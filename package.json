@@ -1,14 +1,19 @@
 {
-  "name": "swarm-desktop",
-  "productName": "Swarm Desktop",
+  "name": "nook",
+  "productName": "Nook",
   "author": {
-    "name": "Swarm Association",
-    "email": "info@ethswarm.org"
+    "name": "Gx93"
   },
+  "contributors": [
+    {
+      "name": "Swarm Association",
+      "email": "info@ethswarm.org",
+      "url": "https://github.com/ethersphere/swarm-desktop"
+    }
+  ],
   "version": "0.52.1",
-  "description": "Desktop client for running and managing bee",
-  "homepage": "https://desktop.ethswarm.org/",
-  "repository": "https://github.com/ethersphere/swarm-desktop",
+  "description": "Permanent decentralized storage for files, folders and websites",
+  "repository": "https://github.com/GasperX93/nook",
   "main": "dist/desktop/src/index.js",
   "scripts": {
     "start": "concurrently -n \"desktop,ui\" \"cross-env-shell NODE_ENV=development 'npm run clean && npm run build && electron-forge start'\" \"cd ui && npm start\"",
