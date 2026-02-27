@@ -1,87 +1,77 @@
-# Getting Started with Create React App
+# Swarm Desktop UI
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+React frontend for Swarm Desktop. Served by the Electron backend's Koa server at `/dashboard`.
 
-## Available env. variables
+## Stack
 
-- `REACT_APP_BEE_DESKTOP_URL` specifies where the Desktop API backend is expected. By default, it is
-  `${window.location.protocol}//${window.location.host}`
+- **Vite** + **React 18** + **TypeScript**
+- **React Router v6** (HashRouter — required by Koa static file serving)
+- **Tanstack Query v5** — data fetching and caching against the desktop API
+- **Zustand** — global state (API key)
+- **Tailwind CSS** — styling via CSS custom properties for theming
 
-## Available Scripts
+## Development
 
-In the project directory, you can run:
+```bash
+npm install --legacy-peer-deps   # first time only
+npm start                        # dev server on http://localhost:3002
+npm run build                    # production build → build/
+npm run lint                     # lint + fix
+npm run lint:check               # lint check only
+```
 
-### `npm start`
+In development the Vite dev server proxies all API routes (`/info`, `/status`, `/config`, etc.) to `http://localhost:3000` (the Electron backend).
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+## Environment variables
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+| Variable | Default | Description |
+|---|---|---|
+| `VITE_BEE_DESKTOP_URL` | same-origin | Backend base URL. Set in `.env.development`. |
+| `VITE_API_KEY` | — | API key for dev without the Electron wrapper. |
 
-### `npm test`
+In production the API key is injected by the Electron backend as a `?v=` URL parameter when it opens the dashboard window. The app reads it from `window.location.search` on startup.
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+## Architecture
 
-### `npm run build`
+```
+src/
+├── main.tsx              # entry point — reads API key from URL, mounts app
+├── App.tsx               # route definitions
+├── index.css             # Tailwind base + dark theme CSS variables
+├── vite-env.d.ts         # Vite env type declarations
+├── store/
+│   └── app.ts            # Zustand store (API key)
+├── api/
+│   ├── client.ts         # typed fetch wrapper + API types
+│   └── queries.ts        # Tanstack Query hooks for all endpoints
+├── components/
+│   └── Layout.tsx        # sidebar navigation + <Outlet />
+└── pages/
+    ├── Overview.tsx      # node status, peers, version, restart
+    ├── Wallet.tsx        # placeholder
+    ├── Settings.tsx      # Bee config viewer + editor
+    └── Logs.tsx          # Bee / Desktop log viewer
+```
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+### API key flow
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+1. Electron backend generates a key and stores it in `api-key.txt`
+2. On launch it opens `http://localhost:{port}/dashboard/?v={key}`
+3. `main.tsx` reads `?v=` from the URL and stores it in the Zustand store
+4. `api/client.ts` reads the key from the store and adds it as the `authorization` header on every authenticated request
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+### Adding a new page
 
-### `npm run eject`
+1. Create `src/pages/MyPage.tsx`
+2. Add a route in `App.tsx`
+3. Add a nav item in `components/Layout.tsx`
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+### Adding a new API endpoint
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will
-remove the single build dependency from your project.
+1. Add the typed call to `api/client.ts`
+2. Add a query/mutation hook in `api/queries.ts`
+3. Use the hook in your component
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right
-into your project so you have full control over them. All of the commands except `eject` will still work, but they will
-point to the copied scripts so you can tweak them. At this point you're on your own.
+## Updating Bee version
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you
-shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't
-customize it when you are ready for it.
-
-## Learn More
-
-You can learn more in the
-[Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
-
-To learn React, check out the [React documentation](https://reactjs.org/).
-
-### Code Splitting
-
-This section has moved here:
-[https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
-
-### Analyzing the Bundle Size
-
-This section has moved here:
-[https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
-
-### Making a Progressive Web App
-
-This section has moved here:
-[https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
-
-### Advanced Configuration
-
-This section has moved here:
-[https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here:
-[https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here:
-[https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+Bee version is managed in the Electron layer, not here. Change the download URL in `../src/downloader.ts` and bump the root `package.json` version.

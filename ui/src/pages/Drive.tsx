@@ -1,9 +1,9 @@
-import { Check, Copy, Download, ExternalLink, File, FolderOpen, Globe, RefreshCw, Rss, Search, Trash2, Upload } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, Copy, Download, ExternalLink, File, FolderOpen, FolderPlus, Globe, RefreshCw, Rss, Search, Trash2, Upload } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { beeApi, calcStampCost, DURATION_PRESETS, getBeeUrl, topicFromString } from '../api/bee'
 import { useAddresses, useChainState, useTopupStamp } from '../api/queries'
-import { useUploadHistory, type UploadRecord } from '../hooks/useUploadHistory'
+import { useUploadHistory, type DriveFolder, type UploadRecord } from '../hooks/useUploadHistory'
 import { useAppStore } from '../store/app'
 import {
   detectIndexDocument,
@@ -488,11 +488,172 @@ function RetrieveModal({ onClose }: { onClose: () => void }) {
   )
 }
 
+// ─── Record row ───────────────────────────────────────────────────────────────
+
+interface RecordRowProps {
+  record: UploadRecord
+  copiedId: string | null
+  downloadingId: string | null
+  gatewayUrl: string
+  indented?: boolean
+  onCopy: (id: string, hash: string) => void
+  onExtend: (id: string) => void
+  onUpdate: (id: string) => void
+  onDownload: (id: string, hash: string, name: string) => void
+  onRemove: (id: string) => void
+  draggable?: boolean
+  onDragStart?: (e: React.DragEvent, id: string) => void
+}
+
+function RecordRow({
+  record,
+  copiedId,
+  downloadingId,
+  gatewayUrl,
+  indented,
+  onCopy,
+  onExtend,
+  onUpdate,
+  onDownload,
+  onRemove,
+  draggable,
+  onDragStart,
+}: RecordRowProps) {
+  const { label: expiry, urgent } = timeUntil(record.expiresAt)
+  const linkHash = record.feedManifestAddress ?? record.hash
+
+  return (
+    <div
+      key={record.id}
+      draggable={draggable}
+      onDragStart={onDragStart ? e => onDragStart(e, record.id) : undefined}
+      className={`rounded-lg border px-4 py-3 flex items-center gap-4 cursor-grab active:cursor-grabbing${indented ? ' ml-6' : ''}`}
+      style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
+    >
+      {/* Type icon or thumbnail */}
+      <div
+        className="w-8 h-8 rounded-lg overflow-hidden flex items-center justify-center shrink-0"
+        style={{ backgroundColor: 'rgb(var(--bg))' }}
+      >
+        {record.type === 'file' && isImageFile(record.name) ? (
+          <img
+            src={`${getBeeUrl()}/bzz/${record.hash}`}
+            className="w-full h-full object-cover"
+            onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+            alt=""
+          />
+        ) : record.type === 'website' ? (
+          <Globe size={14} style={{ color: 'rgb(var(--fg-muted))' }} />
+        ) : record.type === 'folder' ? (
+          <FolderOpen size={14} style={{ color: 'rgb(var(--fg-muted))' }} />
+        ) : (
+          <File size={14} style={{ color: 'rgb(var(--fg-muted))' }} />
+        )}
+      </div>
+
+      {/* Name + hash */}
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          <p className="text-sm font-medium truncate">{record.name}</p>
+          {record.hasFeed && (
+            <span
+              className="shrink-0 flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium"
+              style={{ backgroundColor: 'rgba(247,104,8,0.12)', color: 'rgb(var(--accent))' }}
+            >
+              <Rss size={9} />
+              Feed
+            </span>
+          )}
+        </div>
+        <p className="text-xs font-mono mt-0.5 truncate" style={{ color: 'rgb(var(--fg-muted))' }}>
+          {linkHash.slice(0, 20)}…
+        </p>
+      </div>
+
+      {/* Size */}
+      <span className="text-xs shrink-0 hidden sm:block" style={{ color: 'rgb(var(--fg-muted))' }}>
+        {formatBytes(record.size)}
+      </span>
+
+      {/* Expiry */}
+      <div className="flex flex-col items-end gap-1 shrink-0">
+        <ExpiryBar expiresAt={record.expiresAt} uploadedAt={record.uploadedAt} />
+        <span
+          className="text-[10px] uppercase tracking-widest font-semibold"
+          style={{ color: urgent ? '#ef4444' : 'rgb(var(--fg-muted))' }}
+        >
+          {expiry}
+        </span>
+      </div>
+
+      {/* Actions */}
+      <div className="flex items-center gap-1 shrink-0">
+        {urgent && (
+          <button
+            onClick={() => onExtend(record.id)}
+            className="px-2 py-1 rounded text-[10px] font-semibold uppercase tracking-widest"
+            style={{ backgroundColor: 'rgba(239,68,68,0.15)', color: '#ef4444' }}
+          >
+            Extend
+          </button>
+        )}
+        {record.hasFeed && (
+          <button
+            onClick={() => onUpdate(record.id)}
+            title="Publish update"
+            className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-semibold uppercase tracking-widest transition-colors"
+            style={{ backgroundColor: 'rgba(247,104,8,0.12)', color: 'rgb(var(--accent))' }}
+          >
+            <Rss size={9} />
+            Update
+          </button>
+        )}
+        <button
+          onClick={() => onCopy(record.id, linkHash)}
+          title="Copy link"
+          className="w-7 h-7 flex items-center justify-center rounded transition-colors"
+          style={{ color: copiedId === record.id ? '#4ade80' : 'rgb(var(--fg-muted))' }}
+        >
+          <Copy size={13} />
+        </button>
+        <a
+          href={`${gatewayUrl}/bzz/${linkHash}/`}
+          target="_blank"
+          rel="noreferrer"
+          title="Open"
+          className="w-7 h-7 flex items-center justify-center rounded"
+          style={{ color: 'rgb(var(--fg-muted))' }}
+        >
+          <ExternalLink size={13} />
+        </a>
+        <button
+          onClick={() => onDownload(record.id, record.hash, record.name)}
+          title="Download"
+          className="w-7 h-7 flex items-center justify-center rounded transition-colors"
+          style={{ color: 'rgb(var(--fg-muted))' }}
+        >
+          {downloadingId === record.id
+            ? <RefreshCw size={13} className="animate-spin" />
+            : <Download size={13} />}
+        </button>
+        <button
+          onClick={() => onRemove(record.id)}
+          title="Remove from Drive"
+          className="w-7 h-7 flex items-center justify-center rounded transition-colors hover:text-red-400"
+          style={{ color: 'rgb(var(--fg-muted))' }}
+        >
+          <Trash2 size={13} />
+        </button>
+      </div>
+    </div>
+  )
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function Drive() {
   const navigate = useNavigate()
-  const { records, remove } = useUploadHistory()
+  const { records, folders, remove, addFolder, removeFolder, renameFolder, moveToFolder } = useUploadHistory()
   const { gatewayUrl } = useAppStore()
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [extendingId, setExtendingId] = useState<string | null>(null)
@@ -501,17 +662,93 @@ export default function Drive() {
   const [retrieveOpen, setRetrieveOpen] = useState(false)
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
 
+  // Folder UI state
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())
+  const [draggingId, setDraggingId] = useState<string | null>(null)
+  const [dragOverId, setDragOverId] = useState<string | 'root' | null>(null)
+  const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+  const [creatingFolder, setCreatingFolder] = useState(false)
+  const [newFolderName, setNewFolderName] = useState('')
+
   const filteredRecords = search
     ? records.filter(r => r.name.toLowerCase().includes(search.toLowerCase()))
     : records
 
   function copyHash(id: string, hash: string) {
-    navigator.clipboard.writeText(hash)
+    navigator.clipboard.writeText(`${gatewayUrl}/bzz/${hash}/`)
     setCopiedId(id)
     setTimeout(() => setCopiedId(null), 2000)
   }
 
-  if (records.length === 0) {
+  async function handleDownload(id: string, hash: string, name: string) {
+    setDownloadingId(id)
+    try { await downloadFromSwarm(hash, name) }
+    finally { setDownloadingId(null) }
+  }
+
+  function handleDragStart(e: React.DragEvent, recordId: string) {
+    e.dataTransfer.setData('recordId', recordId)
+    e.dataTransfer.effectAllowed = 'move'
+    setDraggingId(recordId)
+  }
+
+  function handleDragEnd() {
+    setDraggingId(null)
+    setDragOverId(null)
+  }
+
+  function handleFolderDrop(e: React.DragEvent, folderId: string) {
+    e.preventDefault()
+    const recordId = e.dataTransfer.getData('recordId')
+    if (recordId) {
+      moveToFolder(recordId, folderId)
+      // auto-expand the target folder
+      setExpandedFolders(prev => new Set([...prev, folderId]))
+    }
+    setDragOverId(null)
+    setDraggingId(null)
+  }
+
+  function handleRootDrop(e: React.DragEvent) {
+    e.preventDefault()
+    const recordId = e.dataTransfer.getData('recordId')
+    if (recordId) moveToFolder(recordId, null)
+    setDragOverId(null)
+    setDraggingId(null)
+  }
+
+  function commitRename() {
+    if (renamingFolderId && renameValue.trim()) {
+      renameFolder(renamingFolderId, renameValue.trim())
+    }
+    setRenamingFolderId(null)
+    setRenameValue('')
+  }
+
+  function startRename(folder: DriveFolder) {
+    setRenamingFolderId(folder.id)
+    setRenameValue(folder.name)
+  }
+
+  function commitNewFolder() {
+    if (newFolderName.trim()) {
+      addFolder(newFolderName.trim())
+    }
+    setCreatingFolder(false)
+    setNewFolderName('')
+  }
+
+  function toggleFolder(id: string) {
+    setExpandedFolders(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  if (records.length === 0 && folders.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-4 text-center p-6">
         <div
@@ -539,8 +776,25 @@ export default function Drive() {
 
   const updatingRecord = records.find(r => r.id === updatingId)
 
+  const commonRowProps = {
+    copiedId,
+    downloadingId,
+    gatewayUrl,
+    onCopy: copyHash,
+    onExtend: setExtendingId,
+    onUpdate: setUpdatingId,
+    onDownload: handleDownload,
+    onRemove: remove,
+    draggable: true,
+    onDragStart: handleDragStart,
+  }
+
+  // Partition records
+  const rootRecords = records.filter(r => !r.folderId)
+
   return (
-    <div className="p-6">
+    <div className="p-6" onDragEnd={handleDragEnd}>
+      {/* Header */}
       <div className="flex items-center gap-3 mb-6">
         <h1
           className="text-base font-semibold uppercase tracking-widest shrink-0"
@@ -561,6 +815,14 @@ export default function Drive() {
           />
         </div>
         <button
+          onClick={() => { setCreatingFolder(true); setNewFolderName('') }}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium shrink-0 transition-colors"
+          style={{ color: 'rgb(var(--fg-muted))' }}
+        >
+          <FolderPlus size={12} />
+          Folder
+        </button>
+        <button
           onClick={() => setRetrieveOpen(true)}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium shrink-0 transition-colors"
           style={{ color: 'rgb(var(--fg-muted))' }}
@@ -570,144 +832,188 @@ export default function Drive() {
         </button>
       </div>
 
-      <div className="space-y-2">
-        {filteredRecords.length === 0 && search && (
-          <p className="text-xs text-center py-8" style={{ color: 'rgb(var(--fg-muted))' }}>
-            No files match "{search}"
-          </p>
-        )}
-        {filteredRecords.map(record => {
-          const { label: expiry, urgent } = timeUntil(record.expiresAt)
-          const linkHash = record.feedManifestAddress ?? record.hash
-          return (
+      {/* Search mode — flat list */}
+      {search ? (
+        <div className="space-y-2">
+          {filteredRecords.length === 0 && (
+            <p className="text-xs text-center py-8" style={{ color: 'rgb(var(--fg-muted))' }}>
+              No files match "{search}"
+            </p>
+          )}
+          {filteredRecords.map(record => (
+            <RecordRow key={record.id} record={record} {...commonRowProps} draggable={false} onDragStart={undefined} />
+          ))}
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {/* New folder inline input */}
+          {creatingFolder && (
             <div
-              key={record.id}
-              className="rounded-lg border px-4 py-3 flex items-center gap-4"
+              className="rounded-lg border px-4 py-2.5 flex items-center gap-3"
               style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
             >
-              {/* Type icon or thumbnail */}
-              <div
-                className="w-8 h-8 rounded-lg overflow-hidden flex items-center justify-center shrink-0"
-                style={{ backgroundColor: 'rgb(var(--bg))' }}
-              >
-                {record.type === 'file' && isImageFile(record.name) ? (
-                  <img
-                    src={`${getBeeUrl()}/bzz/${record.hash}`}
-                    className="w-full h-full object-cover"
-                    onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
-                    alt=""
-                  />
-                ) : record.type === 'website' ? (
-                  <Globe size={14} style={{ color: 'rgb(var(--fg-muted))' }} />
-                ) : record.type === 'folder' ? (
-                  <FolderOpen size={14} style={{ color: 'rgb(var(--fg-muted))' }} />
-                ) : (
-                  <File size={14} style={{ color: 'rgb(var(--fg-muted))' }} />
-                )}
-              </div>
+              <FolderPlus size={14} style={{ color: 'rgb(var(--fg-muted))' }} />
+              <input
+                type="text"
+                autoFocus
+                value={newFolderName}
+                onChange={e => setNewFolderName(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') commitNewFolder()
+                  if (e.key === 'Escape') { setCreatingFolder(false); setNewFolderName('') }
+                }}
+                onBlur={commitNewFolder}
+                placeholder="Folder name…"
+                className="flex-1 bg-transparent text-sm focus:outline-none"
+                style={{ color: 'rgb(var(--fg))' }}
+              />
+              <span className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>Enter to confirm</span>
+            </div>
+          )}
 
-              {/* Name + hash */}
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <p className="text-sm font-medium truncate">{record.name}</p>
-                  {record.hasFeed && (
+          {/* Folders */}
+          {folders.map(folder => {
+            const folderRecords = records.filter(r => r.folderId === folder.id)
+            const isExpanded = expandedFolders.has(folder.id)
+            const isOver = dragOverId === folder.id
+
+            return (
+              <div key={folder.id}>
+                {/* Folder header row */}
+                <div
+                  onClick={() => toggleFolder(folder.id)}
+                  onDragOver={e => { e.preventDefault(); setDragOverId(folder.id) }}
+                  onDragLeave={e => {
+                    if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverId(null)
+                  }}
+                  onDrop={e => handleFolderDrop(e, folder.id)}
+                  className="rounded-lg border px-4 py-2.5 flex items-center gap-2 cursor-pointer select-none transition-colors"
+                  style={{
+                    backgroundColor: isOver ? 'rgba(247,104,8,0.08)' : 'rgb(var(--bg-surface))',
+                    borderColor: isOver ? 'rgb(var(--accent))' : 'rgb(var(--border))',
+                    outline: isOver ? '2px solid rgb(var(--accent))' : 'none',
+                    outlineOffset: '-2px',
+                  }}
+                >
+                  <span style={{ color: 'rgb(var(--fg-muted))' }}>
+                    {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                  </span>
+                  <FolderOpen size={13} style={{ color: 'rgb(var(--fg-muted))' }} />
+
+                  {/* Folder name — dblclick to rename */}
+                  {renamingFolderId === folder.id ? (
+                    <input
+                      type="text"
+                      autoFocus
+                      value={renameValue}
+                      onClick={e => e.stopPropagation()}
+                      onChange={e => setRenameValue(e.target.value)}
+                      onKeyDown={e => {
+                        e.stopPropagation()
+                        if (e.key === 'Enter') commitRename()
+                        if (e.key === 'Escape') { setRenamingFolderId(null); setRenameValue('') }
+                      }}
+                      onBlur={commitRename}
+                      className="flex-1 bg-transparent text-sm focus:outline-none"
+                      style={{ color: 'rgb(var(--fg))' }}
+                    />
+                  ) : (
                     <span
-                      className="shrink-0 flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium"
-                      style={{ backgroundColor: 'rgba(247,104,8,0.12)', color: 'rgb(var(--accent))' }}
+                      className="flex-1 text-sm font-medium"
+                      onDoubleClick={e => { e.stopPropagation(); startRename(folder) }}
                     >
-                      <Rss size={9} />
-                      Feed
+                      {folder.name}
                     </span>
                   )}
+
+                  <span className="text-xs ml-1" style={{ color: 'rgb(var(--fg-muted))' }}>
+                    {folderRecords.length > 0 ? folderRecords.length : ''}
+                  </span>
+
+                  {/* Delete folder */}
+                  <button
+                    onClick={e => { e.stopPropagation(); removeFolder(folder.id) }}
+                    title="Delete folder"
+                    className="w-6 h-6 flex items-center justify-center rounded ml-1 hover:text-red-400 transition-colors"
+                    style={{ color: 'rgb(var(--fg-muted))' }}
+                  >
+                    <Trash2 size={11} />
+                  </button>
                 </div>
-                <p className="text-xs font-mono mt-0.5 truncate" style={{ color: 'rgb(var(--fg-muted))' }}>
-                  {linkHash.slice(0, 20)}…
-                </p>
+
+                {/* Folder contents */}
+                {isExpanded && (
+                  <div className="mt-1 space-y-1.5 pl-4">
+                    {folderRecords.length === 0 ? (
+                      <div
+                        className="ml-2 rounded-lg border-2 border-dashed px-4 py-3 text-center"
+                        style={{ borderColor: 'rgb(var(--border))' }}
+                      >
+                        <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                          Drop files here
+                        </p>
+                      </div>
+                    ) : (
+                      folderRecords.map(record => (
+                        <RecordRow key={record.id} record={record} {...commonRowProps} />
+                      ))
+                    )}
+                  </div>
+                )}
               </div>
+            )
+          })}
 
-              {/* Size */}
-              <span className="text-xs shrink-0 hidden sm:block" style={{ color: 'rgb(var(--fg-muted))' }}>
-                {formatBytes(record.size)}
-              </span>
-
-              {/* Expiry */}
-              <div className="flex flex-col items-end gap-1 shrink-0">
-                <ExpiryBar expiresAt={record.expiresAt} uploadedAt={record.uploadedAt} />
+          {/* Unorganized section */}
+          {(rootRecords.length > 0 || folders.length > 0) && (
+            <div>
+              <div
+                onDragOver={e => { e.preventDefault(); setDragOverId('root') }}
+                onDragLeave={e => {
+                  if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverId(null)
+                }}
+                onDrop={handleRootDrop}
+                className="flex items-center gap-2 px-1 py-2 mb-1"
+              >
+                <div
+                  className="h-px flex-1"
+                  style={{ backgroundColor: dragOverId === 'root' ? 'rgb(var(--accent))' : 'rgb(var(--border))' }}
+                />
                 <span
-                  className="text-[10px] uppercase tracking-widest font-semibold"
-                  style={{ color: urgent ? '#ef4444' : 'rgb(var(--fg-muted))' }}
+                  className="text-[10px] uppercase tracking-widest font-semibold px-1"
+                  style={{ color: dragOverId === 'root' ? 'rgb(var(--accent))' : 'rgb(var(--fg-muted))' }}
                 >
-                  {expiry}
+                  Unorganized {rootRecords.length > 0 ? `(${rootRecords.length})` : ''}
                 </span>
+                <div
+                  className="h-px flex-1"
+                  style={{ backgroundColor: dragOverId === 'root' ? 'rgb(var(--accent))' : 'rgb(var(--border))' }}
+                />
               </div>
 
-              {/* Actions */}
-              <div className="flex items-center gap-1 shrink-0">
-                {urgent && (
-                  <button
-                    onClick={() => setExtendingId(record.id)}
-                    className="px-2 py-1 rounded text-[10px] font-semibold uppercase tracking-widest"
-                    style={{ backgroundColor: 'rgba(239,68,68,0.15)', color: '#ef4444' }}
-                  >
-                    Extend
-                  </button>
-                )}
-                {record.hasFeed && (
-                  <button
-                    onClick={() => setUpdatingId(record.id)}
-                    title="Publish update"
-                    className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-semibold uppercase tracking-widest transition-colors"
-                    style={{ backgroundColor: 'rgba(247,104,8,0.12)', color: 'rgb(var(--accent))' }}
-                  >
-                    <Rss size={9} />
-                    Update
-                  </button>
-                )}
-                <button
-                  onClick={() => copyHash(record.id, linkHash)}
-                  title="Copy link"
-                  className="w-7 h-7 flex items-center justify-center rounded transition-colors"
-                  style={{ color: copiedId === record.id ? '#4ade80' : 'rgb(var(--fg-muted))' }}
-                >
-                  <Copy size={13} />
-                </button>
-                <a
-                  href={`${gatewayUrl}/bzz/${linkHash}/`}
-                  target="_blank"
-                  rel="noreferrer"
-                  title="Open"
-                  className="w-7 h-7 flex items-center justify-center rounded"
-                  style={{ color: 'rgb(var(--fg-muted))' }}
-                >
-                  <ExternalLink size={13} />
-                </a>
-                <button
-                  onClick={async () => {
-                    setDownloadingId(record.id)
-                    try { await downloadFromSwarm(record.hash, record.name) }
-                    finally { setDownloadingId(null) }
+              {rootRecords.length === 0 && draggingId && (
+                <div
+                  onDragOver={e => { e.preventDefault(); setDragOverId('root') }}
+                  onDrop={handleRootDrop}
+                  className="rounded-lg border-2 border-dashed px-4 py-4 text-center"
+                  style={{
+                    borderColor: dragOverId === 'root' ? 'rgb(var(--accent))' : 'rgb(var(--border))',
+                    backgroundColor: dragOverId === 'root' ? 'rgba(247,104,8,0.04)' : 'transparent',
                   }}
-                  title="Download"
-                  className="w-7 h-7 flex items-center justify-center rounded transition-colors"
-                  style={{ color: 'rgb(var(--fg-muted))' }}
                 >
-                  {downloadingId === record.id
-                    ? <RefreshCw size={13} className="animate-spin" />
-                    : <Download size={13} />}
-                </button>
-                <button
-                  onClick={() => remove(record.id)}
-                  title="Remove from Drive"
-                  className="w-7 h-7 flex items-center justify-center rounded transition-colors hover:text-red-400"
-                  style={{ color: 'rgb(var(--fg-muted))' }}
-                >
-                  <Trash2 size={13} />
-                </button>
+                  <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>Drop here to unorganize</p>
+                </div>
+              )}
+
+              <div className="space-y-2">
+                {rootRecords.map(record => (
+                  <RecordRow key={record.id} record={record} {...commonRowProps} />
+                ))}
               </div>
             </div>
-          )
-        })}
-      </div>
+          )}
+        </div>
+      )}
 
       {extendingId && (
         <ExtendModal

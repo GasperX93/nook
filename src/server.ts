@@ -10,7 +10,7 @@ import * as path from 'path'
 
 import PACKAGE_JSON from '../package.json'
 import { getApiKey } from './api-key'
-import { sendBzzTransaction, sendNativeTransaction } from './blockchain'
+import { redeemGiftCode, sendBzzTransaction, sendNativeTransaction } from './blockchain'
 import { readConfigYaml, readWalletPasswordOrThrow, writeConfigYaml } from './config'
 import { runLauncher } from './launcher'
 import { BeeManager } from './lifecycle'
@@ -128,6 +128,26 @@ export function runServer() {
     await sendBzzTransaction(privateKeyString, address, '50000000000000000', blockchainRpcEndpoint)
     await sendNativeTransaction(privateKeyString, address, '1000000000000000000', blockchainRpcEndpoint)
     context.body = { success: true }
+  })
+  router.post('/redeem', async context => {
+    const { giftCode } = context.request.body as { giftCode: string }
+    if (!giftCode) {
+      context.status = 400
+      context.body = { message: 'giftCode is required' }
+      return
+    }
+    const config = readConfigYaml()
+    const blockchainRpcEndpoint = Reflect.get(config, 'blockchain-rpc-endpoint') as string
+    try {
+      const addrRes = await fetch('http://127.0.0.1:1633/addresses')
+      const { ethereum: nodeAddress } = (await addrRes.json()) as { ethereum: string }
+      await redeemGiftCode(giftCode, nodeAddress, blockchainRpcEndpoint)
+      context.body = { success: true }
+    } catch (error) {
+      logger.error(error)
+      context.status = 500
+      context.body = { message: 'Failed to redeem gift code', error }
+    }
   })
   router.post('/swap', async context => {
     const config = readConfigYaml()

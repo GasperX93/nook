@@ -7,7 +7,7 @@ import cpy from 'cpy'
 import { readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 
-const paths = envPaths('Swarm Desktop', { suffix: '' })
+const paths = envPaths('Nook', { suffix: '' })
 const requestedCommand = process.argv[2]
 
 switch (requestedCommand) {

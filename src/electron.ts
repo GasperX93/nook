@@ -1,6 +1,6 @@
 import { app, BrowserWindow, Menu, nativeTheme, Tray } from 'electron'
 import opener from 'opener'
-import { openDashboardInBrowser, openUrl, openPath } from './browser'
+import { openDashboardInBrowser } from './browser'
 import { runLauncher } from './launcher'
 import { BeeManager } from './lifecycle'
 import { createNotification } from './notify'
@@ -29,39 +29,6 @@ export function rebuildElectronTray() {
           runLauncher()
         }
       },
-    },
-    { type: 'separator' },
-    {
-      type: 'submenu',
-      label: 'Apps',
-      submenu: [
-        {
-          label: 'FDP',
-          click: () => openPath('/fdp'),
-        },
-        {
-          label: 'Datafund App',
-          click: () => openUrl('https://app.datafund.io'),
-        },
-        {
-          label: 'Devcon.buzz',
-          click: () => openUrl('https://devcon.buzz'),
-        },
-        {
-          label: 'Etherjot',
-          click: () => openUrl('https://etherjot.com'),
-        },
-        {
-          label: 'Decentralized Wiki',
-          click: () =>
-            openUrl('http://localhost:1633/bzz/f8aa0f764267de0cae814edf58358dcd6ccf38f0a242656be8bf01a14700090c/'),
-        },
-        {
-          label: 'Decentralized OSM',
-          click: () =>
-            openUrl('http://localhost:1633/bzz/ab77201f6541a9ceafb98a46c643273cfa397a87798273dd17feb2aa366ce2e6/'),
-        },
-      ],
     },
     { type: 'separator' },
     {
@@ -127,7 +94,7 @@ export function runElectronTray() {
     app.quit()
   } else {
     app.on('second-instance', () => {
-      createNotification('Swarm is already running. Please close the previous instance first.')
+      createNotification('Nook is already running. Please close the previous instance first.')
     })
   }
 

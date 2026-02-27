@@ -17,9 +17,9 @@ const iconPath = path.resolve(__dirname, 'assets', 'icon')
 const config = {
   packagerConfig: {
     icon: iconPath,
-    executableName: 'swarm-desktop',
-    name: 'Swarm Desktop',
-    appBundleId: 'org.ethswarm.swarmDesktop',
+    executableName: 'nook',
+    name: 'Nook',
+    appBundleId: 'org.ethswarm.nook',
     asar: true,
     osxSign: {
       identity: 'Developer ID Application: Swarm Association (9J9SPHU9RP)',
@@ -36,7 +36,7 @@ const config = {
     {
       name: '@electron-forge/maker-squirrel',
       config: {
-        name: 'swarm-desktop',
+        name: 'nook',
         iconUrl: iconPath + '.ico',
         setupIcon: iconPath + '.ico',
         loadingGif: path.resolve(__dirname, 'assets', 'windows-install.gif'),
@@ -105,7 +105,7 @@ function notarizeMaybe() {
 
   config.packagerConfig.osxNotarize = {
     tool: 'notarytool',
-    appBundleId: 'org.ethswarm.swarmDesktop',
+    appBundleId: 'org.ethswarm.nook',
     appleId: process.env.APPLE_ID,
     appleIdPassword: process.env.APPLE_ID_PASSWORD,
     ascProvider: '9J9SPHU9RP',

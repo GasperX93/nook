@@ -25,6 +25,31 @@ export async function sendBzzTransaction(privateKey: string, to: string, value: 
   return { transaction, receipt }
 }
 
+export async function redeemGiftCode(giftCode: string, toAddress: string, blockchainRpcEndpoint: string) {
+  const provider = new providers.JsonRpcProvider(blockchainRpcEndpoint, 100)
+  await provider.ready
+  const giftWallet = new Wallet(giftCode, provider)
+  const gasPrice = await provider.getGasPrice()
+
+  // Transfer all BZZ
+  const bzz = new Contract('0xdBF3Ea6F5beE45c02255B2c26a16F300502F68da', bzzContractInterface, giftWallet)
+  const bzzBalance = await bzz.balanceOf(giftWallet.address)
+  if (bzzBalance.gt(0)) {
+    const tx = await bzz.transfer(toAddress, bzzBalance, { gasPrice })
+    await tx.wait(1)
+  }
+
+  // Transfer xDAI minus gas cost
+  const xdaiBalance = await provider.getBalance(giftWallet.address)
+  const gasLimit = 21000
+  const gasCost = gasPrice.mul(gasLimit)
+  const xdaiToSend = xdaiBalance.sub(gasCost)
+  if (xdaiToSend.gt(0)) {
+    const tx = await giftWallet.sendTransaction({ to: toAddress, value: xdaiToSend, gasPrice, gasLimit })
+    await tx.wait(1)
+  }
+}
+
 async function makeReadySigner(privateKey: string, blockchainRpcEndpoint: string) {
   const provider = new providers.JsonRpcProvider(blockchainRpcEndpoint, 100)
   await provider.ready
