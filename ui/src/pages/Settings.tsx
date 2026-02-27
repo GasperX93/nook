@@ -36,18 +36,12 @@ export default function Settings() {
 
   return (
     <div className="p-6 max-w-xl space-y-6">
-      <h1
-        className="text-base font-semibold uppercase tracking-widest"
-        style={{ color: 'rgb(var(--fg-muted))' }}
-      >
+      <h1 className="text-base font-semibold uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
         Settings
       </h1>
 
       {/* Gateway URL */}
-      <div
-        className="rounded-xl border p-5 space-y-4"
-        style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
-      >
+      <div className="rounded-xl border p-5 space-y-4" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
         <div>
           <p className="text-xs uppercase tracking-widest mb-1" style={{ color: 'rgb(var(--fg-muted))' }}>
             Public gateway
@@ -80,10 +74,7 @@ export default function Settings() {
       </div>
 
       {/* Node config */}
-      <div
-        className="rounded-xl border p-5 space-y-4"
-        style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
-      >
+      <div className="rounded-xl border p-5 space-y-4" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
         <div className="flex items-center justify-between">
           <div>
             <p className="text-xs uppercase tracking-widest mb-1" style={{ color: 'rgb(var(--fg-muted))' }}>
@@ -124,7 +115,9 @@ export default function Settings() {
         </div>
 
         {isLoading ? (
-          <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>Loading…</p>
+          <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
+            Loading…
+          </p>
         ) : configError ? (
           <p className="text-xs py-1" style={{ color: 'rgb(var(--fg-muted))' }}>
             Nook backend not available. Start the app to configure node settings.
@@ -138,10 +131,13 @@ export default function Settings() {
             spellCheck={false}
           />
         ) : (
-          <pre className="text-xs overflow-auto rounded-lg border p-4" style={{
-            backgroundColor: 'rgb(var(--bg))',
-            color: 'rgb(var(--fg-muted))',
-          }}>
+          <pre
+            className="text-xs overflow-auto rounded-lg border p-4"
+            style={{
+              backgroundColor: 'rgb(var(--bg))',
+              color: 'rgb(var(--fg-muted))',
+            }}
+          >
             {JSON.stringify(config, null, 2) ?? 'No config found.'}
           </pre>
         )}

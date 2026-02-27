@@ -1,9 +1,37 @@
-import { Check, ChevronRight, Copy, ExternalLink, File, FolderOpen, Globe, RefreshCw, Upload, type LucideIcon } from 'lucide-react'
+import {
+  Check,
+  ChevronRight,
+  Copy,
+  ExternalLink,
+  File,
+  FolderOpen,
+  Globe,
+  RefreshCw,
+  Upload,
+  type LucideIcon,
+} from 'lucide-react'
 import { useCallback, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { beeApi, calcStampCost, depthToCapacity, DURATION_PRESETS, plurToBzz, SIZE_PRESETS, topicFromString, type Stamp } from '../api/bee'
+import {
+  beeApi,
+  calcStampCost,
+  depthToCapacity,
+  DURATION_PRESETS,
+  plurToBzz,
+  SIZE_PRESETS,
+  topicFromString,
+  type Stamp,
+} from '../api/bee'
 import { serverApi } from '../api/server'
-import { useAddresses, useBeeHealth, useBuyStamp, useChainState, useStamps, useTopupStamp, useWallet } from '../api/queries'
+import {
+  useAddresses,
+  useBeeHealth,
+  useBuyStamp,
+  useChainState,
+  useStamps,
+  useTopupStamp,
+  useWallet,
+} from '../api/queries'
 import { useAppStore } from '../store/app'
 import { useUploadHistory } from '../hooks/useUploadHistory'
 import {
@@ -24,24 +52,36 @@ interface SelectedContent {
   name: string
   entries: FileEntry[]
   size: number
-  indexDocument: string  // website only
+  indexDocument: string // website only
 }
 
-interface StoragePlan { sizeIdx: number; durationIdx: number }
-interface PublishResult { hash: string; expiresAt: number; feedManifestAddress?: string }
+interface StoragePlan {
+  sizeIdx: number
+  durationIdx: number
+}
+interface PublishResult {
+  hash: string
+  expiresAt: number
+  feedManifestAddress?: string
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function ttlToDays(seconds: number): string {
   const d = Math.floor(seconds / 86400)
+
   if (d <= 0) return 'Expiring'
+
   if (d < 30) return `${d}d`
+
   return `${Math.floor(d / 30)}mo`
 }
 
 function formatBytes(bytes: number): string {
   if (bytes >= 1_073_741_824) return `${(bytes / 1_073_741_824).toFixed(1)} GB`
+
   if (bytes >= 1_048_576) return `${(bytes / 1_048_576).toFixed(1)} MB`
+
   return `${(bytes / 1024).toFixed(0)} KB`
 }
 
@@ -49,6 +89,7 @@ function formatBytes(bytes: number): string {
 
 function StampTypeBadge({ immutable }: { immutable: boolean }) {
   const [show, setShow] = useState(false)
+
   return (
     <span className="relative" onMouseEnter={() => setShow(true)} onMouseLeave={() => setShow(false)}>
       <span
@@ -63,7 +104,11 @@ function StampTypeBadge({ immutable }: { immutable: boolean }) {
       {show && (
         <span
           className="absolute bottom-full left-0 mb-2 w-56 rounded-lg border px-3 py-2 text-xs leading-relaxed z-50 pointer-events-none"
-          style={{ backgroundColor: 'rgb(var(--bg-surface))', color: 'rgb(var(--fg-muted))', borderColor: 'rgb(var(--border))' }}
+          style={{
+            backgroundColor: 'rgb(var(--bg-surface))',
+            color: 'rgb(var(--fg-muted))',
+            borderColor: 'rgb(var(--border))',
+          }}
         >
           {immutable
             ? 'Content at the same address can never be replaced. Good for permanent archives.'
@@ -77,6 +122,7 @@ function StampTypeBadge({ immutable }: { immutable: boolean }) {
 function StepDots({ step }: { step: Step }) {
   const labels = ['Select', 'Storage', 'Feed']
   const idx = ['select', 'storage', 'feed'].indexOf(step)
+
   return (
     <div className="flex items-center gap-2 mb-8">
       {labels.map((label, i) => (
@@ -129,15 +175,7 @@ function TypeTab({
   )
 }
 
-function PlanButton({
-  label,
-  selected,
-  onClick,
-}: {
-  label: string
-  selected: boolean
-  onClick: () => void
-}) {
+function PlanButton({ label, selected, onClick }: { label: string; selected: boolean; onClick: () => void }) {
   return (
     <button
       onClick={onClick}
@@ -221,8 +259,11 @@ function TopUpModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) {
         )}
 
         <div className="flex gap-3">
-          <button onClick={onClose} className="flex-1 py-2 rounded-lg text-sm"
-            style={{ color: 'rgb(var(--fg-muted))' }}>
+          <button
+            onClick={onClose}
+            className="flex-1 py-2 rounded-lg text-sm"
+            style={{ color: 'rgb(var(--fg-muted))' }}
+          >
             Cancel
           </button>
           <button
@@ -276,9 +317,7 @@ export default function Publish() {
 
   const selectedSize = SIZE_PRESETS[plan.sizeIdx]
   const selectedDuration = DURATION_PRESETS[plan.durationIdx]
-  const cost = chainState
-    ? calcStampCost(selectedSize.depth, selectedDuration.months, chainState.currentPrice)
-    : null
+  const cost = chainState ? calcStampCost(selectedSize.depth, selectedDuration.months, chainState.currentPrice) : null
   const bzzBalance = wallet ? Number(plurToBzz(wallet.bzzBalance)) : null
   const canAfford = cost && bzzBalance !== null ? bzzBalance >= Number(cost.bzzCost) : true
 
@@ -292,35 +331,65 @@ export default function Publish() {
     setStep('storage')
   }
 
-  const handleDrop = useCallback(async (e: React.DragEvent) => {
-    e.preventDefault()
-    setDragging(false)
+  const handleDrop = useCallback(
+    async (e: React.DragEvent) => {
+      e.preventDefault()
+      setDragging(false)
 
-    if (publishType === 'file') {
-      const file = e.dataTransfer.files[0]
-      if (file) {
-        acceptContent({ type: 'file', name: file.name, entries: [{ path: file.name, file }], size: file.size, indexDocument: '' })
+      if (publishType === 'file') {
+        const file = e.dataTransfer.files[0]
+
+        if (file) {
+          acceptContent({
+            type: 'file',
+            name: file.name,
+            entries: [{ path: file.name, file }],
+            size: file.size,
+            indexDocument: '',
+          })
+        }
+
+        return
       }
-      return
-    }
 
-    // Folder / website — read the dropped directory
-    const item = e.dataTransfer.items[0]
-    if (!item) return
-    try {
-      const { name, entries } = await readDroppedDirectory(item)
-      const index = detectIndexDocument(entries) ?? 'index.html'
-      acceptContent({ type: publishType, name, entries, size: totalSize(entries), indexDocument: index })
-    } catch {
-      // Fallback: user may have dropped a file instead of a folder
-      const file = e.dataTransfer.files[0]
-      if (file) acceptContent({ type: 'file', name: file.name, entries: [{ path: file.name, file }], size: file.size, indexDocument: '' })
-    }
-  }, [publishType])
+      // Folder / website — read the dropped directory
+      const item = e.dataTransfer.items[0]
+
+      if (!item) return
+      try {
+        const { name, entries } = await readDroppedDirectory(item)
+        const index = detectIndexDocument(entries) ?? 'index.html'
+        acceptContent({ type: publishType, name, entries, size: totalSize(entries), indexDocument: index })
+      } catch {
+        // Fallback: user may have dropped a file instead of a folder
+        const file = e.dataTransfer.files[0]
+
+        if (file) {
+          acceptContent({
+            type: 'file',
+            name: file.name,
+            entries: [{ path: file.name, file }],
+            size: file.size,
+            indexDocument: '',
+          })
+        }
+      }
+    },
+    [publishType],
+  )
 
   function handleFileInput(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
-    if (file) acceptContent({ type: 'file', name: file.name, entries: [{ path: file.name, file }], size: file.size, indexDocument: '' })
+
+    if (file) {
+      acceptContent({
+        type: 'file',
+        name: file.name,
+        entries: [{ path: file.name, file }],
+        size: file.size,
+        indexDocument: '',
+      })
+    }
   }
 
   function handleDirInput(e: React.ChangeEvent<HTMLInputElement>) {
@@ -337,9 +406,20 @@ export default function Publish() {
 
   // ── Publish ────────────────────────────────────────────────────────────────
 
+  async function pollStampUsable(id: string) {
+    for (let i = 0; i < 60; i++) {
+      const s = await beeApi.getStamp(id)
+
+      if (s.usable) return
+      await new Promise(r => setTimeout(r, 2000))
+    }
+  }
+
   async function publish() {
     if (!content) return
+
     if (stampMode === 'new' && !cost) return
+
     if (stampMode === 'existing' && !selectedStampId) return
     setStep('publishing')
     setPublishError(null)
@@ -350,13 +430,10 @@ export default function Publish() {
       if (stampMode === 'existing') {
         batchID = selectedStampId!
         const stamp = await beeApi.getStamp(batchID)
+
         if (!stamp.usable) {
           setPublishPhase('Waiting for storage confirmation…')
-          for (let i = 0; i < 60; i++) {
-            const s = await beeApi.getStamp(batchID)
-            if (s.usable) break
-            await new Promise(r => setTimeout(r, 2000))
-          }
+          await pollStampUsable(batchID)
         }
       } else {
         setPublishPhase('Buying storage…')
@@ -367,13 +444,8 @@ export default function Publish() {
         })
         batchID = res.batchID
 
-        // Poll until the stamp is usable (on-chain confirmation, can take 10–60s)
         setPublishPhase('Waiting for storage confirmation…')
-        for (let i = 0; i < 60; i++) {
-          const stamp = await beeApi.getStamp(batchID)
-          if (stamp.usable) break
-          await new Promise(r => setTimeout(r, 2000))
-        }
+        await pollStampUsable(batchID)
       }
 
       let reference: string
@@ -382,27 +454,29 @@ export default function Publish() {
         setPublishPhase('Uploading…')
         setUploadProgress(0)
         const res = await beeApi.uploadFileWithProgress(
-          content.entries[0].file, batchID,
+          content.entries[0].file,
+          batchID,
           pct => setUploadProgress(pct),
           !feedEnabled,
         )
         reference = res.reference
       } else {
         setPublishPhase('Creating archive…')
-        const opts = content.type === 'website'
-          ? { indexDocument: content.indexDocument, errorDocument: '404.html', deferred: !feedEnabled }
-          : { deferred: !feedEnabled }
+        const opts =
+          content.type === 'website'
+            ? { indexDocument: content.indexDocument, errorDocument: '404.html', deferred: !feedEnabled }
+            : { deferred: !feedEnabled }
         setPublishPhase('Uploading…')
         setUploadProgress(0)
-        const res = await beeApi.uploadCollectionWithProgress(
-          content.entries, batchID, opts,
-          pct => setUploadProgress(pct),
+        const res = await beeApi.uploadCollectionWithProgress(content.entries, batchID, opts, pct =>
+          setUploadProgress(pct),
         )
         reference = res.reference
       }
 
       // Create feed if enabled
       let feedManifestAddress: string | undefined
+
       if (feedEnabled) {
         setPublishPhase('Creating feed…')
         const topicName = feedTopic.trim() || content.name
@@ -425,7 +499,7 @@ export default function Publish() {
         expiresAt,
         uploadedAt: Date.now(),
         hasFeed: feedEnabled,
-        feedTopic: feedEnabled ? (feedTopic.trim() || content.name) : undefined,
+        feedTopic: feedEnabled ? feedTopic.trim() || content.name : undefined,
         feedManifestAddress,
       })
 
@@ -448,7 +522,9 @@ export default function Publish() {
     setPublishPhase('')
     setUploadProgress(null)
     setSelectedStampId(null)
+
     if (fileInputRef.current) fileInputRef.current.value = ''
+
     if (dirInputRef.current) dirInputRef.current.value = ''
   }
 
@@ -457,14 +533,24 @@ export default function Publish() {
   return (
     <div
       className="p-6 max-w-xl"
-      onDragOver={step === 'select' ? e => { e.preventDefault(); setDragging(true) } : undefined}
-      onDragLeave={step === 'select' ? e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragging(false) } : undefined}
+      onDragOver={
+        step === 'select'
+          ? e => {
+              e.preventDefault()
+              setDragging(true)
+            }
+          : undefined
+      }
+      onDragLeave={
+        step === 'select'
+          ? e => {
+              if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragging(false)
+            }
+          : undefined
+      }
       onDrop={step === 'select' ? handleDrop : undefined}
     >
-      <h1
-        className="text-base font-semibold uppercase tracking-widest mb-6"
-        style={{ color: 'rgb(var(--fg-muted))' }}
-      >
+      <h1 className="text-base font-semibold uppercase tracking-widest mb-6" style={{ color: 'rgb(var(--fg-muted))' }}>
         Publish
       </h1>
 
@@ -479,7 +565,9 @@ export default function Publish() {
               className="rounded-lg border px-4 py-3 space-y-1"
               style={{ backgroundColor: 'rgba(247,104,8,0.06)', borderColor: 'rgba(247,104,8,0.2)' }}
             >
-              <p className="text-xs font-semibold" style={{ color: 'rgb(var(--accent))' }}>Welcome to Nook</p>
+              <p className="text-xs font-semibold" style={{ color: 'rgb(var(--accent))' }}>
+                Welcome to Nook
+              </p>
               <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
                 To publish files you need BZZ tokens to buy storage.{' '}
                 <button
@@ -488,16 +576,35 @@ export default function Publish() {
                   style={{ color: 'rgb(var(--accent))' }}
                 >
                   Fund your wallet
-                </button>{' '}first.
+                </button>{' '}
+                first.
               </p>
             </div>
           )}
 
           {/* Type selector */}
           <div className="flex gap-2">
-            <TypeTab type="file"    icon={File}       label="File"    active={publishType === 'file'}    onClick={() => setPublishType('file')} />
-            <TypeTab type="folder"  icon={FolderOpen} label="Folder"  active={publishType === 'folder'}  onClick={() => setPublishType('folder')} />
-            <TypeTab type="website" icon={Globe}      label="Website" active={publishType === 'website'} onClick={() => setPublishType('website')} />
+            <TypeTab
+              type="file"
+              icon={File}
+              label="File"
+              active={publishType === 'file'}
+              onClick={() => setPublishType('file')}
+            />
+            <TypeTab
+              type="folder"
+              icon={FolderOpen}
+              label="Folder"
+              active={publishType === 'folder'}
+              onClick={() => setPublishType('folder')}
+            />
+            <TypeTab
+              type="website"
+              icon={Globe}
+              label="Website"
+              active={publishType === 'website'}
+              onClick={() => setPublishType('website')}
+            />
           </div>
 
           {/* Drop zone */}
@@ -541,14 +648,17 @@ export default function Publish() {
 
           {publishType === 'website' && (
             <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-              The folder should contain an <span className="font-mono">index.html</span> at its root.
-              Swarm will serve it as a static website.
+              The folder should contain an <span className="font-mono">index.html</span> at its root. Swarm will serve
+              it as a static website.
             </p>
           )}
 
           {/* Hidden inputs */}
           <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileInput} />
-          <input ref={dirInputRef} type="file" className="hidden"
+          <input
+            ref={dirInputRef}
+            type="file"
+            className="hidden"
             // @ts-expect-error — webkitdirectory is not in TS types but works in Electron/Chrome
             webkitdirectory="true"
             onChange={handleDirInput}
@@ -560,10 +670,7 @@ export default function Publish() {
       {step === 'storage' && content && (
         <div className="space-y-6">
           {/* Content summary */}
-          <div
-            className="rounded-lg border px-4 py-3 space-y-1"
-            style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
-          >
+          <div className="rounded-lg border px-4 py-3 space-y-1" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
             <div className="flex items-center justify-between">
               <span className="text-sm font-medium truncate mr-4">{content.name}</span>
               <span className="text-xs shrink-0" style={{ color: 'rgb(var(--fg-muted))' }}>
@@ -577,16 +684,20 @@ export default function Publish() {
             )}
             {content.type === 'website' && (
               <div className="pt-1 flex items-center gap-2">
-                <span className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>Index file</span>
+                <span className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  Index file
+                </span>
                 <input
                   type="text"
                   value={content.indexDocument}
-                  onChange={e => setContent(c => c ? { ...c, indexDocument: e.target.value } : c)}
+                  onChange={e => setContent(c => (c ? { ...c, indexDocument: e.target.value } : c))}
                   className="flex-1 text-xs rounded border px-2 py-1 font-mono focus:outline-none"
                   style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
                 />
                 {!content.entries.some(e => e.path === content.indexDocument) && (
-                  <span className="text-xs" style={{ color: '#facc15' }}>not found</span>
+                  <span className="text-xs" style={{ color: '#facc15' }}>
+                    not found
+                  </span>
                 )}
               </div>
             )}
@@ -604,7 +715,9 @@ export default function Publish() {
                   color: stampMode === mode ? 'rgb(var(--fg))' : 'rgb(var(--fg-muted))',
                 }}
               >
-                {mode === 'existing' ? `Use existing stamp${usableStamps.length ? ` (${usableStamps.length})` : ''}` : 'Buy new storage'}
+                {mode === 'existing'
+                  ? `Use existing stamp${usableStamps.length ? ` (${usableStamps.length})` : ''}`
+                  : 'Buy new storage'}
               </button>
             ))}
           </div>
@@ -613,9 +726,13 @@ export default function Publish() {
           {stampMode === 'existing' && (
             <div className="space-y-2">
               {usableStamps.length === 0 ? (
-                <div className="rounded-lg border px-4 py-5 text-center space-y-2"
-                  style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
-                  <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>No stamps found</p>
+                <div
+                  className="rounded-lg border px-4 py-5 text-center space-y-2"
+                  style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
+                >
+                  <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
+                    No stamps found
+                  </p>
                   <button
                     onClick={() => setStampMode('new')}
                     className="text-xs font-semibold"
@@ -631,6 +748,7 @@ export default function Publish() {
                   const pending = !stamp.usable
                   const incompatible = feedEnabled && stamp.immutableFlag
                   const disabled = pending || incompatible
+
                   return (
                     <div
                       key={stamp.batchID}
@@ -665,7 +783,10 @@ export default function Publish() {
                         {/* TTL + top-up / pending / immutable indicator */}
                         <div className="flex items-center gap-2 shrink-0">
                           {pending ? (
-                            <span className="text-xs font-semibold animate-pulse" style={{ color: 'rgb(var(--fg-muted))' }}>
+                            <span
+                              className="text-xs font-semibold animate-pulse"
+                              style={{ color: 'rgb(var(--fg-muted))' }}
+                            >
                               Confirming…
                             </span>
                           ) : incompatible ? (
@@ -674,7 +795,10 @@ export default function Publish() {
                             </span>
                           ) : (
                             <>
-                              <span className="text-xs font-semibold" style={{ color: urgent ? '#ef4444' : 'rgb(var(--fg-muted))' }}>
+                              <span
+                                className="text-xs font-semibold"
+                                style={{ color: urgent ? '#ef4444' : 'rgb(var(--fg-muted))' }}
+                              >
                                 {ttlToDays(stamp.batchTTL)} left
                               </span>
                               <button
@@ -704,8 +828,12 @@ export default function Publish() {
                 </p>
                 <div className="grid grid-cols-4 gap-2">
                   {SIZE_PRESETS.map((s, i) => (
-                    <PlanButton key={s.label} label={s.label} selected={plan.sizeIdx === i}
-                      onClick={() => setPlan(p => ({ ...p, sizeIdx: i }))} />
+                    <PlanButton
+                      key={s.label}
+                      label={s.label}
+                      selected={plan.sizeIdx === i}
+                      onClick={() => setPlan(p => ({ ...p, sizeIdx: i }))}
+                    />
                   ))}
                 </div>
               </div>
@@ -716,8 +844,12 @@ export default function Publish() {
                 </p>
                 <div className="grid grid-cols-4 gap-2">
                   {DURATION_PRESETS.map((d, i) => (
-                    <PlanButton key={d.label} label={d.label} selected={plan.durationIdx === i}
-                      onClick={() => setPlan(p => ({ ...p, durationIdx: i }))} />
+                    <PlanButton
+                      key={d.label}
+                      label={d.label}
+                      selected={plan.durationIdx === i}
+                      onClick={() => setPlan(p => ({ ...p, durationIdx: i }))}
+                    />
                   ))}
                 </div>
               </div>
@@ -785,25 +917,33 @@ export default function Publish() {
                 className="relative w-10 h-5 rounded-full transition-colors shrink-0 ml-4"
                 style={{ backgroundColor: stampImmutable ? 'rgb(var(--accent))' : 'rgb(var(--border))' }}
               >
-                <span className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all"
-                  style={{ left: stampImmutable ? '1.25rem' : '0.125rem' }} />
+                <span
+                  className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all"
+                  style={{ left: stampImmutable ? '1.25rem' : '0.125rem' }}
+                />
               </div>
             </button>
           )}
 
           <p className="text-xs leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
-            Storage is funded upfront. When it runs out, your content may become unavailable. You can extend it anytime from Drive.
+            Storage is funded upfront. When it runs out, your content may become unavailable. You can extend it anytime
+            from Drive.
           </p>
 
           <div className="flex gap-3">
-            <button onClick={() => setStep('select')} className="px-4 py-2 rounded-lg text-sm"
-              style={{ color: 'rgb(var(--fg-muted))' }}>
+            <button
+              onClick={() => setStep('select')}
+              className="px-4 py-2 rounded-lg text-sm"
+              style={{ color: 'rgb(var(--fg-muted))' }}
+            >
               Back
             </button>
-            <button onClick={() => setStep('feed')}
+            <button
+              onClick={() => setStep('feed')}
               disabled={stampMode === 'existing' ? !selectedStampId : !canAfford}
               className="flex-1 px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-40"
-              style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}>
+              style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+            >
               Continue
             </button>
           </div>
@@ -826,15 +966,19 @@ export default function Publish() {
                 className="relative w-10 h-5 rounded-full transition-colors shrink-0"
                 style={{ backgroundColor: feedEnabled ? 'rgb(var(--accent))' : 'rgb(var(--border))' }}
               >
-                <span className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all"
-                  style={{ left: feedEnabled ? '1.25rem' : '0.125rem' }} />
+                <span
+                  className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all"
+                  style={{ left: feedEnabled ? '1.25rem' : '0.125rem' }}
+                />
               </button>
             </div>
 
             {feedEnabled && (
               <div className="mt-4">
-                <label className="text-xs uppercase tracking-widest block mb-2"
-                  style={{ color: 'rgb(var(--fg-muted))' }}>
+                <label
+                  className="text-xs uppercase tracking-widest block mb-2"
+                  style={{ color: 'rgb(var(--fg-muted))' }}
+                >
                   Feed name
                 </label>
                 <input
@@ -850,20 +994,27 @@ export default function Publish() {
           </div>
 
           {publishError && (
-            <p className="text-xs px-3 py-2 rounded-lg"
-              style={{ backgroundColor: 'rgba(239,68,68,0.1)', color: '#ef4444' }}>
+            <p
+              className="text-xs px-3 py-2 rounded-lg"
+              style={{ backgroundColor: 'rgba(239,68,68,0.1)', color: '#ef4444' }}
+            >
               {publishError}
             </p>
           )}
 
           <div className="flex gap-3">
-            <button onClick={() => setStep('storage')} className="px-4 py-2 rounded-lg text-sm"
-              style={{ color: 'rgb(var(--fg-muted))' }}>
+            <button
+              onClick={() => setStep('storage')}
+              className="px-4 py-2 rounded-lg text-sm"
+              style={{ color: 'rgb(var(--fg-muted))' }}
+            >
               Back
             </button>
-            <button onClick={publish}
+            <button
+              onClick={publish}
               className="flex-1 px-4 py-2 rounded-lg text-sm font-semibold"
-              style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}>
+              style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+            >
               Publish
             </button>
           </div>
@@ -881,13 +1032,18 @@ export default function Publish() {
             </p>
             {uploadProgress !== null && (
               <div className="space-y-1.5">
-                <div className="h-1.5 rounded-full overflow-hidden w-full" style={{ backgroundColor: 'rgb(var(--border))' }}>
+                <div
+                  className="h-1.5 rounded-full overflow-hidden w-full"
+                  style={{ backgroundColor: 'rgb(var(--border))' }}
+                >
                   <div
                     className="h-full rounded-full transition-all duration-200"
                     style={{ width: `${uploadProgress}%`, backgroundColor: 'rgb(var(--accent))' }}
                   />
                 </div>
-                <p className="text-xs tabular-nums" style={{ color: 'rgb(var(--fg-muted))' }}>{uploadProgress}%</p>
+                <p className="text-xs tabular-nums" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  {uploadProgress}%
+                </p>
               </div>
             )}
           </div>
@@ -895,30 +1051,34 @@ export default function Publish() {
       )}
 
       {/* Top-up modal */}
-      {toppingUpStamp && (
-        <TopUpModal stamp={toppingUpStamp} onClose={() => setToppingUpStamp(null)} />
-      )}
+      {toppingUpStamp && <TopUpModal stamp={toppingUpStamp} onClose={() => setToppingUpStamp(null)} />}
 
       {/* ── Done ── */}
       {step === 'done' && result && (
         <div className="space-y-6">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0"
-              style={{ backgroundColor: 'rgba(74,222,128,0.15)' }}>
+            <div
+              className="w-8 h-8 rounded-full flex items-center justify-center shrink-0"
+              style={{ backgroundColor: 'rgba(74,222,128,0.15)' }}
+            >
               <Check size={16} color="#4ade80" />
             </div>
             <div>
               <p className="text-sm font-semibold">Published to Swarm</p>
-              <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>{content?.name}</p>
+              <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                {content?.name}
+              </p>
             </div>
           </div>
 
           {/* Feed manifest address — permanent shareable link */}
           {result.feedManifestAddress && (
-            <div className="rounded-lg border p-4 space-y-2"
-              style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
+            <div className="rounded-lg border p-4 space-y-2" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
               <p className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
-                Feed address <span className="normal-case tracking-normal font-normal">— permanent, always points to the latest version</span>
+                Feed address{' '}
+                <span className="normal-case tracking-normal font-normal">
+                  — permanent, always points to the latest version
+                </span>
               </p>
               <p className="font-mono text-sm break-all">{result.feedManifestAddress}</p>
               <div className="flex gap-2">
@@ -951,8 +1111,7 @@ export default function Publish() {
             </div>
           )}
 
-          <div className="rounded-lg border p-4 space-y-3"
-            style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
+          <div className="rounded-lg border p-4 space-y-3" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
             <p className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
               {result.feedManifestAddress ? 'Content hash (this version)' : 'Swarm hash'}
             </p>
@@ -988,9 +1147,11 @@ export default function Publish() {
             )}
           </div>
 
-          <button onClick={reset}
+          <button
+            onClick={reset}
             className="w-full px-4 py-2 rounded-lg text-sm font-semibold border"
-            style={{ backgroundColor: 'rgb(var(--bg-surface))', color: 'rgb(var(--fg))' }}>
+            style={{ backgroundColor: 'rgb(var(--bg-surface))', color: 'rgb(var(--fg))' }}
+          >
             Publish another
           </button>
         </div>

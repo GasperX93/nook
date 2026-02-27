@@ -59,6 +59,7 @@ export function useUploadHistory() {
     setRecords(prev => {
       const next = [record, ...prev]
       save(next)
+
       return next
     })
   }
@@ -67,14 +68,16 @@ export function useUploadHistory() {
     setRecords(prev => {
       const next = prev.filter(r => r.id !== id)
       save(next)
+
       return next
     })
   }
 
   function update(id: string, changes: Partial<UploadRecord>) {
     setRecords(prev => {
-      const next = prev.map(r => r.id === id ? { ...r, ...changes } : r)
+      const next = prev.map(r => (r.id === id ? { ...r, ...changes } : r))
       save(next)
+
       return next
     })
   }
@@ -88,6 +91,7 @@ export function useUploadHistory() {
     setFolders(prev => {
       const next = [...prev, folder]
       saveFolders(next)
+
       return next
     })
   }
@@ -96,30 +100,32 @@ export function useUploadHistory() {
     setFolders(prev => {
       const next = prev.filter(f => f.id !== id)
       saveFolders(next)
+
       return next
     })
     // unassign records from deleted folder
     setRecords(prev => {
-      const next = prev.map(r => r.folderId === id ? { ...r, folderId: undefined } : r)
+      const next = prev.map(r => (r.folderId === id ? { ...r, folderId: undefined } : r))
       save(next)
+
       return next
     })
   }
 
   function renameFolder(id: string, name: string) {
     setFolders(prev => {
-      const next = prev.map(f => f.id === id ? { ...f, name } : f)
+      const next = prev.map(f => (f.id === id ? { ...f, name } : f))
       saveFolders(next)
+
       return next
     })
   }
 
   function moveToFolder(recordId: string, folderId: string | null) {
     setRecords(prev => {
-      const next = prev.map(r =>
-        r.id === recordId ? { ...r, folderId: folderId ?? undefined } : r
-      )
+      const next = prev.map(r => (r.id === recordId ? { ...r, folderId: folderId ?? undefined } : r))
       save(next)
+
       return next
     })
   }

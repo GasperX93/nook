@@ -1,8 +1,25 @@
-import { Check, ChevronDown, ChevronRight, Copy, Download, ExternalLink, File, FolderOpen, FolderPlus, Globe, RefreshCw, Rss, Search, Trash2, Upload } from 'lucide-react'
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Copy,
+  Download,
+  ExternalLink,
+  File,
+  FolderOpen,
+  FolderPlus,
+  Globe,
+  RefreshCw,
+  Rss,
+  Search,
+  Trash2,
+  Upload,
+} from 'lucide-react'
 import { useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { beeApi, calcStampCost, DURATION_PRESETS, getBeeUrl, topicFromString } from '../api/bee'
-import { useAddresses, useChainState, useTopupStamp } from '../api/queries'
+import { useChainState, useTopupStamp } from '../api/queries'
+import { serverApi } from '../api/server'
 import { useUploadHistory, type DriveFolder, type UploadRecord } from '../hooks/useUploadHistory'
 import { useAppStore } from '../store/app'
 import {
@@ -15,17 +32,24 @@ import {
 
 function formatBytes(bytes: number): string {
   if (bytes >= 1_073_741_824) return `${(bytes / 1_073_741_824).toFixed(1)} GB`
+
   if (bytes >= 1_048_576) return `${(bytes / 1_048_576).toFixed(1)} MB`
+
   return `${(bytes / 1024).toFixed(0)} KB`
 }
 
 function timeUntil(ms: number): { label: string; urgent: boolean } {
   const diff = ms - Date.now()
+
   if (diff <= 0) return { label: 'Expired', urgent: true }
   const days = Math.floor(diff / 86_400_000)
+
   if (days === 0) return { label: 'Today', urgent: true }
+
   if (days <= 7) return { label: `${days}d left`, urgent: true }
+
   if (days < 30) return { label: `${days}d left`, urgent: false }
+
   return { label: `${Math.floor(days / 30)}mo left`, urgent: false }
 }
 
@@ -55,9 +79,7 @@ function ExtendModal({ stampId, onClose }: { stampId: string; onClose: () => voi
   const { data: chainState } = useChainState()
   const topup = useTopupStamp()
 
-  const cost = chainState
-    ? calcStampCost(20, DURATION_PRESETS[durationIdx].months, chainState.currentPrice)
-    : null
+  const cost = chainState ? calcStampCost(20, DURATION_PRESETS[durationIdx].months, chainState.currentPrice) : null
 
   async function extend() {
     if (!cost) return
@@ -113,7 +135,11 @@ function ExtendModal({ stampId, onClose }: { stampId: string; onClose: () => voi
         )}
 
         <div className="flex gap-3">
-          <button onClick={onClose} className="flex-1 py-2 rounded-lg text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
+          <button
+            onClick={onClose}
+            className="flex-1 py-2 rounded-lg text-sm"
+            style={{ color: 'rgb(var(--fg-muted))' }}
+          >
             Cancel
           </button>
           <button
@@ -148,19 +174,22 @@ function UpdateFeedModal({ record, onClose }: { record: UploadRecord; onClose: (
   const fileInputRef = useRef<HTMLInputElement>(null)
   const dirInputRef = useRef<HTMLInputElement>(null)
 
-  const { data: addresses } = useAddresses()
   const { update } = useUploadHistory()
   const { gatewayUrl } = useAppStore()
 
   async function handleDrop(e: React.DragEvent) {
     e.preventDefault()
     setDragging(false)
+
     if (record.type === 'file') {
       const file = e.dataTransfer.files[0]
+
       if (file) setContent({ entries: [{ path: file.name, file }], size: file.size, indexDocument: '' })
+
       return
     }
     const item = e.dataTransfer.items[0]
+
     if (!item) return
     try {
       const { entries } = await readDroppedDirectory(item)
@@ -168,12 +197,14 @@ function UpdateFeedModal({ record, onClose }: { record: UploadRecord; onClose: (
       setContent({ entries, size: totalSize(entries), indexDocument: index })
     } catch {
       const file = e.dataTransfer.files[0]
+
       if (file) setContent({ entries: [{ path: file.name, file }], size: file.size, indexDocument: '' })
     }
   }
 
   function handleFileInput(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
+
     if (file) setContent({ entries: [{ path: file.name, file }], size: file.size, indexDocument: '' })
   }
 
@@ -185,26 +216,26 @@ function UpdateFeedModal({ record, onClose }: { record: UploadRecord; onClose: (
   }
 
   async function doUpdate() {
-    if (!content || !addresses?.ethereum) return
+    if (!content) return
     setPhase('updating')
     setError(null)
     try {
       // Upload new content using the existing stamp
       let reference: string
+
       if (record.type === 'file') {
         const res = await beeApi.uploadFile(content.entries[0].file, record.stampId)
         reference = res.reference
       } else {
-        const opts = record.type === 'website'
-          ? { indexDocument: content.indexDocument, errorDocument: '404.html' }
-          : undefined
+        const opts =
+          record.type === 'website' ? { indexDocument: content.indexDocument, errorDocument: '404.html' } : undefined
         const res = await beeApi.uploadCollection(content.entries, record.stampId, opts)
         reference = res.reference
       }
 
       // Push update to the feed
       const topicHex = await topicFromString(record.feedTopic ?? record.name)
-      await beeApi.createFeedUpdate(addresses.ethereum, topicHex, reference, record.stampId)
+      await serverApi.createFeedUpdate(topicHex, reference, record.stampId)
 
       // Update the Drive record with the new content hash
       update(record.id, { hash: reference })
@@ -241,10 +272,13 @@ function UpdateFeedModal({ record, onClose }: { record: UploadRecord; onClose: (
           <>
             {/* Drop zone */}
             <div
-              onDragOver={e => { e.preventDefault(); setDragging(true) }}
+              onDragOver={e => {
+                e.preventDefault()
+                setDragging(true)
+              }}
               onDragLeave={() => setDragging(false)}
               onDrop={handleDrop}
-              onClick={() => record.type === 'file' ? fileInputRef.current?.click() : dirInputRef.current?.click()}
+              onClick={() => (record.type === 'file' ? fileInputRef.current?.click() : dirInputRef.current?.click())}
               className="rounded-lg border-2 border-dashed cursor-pointer transition-colors"
               style={{
                 borderColor: content ? 'rgb(var(--accent))' : dragging ? 'rgb(var(--accent))' : 'rgb(var(--border))',
@@ -272,7 +306,10 @@ function UpdateFeedModal({ record, onClose }: { record: UploadRecord; onClose: (
             </div>
 
             <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileInput} />
-            <input ref={dirInputRef} type="file" className="hidden"
+            <input
+              ref={dirInputRef}
+              type="file"
+              className="hidden"
               // @ts-expect-error — webkitdirectory not in TS types
               webkitdirectory="true"
               onChange={handleDirInput}
@@ -283,15 +320,20 @@ function UpdateFeedModal({ record, onClose }: { record: UploadRecord; onClose: (
             </p>
 
             {error && (
-              <p className="text-xs px-3 py-2 rounded"
-                style={{ backgroundColor: 'rgba(239,68,68,0.1)', color: '#ef4444' }}>
+              <p
+                className="text-xs px-3 py-2 rounded"
+                style={{ backgroundColor: 'rgba(239,68,68,0.1)', color: '#ef4444' }}
+              >
                 {error}
               </p>
             )}
 
             <div className="flex gap-3">
-              <button onClick={onClose} className="flex-1 py-2 rounded-lg text-sm"
-                style={{ color: 'rgb(var(--fg-muted))' }}>
+              <button
+                onClick={onClose}
+                className="flex-1 py-2 rounded-lg text-sm"
+                style={{ color: 'rgb(var(--fg-muted))' }}
+              >
                 Cancel
               </button>
               <button
@@ -309,23 +351,28 @@ function UpdateFeedModal({ record, onClose }: { record: UploadRecord; onClose: (
         {phase === 'updating' && (
           <div className="flex flex-col items-center gap-3 py-6">
             <RefreshCw size={20} className="animate-spin" style={{ color: 'rgb(var(--accent))' }} />
-            <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>Uploading and updating feed…</p>
+            <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
+              Uploading and updating feed…
+            </p>
           </div>
         )}
 
         {phase === 'done' && (
           <div className="space-y-4">
             <div className="flex items-center gap-3">
-              <div className="w-7 h-7 rounded-full flex items-center justify-center shrink-0"
-                style={{ backgroundColor: 'rgba(74,222,128,0.15)' }}>
+              <div
+                className="w-7 h-7 rounded-full flex items-center justify-center shrink-0"
+                style={{ backgroundColor: 'rgba(74,222,128,0.15)' }}
+              >
                 <Check size={14} color="#4ade80" />
               </div>
               <p className="text-sm font-medium">Feed updated</p>
             </div>
             {record.feedManifestAddress && (
-              <div className="rounded-lg border p-3 space-y-2"
-                style={{ backgroundColor: 'rgb(var(--bg))' }}>
-                <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>Feed address (unchanged)</p>
+              <div className="rounded-lg border p-3 space-y-2" style={{ backgroundColor: 'rgb(var(--bg))' }}>
+                <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  Feed address (unchanged)
+                </p>
                 <p className="font-mono text-xs break-all">{record.feedManifestAddress}</p>
                 <div className="flex gap-2">
                   <button
@@ -353,9 +400,11 @@ function UpdateFeedModal({ record, onClose }: { record: UploadRecord; onClose: (
                 </div>
               </div>
             )}
-            <button onClick={onClose}
+            <button
+              onClick={onClose}
               className="w-full py-2 rounded-lg text-sm font-semibold border"
-              style={{ backgroundColor: 'transparent', color: 'rgb(var(--fg))' }}>
+              style={{ backgroundColor: 'transparent', color: 'rgb(var(--fg))' }}
+            >
               Done
             </button>
           </div>
@@ -393,6 +442,7 @@ function RetrieveModal({ onClose }: { onClose: () => void }) {
 
   async function retrieve() {
     const h = hash.trim()
+
     if (!h) return
     setLoading(true)
     setError(null)
@@ -441,7 +491,7 @@ function RetrieveModal({ onClose }: { onClose: () => void }) {
               type="text"
               value={hash}
               onChange={e => setHash(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && retrieve()}
+              onKeyDown={async e => e.key === 'Enter' && retrieve()}
               placeholder="64-char hex…"
               className="w-full rounded-lg border px-3 py-2 text-xs font-mono focus:outline-none"
               style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
@@ -470,7 +520,11 @@ function RetrieveModal({ onClose }: { onClose: () => void }) {
         )}
 
         <div className="flex gap-3">
-          <button onClick={onClose} className="flex-1 py-2 rounded-lg text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
+          <button
+            onClick={onClose}
+            className="flex-1 py-2 rounded-lg text-sm"
+            style={{ color: 'rgb(var(--fg-muted))' }}
+          >
             Cancel
           </button>
           <button
@@ -527,7 +581,9 @@ function RecordRow({
       key={record.id}
       draggable={draggable}
       onDragStart={onDragStart ? e => onDragStart(e, record.id) : undefined}
-      className={`rounded-lg border px-4 py-3 flex items-center gap-4 cursor-grab active:cursor-grabbing${indented ? ' ml-6' : ''}`}
+      className={`rounded-lg border px-4 py-3 flex items-center gap-4 cursor-grab active:cursor-grabbing${
+        indented ? ' ml-6' : ''
+      }`}
       style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
     >
       {/* Type icon or thumbnail */}
@@ -539,7 +595,9 @@ function RecordRow({
           <img
             src={`${getBeeUrl()}/bzz/${record.hash}`}
             className="w-full h-full object-cover"
-            onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+            onError={e => {
+              ;(e.target as HTMLImageElement).style.display = 'none'
+            }}
             alt=""
           />
         ) : record.type === 'website' ? (
@@ -576,10 +634,10 @@ function RecordRow({
       </span>
 
       {/* Expiry */}
-      <div className="flex flex-col items-end gap-1 shrink-0">
+      <div className="flex items-center gap-2 shrink-0">
         <ExpiryBar expiresAt={record.expiresAt} uploadedAt={record.uploadedAt} />
         <span
-          className="text-[10px] uppercase tracking-widest font-semibold"
+          className="text-[10px] uppercase tracking-widest font-semibold w-16 text-right"
           style={{ color: urgent ? '#ef4444' : 'rgb(var(--fg-muted))' }}
         >
           {expiry}
@@ -632,9 +690,7 @@ function RecordRow({
           className="w-7 h-7 flex items-center justify-center rounded transition-colors"
           style={{ color: 'rgb(var(--fg-muted))' }}
         >
-          {downloadingId === record.id
-            ? <RefreshCw size={13} className="animate-spin" />
-            : <Download size={13} />}
+          {downloadingId === record.id ? <RefreshCw size={13} className="animate-spin" /> : <Download size={13} />}
         </button>
         <button
           onClick={() => onRemove(record.id)}
@@ -671,9 +727,7 @@ export default function Drive() {
   const [creatingFolder, setCreatingFolder] = useState(false)
   const [newFolderName, setNewFolderName] = useState('')
 
-  const filteredRecords = search
-    ? records.filter(r => r.name.toLowerCase().includes(search.toLowerCase()))
-    : records
+  const filteredRecords = search ? records.filter(r => r.name.toLowerCase().includes(search.toLowerCase())) : records
 
   function copyHash(id: string, hash: string) {
     navigator.clipboard.writeText(`${gatewayUrl}/bzz/${hash}/`)
@@ -683,8 +737,11 @@ export default function Drive() {
 
   async function handleDownload(id: string, hash: string, name: string) {
     setDownloadingId(id)
-    try { await downloadFromSwarm(hash, name) }
-    finally { setDownloadingId(null) }
+    try {
+      await downloadFromSwarm(hash, name)
+    } finally {
+      setDownloadingId(null)
+    }
   }
 
   function handleDragStart(e: React.DragEvent, recordId: string) {
@@ -701,6 +758,7 @@ export default function Drive() {
   function handleFolderDrop(e: React.DragEvent, folderId: string) {
     e.preventDefault()
     const recordId = e.dataTransfer.getData('recordId')
+
     if (recordId) {
       moveToFolder(recordId, folderId)
       // auto-expand the target folder
@@ -713,6 +771,7 @@ export default function Drive() {
   function handleRootDrop(e: React.DragEvent) {
     e.preventDefault()
     const recordId = e.dataTransfer.getData('recordId')
+
     if (recordId) moveToFolder(recordId, null)
     setDragOverId(null)
     setDraggingId(null)
@@ -742,8 +801,10 @@ export default function Drive() {
   function toggleFolder(id: string) {
     setExpandedFolders(prev => {
       const next = new Set(prev)
+
       if (next.has(id)) next.delete(id)
       else next.add(id)
+
       return next
     })
   }
@@ -803,8 +864,11 @@ export default function Drive() {
           Drive
         </h1>
         <div className="flex-1 relative">
-          <Search size={11} className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
-            style={{ color: 'rgb(var(--fg-muted))' }} />
+          <Search
+            size={11}
+            className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
+            style={{ color: 'rgb(var(--fg-muted))' }}
+          />
           <input
             type="text"
             placeholder="Filter…"
@@ -815,7 +879,10 @@ export default function Drive() {
           />
         </div>
         <button
-          onClick={() => { setCreatingFolder(true); setNewFolderName('') }}
+          onClick={() => {
+            setCreatingFolder(true)
+            setNewFolderName('')
+          }}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium shrink-0 transition-colors"
           style={{ color: 'rgb(var(--fg-muted))' }}
         >
@@ -860,14 +927,20 @@ export default function Drive() {
                 onChange={e => setNewFolderName(e.target.value)}
                 onKeyDown={e => {
                   if (e.key === 'Enter') commitNewFolder()
-                  if (e.key === 'Escape') { setCreatingFolder(false); setNewFolderName('') }
+
+                  if (e.key === 'Escape') {
+                    setCreatingFolder(false)
+                    setNewFolderName('')
+                  }
                 }}
                 onBlur={commitNewFolder}
                 placeholder="Folder name…"
                 className="flex-1 bg-transparent text-sm focus:outline-none"
                 style={{ color: 'rgb(var(--fg))' }}
               />
-              <span className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>Enter to confirm</span>
+              <span className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Enter to confirm
+              </span>
             </div>
           )}
 
@@ -882,7 +955,10 @@ export default function Drive() {
                 {/* Folder header row */}
                 <div
                   onClick={() => toggleFolder(folder.id)}
-                  onDragOver={e => { e.preventDefault(); setDragOverId(folder.id) }}
+                  onDragOver={e => {
+                    e.preventDefault()
+                    setDragOverId(folder.id)
+                  }}
                   onDragLeave={e => {
                     if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverId(null)
                   }}
@@ -910,8 +986,13 @@ export default function Drive() {
                       onChange={e => setRenameValue(e.target.value)}
                       onKeyDown={e => {
                         e.stopPropagation()
+
                         if (e.key === 'Enter') commitRename()
-                        if (e.key === 'Escape') { setRenamingFolderId(null); setRenameValue('') }
+
+                        if (e.key === 'Escape') {
+                          setRenamingFolderId(null)
+                          setRenameValue('')
+                        }
                       }}
                       onBlur={commitRename}
                       className="flex-1 bg-transparent text-sm focus:outline-none"
@@ -920,7 +1001,10 @@ export default function Drive() {
                   ) : (
                     <span
                       className="flex-1 text-sm font-medium"
-                      onDoubleClick={e => { e.stopPropagation(); startRename(folder) }}
+                      onDoubleClick={e => {
+                        e.stopPropagation()
+                        startRename(folder)
+                      }}
                     >
                       {folder.name}
                     </span>
@@ -932,7 +1016,10 @@ export default function Drive() {
 
                   {/* Delete folder */}
                   <button
-                    onClick={e => { e.stopPropagation(); removeFolder(folder.id) }}
+                    onClick={e => {
+                      e.stopPropagation()
+                      removeFolder(folder.id)
+                    }}
                     title="Delete folder"
                     className="w-6 h-6 flex items-center justify-center rounded ml-1 hover:text-red-400 transition-colors"
                     style={{ color: 'rgb(var(--fg-muted))' }}
@@ -954,9 +1041,7 @@ export default function Drive() {
                         </p>
                       </div>
                     ) : (
-                      folderRecords.map(record => (
-                        <RecordRow key={record.id} record={record} {...commonRowProps} />
-                      ))
+                      folderRecords.map(record => <RecordRow key={record.id} record={record} {...commonRowProps} />)
                     )}
                   </div>
                 )}
@@ -968,7 +1053,10 @@ export default function Drive() {
           {(rootRecords.length > 0 || folders.length > 0) && (
             <div>
               <div
-                onDragOver={e => { e.preventDefault(); setDragOverId('root') }}
+                onDragOver={e => {
+                  e.preventDefault()
+                  setDragOverId('root')
+                }}
                 onDragLeave={e => {
                   if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverId(null)
                 }}
@@ -993,7 +1081,10 @@ export default function Drive() {
 
               {rootRecords.length === 0 && draggingId && (
                 <div
-                  onDragOver={e => { e.preventDefault(); setDragOverId('root') }}
+                  onDragOver={e => {
+                    e.preventDefault()
+                    setDragOverId('root')
+                  }}
                   onDrop={handleRootDrop}
                   className="rounded-lg border-2 border-dashed px-4 py-4 text-center"
                   style={{
@@ -1001,7 +1092,9 @@ export default function Drive() {
                     backgroundColor: dragOverId === 'root' ? 'rgba(247,104,8,0.04)' : 'transparent',
                   }}
                 >
-                  <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>Drop here to unorganize</p>
+                  <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                    Drop here to unorganize
+                  </p>
                 </div>
               )}
 
@@ -1022,12 +1115,7 @@ export default function Drive() {
         />
       )}
 
-      {updatingRecord && (
-        <UpdateFeedModal
-          record={updatingRecord}
-          onClose={() => setUpdatingId(null)}
-        />
-      )}
+      {updatingRecord && <UpdateFeedModal record={updatingRecord} onClose={() => setUpdatingId(null)} />}
 
       {retrieveOpen && <RetrieveModal onClose={() => setRetrieveOpen(false)} />}
     </div>

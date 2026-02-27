@@ -51,14 +51,10 @@ export default function Layout() {
               className={({ isActive }) =>
                 [
                   'flex items-center justify-center w-9 h-9 rounded-lg transition-colors',
-                  isActive
-                    ? 'text-white'
-                    : 'text-[rgb(var(--fg-muted))] hover:text-[rgb(var(--fg))]',
+                  isActive ? 'text-white' : 'text-[rgb(var(--fg-muted))] hover:text-[rgb(var(--fg))]',
                 ].join(' ')
               }
-              style={({ isActive }) =>
-                isActive ? { backgroundColor: 'rgb(var(--accent))' } : {}
-              }
+              style={({ isActive }) => (isActive ? { backgroundColor: 'rgb(var(--accent))' } : {})}
             >
               <Icon size={16} />
             </NavLink>

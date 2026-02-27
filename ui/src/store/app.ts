@@ -10,11 +10,11 @@ interface AppState {
   setGatewayUrl: (url: string) => void
 }
 
-export const useAppStore = create<AppState>()((set) => ({
+export const useAppStore = create<AppState>()(set => ({
   apiKey: null,
-  setApiKey: (apiKey) => set({ apiKey }),
+  setApiKey: apiKey => set({ apiKey }),
   gatewayUrl: localStorage.getItem(GATEWAY_KEY) ?? DEFAULT_GATEWAY,
-  setGatewayUrl: (gatewayUrl) => {
+  setGatewayUrl: gatewayUrl => {
     localStorage.setItem(GATEWAY_KEY, gatewayUrl)
     set({ gatewayUrl })
   },

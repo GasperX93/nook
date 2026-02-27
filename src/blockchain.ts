@@ -34,6 +34,7 @@ export async function redeemGiftCode(giftCode: string, toAddress: string, blockc
   // Transfer all BZZ
   const bzz = new Contract('0xdBF3Ea6F5beE45c02255B2c26a16F300502F68da', bzzContractInterface, giftWallet)
   const bzzBalance = await bzz.balanceOf(giftWallet.address)
+
   if (bzzBalance.gt(0)) {
     const tx = await bzz.transfer(toAddress, bzzBalance, { gasPrice })
     await tx.wait(1)
@@ -44,6 +45,7 @@ export async function redeemGiftCode(giftCode: string, toAddress: string, blockc
   const gasLimit = 21000
   const gasCost = gasPrice.mul(gasLimit)
   const xdaiToSend = xdaiBalance.sub(gasCost)
+
   if (xdaiToSend.gt(0)) {
     const tx = await giftWallet.sendTransaction({ to: toAddress, value: xdaiToSend, gasPrice, gasLimit })
     await tx.wait(1)

@@ -11,10 +11,7 @@ const statusColor: Record<NodeStatus, string> = {
 
 function StatCard({ label, value }: { label: string; value: ReactNode }) {
   return (
-    <div
-      className="rounded-lg border p-4"
-      style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
-    >
+    <div className="rounded-lg border p-4" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
       <p className="text-xs uppercase tracking-widest mb-2" style={{ color: 'rgb(var(--fg-muted))' }}>
         {label}
       </p>
@@ -57,20 +54,16 @@ export default function Overview() {
             ) : (
               <span className="flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full" style={{ backgroundColor: color }} />
-                <span className="capitalize" style={{ color }}>{bee}</span>
+                <span className="capitalize" style={{ color }}>
+                  {bee}
+                </span>
               </span>
             )
           }
         />
         <StatCard
           label="Peers"
-          value={
-            peersLoading ? (
-              <span style={{ color: 'rgb(var(--fg-muted))' }}>—</span>
-            ) : (
-              peers?.connections ?? 0
-            )
-          }
+          value={peersLoading ? <span style={{ color: 'rgb(var(--fg-muted))' }}>—</span> : peers?.connections ?? 0}
         />
         <StatCard
           label="Version"

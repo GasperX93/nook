@@ -8,7 +8,7 @@ export function getBeeUrl(): string {
   return import.meta.env.VITE_BEE_API_URL ?? 'http://localhost:1633'
 }
 
-function xhrUpload(
+async function xhrUpload(
   url: string,
   body: XMLHttpRequestBodyInit,
   headers: Record<string, string>,
@@ -19,6 +19,7 @@ function xhrUpload(
     xhr.open('POST', url)
     for (const [k, v] of Object.entries(headers)) xhr.setRequestHeader(k, v)
     xhr.responseType = 'json'
+
     if (onProgress) {
       xhr.upload.onprogress = e => {
         if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100))
@@ -43,23 +44,25 @@ async function beeRequest<T>(path: string, options?: RequestInit): Promise<T> {
   }
 
   const contentType = response.headers.get('content-type') ?? ''
+
   if (contentType.includes('application/json')) {
     return response.json() as Promise<T>
   }
+
   return response.text() as unknown as Promise<T>
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface WalletInfo {
-  bzzBalance: string        // PLUR (1 BZZ = 1e16 PLUR)
+  bzzBalance: string // PLUR (1 BZZ = 1e16 PLUR)
   nativeTokenBalance: string // Wei  (1 xDAI = 1e18 Wei)
 }
 
 export interface NodeAddresses {
   overlay: string
   underlay: string[]
-  ethereum: string          // wallet address
+  ethereum: string // wallet address
 }
 
 export interface Stamp {
@@ -73,30 +76,31 @@ export interface Stamp {
   blockNumber: number
   immutableFlag: boolean
   exists: boolean
-  batchTTL: number          // seconds remaining
+  batchTTL: number // seconds remaining
 }
 
 export interface ChainState {
   block: number
   totalAmount: string
-  currentPrice: string      // PLUR per chunk per block
+  currentPrice: string // PLUR per chunk per block
 }
 
 export interface UploadResult {
-  reference: string         // Swarm hash
+  reference: string // Swarm hash
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const BLOCKS_PER_MONTH = 518_400n   // Gnosis chain ~5s blocks
+const BLOCKS_PER_MONTH = 518_400n // Gnosis chain ~5s blocks
 const PLUR_PER_BZZ = 10n ** 16n
-const WEI_PER_DAI  = 10n ** 18n
+const WEI_PER_DAI = 10n ** 18n
 
 /** Convert PLUR string to human-readable BZZ (4 decimals) */
 export function plurToBzz(plur: string): string {
   const raw = BigInt(plur)
   const whole = raw / PLUR_PER_BZZ
-  const frac  = (raw % PLUR_PER_BZZ) * 10_000n / PLUR_PER_BZZ
+  const frac = ((raw % PLUR_PER_BZZ) * 10_000n) / PLUR_PER_BZZ
+
   return `${whole}.${String(frac).padStart(4, '0')}`
 }
 
@@ -104,14 +108,17 @@ export function plurToBzz(plur: string): string {
 export function weiToDai(wei: string): string {
   const raw = BigInt(wei)
   const whole = raw / WEI_PER_DAI
-  const frac  = (raw % WEI_PER_DAI) * 10_000n / WEI_PER_DAI
+  const frac = ((raw % WEI_PER_DAI) * 10_000n) / WEI_PER_DAI
+
   return `${whole}.${String(frac).padStart(4, '0')}`
 }
 
 /** Human-readable capacity for a given stamp depth */
 export function depthToCapacity(depth: number): string {
   const bytes = (1 << depth) * 4096
+
   if (bytes >= 1_073_741_824) return `${(bytes / 1_073_741_824).toFixed(0)} GB`
+
   return `${(bytes / 1_048_576).toFixed(0)} MB`
 }
 
@@ -129,6 +136,7 @@ export function calcStampCost(
   const amount = price * durationBlocks
   const totalChunks = 1n << BigInt(depth)
   const totalPlur = amount * totalChunks
+
   return {
     amount: amount.toString(),
     bzzCost: plurToBzz(totalPlur.toString()),
@@ -140,6 +148,7 @@ export async function topicFromString(name: string): Promise<string> {
   const { keccak256 } = await import('ethereum-cryptography/keccak')
   const data = new TextEncoder().encode(name)
   const hash = keccak256(data)
+
   return Array.from(hash)
     .map(b => b.toString(16).padStart(2, '0'))
     .join('')
@@ -148,62 +157,53 @@ export async function topicFromString(name: string): Promise<string> {
 // ─── Storage plan presets ─────────────────────────────────────────────────────
 
 export const SIZE_PRESETS = [
-  { label: '500 MB',  depth: 17 },
-  { label: '2 GB',    depth: 19 },
-  { label: '5 GB',    depth: 20 },
-  { label: '20 GB',   depth: 22 },
+  { label: '500 MB', depth: 17 },
+  { label: '2 GB', depth: 19 },
+  { label: '5 GB', depth: 20 },
+  { label: '20 GB', depth: 22 },
 ] as const
 
 export const DURATION_PRESETS = [
-  { label: '1 month',   months: 1 },
-  { label: '3 months',  months: 3 },
-  { label: '6 months',  months: 6 },
-  { label: '1 year',    months: 12 },
+  { label: '1 month', months: 1 },
+  { label: '3 months', months: 3 },
+  { label: '6 months', months: 6 },
+  { label: '1 year', months: 12 },
 ] as const
 
 // ─── API calls ────────────────────────────────────────────────────────────────
 
 export const beeApi = {
-  health:       () => beeRequest<{ status: string; version?: string }>('/health'),
-  getWallet:    () => beeRequest<WalletInfo>('/wallet'),
-  getAddresses: () => beeRequest<NodeAddresses>('/addresses'),
-  getStamps:    () => beeRequest<{ stamps: Stamp[] }>('/stamps'),
-  getChainState:() => beeRequest<ChainState>('/chainstate'),
+  health: async () => beeRequest<{ status: string; version?: string }>('/health'),
+  getWallet: async () => beeRequest<WalletInfo>('/wallet'),
+  getAddresses: async () => beeRequest<NodeAddresses>('/addresses'),
+  getStamps: async () => beeRequest<{ stamps: Stamp[] }>('/stamps'),
+  getChainState: async () => beeRequest<ChainState>('/chainstate'),
 
-  buyStamp: (amount: string, depth: number, immutable = false) =>
+  buyStamp: async (amount: string, depth: number, immutable = false) =>
     beeRequest<{ batchID: string }>(`/stamps/${amount}/${depth}?immutable=${immutable}`, { method: 'POST' }),
 
-  getStamp: (id: string) =>
-    beeRequest<Stamp>(`/stamps/${id}`),
+  getStamp: async (id: string) => beeRequest<Stamp>(`/stamps/${id}`),
 
-  topupStamp: (id: string, amount: string) =>
+  topupStamp: async (id: string, amount: string) =>
     beeRequest<{ batchID: string }>(`/stamps/topup/${id}/${amount}`, { method: 'PATCH' }),
 
-  /**
-   * Create or update a Swarm feed. topicHex must be a 64-char hex string.
-   * Returns the feed manifest address — a permanent, shareable Swarm hash.
-   */
-  createFeedUpdate: async (
-    owner: string,
-    topicHex: string,
-    reference: string,
+  uploadFileWithProgress: async (
+    file: File,
     stampId: string,
-  ): Promise<{ reference: string }> => {
-    const r = await fetch(
-      `${getBeeUrl()}/feeds/${owner}/${topicHex}?reference=${reference}&type=sequence`,
-      { method: 'POST', headers: { 'swarm-postage-batch-id': stampId, 'swarm-deferred-upload': 'false' } },
-    )
-    if (!r.ok) throw new Error(`Feed update failed: ${r.status}`)
-    return r.json() as Promise<{ reference: string }>
-  },
-
-  uploadFileWithProgress: (file: File, stampId: string, onProgress?: (pct: number) => void, deferred = true): Promise<UploadResult> =>
-    xhrUpload(`${getBeeUrl()}/bzz`, file, {
-      'swarm-postage-batch-id': stampId,
-      'swarm-deferred-upload': deferred ? 'true' : 'false',
-      'Content-Type': file.type || 'application/octet-stream',
-      'Content-Disposition': `inline; filename="${encodeURIComponent(file.name)}"`,
-    }, onProgress),
+    onProgress?: (pct: number) => void,
+    deferred = true,
+  ): Promise<UploadResult> =>
+    xhrUpload(
+      `${getBeeUrl()}/bzz`,
+      file,
+      {
+        'swarm-postage-batch-id': stampId,
+        'swarm-deferred-upload': deferred ? 'true' : 'false',
+        'Content-Type': file.type || 'application/octet-stream',
+        'Content-Disposition': `inline; filename="${encodeURIComponent(file.name)}"`,
+      },
+      onProgress,
+    ),
 
   uploadCollectionWithProgress: async (
     entries: FileEntry[],
@@ -219,18 +219,23 @@ export const beeApi = {
       'swarm-collection': 'true',
       'Content-Type': 'application/x-tar',
     }
+
     if (options?.indexDocument) headers['swarm-index-document'] = options.indexDocument
+
     if (options?.errorDocument) headers['swarm-error-document'] = options.errorDocument
+
     return xhrUpload(`${getBeeUrl()}/bzz`, tar as XMLHttpRequestBodyInit, headers, onProgress)
   },
 
   downloadFile: async (hash: string): Promise<Blob> => {
     const r = await fetch(`${getBeeUrl()}/bzz/${hash}`)
+
     if (!r.ok) throw new Error(`Download failed: ${r.status}`)
+
     return r.blob()
   },
 
-  uploadFile: (file: File, stampId: string): Promise<UploadResult> => {
+  uploadFile: async (file: File, stampId: string): Promise<UploadResult> => {
     return fetch(`${getBeeUrl()}/bzz`, {
       method: 'POST',
       headers: {
@@ -242,6 +247,7 @@ export const beeApi = {
       body: file,
     }).then(async r => {
       if (!r.ok) throw new Error(`Upload failed: ${r.status}`)
+
       return r.json() as Promise<UploadResult>
     })
   },
@@ -264,11 +270,15 @@ export const beeApi = {
       'swarm-collection': 'true',
       'Content-Type': 'application/x-tar',
     }
+
     if (options?.indexDocument) headers['swarm-index-document'] = options.indexDocument
+
     if (options?.errorDocument) headers['swarm-error-document'] = options.errorDocument
 
     const r = await fetch(`${getBeeUrl()}/bzz`, { method: 'POST', headers, body: tar as BodyInit })
+
     if (!r.ok) throw new Error(`Upload failed: ${r.status}`)
+
     return r.json() as Promise<UploadResult>
   },
 }

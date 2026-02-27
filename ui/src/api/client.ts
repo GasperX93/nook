@@ -22,6 +22,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   }
 
   const contentType = response.headers.get('content-type') ?? ''
+
   if (contentType.includes('application/json')) {
     return response.json() as Promise<T>
   }
@@ -47,15 +48,15 @@ export interface Peers {
 }
 
 export const api = {
-  getInfo: () => request<Info>('/info'),
-  getStatus: () => request<Status>('/status'),
-  getPeers: () => request<Peers>('/peers'),
-  getConfig: () => request<Record<string, unknown>>('/config'),
-  updateConfig: (config: Record<string, unknown>) =>
+  getInfo: async () => request<Info>('/info'),
+  getStatus: async () => request<Status>('/status'),
+  getPeers: async () => request<Peers>('/peers'),
+  getConfig: async () => request<Record<string, unknown>>('/config'),
+  updateConfig: async (config: Record<string, unknown>) =>
     request<Record<string, unknown>>('/config', { method: 'POST', body: JSON.stringify(config) }),
-  getDesktopLogs: () => request<string>('/logs/bee-desktop'),
-  getBeeLogs: () => request<string>('/logs/bee'),
-  restart: () => request<{ success: boolean }>('/restart', { method: 'POST' }),
-  redeem: (giftCode: string) =>
+  getDesktopLogs: async () => request<string>('/logs/bee-desktop'),
+  getBeeLogs: async () => request<string>('/logs/bee'),
+  restart: async () => request<{ success: boolean }>('/restart', { method: 'POST' }),
+  redeem: async (giftCode: string) =>
     request<{ success: boolean }>('/redeem', { method: 'POST', body: JSON.stringify({ giftCode }) }),
 }

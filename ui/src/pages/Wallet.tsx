@@ -6,31 +6,22 @@ import { api } from '../api/client'
 import { useAddresses, useWallet } from '../api/queries'
 import { useAppStore } from '../store/app'
 
-function BalanceCard({
-  label,
-  value,
-  symbol,
-  sub,
-}: {
-  label: string
-  value: string
-  symbol: string
-  sub?: string
-}) {
+function BalanceCard({ label, value, symbol, sub }: { label: string; value: string; symbol: string; sub?: string }) {
   return (
-    <div
-      className="rounded-xl border p-5 flex-1"
-      style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
-    >
+    <div className="rounded-xl border p-5 flex-1" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
       <p className="text-xs uppercase tracking-widest mb-3" style={{ color: 'rgb(var(--fg-muted))' }}>
         {label}
       </p>
       <div className="flex items-baseline gap-2">
         <span className="text-3xl font-bold tabular-nums">{value}</span>
-        <span className="text-sm font-medium" style={{ color: 'rgb(var(--fg-muted))' }}>{symbol}</span>
+        <span className="text-sm font-medium" style={{ color: 'rgb(var(--fg-muted))' }}>
+          {symbol}
+        </span>
       </div>
       {sub && (
-        <p className="text-xs mt-2" style={{ color: 'rgb(var(--fg-muted))' }}>{sub}</p>
+        <p className="text-xs mt-2" style={{ color: 'rgb(var(--fg-muted))' }}>
+          {sub}
+        </p>
       )}
     </div>
   )
@@ -73,6 +64,7 @@ export default function Wallet() {
         headers: { 'Content-Type': 'application/json', ...(apiKey ? { authorization: apiKey } : {}) },
         body: JSON.stringify({ dai: swapAmount }),
       })
+
       if (!res.ok) throw new Error(`Swap failed: ${res.status}`)
       setSwapDone(true)
       setSwapAmount('')
@@ -107,38 +99,24 @@ export default function Wallet() {
 
   return (
     <div className="p-6 max-w-lg">
-      <h1
-        className="text-base font-semibold uppercase tracking-widest mb-6"
-        style={{ color: 'rgb(var(--fg-muted))' }}
-      >
+      <h1 className="text-base font-semibold uppercase tracking-widest mb-6" style={{ color: 'rgb(var(--fg-muted))' }}>
         Wallet
       </h1>
 
       {isLoading ? (
-        <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>Loading…</p>
+        <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
+          Loading…
+        </p>
       ) : (
         <div className="space-y-5">
           {/* Balances */}
           <div className="flex gap-3">
-            <BalanceCard
-              label="BZZ"
-              value={bzz}
-              symbol="BZZ"
-              sub="Used to buy storage"
-            />
-            <BalanceCard
-              label="xDAI"
-              value={dai}
-              symbol="xDAI"
-              sub="Used for gas fees"
-            />
+            <BalanceCard label="BZZ" value={bzz} symbol="BZZ" sub="Used to buy storage" />
+            <BalanceCard label="xDAI" value={dai} symbol="xDAI" sub="Used for gas fees" />
           </div>
 
           {/* Address */}
-          <div
-            className="rounded-xl border p-5"
-            style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
-          >
+          <div className="rounded-xl border p-5" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
             <p className="text-xs uppercase tracking-widest mb-3" style={{ color: 'rgb(var(--fg-muted))' }}>
               Wallet address
             </p>
@@ -154,15 +132,14 @@ export default function Wallet() {
                 </button>
               </div>
             ) : (
-              <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>Not available</p>
+              <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Not available
+              </p>
             )}
           </div>
 
           {/* Swap */}
-          <div
-            className="rounded-xl border p-5"
-            style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
-          >
+          <div className="rounded-xl border p-5" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
             <p className="text-xs uppercase tracking-widest mb-1" style={{ color: 'rgb(var(--fg-muted))' }}>
               Swap xDAI → BZZ
             </p>
@@ -200,15 +177,14 @@ export default function Wallet() {
               </button>
             </div>
             {swapError && (
-              <p className="text-xs mt-3" style={{ color: '#ef4444' }}>{swapError}</p>
+              <p className="text-xs mt-3" style={{ color: '#ef4444' }}>
+                {swapError}
+              </p>
             )}
           </div>
 
           {/* Redeem gift code */}
-          <div
-            className="rounded-xl border p-5"
-            style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
-          >
+          <div className="rounded-xl border p-5" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
             <div className="flex items-center gap-2 mb-1">
               <Gift size={13} style={{ color: 'rgb(var(--accent))' }} />
               <p className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
@@ -223,7 +199,7 @@ export default function Wallet() {
                 type="text"
                 value={giftCode}
                 onChange={e => setGiftCode(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && redeem()}
+                onKeyDown={async e => e.key === 'Enter' && redeem()}
                 placeholder="Gift code…"
                 className="flex-1 rounded-lg border px-3 py-2 text-sm font-mono focus:outline-none"
                 style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
@@ -241,10 +217,14 @@ export default function Wallet() {
               </button>
             </div>
             {redeemError && (
-              <p className="text-xs mt-3" style={{ color: '#ef4444' }}>{redeemError}</p>
+              <p className="text-xs mt-3" style={{ color: '#ef4444' }}>
+                {redeemError}
+              </p>
             )}
             {redeemDone && (
-              <p className="text-xs mt-3" style={{ color: '#4ade80' }}>Gift code redeemed — balance updated.</p>
+              <p className="text-xs mt-3" style={{ color: '#4ade80' }}>
+                Gift code redeemed — balance updated.
+              </p>
             )}
           </div>
         </div>

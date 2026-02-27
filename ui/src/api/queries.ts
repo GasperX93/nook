@@ -53,6 +53,7 @@ export function useBeeLogs() {
 
 export function useRestart() {
   const queryClient = useQueryClient()
+
   return useMutation({
     mutationFn: api.restart,
     onSuccess: () => {
@@ -63,6 +64,7 @@ export function useRestart() {
 
 export function useUpdateConfig() {
   const queryClient = useQueryClient()
+
   return useMutation({
     mutationFn: api.updateConfig,
     onSuccess: () => {
@@ -103,7 +105,7 @@ export function useStamps() {
     queryKey: ['bee', 'stamps'],
     queryFn: beeApi.getStamps,
     refetchInterval: 30_000,
-    select: (data) => data.stamps,
+    select: data => data.stamps,
   })
 }
 
@@ -117,8 +119,9 @@ export function useChainState() {
 
 export function useBuyStamp() {
   const queryClient = useQueryClient()
+
   return useMutation({
-    mutationFn: ({ amount, depth, immutable }: { amount: string; depth: number; immutable?: boolean }) =>
+    mutationFn: async ({ amount, depth, immutable }: { amount: string; depth: number; immutable?: boolean }) =>
       beeApi.buyStamp(amount, depth, immutable),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['bee', 'stamps'] })
@@ -128,9 +131,9 @@ export function useBuyStamp() {
 
 export function useTopupStamp() {
   const queryClient = useQueryClient()
+
   return useMutation({
-    mutationFn: ({ id, amount }: { id: string; amount: string }) =>
-      beeApi.topupStamp(id, amount),
+    mutationFn: async ({ id, amount }: { id: string; amount: string }) => beeApi.topupStamp(id, amount),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['bee', 'stamps'] })
     },

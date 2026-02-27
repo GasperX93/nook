@@ -1,5 +1,5 @@
 export interface FileEntry {
-  path: string  // relative path within the collection (e.g. "js/app.js")
+  path: string // relative path within the collection (e.g. "js/app.js")
   file: File
 }
 
@@ -7,36 +7,30 @@ export interface FileEntry {
  * Read a directory that was dragged onto a drop zone.
  * Uses the FileSystem Access API (webkitGetAsEntry), available in Electron and Chrome.
  */
-export async function readDroppedDirectory(
-  item: DataTransferItem,
-): Promise<{ name: string; entries: FileEntry[] }> {
+export async function readDroppedDirectory(item: DataTransferItem): Promise<{ name: string; entries: FileEntry[] }> {
   const entry = item.webkitGetAsEntry()
+
   if (!entry?.isDirectory) throw new Error('Not a directory')
 
   const dir = entry as FileSystemDirectoryEntry
   const entries = await readDirEntry(dir, '')
+
   return { name: dir.name, entries }
 }
 
-async function readDirEntry(
-  dir: FileSystemDirectoryEntry,
-  prefix: string,
-): Promise<FileEntry[]> {
+async function readDirEntry(dir: FileSystemDirectoryEntry, prefix: string): Promise<FileEntry[]> {
   const result: FileEntry[] = []
   const reader = dir.createReader()
 
   // readEntries returns at most 100 entries per call — loop until exhausted
   let batch: FileSystemEntry[]
   do {
-    batch = await new Promise<FileSystemEntry[]>((resolve, reject) =>
-      reader.readEntries(resolve, reject),
-    )
+    batch = await new Promise<FileSystemEntry[]>((resolve, reject) => reader.readEntries(resolve, reject))
     for (const entry of batch) {
       const entryPath = prefix ? `${prefix}/${entry.name}` : entry.name
+
       if (entry.isFile) {
-        const file = await new Promise<File>((resolve, reject) =>
-          (entry as FileSystemFileEntry).file(resolve, reject),
-        )
+        const file = await new Promise<File>((resolve, reject) => (entry as FileSystemFileEntry).file(resolve, reject))
         result.push({ path: entryPath, file })
       } else if (entry.isDirectory) {
         const sub = await readDirEntry(entry as FileSystemDirectoryEntry, entryPath)
@@ -55,6 +49,7 @@ async function readDirEntry(
  */
 export function fileListToEntries(files: FileList): { name: string; entries: FileEntry[] } {
   const arr = Array.from(files)
+
   if (arr.length === 0) return { name: '', entries: [] }
 
   const topFolder = arr[0].webkitRelativePath.split('/')[0]
@@ -75,8 +70,11 @@ export function fileListToEntries(files: FileList): { name: string; entries: Fil
 /** Detect the likely index document in a set of entries (for website uploads) */
 export function detectIndexDocument(entries: FileEntry[]): string | null {
   const paths = entries.map(e => e.path)
+
   if (paths.includes('index.html')) return 'index.html'
+
   if (paths.includes('index.htm')) return 'index.htm'
+
   return null
 }
 

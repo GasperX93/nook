@@ -19,22 +19,17 @@ export default function Logs() {
   return (
     <div className="flex flex-col h-full p-6">
       <div className="flex items-center justify-between mb-4">
-        <h1
-          className="text-base font-semibold uppercase tracking-widest"
-          style={{ color: 'rgb(var(--fg-muted))' }}
-        >
+        <h1 className="text-base font-semibold uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
           Logs
         </h1>
         <div className="flex gap-1">
-          {(['bee', 'desktop'] as LogTab[]).map((t) => (
+          {(['bee', 'desktop'] as LogTab[]).map(t => (
             <button
               key={t}
               onClick={() => setTab(t)}
               className="px-3 py-1.5 rounded text-xs font-semibold uppercase tracking-widest transition-colors"
               style={
-                tab === t
-                  ? { backgroundColor: 'rgb(var(--accent))', color: '#fff' }
-                  : { color: 'rgb(var(--fg-muted))' }
+                tab === t ? { backgroundColor: 'rgb(var(--accent))', color: '#fff' } : { color: 'rgb(var(--fg-muted))' }
               }
             >
               {t === 'bee' ? 'Bee' : 'Desktop'}
@@ -47,10 +42,7 @@ export default function Logs() {
         className="flex-1 rounded-lg border p-4 overflow-auto min-h-0"
         style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
       >
-        <pre
-          className="text-xs whitespace-pre-wrap break-all"
-          style={{ color: 'rgb(var(--fg-muted))' }}
-        >
+        <pre className="text-xs whitespace-pre-wrap break-all" style={{ color: 'rgb(var(--fg-muted))' }}>
           {logs ?? 'No logs available.'}
         </pre>
         <div ref={bottomRef} />
