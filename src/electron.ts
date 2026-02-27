@@ -32,7 +32,7 @@ export function rebuildElectronTray() {
     },
     { type: 'separator' },
     {
-      label: 'Swarm Screenshot',
+      label: 'Nook Screenshot',
       click: () => {
         const { captureWindow, previewWindow } = screenshot
 
@@ -73,18 +73,7 @@ export function rebuildElectronTray() {
 }
 
 function getTrayIcon() {
-  if (process.platform === 'darwin') {
-    // on macOS the resolution and dark/light is managed automatically
-    return getAssetPath('trayTemplate.png')
-  }
-
-  const isDark = nativeTheme.shouldUseDarkColors
-
-  if (isDark) {
-    return getAssetPath('icon-inv.png')
-  }
-
-  return getAssetPath('icon.png')
+  return nativeTheme.shouldUseDarkColors ? getAssetPath('nookTray.png') : getAssetPath('nookTray-inv.png')
 }
 
 export function runElectronTray() {
@@ -100,7 +89,7 @@ export function runElectronTray() {
 
   app.whenReady().then(() => {
     if (app.dock) {
-      app.dock.setIcon(getAssetPath('icon.png'))
+      app.dock.setIcon(getAssetPath('nook-inv.png'))
       app.dock.hide()
     }
 

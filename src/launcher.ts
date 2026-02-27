@@ -26,7 +26,7 @@ function getBeeExecutable() {
 
 function createConfiguration() {
   return `api-addr: 127.0.0.1:1633
-swap-enable: false
+swap-enable: true
 mainnet: true
 full-node: false
 cors-allowed-origins: '*'
@@ -35,7 +35,8 @@ skip-postage-snapshot: true
 resolver-options: https://cloudflare-eth.com
 data-dir: ${getPath('data-dir')}
 password: ${v4()}
-storage-incentives-enable: false`
+storage-incentives-enable: false
+blockchain-rpc-endpoint: https://xdai.fairdatasociety.org`
 }
 
 export async function initializeBee() {

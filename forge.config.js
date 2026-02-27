@@ -30,7 +30,7 @@ const config = {
     },
   },
   electronInstallerDebian: {
-    bin: 'Swarm Desktop',
+    bin: 'Nook',
   },
   makers: [
     {

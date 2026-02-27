@@ -19,6 +19,14 @@ export function runMigrations() {
     writeConfigYaml({ 'blockchain-rpc-endpoint': config['swap-endpoint'] })
   }
 
+  if (!config['blockchain-rpc-endpoint']) {
+    writeConfigYaml({ 'blockchain-rpc-endpoint': 'https://xdai.fairdatasociety.org' })
+  }
+
+  if (config['swap-enable'] === 'false' || config['swap-enable'] === false) {
+    writeConfigYaml({ 'swap-enable': true })
+  }
+
   if (config['chain-enable'] !== undefined) {
     deleteKeyFromConfigYaml('chain-enable')
   }

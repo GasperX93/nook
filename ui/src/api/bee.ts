@@ -135,11 +135,12 @@ export function calcStampCost(
   }
 }
 
-/** Hash a human-readable name to a 32-byte topic hex for Swarm feeds (SHA-256) */
+/** Hash a human-readable name to a 32-byte topic hex for Swarm feeds (keccak256, matches swarm-cli) */
 export async function topicFromString(name: string): Promise<string> {
+  const { keccak256 } = await import('ethereum-cryptography/keccak')
   const data = new TextEncoder().encode(name)
-  const hash = await crypto.subtle.digest('SHA-256', data)
-  return Array.from(new Uint8Array(hash))
+  const hash = keccak256(data)
+  return Array.from(hash)
     .map(b => b.toString(16).padStart(2, '0'))
     .join('')
 }
@@ -169,8 +170,8 @@ export const beeApi = {
   getStamps:    () => beeRequest<{ stamps: Stamp[] }>('/stamps'),
   getChainState:() => beeRequest<ChainState>('/chainstate'),
 
-  buyStamp: (amount: string, depth: number) =>
-    beeRequest<{ batchID: string }>(`/stamps/${amount}/${depth}`, { method: 'POST' }),
+  buyStamp: (amount: string, depth: number, immutable = false) =>
+    beeRequest<{ batchID: string }>(`/stamps/${amount}/${depth}?immutable=${immutable}`, { method: 'POST' }),
 
   getStamp: (id: string) =>
     beeRequest<Stamp>(`/stamps/${id}`),
@@ -190,16 +191,16 @@ export const beeApi = {
   ): Promise<{ reference: string }> => {
     const r = await fetch(
       `${getBeeUrl()}/feeds/${owner}/${topicHex}?reference=${reference}&type=sequence`,
-      { method: 'POST', headers: { 'swarm-postage-batch-id': stampId } },
+      { method: 'POST', headers: { 'swarm-postage-batch-id': stampId, 'swarm-deferred-upload': 'false' } },
     )
     if (!r.ok) throw new Error(`Feed update failed: ${r.status}`)
     return r.json() as Promise<{ reference: string }>
   },
 
-  uploadFileWithProgress: (file: File, stampId: string, onProgress?: (pct: number) => void): Promise<UploadResult> =>
+  uploadFileWithProgress: (file: File, stampId: string, onProgress?: (pct: number) => void, deferred = true): Promise<UploadResult> =>
     xhrUpload(`${getBeeUrl()}/bzz`, file, {
       'swarm-postage-batch-id': stampId,
-      'swarm-deferred-upload': 'true',
+      'swarm-deferred-upload': deferred ? 'true' : 'false',
       'Content-Type': file.type || 'application/octet-stream',
       'Content-Disposition': `inline; filename="${encodeURIComponent(file.name)}"`,
     }, onProgress),
@@ -207,13 +208,14 @@ export const beeApi = {
   uploadCollectionWithProgress: async (
     entries: FileEntry[],
     stampId: string,
-    options?: { indexDocument?: string; errorDocument?: string },
+    options?: { indexDocument?: string; errorDocument?: string; deferred?: boolean },
     onProgress?: (pct: number) => void,
   ): Promise<UploadResult> => {
     const tar = await createTar(entries)
+    const deferred = options?.deferred !== false
     const headers: Record<string, string> = {
       'swarm-postage-batch-id': stampId,
-      'swarm-deferred-upload': 'true',
+      'swarm-deferred-upload': deferred ? 'true' : 'false',
       'swarm-collection': 'true',
       'Content-Type': 'application/x-tar',
     }

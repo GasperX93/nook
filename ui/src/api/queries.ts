@@ -118,8 +118,8 @@ export function useChainState() {
 export function useBuyStamp() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ amount, depth }: { amount: string; depth: number }) =>
-      beeApi.buyStamp(amount, depth),
+    mutationFn: ({ amount, depth, immutable }: { amount: string; depth: number; immutable?: boolean }) =>
+      beeApi.buyStamp(amount, depth, immutable),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['bee', 'stamps'] })
     },

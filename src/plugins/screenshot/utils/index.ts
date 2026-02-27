@@ -37,7 +37,7 @@ export function errorHandler(e: Error | string) {
   }
 
   logger.error(e)
-  dialog.showErrorBox('There was an error in Swarm Desktop', e)
+  dialog.showErrorBox('There was an error in Nook', e)
 }
 
 /**

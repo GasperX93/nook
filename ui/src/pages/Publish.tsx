@@ -2,6 +2,7 @@ import { Check, ChevronRight, Copy, ExternalLink, File, FolderOpen, Globe, Refre
 import { useCallback, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { beeApi, calcStampCost, depthToCapacity, DURATION_PRESETS, plurToBzz, SIZE_PRESETS, topicFromString, type Stamp } from '../api/bee'
+import { serverApi } from '../api/server'
 import { useAddresses, useBeeHealth, useBuyStamp, useChainState, useStamps, useTopupStamp, useWallet } from '../api/queries'
 import { useAppStore } from '../store/app'
 import { useUploadHistory } from '../hooks/useUploadHistory'
@@ -45,6 +46,33 @@ function formatBytes(bytes: number): string {
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
+
+function StampTypeBadge({ immutable }: { immutable: boolean }) {
+  const [show, setShow] = useState(false)
+  return (
+    <span className="relative" onMouseEnter={() => setShow(true)} onMouseLeave={() => setShow(false)}>
+      <span
+        className="text-[10px] px-1.5 py-0.5 rounded font-semibold uppercase tracking-widest cursor-default"
+        style={{
+          backgroundColor: immutable ? 'rgba(239,68,68,0.1)' : 'rgba(74,222,128,0.1)',
+          color: immutable ? '#ef4444' : '#4ade80',
+        }}
+      >
+        {immutable ? 'Immutable' : 'Mutable'}
+      </span>
+      {show && (
+        <span
+          className="absolute bottom-full left-0 mb-2 w-56 rounded-lg border px-3 py-2 text-xs leading-relaxed z-50 pointer-events-none"
+          style={{ backgroundColor: 'rgb(var(--bg-surface))', color: 'rgb(var(--fg-muted))', borderColor: 'rgb(var(--border))' }}
+        >
+          {immutable
+            ? 'Content at the same address can never be replaced. Good for permanent archives.'
+            : 'Content at the same address can be overwritten. Required for feeds and updatable content (e.g. a webpage).'}
+        </span>
+      )}
+    </span>
+  )
+}
 
 function StepDots({ step }: { step: Step }) {
   const labels = ['Select', 'Storage', 'Feed']
@@ -223,6 +251,7 @@ export default function Publish() {
   const [selectedStampId, setSelectedStampId] = useState<string | null>(null)
   const [toppingUpStamp, setToppingUpStamp] = useState<Stamp | null>(null)
   const [feedEnabled, setFeedEnabled] = useState(false)
+  const [stampImmutable, setStampImmutable] = useState(false)
   const [feedTopic, setFeedTopic] = useState('')
   const [result, setResult] = useState<PublishResult | null>(null)
   const [publishPhase, setPublishPhase] = useState('')
@@ -243,7 +272,7 @@ export default function Publish() {
   const buyStamp = useBuyStamp()
   const { add: addRecord } = useUploadHistory()
 
-  const usableStamps = stamps?.filter(s => s.usable) ?? []
+  const usableStamps = stamps ?? []
 
   const selectedSize = SIZE_PRESETS[plan.sizeIdx]
   const selectedDuration = DURATION_PRESETS[plan.durationIdx]
@@ -320,11 +349,21 @@ export default function Publish() {
     try {
       if (stampMode === 'existing') {
         batchID = selectedStampId!
+        const stamp = await beeApi.getStamp(batchID)
+        if (!stamp.usable) {
+          setPublishPhase('Waiting for storage confirmation…')
+          for (let i = 0; i < 60; i++) {
+            const s = await beeApi.getStamp(batchID)
+            if (s.usable) break
+            await new Promise(r => setTimeout(r, 2000))
+          }
+        }
       } else {
         setPublishPhase('Buying storage…')
         const res = await buyStamp.mutateAsync({
           amount: cost!.amount,
           depth: selectedSize.depth,
+          immutable: stampImmutable,
         })
         batchID = res.batchID
 
@@ -345,13 +384,14 @@ export default function Publish() {
         const res = await beeApi.uploadFileWithProgress(
           content.entries[0].file, batchID,
           pct => setUploadProgress(pct),
+          !feedEnabled,
         )
         reference = res.reference
       } else {
         setPublishPhase('Creating archive…')
         const opts = content.type === 'website'
-          ? { indexDocument: content.indexDocument, errorDocument: '404.html' }
-          : undefined
+          ? { indexDocument: content.indexDocument, errorDocument: '404.html', deferred: !feedEnabled }
+          : { deferred: !feedEnabled }
         setPublishPhase('Uploading…')
         setUploadProgress(0)
         const res = await beeApi.uploadCollectionWithProgress(
@@ -363,14 +403,12 @@ export default function Publish() {
 
       // Create feed if enabled
       let feedManifestAddress: string | undefined
-      if (feedEnabled && addresses?.ethereum) {
+      if (feedEnabled) {
         setPublishPhase('Creating feed…')
         const topicName = feedTopic.trim() || content.name
         const topicHex = await topicFromString(topicName)
-        const { reference: manifestRef } = await beeApi.createFeedUpdate(
-          addresses.ethereum, topicHex, reference, batchID,
-        )
-        feedManifestAddress = manifestRef
+        const { feedManifestAddress: addr } = await serverApi.createFeedUpdate(topicHex, reference, batchID)
+        feedManifestAddress = addr
       }
 
       const existingStamp = usableStamps.find(s => s.batchID === batchID)
@@ -404,6 +442,7 @@ export default function Publish() {
     setContent(null)
     setFeedEnabled(false)
     setFeedTopic('')
+    setStampImmutable(false)
     setResult(null)
     setPublishError(null)
     setPublishPhase('')
@@ -576,7 +615,7 @@ export default function Publish() {
               {usableStamps.length === 0 ? (
                 <div className="rounded-lg border px-4 py-5 text-center space-y-2"
                   style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
-                  <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>No usable stamps found</p>
+                  <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>No stamps found</p>
                   <button
                     onClick={() => setStampMode('new')}
                     className="text-xs font-semibold"
@@ -589,6 +628,9 @@ export default function Publish() {
                 usableStamps.map(stamp => {
                   const selected = selectedStampId === stamp.batchID
                   const urgent = stamp.batchTTL < 7 * 86400
+                  const pending = !stamp.usable
+                  const incompatible = feedEnabled && stamp.immutableFlag
+                  const disabled = pending || incompatible
                   return (
                     <div
                       key={stamp.batchID}
@@ -596,32 +638,54 @@ export default function Publish() {
                       style={{
                         borderColor: selected ? 'rgb(var(--accent))' : 'rgb(var(--border))',
                         backgroundColor: selected ? 'rgba(247,104,8,0.06)' : 'rgb(var(--bg-surface))',
+                        opacity: disabled ? 0.5 : 1,
                       }}
                     >
                       <div className="flex items-center gap-3">
                         {/* Select area */}
                         <button
                           className="flex-1 text-left"
-                          onClick={() => setSelectedStampId(stamp.batchID)}
+                          disabled={disabled}
+                          onClick={() => !disabled && setSelectedStampId(stamp.batchID)}
                         >
-                          <p className="text-sm font-semibold">{depthToCapacity(stamp.depth)}</p>
+                          <div className="flex items-center gap-2">
+                            <p className="text-sm font-semibold">{depthToCapacity(stamp.depth)}</p>
+                            <StampTypeBadge immutable={stamp.immutableFlag} />
+                          </div>
                           <p className="text-xs font-mono mt-0.5" style={{ color: 'rgb(var(--fg-muted))' }}>
                             {stamp.label || `${stamp.batchID.slice(0, 12)}…`}
                           </p>
+                          {incompatible && (
+                            <p className="text-xs mt-1" style={{ color: '#f59e0b' }}>
+                              Not compatible with feeds
+                            </p>
+                          )}
                         </button>
 
-                        {/* TTL + top-up */}
+                        {/* TTL + top-up / pending / immutable indicator */}
                         <div className="flex items-center gap-2 shrink-0">
-                          <span className="text-xs font-semibold" style={{ color: urgent ? '#ef4444' : 'rgb(var(--fg-muted))' }}>
-                            {ttlToDays(stamp.batchTTL)} left
-                          </span>
-                          <button
-                            onClick={() => setToppingUpStamp(stamp)}
-                            className="text-[10px] px-2 py-1 rounded font-semibold uppercase tracking-widest transition-colors"
-                            style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg-muted))' }}
-                          >
-                            Top up
-                          </button>
+                          {pending ? (
+                            <span className="text-xs font-semibold animate-pulse" style={{ color: 'rgb(var(--fg-muted))' }}>
+                              Confirming…
+                            </span>
+                          ) : incompatible ? (
+                            <span className="text-xs font-semibold" style={{ color: '#f59e0b' }}>
+                              Immutable
+                            </span>
+                          ) : (
+                            <>
+                              <span className="text-xs font-semibold" style={{ color: urgent ? '#ef4444' : 'rgb(var(--fg-muted))' }}>
+                                {ttlToDays(stamp.batchTTL)} left
+                              </span>
+                              <button
+                                onClick={() => setToppingUpStamp(stamp)}
+                                className="text-[10px] px-2 py-1 rounded font-semibold uppercase tracking-widest transition-colors"
+                                style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg-muted))' }}
+                              >
+                                Top up
+                              </button>
+                            </>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -701,6 +765,30 @@ export default function Publish() {
                 </div>
               )}
             </>
+          )}
+
+          {stampMode === 'new' && (
+            <button
+              onClick={() => setStampImmutable(v => !v)}
+              className="flex items-center justify-between w-full rounded-lg border px-4 py-3"
+              style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
+            >
+              <div className="text-left">
+                <p className="text-sm font-medium">{stampImmutable ? 'Immutable' : 'Mutable'}</p>
+                <p className="text-xs mt-0.5" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  {stampImmutable
+                    ? 'Once uploaded, content at the same address can never be replaced. Good for permanent archives.'
+                    : 'Content at the same address can be overwritten. Required for feeds and updatable content (e.g. a webpage).'}
+                </p>
+              </div>
+              <div
+                className="relative w-10 h-5 rounded-full transition-colors shrink-0 ml-4"
+                style={{ backgroundColor: stampImmutable ? 'rgb(var(--accent))' : 'rgb(var(--border))' }}
+              >
+                <span className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all"
+                  style={{ left: stampImmutable ? '1.25rem' : '0.125rem' }} />
+              </div>
+            </button>
           )}
 
           <p className="text-xs leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
