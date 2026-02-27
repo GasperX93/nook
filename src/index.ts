@@ -37,13 +37,13 @@ function errorHandler(e: Error | string) {
   }
 
   logger.error(e)
-  dialog.showErrorBox('There was an error in Swarm Desktop', e)
+  dialog.showErrorBox('There was an error in Nook', e)
 }
 
 let splash: Splash | undefined
 
 async function main() {
-  logger.info(`Bee Desktop version: ${PACKAGE_JSON.version} (${process.env.NODE_ENV ?? 'production'})`)
+  logger.info(`Nook version: ${PACKAGE_JSON.version} (${process.env.NODE_ENV ?? 'production'})`)
 
   splash = await initSplash()
 
