@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, nativeTheme, Tray } from 'electron'
+import { app, BrowserWindow, Menu, Tray } from 'electron'
 import opener from 'opener'
 import { openDashboardInBrowser } from './browser'
 import { runLauncher } from './launcher'
@@ -73,7 +73,7 @@ export function rebuildElectronTray() {
 }
 
 function getTrayIcon() {
-  return nativeTheme.shouldUseDarkColors ? getAssetPath('nookTray.png') : getAssetPath('nookTray-inv.png')
+  return getAssetPath('nookTray-N.png')
 }
 
 export function runElectronTray() {
@@ -89,7 +89,7 @@ export function runElectronTray() {
 
   app.whenReady().then(() => {
     if (app.dock) {
-      app.dock.setIcon(getAssetPath('nook-inv.png'))
+      app.dock.setIcon(getAssetPath('nook_N_transparent_master.png'))
       app.dock.hide()
     }
 

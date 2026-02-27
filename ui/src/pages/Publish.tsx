@@ -17,6 +17,7 @@ import {
   calcStampCost,
   depthToCapacity,
   DURATION_PRESETS,
+  getBeeUrl,
   plurToBzz,
   SIZE_PRESETS,
   topicFromString,
@@ -406,13 +407,26 @@ export default function Publish() {
 
   // ── Publish ────────────────────────────────────────────────────────────────
 
+  // Bee can return 400 "batch not usable" for unconfirmed stamps instead of {usable:false}.
+  // Treat any error as "not yet usable" and keep polling with elapsed time feedback.
   async function pollStampUsable(id: string) {
     for (let i = 0; i < 60; i++) {
-      const s = await beeApi.getStamp(id)
+      const elapsed = i * 2
 
-      if (s.usable) return
+      setPublishPhase(`Waiting for storage confirmation… ${elapsed > 0 ? `(${elapsed}s)` : ''}`.trim())
+
+      try {
+        const s = await beeApi.getStamp(id)
+
+        if (s.usable) return
+      } catch {
+        // stamp not yet confirmed — keep polling
+      }
+
       await new Promise(r => setTimeout(r, 2000))
     }
+
+    throw new Error('Stamp did not become usable after 2 minutes. It may be expired or invalid.')
   }
 
   async function publish() {
@@ -429,10 +443,18 @@ export default function Publish() {
     try {
       if (stampMode === 'existing') {
         batchID = selectedStampId!
-        const stamp = await beeApi.getStamp(batchID)
 
-        if (!stamp.usable) {
-          setPublishPhase('Waiting for storage confirmation…')
+        let usable = false
+
+        try {
+          const stamp = await beeApi.getStamp(batchID)
+
+          usable = stamp.usable
+        } catch {
+          // 400 "batch not usable" — stamp not yet confirmed, will poll below
+        }
+
+        if (!usable) {
           await pollStampUsable(batchID)
         }
       } else {
@@ -444,34 +466,43 @@ export default function Publish() {
         })
         batchID = res.batchID
 
-        setPublishPhase('Waiting for storage confirmation…')
         await pollStampUsable(batchID)
       }
 
-      let reference: string
+      let reference!: string
+      const c = content // content is non-null here (guarded at top of publish())
 
-      if (content.type === 'file') {
+      // Upload with retry — Bee's stamp issuer may need a moment to load
+      // even after the stamp reports as usable via REST.
+      async function doUpload(attempt: number): Promise<string> {
+        if (attempt > 1) {
+          setPublishPhase(`Finalising storage… (retry ${attempt - 1})`)
+          await new Promise(r => setTimeout(r, 5000))
+        }
+
         setPublishPhase('Uploading…')
         setUploadProgress(0)
-        const res = await beeApi.uploadFileWithProgress(
-          content.entries[0].file,
-          batchID,
-          pct => setUploadProgress(pct),
-          !feedEnabled,
-        )
-        reference = res.reference
-      } else {
-        setPublishPhase('Creating archive…')
-        const opts =
-          content.type === 'website'
-            ? { indexDocument: content.indexDocument, errorDocument: '404.html', deferred: !feedEnabled }
-            : { deferred: !feedEnabled }
-        setPublishPhase('Uploading…')
-        setUploadProgress(0)
-        const res = await beeApi.uploadCollectionWithProgress(content.entries, batchID, opts, pct =>
-          setUploadProgress(pct),
-        )
-        reference = res.reference
+
+        if (c.type === 'file') {
+          const res = await beeApi.uploadFileWithProgress(c.entries[0].file, batchID, pct => setUploadProgress(pct))
+
+          return res.reference
+        }
+
+        const opts = c.type === 'website' ? { indexDocument: c.indexDocument, errorDocument: '404.html' } : {}
+        const res = await beeApi.uploadCollectionWithProgress(c.entries, batchID, opts, pct => setUploadProgress(pct))
+
+        return res.reference
+      }
+
+      for (let attempt = 1; attempt <= 4; attempt++) {
+        try {
+          reference = await doUpload(attempt)
+          break
+        } catch (err) {
+          if (attempt === 4) throw err
+          // stamp issuer may not be loaded yet — retry
+        }
       }
 
       // Create feed if enabled
@@ -900,29 +931,31 @@ export default function Publish() {
           )}
 
           {stampMode === 'new' && (
-            <button
-              onClick={() => setStampImmutable(v => !v)}
-              className="flex items-center justify-between w-full rounded-lg border px-4 py-3"
-              style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
-            >
-              <div className="text-left">
-                <p className="text-sm font-medium">{stampImmutable ? 'Immutable' : 'Mutable'}</p>
-                <p className="text-xs mt-0.5" style={{ color: 'rgb(var(--fg-muted))' }}>
-                  {stampImmutable
-                    ? 'Once uploaded, content at the same address can never be replaced. Good for permanent archives.'
-                    : 'Content at the same address can be overwritten. Required for feeds and updatable content (e.g. a webpage).'}
-                </p>
+            <div className="rounded-lg border p-3 space-y-2" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
+              <p className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Stamp type
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                {([false, true] as const).map(isImmutable => (
+                  <button
+                    key={String(isImmutable)}
+                    onClick={() => setStampImmutable(isImmutable)}
+                    className="px-3 py-2.5 rounded-lg border text-left transition-all space-y-0.5"
+                    style={{
+                      borderColor: stampImmutable === isImmutable ? 'rgb(var(--accent))' : 'rgb(var(--border))',
+                      backgroundColor: stampImmutable === isImmutable ? 'rgba(247,104,8,0.08)' : 'transparent',
+                    }}
+                  >
+                    <p className="text-sm font-medium">{isImmutable ? 'Immutable' : 'Mutable'}</p>
+                    <p className="text-[10px] leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
+                      {isImmutable
+                        ? 'Content can never be replaced. Good for permanent archives.'
+                        : 'Content can be overwritten. Required for feeds and updatable sites.'}
+                    </p>
+                  </button>
+                ))}
               </div>
-              <div
-                className="relative w-10 h-5 rounded-full transition-colors shrink-0 ml-4"
-                style={{ backgroundColor: stampImmutable ? 'rgb(var(--accent))' : 'rgb(var(--border))' }}
-              >
-                <span
-                  className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all"
-                  style={{ left: stampImmutable ? '1.25rem' : '0.125rem' }}
-                />
-              </div>
-            </button>
+            </div>
           )}
 
           <p className="text-xs leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
@@ -1098,6 +1131,16 @@ export default function Publish() {
                   {copied ? 'Copied' : 'Copy feed link'}
                 </button>
                 <a
+                  href={`${getBeeUrl()}/bzz/${result.feedManifestAddress}/`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium"
+                  style={{ color: 'rgb(var(--fg-muted))' }}
+                >
+                  <ExternalLink size={12} />
+                  Preview locally
+                </a>
+                <a
                   href={`${gatewayUrl}/bzz/${result.feedManifestAddress}/`}
                   target="_blank"
                   rel="noreferrer"
@@ -1105,7 +1148,7 @@ export default function Publish() {
                   style={{ color: 'rgb(var(--fg-muted))' }}
                 >
                   <ExternalLink size={12} />
-                  Open
+                  Open on gateway
                 </a>
               </div>
             </div>
@@ -1134,6 +1177,16 @@ export default function Publish() {
                   {copied ? 'Copied' : 'Copy hash'}
                 </button>
                 <a
+                  href={`${getBeeUrl()}/bzz/${result.hash}/`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium"
+                  style={{ color: 'rgb(var(--fg-muted))' }}
+                >
+                  <ExternalLink size={12} />
+                  Preview locally
+                </a>
+                <a
                   href={`${gatewayUrl}/bzz/${result.hash}/`}
                   target="_blank"
                   rel="noreferrer"
@@ -1141,7 +1194,7 @@ export default function Publish() {
                   style={{ color: 'rgb(var(--fg-muted))' }}
                 >
                   <ExternalLink size={12} />
-                  Open
+                  Open on gateway
                 </a>
               </div>
             )}

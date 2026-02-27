@@ -1,4 +1,5 @@
-import { AlertTriangle, FileText, HardDrive, Settings, Upload, Wallet } from 'lucide-react'
+import { AlertTriangle, FileText, HardDrive, RefreshCw, Settings, Upload, Wallet } from 'lucide-react'
+import { useRef } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { useBeeHealth } from '../api/queries'
 
@@ -12,6 +13,15 @@ const navItems = [
 
 export default function Layout() {
   const { isError: beeOffline, isPending: beeChecking, isSuccess: beeOnline } = useBeeHealth()
+
+  // Track whether Bee has connected at least once this session.
+  // Before that we show a friendly "starting" indicator instead of an error.
+  const hasEverBeenOnline = useRef(false)
+
+  if (beeOnline) hasEverBeenOnline.current = true
+
+  const showStarting = !beeOnline && !hasEverBeenOnline.current
+  const showDown = beeOffline && !beeChecking && hasEverBeenOnline.current
 
   const dotColor = beeChecking ? 'rgb(var(--border))' : beeOnline ? '#4ade80' : '#ef4444'
   const dotLabel = beeChecking ? '···' : beeOnline ? 'live' : 'off'
@@ -64,18 +74,28 @@ export default function Layout() {
 
       {/* Main content */}
       <main className="flex-1 overflow-auto flex flex-col">
-        {/* Bee offline banner — only after health check completes */}
-        {!beeChecking && beeOffline && (
+        {/* Starting up — friendly indicator */}
+        {showStarting && (
+          <div
+            className="flex items-center gap-2.5 px-4 py-2.5 text-xs shrink-0"
+            style={{ backgroundColor: 'rgba(247,104,8,0.08)', borderBottom: '1px solid rgba(247,104,8,0.15)' }}
+          >
+            <RefreshCw size={12} className="animate-spin shrink-0" style={{ color: 'rgb(var(--accent))' }} />
+            <span style={{ color: 'rgb(var(--accent))' }}>Starting Bee node and connecting to the network…</span>
+          </div>
+        )}
+
+        {/* Bee down — only shown after it was previously online */}
+        {showDown && (
           <div
             className="flex items-center gap-2 px-4 py-2.5 text-xs shrink-0"
             style={{ backgroundColor: 'rgba(239,68,68,0.1)', borderBottom: '1px solid rgba(239,68,68,0.2)' }}
           >
             <AlertTriangle size={13} className="shrink-0" style={{ color: '#ef4444' }} />
-            <span style={{ color: '#ef4444' }}>
-              Can't reach Bee node at localhost:1633. Make sure your node is running.
-            </span>
+            <span style={{ color: '#ef4444' }}>Bee node is not running. Check the Logs tab for details.</span>
           </div>
         )}
+
         <div className="flex-1 overflow-auto">
           <Outlet />
         </div>

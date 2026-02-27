@@ -180,7 +180,9 @@ export const beeApi = {
   getChainState: async () => beeRequest<ChainState>('/chainstate'),
 
   buyStamp: async (amount: string, depth: number, immutable = false) =>
-    beeRequest<{ batchID: string }>(`/stamps/${amount}/${depth}?immutable=${immutable}`, { method: 'POST' }),
+    beeRequest<{ batchID: string }>(`/stamps/${amount}/${depth}${immutable ? '?immutable=true' : ''}`, {
+      method: 'POST',
+    }),
 
   getStamp: async (id: string) => beeRequest<Stamp>(`/stamps/${id}`),
 

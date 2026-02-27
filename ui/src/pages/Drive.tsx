@@ -388,7 +388,7 @@ function UpdateFeedModal({ record, onClose }: { record: UploadRecord; onClose: (
                     {copied ? 'Copied' : 'Copy'}
                   </button>
                   <a
-                    href={`${gatewayUrl}/bzz/${record.feedManifestAddress}/`}
+                    href={`${getBeeUrl()}/bzz/${record.feedManifestAddress}/`}
                     target="_blank"
                     rel="noreferrer"
                     className="flex items-center gap-1.5 px-2 py-1 rounded text-xs"
@@ -675,7 +675,7 @@ function RecordRow({
           <Copy size={13} />
         </button>
         <a
-          href={`${gatewayUrl}/bzz/${linkHash}/`}
+          href={record.type === 'website' ? `${getBeeUrl()}/bzz/${linkHash}/` : `${gatewayUrl}/bzz/${linkHash}/`}
           target="_blank"
           rel="noreferrer"
           title="Open"
