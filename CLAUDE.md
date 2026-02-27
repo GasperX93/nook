@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Swarm Desktop is an Electron-based desktop application that manages a Bee node on the Swarm decentralized storage network. It downloads and runs the Bee binary, exposes a Koa REST API, and serves a bundled React dashboard (from `@ethersphere/bee-dashboard`).
+Nook is an Electron-based desktop application that manages a Bee node on the Swarm decentralized storage network. It downloads and runs the Bee binary, exposes a Koa REST API, and serves a custom React dashboard (`ui/`).
 
 ## Commands
 
@@ -60,20 +60,27 @@ The app has two main layers:
 
 **Startup sequence** (`index.ts`): migrations → splash → download Bee if needed → API key → free port → start Koa server → init Bee config → launch Bee → setup tray → keep-alive loop.
 
-**Server** (`server.ts`): Koa REST API. Public routes: `/info`, `/price`. Auth-required routes (API key header): `/status`, `/config`, `/logs/*`, `/restart`, `/gift-wallet`, `/swap`.
+**Server** (`server.ts`): Koa REST API. Public routes: `/info`, `/price`. Auth-required routes (API key header): `/status`, `/config`, `/logs/*`, `/restart`, `/swap`, `/redeem`.
 
-### Frontend (`ui/`) — React (Bee Dashboard)
+### Frontend (`ui/`) — Custom React app
 
-The UI is the `@ethersphere/bee-dashboard` package wrapped in a minimal React app. It's built separately, copied into `dist/ui/`, and served by the Koa server. The API key is injected via URL parameter.
+Built with Vite + React + Tailwind + TanStack Query + Zustand. Pages: Publish, Drive, Wallet, Settings, Logs. It's built separately, copied into `dist/ui/`, and served by the Koa server. The API key is injected via URL parameter.
+
+Key files:
+- `ui/src/api/bee.ts` — direct Bee node API calls (port 1633). **Note:** the `immutable` flag for stamp creation is sent as an HTTP **header**, not a query param (e.g. `headers: { immutable: 'false' }`).
+- `ui/src/api/server.ts` — calls to the Nook Koa backend
+- `ui/src/pages/Publish.tsx` — multi-step publish wizard (select → storage → feed → done)
+- `ui/src/pages/Drive.tsx` — upload history, feed updates, stamp top-up
+- `ui/src/components/Layout.tsx` — sidebar nav + Bee status banner
 
 ## Key data paths (runtime)
 
-- **macOS logs**: `~/Library/Logs/Swarm Desktop/`
-- **macOS data**: `~/Library/Application Support/Swarm Desktop/`
-- **Windows logs**: `%LOCALAPPDATA%\Swarm Desktop\Log\`
-- **Windows data**: `%LOCALAPPDATA%\Swarm Desktop\Data\`
-- **Linux logs**: `~/.local/state/Swarm Desktop/`
-- **Linux data**: `~/.local/share/Swarm Desktop/`
+- **macOS logs**: `~/Library/Logs/Nook/`
+- **macOS data**: `~/Library/Application Support/Nook/`
+- **Windows logs**: `%LOCALAPPDATA%\Nook\Log\`
+- **Windows data**: `%LOCALAPPDATA%\Nook\Data\`
+- **Linux logs**: `~/.local/state/Nook/`
+- **Linux data**: `~/.local/share/Nook/`
 
 ## Build output
 
