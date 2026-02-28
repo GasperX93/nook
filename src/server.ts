@@ -172,6 +172,42 @@ export function runServer() {
       context.body = { message: 'Feed update failed', error }
     }
   })
+  router.post('/buy-stamp', async context => {
+    const { amount, depth, immutable } = context.request.body as {
+      amount: string
+      depth: number
+      immutable: boolean
+    }
+
+    if (!amount || !depth) {
+      context.status = 400
+      context.body = { message: 'amount and depth are required' }
+
+      return
+    }
+
+    try {
+      const res = await fetch(`http://127.0.0.1:1633/stamps/${amount}/${depth}`, {
+        method: 'POST',
+        headers: { immutable: String(Boolean(immutable)) },
+      })
+      const data = (await res.json()) as { batchID: string }
+
+      if (!res.ok) {
+        context.status = res.status
+        context.body = data
+
+        return
+      }
+
+      context.body = data
+    } catch (error) {
+      logger.error(error)
+      context.status = 500
+      context.body = { message: 'Failed to buy stamp', error }
+    }
+  })
+
   router.post('/swap', async context => {
     const config = readConfigYaml()
     const blockchainRpcEndpoint = Reflect.get(config, 'blockchain-rpc-endpoint') as string

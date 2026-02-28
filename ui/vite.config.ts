@@ -19,6 +19,7 @@ export default defineConfig(({ command }) => ({
       '/swap': 'http://localhost:3000',
       '/redeem': 'http://localhost:3000',
       '/feed-update': 'http://localhost:3000',
+      '/buy-stamp': 'http://localhost:3000',
       // Bee node API — proxied to avoid CORS issues in dev
       '/bee-api': {
         target: 'http://localhost:1633',

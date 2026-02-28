@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { beeApi } from './bee'
 import { api } from './client'
+import { serverApi } from './server'
 
 export const queryKeys = {
   info: ['info'] as const,
@@ -122,7 +123,7 @@ export function useBuyStamp() {
 
   return useMutation({
     mutationFn: async ({ amount, depth, immutable }: { amount: string; depth: number; immutable?: boolean }) =>
-      beeApi.buyStamp(amount, depth, immutable),
+      serverApi.buyStamp(amount, depth, Boolean(immutable)),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['bee', 'stamps'] })
     },

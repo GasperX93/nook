@@ -29,4 +29,12 @@ export const serverApi = {
    */
   createFeedUpdate: async (topicHex: string, reference: string, stampId: string) =>
     serverPost<{ feedManifestAddress: string }>('/feed-update', { topicHex, reference, stampId }),
+
+  /**
+   * Buy a postage stamp via the Nook backend.
+   * Proxied through the server so that the immutable header is sent correctly
+   * (Electron renderer fetch strips custom headers on localhost requests).
+   */
+  buyStamp: async (amount: string, depth: number, immutable: boolean) =>
+    serverPost<{ batchID: string }>('/buy-stamp', { amount, depth, immutable }),
 }
