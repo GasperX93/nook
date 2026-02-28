@@ -7,7 +7,8 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "lint": "eslint --fix \"src/**/*.{ts,tsx}\"",
-    "lint:check": "eslint \"src/**/*.{ts,tsx}\""
+    "lint:check": "eslint \"src/**/*.{ts,tsx}\"",
+    "test": "vitest run"
   },
   "dependencies": {
     "@rainbow-me/rainbowkit": "^2.2.10",
@@ -38,6 +39,7 @@
     "prettier": "^2.8.8",
     "tailwindcss": "^3.4.13",
     "typescript": "^5.5.4",
-    "vite": "^5.4.8"
+    "vite": "^5.4.8",
+    "vitest": "^4.0.18"
   }
 }
