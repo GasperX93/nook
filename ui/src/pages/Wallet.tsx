@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query'
-import { Check, Copy, Gift, Wallet2 } from 'lucide-react'
+import { AlertTriangle, Check, Copy, Gift } from 'lucide-react'
 import { useState } from 'react'
 import '@rainbow-me/rainbowkit/styles.css'
 import '@upcoming/multichain-widget/styles.css'
@@ -9,25 +9,29 @@ import { api } from '../api/client'
 import { useAddresses, useWallet } from '../api/queries'
 import { useAppStore } from '../store/app'
 
-function BalanceCard({ label, value, symbol, sub }: { label: string; value: string; symbol: string; sub?: string }) {
-  return (
-    <div className="rounded-xl border p-5 flex-1" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
-      <p className="text-xs uppercase tracking-widest mb-3" style={{ color: 'rgb(var(--fg-muted))' }}>
-        {label}
-      </p>
-      <div className="flex items-baseline gap-2">
-        <span className="text-3xl font-bold tabular-nums">{value}</span>
-        <span className="text-sm font-medium" style={{ color: 'rgb(var(--fg-muted))' }}>
-          {symbol}
-        </span>
-      </div>
-      {sub && (
-        <p className="text-xs mt-2" style={{ color: 'rgb(var(--fg-muted))' }}>
-          {sub}
-        </p>
-      )}
-    </div>
-  )
+const WIDGET_THEME = {
+  backgroundColor: '#0f1117',
+  inputBackgroundColor: '#181b23',
+  inputBorderColor: '#262a36',
+  inputTextColor: '#f0f4f8',
+  textColor: '#f0f4f8',
+  secondaryTextColor: '#78829690',
+  buttonBackgroundColor: '#f76808',
+  buttonTextColor: '#ffffff',
+  buttonSecondaryBackgroundColor: '#262a36',
+  buttonSecondaryTextColor: '#f0f4f8',
+  errorTextColor: '#ef4444',
+  borderRadius: '8px',
+  fontFamily: "ui-monospace, 'Cascadia Code', 'Fira Code', monospace",
+  fontSize: '13px',
+  fontWeight: 400,
+  smallFontSize: '11px',
+  smallFontWeight: 400,
+  labelSpacing: '0.1em',
+  inputVerticalPadding: '8px',
+  inputHorizontalPadding: '12px',
+  buttonVerticalPadding: '10px',
+  buttonHorizontalPadding: '16px',
 }
 
 export default function Wallet() {
@@ -39,9 +43,6 @@ export default function Wallet() {
   const [swapping, setSwapping] = useState(false)
   const [swapError, setSwapError] = useState<string | null>(null)
   const [swapDone, setSwapDone] = useState(false)
-
-  const [showTopUp, setShowTopUp] = useState(false)
-
   const [giftCode, setGiftCode] = useState('')
   const [redeeming, setRedeeming] = useState(false)
   const [redeemError, setRedeemError] = useState<string | null>(null)
@@ -50,6 +51,10 @@ export default function Wallet() {
   const bzz = wallet ? Number(plurToBzz(wallet.bzzBalance)).toFixed(4) : '—'
   const dai = wallet ? Number(weiToDai(wallet.nativeTokenBalance)).toFixed(4) : '—'
   const address = addresses?.ethereum ?? ''
+  const isEmpty =
+    wallet &&
+    Number(plurToBzz(wallet.bzzBalance)) === 0 &&
+    Number(weiToDai(wallet.nativeTokenBalance)) === 0
 
   function copyAddress() {
     navigator.clipboard.writeText(address)
@@ -69,7 +74,6 @@ export default function Wallet() {
         headers: { 'Content-Type': 'application/json', ...(apiKey ? { authorization: apiKey } : {}) },
         body: JSON.stringify({ dai: swapAmount }),
       })
-
       if (!res.ok) throw new Error(`Swap failed: ${res.status}`)
       setSwapDone(true)
       setSwapAmount('')
@@ -103,7 +107,7 @@ export default function Wallet() {
   const isLoading = walletLoading || addrLoading
 
   return (
-    <div className="p-6 max-w-lg">
+    <div className="p-6 max-w-4xl">
       <h1 className="text-base font-semibold uppercase tracking-widest mb-6" style={{ color: 'rgb(var(--fg-muted))' }}>
         Wallet
       </h1>
@@ -114,162 +118,188 @@ export default function Wallet() {
         </p>
       ) : (
         <div className="space-y-5">
-          {/* Balances */}
-          <div className="flex gap-3">
-            <BalanceCard label="BZZ" value={bzz} symbol="BZZ" sub="Used to buy storage" />
-            <BalanceCard label="xDAI" value={dai} symbol="xDAI" sub="Used for gas fees" />
-          </div>
-
-          {/* Address */}
-          <div className="rounded-xl border p-5" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
-            <p className="text-xs uppercase tracking-widest mb-3" style={{ color: 'rgb(var(--fg-muted))' }}>
-              Wallet address
-            </p>
+          {/* Address — full width slim row */}
+          <div className="flex items-center gap-3 px-1">
+            <span className="text-xs uppercase tracking-widest shrink-0" style={{ color: 'rgb(var(--fg-muted))' }}>
+              Address
+            </span>
             {address ? (
-              <div className="flex items-center gap-3">
-                <p className="font-mono text-sm flex-1 truncate">{address}</p>
+              <div className="flex items-center gap-1 min-w-0">
+                <p className="font-mono text-xs min-w-0 truncate" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  {address}
+                </p>
                 <button
                   onClick={copyAddress}
-                  className="w-7 h-7 flex items-center justify-center rounded shrink-0 transition-colors"
+                  className="w-6 h-6 flex items-center justify-center rounded shrink-0 transition-colors"
                   style={{ color: copiedAddr ? '#4ade80' : 'rgb(var(--fg-muted))' }}
                 >
-                  {copiedAddr ? <Check size={14} /> : <Copy size={14} />}
+                  {copiedAddr ? <Check size={12} /> : <Copy size={12} />}
                 </button>
               </div>
             ) : (
-              <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
+              <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
                 Not available
               </p>
             )}
           </div>
 
-          {/* Top up from external wallet */}
-          <div className="rounded-xl border p-5" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
-            <div className="flex items-center justify-between">
-              <div>
+          {/* Empty wallet warning — full width */}
+          {isEmpty && (
+            <div className="flex items-start gap-2 rounded-lg px-4 py-3" style={{ backgroundColor: 'rgba(247,104,8,0.08)', border: '1px solid rgba(247,104,8,0.25)' }}>
+              <AlertTriangle size={13} className="shrink-0 mt-0.5" style={{ color: '#f76808' }} />
+              <p className="text-xs" style={{ color: '#f76808' }}>
+                Your wallet is empty. You need funds to buy storage — top up below.
+              </p>
+            </div>
+          )}
+
+          {/* Two-column layout */}
+          <div className="grid gap-5 items-stretch" style={{ gridTemplateColumns: '2fr 4fr' }}>
+
+            {/* Left column: balances + swap + redeem */}
+            <div className="space-y-4 flex flex-col h-full">
+              {/* Balances */}
+              <div className="flex gap-3">
+                <div className="rounded-xl border p-5 flex-1" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
+                  <p className="text-xs uppercase tracking-widest mb-3" style={{ color: 'rgb(var(--fg-muted))' }}>BZZ</p>
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-3xl font-bold tabular-nums">{bzz}</span>
+                    <span className="text-sm font-medium" style={{ color: 'rgb(var(--fg-muted))' }}>BZZ</span>
+                  </div>
+                  <p className="text-xs mt-2" style={{ color: 'rgb(var(--fg-muted))' }}>Used to buy storage</p>
+                </div>
+                <div className="rounded-xl border p-5 flex-1" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
+                  <p className="text-xs uppercase tracking-widest mb-3" style={{ color: 'rgb(var(--fg-muted))' }}>xDAI</p>
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-3xl font-bold tabular-nums">{dai}</span>
+                    <span className="text-sm font-medium" style={{ color: 'rgb(var(--fg-muted))' }}>xDAI</span>
+                  </div>
+                  <p className="text-xs mt-2" style={{ color: 'rgb(var(--fg-muted))' }}>Used for gas fees</p>
+                </div>
+              </div>
+
+              {/* Swap */}
+              <div className="rounded-xl border p-5" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
+                <p className="text-xs uppercase tracking-widest mb-1" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  Swap xDAI → BZZ
+                </p>
+                <p className="text-xs mb-4" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  Convert xDAI to BZZ to fund storage purchases.
+                </p>
+                <div className="flex gap-3">
+                  <div className="relative flex-1">
+                    <input
+                      type="number"
+                      value={swapAmount}
+                      onChange={e => setSwapAmount(e.target.value)}
+                      placeholder="0.00"
+                      min="0"
+                      className="w-full rounded-lg border px-3 py-2 text-sm pr-14 focus:outline-none"
+                      style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
+                    />
+                    <span
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium"
+                      style={{ color: 'rgb(var(--fg-muted))' }}
+                    >
+                      xDAI
+                    </span>
+                  </div>
+                  <button
+                    onClick={swap}
+                    disabled={swapping || !swapAmount}
+                    className="px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-40 transition-opacity shrink-0"
+                    style={{
+                      backgroundColor: swapDone ? 'rgba(74,222,128,0.15)' : 'rgb(var(--accent))',
+                      color: swapDone ? '#4ade80' : '#fff',
+                    }}
+                  >
+                    {swapping ? 'Swapping…' : swapDone ? 'Done' : 'Swap'}
+                  </button>
+                </div>
+                {swapError && (
+                  <p className="text-xs mt-3" style={{ color: '#ef4444' }}>
+                    {swapError}
+                  </p>
+                )}
+              </div>
+
+              {/* Redeem gift code */}
+              <div className="rounded-xl border p-5" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
                 <div className="flex items-center gap-2 mb-1">
-                  <Wallet2 size={13} style={{ color: 'rgb(var(--accent))' }} />
+                  <Gift size={13} style={{ color: 'rgb(var(--accent))' }} />
                   <p className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
-                    Top up from external wallet
+                    Redeem gift code
                   </p>
                 </div>
-                <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-                  Send BZZ from any chain or token using MetaMask or WalletConnect.
+                <p className="text-xs mb-4" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  Paste a gift code to transfer its BZZ and xDAI to your node wallet.
                 </p>
+                <div className="flex gap-3">
+                  <input
+                    type="text"
+                    value={giftCode}
+                    onChange={e => setGiftCode(e.target.value)}
+                    onKeyDown={async e => e.key === 'Enter' && redeem()}
+                    placeholder="Gift code…"
+                    className="flex-1 rounded-lg border px-3 py-2 text-sm font-mono focus:outline-none"
+                    style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
+                  />
+                  <button
+                    onClick={redeem}
+                    disabled={redeeming || !giftCode.trim()}
+                    className="px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-40 transition-opacity shrink-0"
+                    style={{
+                      backgroundColor: redeemDone ? 'rgba(74,222,128,0.15)' : 'rgb(var(--accent))',
+                      color: redeemDone ? '#4ade80' : '#fff',
+                    }}
+                  >
+                    {redeeming ? 'Redeeming…' : redeemDone ? 'Done' : 'Redeem'}
+                  </button>
+                </div>
+                {redeemError && (
+                  <p className="text-xs mt-3" style={{ color: '#ef4444' }}>
+                    {redeemError}
+                  </p>
+                )}
+                {redeemDone && (
+                  <p className="text-xs mt-3" style={{ color: '#4ade80' }}>
+                    Gift code redeemed — balance updated.
+                  </p>
+                )}
               </div>
-              <button
-                onClick={() => setShowTopUp(v => !v)}
-                disabled={!address}
-                className="px-3 py-1.5 rounded text-xs font-semibold uppercase tracking-widest shrink-0 ml-4 disabled:opacity-40"
-                style={{ backgroundColor: 'rgb(var(--bg))', border: '1px solid rgb(var(--border))' }}
-              >
-                {showTopUp ? 'Close' : 'Open'}
-              </button>
             </div>
-            {showTopUp && address && (
-              <div className="mt-4">
-                <MultichainWidget
-                  destination={address}
-                  intent="initial-funding"
-                  hooks={{
-                    onCompletion: async () => {
-                      queryClient.invalidateQueries({ queryKey: ['bee', 'wallet'] })
-                      setShowTopUp(false)
-                    },
-                  }}
-                />
-              </div>
-            )}
-          </div>
 
-          {/* Swap */}
-          <div className="rounded-xl border p-5" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
-            <p className="text-xs uppercase tracking-widest mb-1" style={{ color: 'rgb(var(--fg-muted))' }}>
-              Swap xDAI → BZZ
-            </p>
-            <p className="text-xs mb-4" style={{ color: 'rgb(var(--fg-muted))' }}>
-              Convert xDAI to BZZ to fund storage purchases.
-            </p>
-            <div className="flex gap-3">
-              <div className="relative flex-1">
-                <input
-                  type="number"
-                  value={swapAmount}
-                  onChange={e => setSwapAmount(e.target.value)}
-                  placeholder="0.00"
-                  min="0"
-                  className="w-full rounded-lg border px-3 py-2 text-sm pr-14 focus:outline-none"
-                  style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
-                />
-                <span
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium"
-                  style={{ color: 'rgb(var(--fg-muted))' }}
-                >
-                  xDAI
-                </span>
-              </div>
-              <button
-                onClick={swap}
-                disabled={swapping || !swapAmount}
-                className="px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-40 transition-opacity shrink-0"
-                style={{
-                  backgroundColor: swapDone ? 'rgba(74,222,128,0.15)' : 'rgb(var(--accent))',
-                  color: swapDone ? '#4ade80' : '#fff',
-                }}
-              >
-                {swapping ? 'Swapping…' : swapDone ? 'Done' : 'Swap'}
-              </button>
-            </div>
-            {swapError && (
-              <p className="text-xs mt-3" style={{ color: '#ef4444' }}>
-                {swapError}
+            {/* Right column: top up widget */}
+            <div className="rounded-xl border p-5" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
+              <p className="text-xs uppercase tracking-widest mb-3" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Top up
               </p>
-            )}
-          </div>
+              {address ? (
+                <>
+                  <p className="text-xs mb-1" style={{ color: 'rgb(var(--fg-muted))' }}>
+                    Fund your node wallet from any chain and any token.
+                  </p>
+                  <p className="text-xs mb-3" style={{ color: 'rgb(var(--fg-muted))' }}>
+                    Set how much xDAI and xBZZ you want to top up to your node.
+                  </p>
+                  <MultichainWidget
+                    destination={address}
+                    intent="arbitrary"
+                    theme={WIDGET_THEME}
+                    hooks={{
+                      onCompletion: async () => {
+                        queryClient.invalidateQueries({ queryKey: ['bee', 'wallet'] })
+                      },
+                    }}
+                  />
+                </>
+              ) : (
+                <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  Wallet address not available.
+                </p>
+              )}
+            </div>
 
-          {/* Redeem gift code */}
-          <div className="rounded-xl border p-5" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
-            <div className="flex items-center gap-2 mb-1">
-              <Gift size={13} style={{ color: 'rgb(var(--accent))' }} />
-              <p className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
-                Redeem gift code
-              </p>
-            </div>
-            <p className="text-xs mb-4" style={{ color: 'rgb(var(--fg-muted))' }}>
-              Paste a gift code to transfer its BZZ and xDAI to your node wallet.
-            </p>
-            <div className="flex gap-3">
-              <input
-                type="text"
-                value={giftCode}
-                onChange={e => setGiftCode(e.target.value)}
-                onKeyDown={async e => e.key === 'Enter' && redeem()}
-                placeholder="Gift code…"
-                className="flex-1 rounded-lg border px-3 py-2 text-sm font-mono focus:outline-none"
-                style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
-              />
-              <button
-                onClick={redeem}
-                disabled={redeeming || !giftCode.trim()}
-                className="px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-40 transition-opacity shrink-0"
-                style={{
-                  backgroundColor: redeemDone ? 'rgba(74,222,128,0.15)' : 'rgb(var(--accent))',
-                  color: redeemDone ? '#4ade80' : '#fff',
-                }}
-              >
-                {redeeming ? 'Redeeming…' : redeemDone ? 'Done' : 'Redeem'}
-              </button>
-            </div>
-            {redeemError && (
-              <p className="text-xs mt-3" style={{ color: '#ef4444' }}>
-                {redeemError}
-              </p>
-            )}
-            {redeemDone && (
-              <p className="text-xs mt-3" style={{ color: '#4ade80' }}>
-                Gift code redeemed — balance updated.
-              </p>
-            )}
           </div>
         </div>
       )}

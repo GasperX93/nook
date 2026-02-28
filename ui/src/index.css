@@ -36,3 +36,20 @@
     border-radius: 3px;
   }
 }
+
+/* Hide the multichain-widget intent description banner (info icon + text row) */
+.multichain__wrapper > .multichain__row:first-child {
+  display: none !important;
+}
+
+/* Hide required field asterisks — browsers normalise hex to rgb in inline styles */
+.multichain__text[style*="#f76808"],
+.multichain__text[style*="247, 104, 8"],
+.multichain__text[style*="247,104,8"] {
+  display: none !important;
+}
+
+/* Remove widget min-height so the card doesn't exceed the left column */
+.multichain__wrapper {
+  min-height: 0 !important;
+}
