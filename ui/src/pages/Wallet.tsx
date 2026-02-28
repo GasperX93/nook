@@ -1,6 +1,9 @@
 import { useQueryClient } from '@tanstack/react-query'
-import { Check, Copy, Gift } from 'lucide-react'
+import { Check, Copy, Gift, Wallet2 } from 'lucide-react'
 import { useState } from 'react'
+import '@rainbow-me/rainbowkit/styles.css'
+import '@upcoming/multichain-widget/styles.css'
+import { MultichainWidget } from '@upcoming/multichain-widget'
 import { weiToDai, plurToBzz } from '../api/bee'
 import { api } from '../api/client'
 import { useAddresses, useWallet } from '../api/queries'
@@ -36,6 +39,8 @@ export default function Wallet() {
   const [swapping, setSwapping] = useState(false)
   const [swapError, setSwapError] = useState<string | null>(null)
   const [swapDone, setSwapDone] = useState(false)
+
+  const [showTopUp, setShowTopUp] = useState(false)
 
   const [giftCode, setGiftCode] = useState('')
   const [redeeming, setRedeeming] = useState(false)
@@ -135,6 +140,45 @@ export default function Wallet() {
               <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
                 Not available
               </p>
+            )}
+          </div>
+
+          {/* Top up from external wallet */}
+          <div className="rounded-xl border p-5" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="flex items-center gap-2 mb-1">
+                  <Wallet2 size={13} style={{ color: 'rgb(var(--accent))' }} />
+                  <p className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
+                    Top up from external wallet
+                  </p>
+                </div>
+                <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  Send BZZ from any chain or token using MetaMask or WalletConnect.
+                </p>
+              </div>
+              <button
+                onClick={() => setShowTopUp(v => !v)}
+                disabled={!address}
+                className="px-3 py-1.5 rounded text-xs font-semibold uppercase tracking-widest shrink-0 ml-4 disabled:opacity-40"
+                style={{ backgroundColor: 'rgb(var(--bg))', border: '1px solid rgb(var(--border))' }}
+              >
+                {showTopUp ? 'Close' : 'Open'}
+              </button>
+            </div>
+            {showTopUp && address && (
+              <div className="mt-4">
+                <MultichainWidget
+                  destination={address}
+                  intent="initial-funding"
+                  hooks={{
+                    onCompletion: async () => {
+                      queryClient.invalidateQueries({ queryKey: ['bee', 'wallet'] })
+                      setShowTopUp(false)
+                    },
+                  }}
+                />
+              </div>
             )}
           </div>
 
