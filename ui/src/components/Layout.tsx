@@ -2,17 +2,20 @@ import { AlertTriangle, FileText, HardDrive, RefreshCw, Settings, Upload, User }
 import { useRef } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { useBeeHealth } from '../api/queries'
+import { useAppStore } from '../store/app'
 
-const navItems = [
+const baseNavItems = [
   { to: '/publish', icon: Upload, label: 'Publish' },
   { to: '/drive', icon: HardDrive, label: 'Drive' },
   { to: '/account', icon: User, label: 'Account' },
   { to: '/settings', icon: Settings, label: 'Settings' },
-  { to: '/logs', icon: FileText, label: 'Logs' },
 ]
 
 export default function Layout() {
   const { isError: beeOffline, isPending: beeChecking, isSuccess: beeOnline } = useBeeHealth()
+  const { devMode } = useAppStore()
+
+  const navItems = devMode ? [...baseNavItems, { to: '/logs', icon: FileText, label: 'Logs' }] : baseNavItems
 
   // Track whether Bee has connected at least once this session.
   // Before that we show a friendly "starting" indicator instead of an error.

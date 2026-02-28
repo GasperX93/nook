@@ -1,21 +1,24 @@
 import { create } from 'zustand'
 
-const GATEWAY_KEY = 'swarm-gateway-url'
 export const DEFAULT_GATEWAY = 'https://gateway.ethswarm.org'
+
+const DEV_MODE_KEY = 'nook-dev-mode'
 
 interface AppState {
   apiKey: string | null
   setApiKey: (key: string) => void
   gatewayUrl: string
-  setGatewayUrl: (url: string) => void
+  devMode: boolean
+  setDevMode: (enabled: boolean) => void
 }
 
 export const useAppStore = create<AppState>()(set => ({
   apiKey: null,
   setApiKey: apiKey => set({ apiKey }),
-  gatewayUrl: localStorage.getItem(GATEWAY_KEY) ?? DEFAULT_GATEWAY,
-  setGatewayUrl: gatewayUrl => {
-    localStorage.setItem(GATEWAY_KEY, gatewayUrl)
-    set({ gatewayUrl })
+  gatewayUrl: DEFAULT_GATEWAY,
+  devMode: localStorage.getItem(DEV_MODE_KEY) === 'true',
+  setDevMode: devMode => {
+    localStorage.setItem(DEV_MODE_KEY, String(devMode))
+    set({ devMode })
   },
 }))
