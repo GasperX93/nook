@@ -35,6 +35,6 @@ export const serverApi = {
    * Proxied through the server so that the immutable header is sent correctly
    * (Electron renderer fetch strips custom headers on localhost requests).
    */
-  buyStamp: async (amount: string, depth: number, immutable: boolean) =>
-    serverPost<{ batchID: string }>('/buy-stamp', { amount, depth, immutable }),
+  buyStamp: async (amount: string, depth: number, immutable: boolean, label?: string) =>
+    serverPost<{ batchID: string }>('/buy-stamp', { amount, depth, immutable, label }),
 }

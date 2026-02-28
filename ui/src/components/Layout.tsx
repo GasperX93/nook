@@ -1,4 +1,4 @@
-import { AlertTriangle, FileText, HardDrive, RefreshCw, Settings, Upload, Wallet } from 'lucide-react'
+import { AlertTriangle, FileText, HardDrive, RefreshCw, Settings, Upload, User } from 'lucide-react'
 import { useRef } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { useBeeHealth } from '../api/queries'
@@ -6,7 +6,7 @@ import { useBeeHealth } from '../api/queries'
 const navItems = [
   { to: '/publish', icon: Upload, label: 'Publish' },
   { to: '/drive', icon: HardDrive, label: 'Drive' },
-  { to: '/wallet', icon: Wallet, label: 'Wallet' },
+  { to: '/account', icon: User, label: 'Account' },
   { to: '/settings', icon: Settings, label: 'Settings' },
   { to: '/logs', icon: FileText, label: 'Logs' },
 ]

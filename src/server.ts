@@ -173,10 +173,11 @@ export function runServer() {
     }
   })
   router.post('/buy-stamp', async context => {
-    const { amount, depth, immutable } = context.request.body as {
+    const { amount, depth, immutable, label } = context.request.body as {
       amount: string
       depth: number
       immutable: boolean
+      label?: string
     }
 
     if (!amount || !depth) {
@@ -188,7 +189,8 @@ export function runServer() {
 
     try {
       const beePassword = readConfigYaml().password as string
-      const res = await fetch(`http://127.0.0.1:1633/stamps/${amount}/${depth}`, {
+      const qs = label ? `?label=${encodeURIComponent(label)}` : ''
+      const res = await fetch(`http://127.0.0.1:1633/stamps/${amount}/${depth}${qs}`, {
         method: 'POST',
         headers: {
           immutable: String(Boolean(immutable)),

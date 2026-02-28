@@ -581,14 +581,13 @@ function RecordRow({
       key={record.id}
       draggable={draggable}
       onDragStart={onDragStart ? e => onDragStart(e, record.id) : undefined}
-      className={`rounded-lg border px-4 py-3 flex items-center gap-4 cursor-grab active:cursor-grabbing${
+      className={`px-2 py-2 flex items-center gap-3 cursor-grab active:cursor-grabbing transition-colors hover:bg-white/[0.02]${
         indented ? ' ml-6' : ''
       }`}
-      style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
     >
       {/* Type icon or thumbnail */}
       <div
-        className="w-8 h-8 rounded-lg overflow-hidden flex items-center justify-center shrink-0"
+        className="w-6 h-6 rounded overflow-hidden flex items-center justify-center shrink-0"
         style={{ backgroundColor: 'rgb(var(--bg))' }}
       >
         {record.type === 'file' && isImageFile(record.name) ? (
@@ -601,35 +600,31 @@ function RecordRow({
             alt=""
           />
         ) : record.type === 'website' ? (
-          <Globe size={14} style={{ color: 'rgb(var(--fg-muted))' }} />
+          <Globe size={12} style={{ color: 'rgb(var(--fg-muted))' }} />
         ) : record.type === 'folder' ? (
-          <FolderOpen size={14} style={{ color: 'rgb(var(--fg-muted))' }} />
+          <FolderOpen size={12} style={{ color: 'rgb(var(--fg-muted))' }} />
         ) : (
-          <File size={14} style={{ color: 'rgb(var(--fg-muted))' }} />
+          <File size={12} style={{ color: 'rgb(var(--fg-muted))' }} />
         )}
       </div>
 
-      {/* Name + hash */}
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <p className="text-sm font-medium truncate">{record.name}</p>
-          {record.hasFeed && (
-            <span
-              className="shrink-0 flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium"
-              style={{ backgroundColor: 'rgba(247,104,8,0.12)', color: 'rgb(var(--accent))' }}
-            >
-              <Rss size={9} />
-              Feed
-            </span>
-          )}
-        </div>
-        <p className="text-xs font-mono mt-0.5 truncate" style={{ color: 'rgb(var(--fg-muted))' }}>
-          {linkHash.slice(0, 20)}…
-        </p>
+      {/* Name + feed badge */}
+      <div className="flex items-center gap-2 flex-1 min-w-0">
+        <p className="text-xs font-medium truncate">{record.name}</p>
+        {record.hasFeed && (
+          <button
+            onClick={() => onUpdate(record.id)}
+            className="shrink-0 flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium transition-opacity hover:opacity-80"
+            style={{ backgroundColor: 'rgba(247,104,8,0.12)', color: 'rgb(var(--accent))' }}
+          >
+            <RefreshCw size={9} />
+            Update content
+          </button>
+        )}
       </div>
 
       {/* Size */}
-      <span className="text-xs shrink-0 hidden sm:block" style={{ color: 'rgb(var(--fg-muted))' }}>
+      <span className="text-xs shrink-0 hidden sm:block w-14 text-right tabular-nums" style={{ color: 'rgb(var(--fg-muted))' }}>
         {formatBytes(record.size)}
       </span>
 
@@ -637,7 +632,7 @@ function RecordRow({
       <div className="flex items-center gap-2 shrink-0">
         <ExpiryBar expiresAt={record.expiresAt} uploadedAt={record.uploadedAt} />
         <span
-          className="text-[10px] uppercase tracking-widest font-semibold w-16 text-right"
+          className="text-[10px] uppercase tracking-widest font-semibold w-14 text-right"
           style={{ color: urgent ? '#ef4444' : 'rgb(var(--fg-muted))' }}
         >
           {expiry}
@@ -645,60 +640,49 @@ function RecordRow({
       </div>
 
       {/* Actions */}
-      <div className="flex items-center gap-1 shrink-0">
+      <div className="flex items-center gap-0.5 shrink-0">
         {urgent && (
           <button
             onClick={() => onExtend(record.id)}
-            className="px-2 py-1 rounded text-[10px] font-semibold uppercase tracking-widest"
+            className="px-2 py-1 rounded text-[10px] font-semibold uppercase tracking-widest mr-1"
             style={{ backgroundColor: 'rgba(239,68,68,0.15)', color: '#ef4444' }}
           >
             Extend
           </button>
         )}
-        {record.hasFeed && (
-          <button
-            onClick={() => onUpdate(record.id)}
-            title="Publish update"
-            className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-semibold uppercase tracking-widest transition-colors"
-            style={{ backgroundColor: 'rgba(247,104,8,0.12)', color: 'rgb(var(--accent))' }}
-          >
-            <Rss size={9} />
-            Update
-          </button>
-        )}
         <button
           onClick={() => onCopy(record.id, linkHash)}
           title="Copy link"
-          className="w-7 h-7 flex items-center justify-center rounded transition-colors"
+          className="w-6 h-6 flex items-center justify-center rounded transition-colors"
           style={{ color: copiedId === record.id ? '#4ade80' : 'rgb(var(--fg-muted))' }}
         >
-          <Copy size={13} />
+          <Copy size={12} />
         </button>
         <a
           href={record.type === 'website' ? `${getBeeUrl()}/bzz/${linkHash}/` : `${gatewayUrl}/bzz/${linkHash}/`}
           target="_blank"
           rel="noreferrer"
           title="Open"
-          className="w-7 h-7 flex items-center justify-center rounded"
+          className="w-6 h-6 flex items-center justify-center rounded"
           style={{ color: 'rgb(var(--fg-muted))' }}
         >
-          <ExternalLink size={13} />
+          <ExternalLink size={12} />
         </a>
         <button
           onClick={() => onDownload(record.id, record.hash, record.name)}
           title="Download"
-          className="w-7 h-7 flex items-center justify-center rounded transition-colors"
+          className="w-6 h-6 flex items-center justify-center rounded transition-colors"
           style={{ color: 'rgb(var(--fg-muted))' }}
         >
-          {downloadingId === record.id ? <RefreshCw size={13} className="animate-spin" /> : <Download size={13} />}
+          {downloadingId === record.id ? <RefreshCw size={12} className="animate-spin" /> : <Download size={12} />}
         </button>
         <button
           onClick={() => onRemove(record.id)}
           title="Remove from Drive"
-          className="w-7 h-7 flex items-center justify-center rounded transition-colors hover:text-red-400"
+          className="w-6 h-6 flex items-center justify-center rounded transition-colors hover:text-red-400"
           style={{ color: 'rgb(var(--fg-muted))' }}
         >
-          <Trash2 size={13} />
+          <Trash2 size={12} />
         </button>
       </div>
     </div>
@@ -907,9 +891,11 @@ export default function Drive() {
               No files match "{search}"
             </p>
           )}
-          {filteredRecords.map(record => (
-            <RecordRow key={record.id} record={record} {...commonRowProps} draggable={false} onDragStart={undefined} />
-          ))}
+          <div className="divide-y" style={{ borderColor: 'rgb(var(--border))' }}>
+            {filteredRecords.map(record => (
+              <RecordRow key={record.id} record={record} {...commonRowProps} draggable={false} onDragStart={undefined} />
+            ))}
+          </div>
         </div>
       ) : (
         <div className="space-y-2">
@@ -1041,7 +1027,9 @@ export default function Drive() {
                         </p>
                       </div>
                     ) : (
-                      folderRecords.map(record => <RecordRow key={record.id} record={record} {...commonRowProps} />)
+                      <div className="divide-y" style={{ borderColor: 'rgb(var(--border))' }}>
+                      {folderRecords.map(record => <RecordRow key={record.id} record={record} {...commonRowProps} />)}
+                    </div>
                     )}
                   </div>
                 )}
@@ -1098,7 +1086,7 @@ export default function Drive() {
                 </div>
               )}
 
-              <div className="space-y-2">
+              <div className="divide-y" style={{ borderColor: 'rgb(var(--border))' }}>
                 {rootRecords.map(record => (
                   <RecordRow key={record.id} record={record} {...commonRowProps} />
                 ))}

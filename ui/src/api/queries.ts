@@ -122,8 +122,17 @@ export function useBuyStamp() {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: async ({ amount, depth, immutable }: { amount: string; depth: number; immutable?: boolean }) =>
-      serverApi.buyStamp(amount, depth, Boolean(immutable)),
+    mutationFn: async ({
+      amount,
+      depth,
+      immutable,
+      label,
+    }: {
+      amount: string
+      depth: number
+      immutable?: boolean
+      label?: string
+    }) => serverApi.buyStamp(amount, depth, Boolean(immutable), label),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['bee', 'stamps'] })
     },
