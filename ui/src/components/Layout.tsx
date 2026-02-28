@@ -1,4 +1,4 @@
-import { AlertTriangle, FileText, HardDrive, RefreshCw, Settings, Upload, User } from 'lucide-react'
+import { AlertTriangle, HardDrive, RefreshCw, Settings, Terminal, Upload, User } from 'lucide-react'
 import { useRef } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { useBeeHealth } from '../api/queries'
@@ -15,7 +15,7 @@ export default function Layout() {
   const { isError: beeOffline, isPending: beeChecking, isSuccess: beeOnline } = useBeeHealth()
   const { devMode } = useAppStore()
 
-  const navItems = devMode ? [...baseNavItems, { to: '/logs', icon: FileText, label: 'Logs' }] : baseNavItems
+  const navItems = devMode ? [...baseNavItems, { to: '/dev', icon: Terminal, label: 'Developer' }] : baseNavItems
 
   // Track whether Bee has connected at least once this session.
   // Before that we show a friendly "starting" indicator instead of an error.
