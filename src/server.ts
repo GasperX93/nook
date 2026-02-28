@@ -187,9 +187,13 @@ export function runServer() {
     }
 
     try {
+      const beePassword = readConfigYaml().password as string
       const res = await fetch(`http://127.0.0.1:1633/stamps/${amount}/${depth}`, {
         method: 'POST',
-        headers: { immutable: String(Boolean(immutable)) },
+        headers: {
+          immutable: String(Boolean(immutable)),
+          ...(beePassword ? { Authorization: `Bearer ${beePassword}` } : {}),
+        },
       })
       const data = (await res.json()) as { batchID: string }
 
