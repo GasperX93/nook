@@ -23,7 +23,7 @@
     "publish:mac:arm64": "electron-forge publish --platform=darwin --arch=arm64",
     "publish:mac:x64": "electron-forge publish --platform=darwin --arch=x64",
     "publish:linux:arm64": "electron-forge publish --platform=linux --arch=arm64",
-    "build:ui": "cd ui && npm run build && cd ..",
+    "build:ui": "cd ui && rimraf dist && npm run build && cd ..",
     "build:desktop": "tsc",
     "build": "npm run build:desktop && npm run build:ui && npm run copy:ui",
     "copy:ui": "node devkit.mjs copy:ui",
