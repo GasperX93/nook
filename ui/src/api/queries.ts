@@ -28,7 +28,8 @@ export function usePeers() {
   return useQuery({
     queryKey: queryKeys.peers,
     queryFn: api.getPeers,
-    refetchInterval: 10_000,
+    refetchInterval: query => (query.state.status === 'error' ? 30_000 : 10_000),
+    retry: false,
   })
 }
 
@@ -97,7 +98,8 @@ export function useWallet() {
   return useQuery({
     queryKey: ['bee', 'wallet'],
     queryFn: beeApi.getWallet,
-    refetchInterval: 15_000,
+    refetchInterval: query => (query.state.status === 'error' ? 30_000 : 15_000),
+    retry: false,
   })
 }
 
@@ -113,7 +115,8 @@ export function useStamps() {
   return useQuery({
     queryKey: ['bee', 'stamps'],
     queryFn: beeApi.getStamps,
-    refetchInterval: 30_000,
+    refetchInterval: query => (query.state.status === 'error' ? 60_000 : 30_000),
+    retry: false,
     select: data => data.stamps,
   })
 }

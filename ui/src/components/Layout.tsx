@@ -1,7 +1,7 @@
-import { AlertTriangle, HardDrive, RefreshCw, Settings, Terminal, Upload, User } from 'lucide-react'
+import { AlertTriangle, HardDrive, RefreshCw, Settings, Terminal, Upload, User, Wallet } from 'lucide-react'
 import { useRef } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
-import { useBeeHealth, usePeers } from '../api/queries'
+import { useBeeHealth, usePeers, useStatus } from '../api/queries'
 import { useAppStore } from '../store/app'
 
 const baseNavItems = [
@@ -14,6 +14,7 @@ const baseNavItems = [
 export default function Layout() {
   const { isError: beeOffline, isPending: beeChecking, isSuccess: beeOnline } = useBeeHealth()
   const { data: peers } = usePeers()
+  const { data: status } = useStatus()
   const { devMode } = useAppStore()
   const navigate = useNavigate()
 
@@ -27,6 +28,7 @@ export default function Layout() {
 
   const showStarting = !beeOnline && !hasEverBeenOnline.current
   const showDown = beeOffline && !beeChecking && hasEverBeenOnline.current
+  const showFundingWarning = status?.needsFunding && !beeOnline && !beeChecking
 
   const peerCount = peers?.connections ?? 0
   const isSyncing = beeOnline && peerCount === 0
@@ -102,6 +104,26 @@ export default function Layout() {
           >
             <AlertTriangle size={13} className="shrink-0" style={{ color: '#ef4444' }} />
             <span style={{ color: '#ef4444' }}>Bee node is not running. Check the Logs tab for details.</span>
+          </div>
+        )}
+
+        {/* Needs funding — shown when Bee exits because wallet has no xDAI */}
+        {showFundingWarning && (
+          <div
+            className="flex items-center gap-2.5 px-4 py-2.5 text-xs shrink-0"
+            style={{ backgroundColor: 'rgba(247,104,8,0.08)', borderBottom: '1px solid rgba(247,104,8,0.15)' }}
+          >
+            <Wallet size={12} className="shrink-0" style={{ color: 'rgb(var(--accent))' }} />
+            <span style={{ color: 'rgb(var(--accent))' }}>
+              Fund your node wallet to start.{' '}
+              <button
+                onClick={() => navigate('/account')}
+                className="underline font-semibold"
+                style={{ color: 'rgb(var(--accent))' }}
+              >
+                Go to Wallet →
+              </button>
+            </span>
           </div>
         )}
 

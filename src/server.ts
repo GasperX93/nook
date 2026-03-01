@@ -186,7 +186,11 @@ export function runServer() {
     } catch (error) {
       logger.error(error)
       context.status = 500
-      context.body = { message: 'Failed to buy stamp', error }
+      const beeMessage: string = (error as any)?.responseBody?.message ?? ''
+      const message = beeMessage.toLowerCase().includes('syncing')
+        ? 'Bee is syncing postage state from the chain. This can take a few minutes on first start — please try again shortly.'
+        : 'Failed to create drive. Please try again.'
+      context.body = { message }
     }
   })
 

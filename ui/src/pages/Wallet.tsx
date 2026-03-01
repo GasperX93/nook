@@ -6,7 +6,7 @@ import '@upcoming/multichain-widget/styles.css'
 import { MultichainWidget } from '@upcoming/multichain-widget'
 import { weiToDai, plurToBzz } from '../api/bee'
 import { api } from '../api/client'
-import { useAddresses, useWallet } from '../api/queries'
+import { useAddresses, useBeeHealth, useWallet } from '../api/queries'
 import { useAppStore } from '../store/app'
 
 const WIDGET_THEME = {
@@ -36,8 +36,9 @@ const WIDGET_THEME = {
 
 export default function Wallet() {
   const queryClient = useQueryClient()
-  const { data: wallet, isLoading: walletLoading } = useWallet()
-  const { data: addresses, isLoading: addrLoading } = useAddresses()
+  const { data: wallet, isError: walletError } = useWallet()
+  const { data: addresses } = useAddresses()
+  const { isSuccess: beeOnline } = useBeeHealth()
   const [copiedAddr, setCopiedAddr] = useState(false)
   const [swapAmount, setSwapAmount] = useState('')
   const [swapping, setSwapping] = useState(false)
@@ -48,8 +49,9 @@ export default function Wallet() {
   const [redeemError, setRedeemError] = useState<string | null>(null)
   const [redeemDone, setRedeemDone] = useState(false)
 
-  const bzz = wallet ? Number(plurToBzz(wallet.bzzBalance)).toFixed(4) : '—'
-  const dai = wallet ? Number(weiToDai(wallet.nativeTokenBalance)).toFixed(4) : '—'
+  const syncing = beeOnline && walletError
+  const bzz = wallet ? Number(plurToBzz(wallet.bzzBalance)).toFixed(4) : syncing ? 'syncing…' : '—'
+  const dai = wallet ? Number(weiToDai(wallet.nativeTokenBalance)).toFixed(4) : syncing ? 'syncing…' : '—'
   const address = addresses?.ethereum ?? ''
   const isEmpty =
     wallet &&
@@ -95,8 +97,13 @@ export default function Wallet() {
       await api.redeem(giftCode.trim())
       setRedeemDone(true)
       setGiftCode('')
-      queryClient.invalidateQueries({ queryKey: ['bee', 'wallet'] })
-      setTimeout(() => setRedeemDone(false), 4000)
+      // Poll wallet every 3s for up to 30s to pick up balance change after tx settles
+      let ticks = 0
+      const poll = setInterval(() => {
+        queryClient.refetchQueries({ queryKey: ['bee', 'wallet'] })
+        if (++ticks >= 10) clearInterval(poll)
+      }, 3000)
+      setTimeout(() => setRedeemDone(false), 30_000)
     } catch (err) {
       setRedeemError(err instanceof Error ? err.message : 'Redeem failed')
     } finally {
@@ -104,21 +111,14 @@ export default function Wallet() {
     }
   }
 
-  const isLoading = walletLoading || addrLoading
-
   return (
     <div className="p-6 max-w-4xl">
       <h1 className="text-base font-semibold uppercase tracking-widest mb-6" style={{ color: 'rgb(var(--fg-muted))' }}>
         Wallet
       </h1>
 
-      {isLoading ? (
-        <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
-          Loading…
-        </p>
-      ) : (
-        <div className="space-y-5">
-          {/* Address — full width slim row */}
+      <div className="space-y-5">
+        {/* Address — full width slim row */}
           <div className="flex items-center gap-3 px-1">
             <span className="text-xs uppercase tracking-widest shrink-0" style={{ color: 'rgb(var(--fg-muted))' }}>
               Address
@@ -302,7 +302,6 @@ export default function Wallet() {
 
           </div>
         </div>
-      )}
     </div>
   )
 }

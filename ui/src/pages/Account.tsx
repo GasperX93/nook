@@ -176,7 +176,7 @@ function BuyModal({ onClose }: { onClose: () => void }) {
   const [driveLabel, setDriveLabel] = useState('')
   const [sizeIdx, setSizeIdx] = useState(1)
   const [durationIdx, setDurationIdx] = useState(1)
-  const [stampImmutable, setStampImmutable] = useState(false)
+  const [stampImmutable, setStampImmutable] = useState(true)
   const [buying, setBuying] = useState(false)
   const [buyDone, setBuyDone] = useState(false)
   const [buyError, setBuyError] = useState<string | null>(null)
@@ -273,26 +273,27 @@ function BuyModal({ onClose }: { onClose: () => void }) {
           <p className="text-xs uppercase tracking-widest mb-2" style={{ color: 'rgb(var(--fg-muted))' }}>
             Type
           </p>
-          <div className="flex gap-2">
-            {(['mutable', 'immutable'] as const).map(type => {
-              const isImmutable = type === 'immutable'
-              const selected = stampImmutable === isImmutable
-
-              return (
-                <button
-                  key={type}
-                  onClick={() => setStampImmutable(isImmutable)}
-                  className="px-4 py-2 rounded-lg border text-sm font-medium transition-all capitalize"
-                  style={{
-                    borderColor: selected ? 'rgb(var(--accent))' : 'rgb(var(--border))',
-                    backgroundColor: selected ? 'rgba(247,104,8,0.08)' : 'transparent',
-                    color: selected ? 'rgb(var(--fg))' : 'rgb(var(--fg-muted))',
-                  }}
-                >
-                  {type}
-                </button>
-              )
-            })}
+          <div className="grid grid-cols-2 gap-2">
+            {([true, false] as const).map(isImmutable => (
+              <button
+                key={String(isImmutable)}
+                onClick={() => setStampImmutable(isImmutable)}
+                className="px-3 py-2.5 rounded-lg border text-left transition-all space-y-0.5"
+                style={{
+                  borderColor: stampImmutable === isImmutable ? 'rgb(var(--accent))' : 'rgb(var(--border))',
+                  backgroundColor: stampImmutable === isImmutable ? 'rgba(247,104,8,0.08)' : 'transparent',
+                }}
+              >
+                <p className="text-sm font-medium" style={{ color: 'rgb(var(--fg))' }}>
+                  {isImmutable ? 'Immutable' : 'Mutable'}
+                </p>
+                <p className="text-[10px] leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  {isImmutable
+                    ? 'Content can never be replaced. Good for permanent archives.'
+                    : 'Content can be overwritten. Required for feeds and updatable sites.'}
+                </p>
+              </button>
+            ))}
           </div>
         </div>
 
@@ -438,7 +439,7 @@ function DriveListHeader() {
 // ─── My Storage tab ────────────────────────────────────────────────────────────
 
 function MyStorage() {
-  const { data: stamps, isLoading } = useStamps()
+  const { data: stamps, isError: stampsError } = useStamps()
   const [toppingUp, setToppingUp] = useState<Stamp | null>(null)
   const [buyOpen, setBuyOpen] = useState(false)
 
@@ -446,16 +447,21 @@ function MyStorage() {
   const warnLowTtl = allStamps.some(s => s.usable && s.batchTTL < 7 * 86400)
   const driveLabel = allStamps.length === 1 ? 'My drive' : 'My drives'
 
-  if (isLoading) {
-    return (
-      <p className="text-sm mt-4" style={{ color: 'rgb(var(--fg-muted))' }}>
-        Loading…
-      </p>
-    )
-  }
-
   return (
     <div className="space-y-4">
+      {/* Stamps not ready banner */}
+      {stampsError && (
+        <div
+          className="flex items-center gap-2 px-4 py-3 rounded-lg text-xs"
+          style={{ backgroundColor: 'rgba(247,104,8,0.08)', border: '1px solid rgba(247,104,8,0.15)' }}
+        >
+          <AlertTriangle size={13} style={{ color: 'rgb(var(--accent))' }} className="shrink-0" />
+          <span style={{ color: 'rgb(var(--accent))' }}>
+            Bee is syncing postage state from the chain. Creating drives will be available shortly.
+          </span>
+        </div>
+      )}
+
       {/* TTL warning banner */}
       {warnLowTtl && (
         <div

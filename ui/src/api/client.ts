@@ -41,6 +41,8 @@ export interface Info {
 export interface Status {
   bee: NodeStatus
   config: Record<string, unknown> | null
+  needsFunding: boolean
+  address?: string
 }
 
 export interface Peers {

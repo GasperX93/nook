@@ -7,8 +7,8 @@ export function runMigrations() {
 
   const config = readConfigYaml()
 
-  if (config['skip-postage-snapshot'] !== undefined) {
-    deleteKeyFromConfigYaml('skip-postage-snapshot')
+  if (config['skip-postage-snapshot'] !== true && config['skip-postage-snapshot'] !== 'true') {
+    writeConfigYaml({ 'skip-postage-snapshot': true })
   }
 
   if (config['storage-incentives-enable'] === undefined) {
@@ -19,8 +19,8 @@ export function runMigrations() {
     writeConfigYaml({ 'blockchain-rpc-endpoint': config['swap-endpoint'] })
   }
 
-  if (!config['blockchain-rpc-endpoint']) {
-    writeConfigYaml({ 'blockchain-rpc-endpoint': 'https://xdai.fairdatasociety.org' })
+  if (!config['blockchain-rpc-endpoint'] || config['blockchain-rpc-endpoint'] === 'https://xdai.fairdatasociety.org') {
+    writeConfigYaml({ 'blockchain-rpc-endpoint': 'https://rpc.gnosischain.com' })
   }
 
   if (config['swap-enable'] === 'false' || config['swap-enable'] === false) {

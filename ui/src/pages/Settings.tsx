@@ -5,7 +5,7 @@ import { useAppStore } from '../store/app'
 
 type SettingsTab = 'general' | 'network'
 
-const DEFAULT_RPC = 'https://xdai.fairdatasociety.org'
+const DEFAULT_RPC = 'https://rpc.gnosischain.com'
 
 export default function Settings() {
   const [tab, setTab] = useState<SettingsTab>('general')

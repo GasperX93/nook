@@ -15,8 +15,14 @@ async function serverPost<T>(path: string, body: unknown): Promise<T> {
   })
 
   if (!response.ok) {
-    const text = await response.text().catch(() => '')
-    throw new Error(`Server ${path}: ${response.status} ${text}`)
+    let message: string
+    try {
+      const body = await response.json()
+      message = body.message ?? `${response.status} error`
+    } catch {
+      message = await response.text().catch(() => `${response.status} error`)
+    }
+    throw new Error(message)
   }
 
   return response.json() as Promise<T>
