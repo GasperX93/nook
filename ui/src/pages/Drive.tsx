@@ -76,7 +76,7 @@ function ExpiryBar({ expiresAt, uploadedAt }: { expiresAt: number; uploadedAt: n
 
 // ─── Extend modal ─────────────────────────────────────────────────────────────
 
-function ExtendModal({ stampId, onClose }: { stampId: string; onClose: () => void }) {
+function ExtendModal({ stampId, fileName, sharedCount, onClose }: { stampId: string; fileName: string; sharedCount: number; onClose: () => void }) {
   const [durationIdx, setDurationIdx] = useState(1)
   const { data: chainState } = useChainState()
   const topup = useTopupStamp()
@@ -101,9 +101,11 @@ function ExtendModal({ stampId, onClose }: { stampId: string; onClose: () => voi
         onClick={e => e.stopPropagation()}
       >
         <div>
-          <p className="text-sm font-semibold">Extend storage</p>
+          <p className="text-sm font-semibold">Extend drive</p>
           <p className="text-xs mt-1" style={{ color: 'rgb(var(--fg-muted))' }}>
-            Add more time to keep your file available.
+            {sharedCount > 0
+              ? `Extends the drive holding ${fileName} and ${sharedCount} other ${sharedCount === 1 ? 'file' : 'files'}.`
+              : `Extends the drive holding ${fileName}.`}
           </p>
         </div>
 
@@ -654,7 +656,7 @@ function RecordRow({
             : { color: 'rgb(var(--fg-muted))' }
           }
         >
-          Top up
+          Extend
         </button>
         <button
           onClick={() => onCopy(record.id, linkHash)}
@@ -1117,12 +1119,20 @@ export default function Drive() {
         </div>
       )}
 
-      {extendingId && (
-        <ExtendModal
-          stampId={records.find(r => r.id === extendingId)?.stampId ?? ''}
-          onClose={() => setExtendingId(null)}
-        />
-      )}
+      {extendingId && (() => {
+        const extendingRecord = records.find(r => r.id === extendingId)
+        const sharedCount = extendingRecord
+          ? records.filter(r => r.stampId === extendingRecord.stampId && r.id !== extendingId).length
+          : 0
+        return (
+          <ExtendModal
+            stampId={extendingRecord?.stampId ?? ''}
+            fileName={extendingRecord?.name ?? ''}
+            sharedCount={sharedCount}
+            onClose={() => setExtendingId(null)}
+          />
+        )
+      })()}
 
       {updatingRecord && <UpdateFeedModal record={updatingRecord} onClose={() => setUpdatingId(null)} />}
 

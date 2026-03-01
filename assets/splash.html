@@ -2,81 +2,85 @@
 <html lang='en'>
 <head>
   <meta charset='UTF-8'>
-  <title>Splash</title>
+  <title>Nook</title>
   <style>
     @font-face {
-      font-family: iA-Writer;
-      src: url("iAWriterQuattroS-Regular.woff");
+      font-family: 'iA-Writer';
+      src: url('iAWriterQuattroS-Regular.woff');
     }
 
     * {
-      -webkit-touch-callout:none;
-      -webkit-user-select:none;
-      -moz-user-select:none;
-      -ms-user-select:none;
-      user-select:none;
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      -webkit-user-select: none;
+      user-select: none;
     }
 
     body {
-      margin: 0;
-      overflow: hidden;
-    }
-    img{
-      display: block;
-    }
-
-    .Hello {
-      width: 44px;
-      height: 23px;
-      margin: 0 128px 123px;
-      font-family: iA-Writer, serif;
-      font-size: 18px;
-      font-weight: normal;
-      font-stretch: normal;
-      font-style: normal;
-      line-height: normal;
-      letter-spacing: normal;
-      text-align: center;
-      color: #595959;
-    }
-
-    img.logo {
-      width: 300px;
-      height: 60px;
-      margin: 123px 0 124px;
-      object-fit: contain;
-    }
-
-    .Initializing {
-      width: 220px;
-      height: 23px;
-      margin: 124px 0 0 90px;
-      font-family: iA-Writer, serif;
-      font-size: 18px;
-      font-weight: normal;
-      font-stretch: normal;
-      font-style: normal;
-      line-height: normal;
-      letter-spacing: normal;
-      text-align: left;
-      color: #595959;
-    }
-
-    .Rectangle {
-      overflow: hidden;
       width: 800px;
       height: 600px;
-      padding: 124px 250px 123px;
-      background-image: linear-gradient(to bottom, #fff, #f9f9f9);
+      overflow: hidden;
+      background: rgb(15, 17, 23);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      font-family: 'iA-Writer', serif;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: rgb(247, 104, 8);
+      margin-bottom: 20px;
+      box-shadow: 0 0 12px rgba(247, 104, 8, 0.6);
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    .wordmark {
+      font-size: 48px;
+      font-weight: 700;
+      letter-spacing: 0.3em;
+      text-transform: uppercase;
+      color: rgb(240, 244, 248);
+    }
+
+
+    .tagline {
+      margin-top: 10px;
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.2em;
+      color: rgb(120, 130, 150);
+    }
+
+    .status {
+      position: absolute;
+      bottom: 44px;
+      left: 0;
+      right: 0;
+      text-align: center;
+      font-size: 10px;
+      font-weight: 500;
+      letter-spacing: 0.25em;
+      text-transform: uppercase;
+      color: rgb(60, 68, 86);
     }
   </style>
 </head>
 <body>
-<div class='Rectangle'>
-  <div class='Hello'>Hello</div>
-  <img src='nook-inv-removebg-preview.png' class='logo'>
-  <div class='Initializing'><span id='message'>Starting</span><span id='dots'>...</span></div>
-</div>
+  <div class='dot'></div>
+  <div class='wordmark'>Nook</div>
+  <div class='tagline'>Drive on top of Swarm Decentralised Storage</div>
+
+  <div class='status'><span id='message'>Starting</span><span id='dots'></span></div>
 </body>
 <script>
   const urlParams = new URLSearchParams(window.location.search)
@@ -87,11 +91,7 @@
 
   const dotsElem = document.getElementById('dots')
   setInterval(() => {
-    if (dotsElem.innerText.length >= 3) {
-      dotsElem.innerText = ''
-    } else {
-      dotsElem.innerText += '.'
-    }
+    dotsElem.innerText = dotsElem.innerText.length >= 3 ? '' : dotsElem.innerText + '.'
   }, 500)
 </script>
 </html>

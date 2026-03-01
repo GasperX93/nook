@@ -106,7 +106,7 @@ function TopUpModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) {
         onClick={e => e.stopPropagation()}
       >
         <div>
-          <p className="text-sm font-semibold">Top up drive</p>
+          <p className="text-sm font-semibold">Extend drive</p>
           <p className="text-xs mt-1" style={{ color: 'rgb(var(--fg-muted))' }}>
             {stamp.label || `${stamp.batchID.slice(0, 20)}…`}
           </p>
@@ -158,7 +158,7 @@ function TopUpModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) {
             className="flex-1 py-2 rounded-lg text-sm font-semibold disabled:opacity-40"
             style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
           >
-            {topup.isPending ? 'Topping up…' : 'Top up'}
+            {topup.isPending ? 'Extending…' : 'Extend drive'}
           </button>
         </div>
       </div>
@@ -399,7 +399,7 @@ function DriveRow({ stamp, onTopUp }: { stamp: Stamp; onTopUp: () => void }) {
             className="text-xs font-medium transition-colors"
             style={{ color: 'rgb(var(--fg-muted))' }}
           >
-            Top up
+            Extend drive
           </button>
         )}
       </div>
@@ -464,7 +464,7 @@ function MyStorage() {
         >
           <AlertTriangle size={13} style={{ color: '#f59e0b' }} className="shrink-0" />
           <span style={{ color: '#f59e0b' }}>
-            One or more drives will expire in less than 30 days. Top up to avoid losing storage.
+            One or more drives will expire in less than 30 days. Extend to avoid losing storage.
           </span>
         </div>
       )}
