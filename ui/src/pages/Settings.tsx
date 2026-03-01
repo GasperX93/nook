@@ -1,13 +1,24 @@
 import { useEffect, useState } from 'react'
-import { useConfig, useInfo, useUpdateConfig } from '../api/queries'
+import { useNavigate } from 'react-router-dom'
+import { useAddresses, useBeeHealth, useConfig, useInfo, usePeers, useTopology, useUpdateConfig } from '../api/queries'
 import { useAppStore } from '../store/app'
+
+type SettingsTab = 'general' | 'network'
 
 const DEFAULT_RPC = 'https://xdai.fairdatasociety.org'
 
 export default function Settings() {
+  const [tab, setTab] = useState<SettingsTab>('general')
+  const navigate = useNavigate()
+
   const { data: config, isLoading, isError: configError } = useConfig()
   const { data: info } = useInfo()
   const updateConfig = useUpdateConfig()
+
+  const { data: health } = useBeeHealth()
+  const { data: peers } = usePeers()
+  const { data: topology } = useTopology()
+  const { data: addresses } = useAddresses()
 
   const [rpcDraft, setRpcDraft] = useState('')
   const [rpcSaved, setRpcSaved] = useState(false)
@@ -41,91 +52,142 @@ export default function Settings() {
         Settings
       </h1>
 
-      {/* Blockchain RPC URL */}
-      <div className="rounded-xl border p-5 space-y-4" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
-        <div>
-          <p className="text-xs uppercase tracking-widest mb-1" style={{ color: 'rgb(var(--fg-muted))' }}>
-            Blockchain RPC URL
-          </p>
-          <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-            Gnosis Chain RPC endpoint used for wallet and swap.
-          </p>
-        </div>
-        {isLoading ? (
-          <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>Loading…</p>
-        ) : configError ? (
-          <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>Nook backend not available.</p>
-        ) : (
-          <div className="flex gap-3">
-            <input
-              type="text"
-              value={rpcDraft}
-              onChange={e => setRpcDraft(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && saveRpc()}
-              placeholder={DEFAULT_RPC}
-              className="flex-1 rounded-lg border px-3 py-2 text-xs font-mono focus:outline-none"
-              style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
-            />
-            <button
-              onClick={saveRpc}
-              disabled={updateConfig.isPending}
-              className="px-4 py-2 rounded-lg text-xs font-semibold shrink-0 transition-colors disabled:opacity-40"
-              style={{
-                backgroundColor: rpcSaved ? 'rgba(74,222,128,0.15)' : 'rgb(var(--accent))',
-                color: rpcSaved ? '#4ade80' : '#fff',
-              }}
-            >
-              {rpcSaved ? 'Saved' : 'Save'}
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Developer mode toggle */}
-      <div className="rounded-xl border p-5" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-xs uppercase tracking-widest mb-1" style={{ color: 'rgb(var(--fg-muted))' }}>
-              Developer mode
-            </p>
-            <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-              Shows logs and node configuration.
-            </p>
-          </div>
+      {/* Tabs */}
+      <div className="flex gap-1 mb-6 border-b" style={{ borderColor: 'rgb(var(--border))' }}>
+        {(['general', 'network'] as SettingsTab[]).map(t => (
           <button
-            role="switch"
-            aria-checked={devMode}
-            onClick={() => setDevMode(!devMode)}
-            className="relative rounded-full transition-colors shrink-0"
-            style={{
-              backgroundColor: devMode ? 'rgb(var(--accent))' : 'rgb(var(--border))',
-              width: 40,
-              height: 22,
-            }}
+            key={t}
+            onClick={() => setTab(t)}
+            className="px-4 py-2 text-sm font-medium transition-colors relative capitalize"
+            style={{ color: tab === t ? 'rgb(var(--fg))' : 'rgb(var(--fg-muted))' }}
           >
-            <span
-              className="absolute top-0.5 rounded-full bg-white transition-transform"
-              style={{
-                width: 18,
-                height: 18,
-                left: 2,
-                transform: devMode ? 'translateX(18px)' : 'translateX(0)',
-              }}
-            />
+            {t}
+            {tab === t && (
+              <span
+                className="absolute bottom-0 left-0 right-0 h-0.5 rounded-t"
+                style={{ backgroundColor: 'rgb(var(--accent))' }}
+              />
+            )}
           </button>
-        </div>
+        ))}
       </div>
 
-      {/* Version info */}
-      <div className="rounded-xl border p-5 space-y-2" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
-        <p className="text-xs uppercase tracking-widest mb-1" style={{ color: 'rgb(var(--fg-muted))' }}>
-          About
-        </p>
-        <div className="flex justify-between text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-          <span>Nook</span>
-          <span className="font-mono">{info?.version ?? '—'}</span>
+      {tab === 'general' && (
+        <>
+          {/* Blockchain RPC URL */}
+          <div className="rounded-xl border p-5 space-y-4" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
+            <div>
+              <p className="text-sm mb-1" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Blockchain RPC URL
+              </p>
+              <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Gnosis Chain RPC endpoint used for wallet and swap.
+              </p>
+            </div>
+            {isLoading ? (
+              <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>Loading…</p>
+            ) : configError ? (
+              <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>Nook backend not available.</p>
+            ) : (
+              <div className="flex gap-3">
+                <input
+                  type="text"
+                  value={rpcDraft}
+                  onChange={e => setRpcDraft(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && saveRpc()}
+                  placeholder={DEFAULT_RPC}
+                  className="flex-1 rounded-lg border px-3 py-2 text-xs font-mono focus:outline-none"
+                  style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
+                />
+                <button
+                  onClick={saveRpc}
+                  disabled={updateConfig.isPending}
+                  className="px-4 py-2 rounded-lg text-xs font-semibold shrink-0 transition-colors disabled:opacity-40"
+                  style={{
+                    backgroundColor: rpcSaved ? 'rgba(74,222,128,0.15)' : 'rgb(var(--accent))',
+                    color: rpcSaved ? '#4ade80' : '#fff',
+                  }}
+                >
+                  {rpcSaved ? 'Saved' : 'Save'}
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Version info */}
+          <div className="rounded-xl border p-5 space-y-2" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
+            <p className="text-sm mb-1" style={{ color: 'rgb(var(--fg-muted))' }}>
+              About
+            </p>
+            <div className="flex justify-between text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+              <span>Nook</span>
+              <span className="font-mono">{info?.version ?? '—'}</span>
+            </div>
+          </div>
+        </>
+      )}
+
+      {tab === 'network' && (
+        <div className="space-y-3">
+          {[
+            { label: 'Connected peers', value: peers?.connections ?? '—' },
+            { label: 'Network size', value: topology?.population ?? '—' },
+            { label: 'Network depth', value: topology?.depth ?? '—' },
+            { label: 'Bee version', value: health?.version ?? '—' },
+            { label: 'Overlay address', value: addresses?.overlay ?? '—', mono: true },
+            { label: 'Wallet address', value: addresses?.ethereum ?? '—', mono: true },
+          ].map(({ label, value, mono }) => (
+            <div
+              key={label}
+              className="rounded-xl border px-5 py-4 flex items-center justify-between gap-4"
+              style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
+            >
+              <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>{label}</p>
+              <p
+                className={`text-xs text-right break-all ${mono ? 'font-mono' : 'font-semibold tabular-nums'}`}
+                style={{ color: 'rgb(var(--fg))' }}
+              >
+                {String(value)}
+              </p>
+            </div>
+          ))}
+
+          {/* Developer mode toggle */}
+          <div className="rounded-xl border p-5 space-y-3" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm mb-1" style={{ color: 'rgb(var(--fg-muted))' }}>Developer mode</p>
+                <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>Shows logs and node configuration.</p>
+              </div>
+              <button
+                role="switch"
+                aria-checked={devMode}
+                onClick={() => setDevMode(!devMode)}
+                className="relative rounded-full transition-colors shrink-0"
+                style={{
+                  backgroundColor: devMode ? 'rgb(var(--accent))' : 'rgb(var(--border))',
+                  width: 40,
+                  height: 22,
+                }}
+              >
+                <span
+                  className="absolute top-0.5 rounded-full bg-white transition-transform"
+                  style={{ width: 18, height: 18, left: 2, transform: devMode ? 'translateX(18px)' : 'translateX(0)' }}
+                />
+              </button>
+            </div>
+            {devMode && (
+              <button
+                onClick={() => navigate('/dev')}
+                className="text-xs font-medium transition-colors"
+                style={{ color: 'rgb(var(--accent))' }}
+              >
+                Open Developer page →
+              </button>
+            )}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   )
 }

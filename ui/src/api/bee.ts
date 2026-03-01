@@ -172,12 +172,19 @@ export const DURATION_PRESETS = [
 
 // ─── API calls ────────────────────────────────────────────────────────────────
 
+export interface Topology {
+  population: number
+  connected: number
+  depth: number
+}
+
 export const beeApi = {
   health: async () => beeRequest<{ status: string; version?: string }>('/health'),
   getWallet: async () => beeRequest<WalletInfo>('/wallet'),
   getAddresses: async () => beeRequest<NodeAddresses>('/addresses'),
   getStamps: async () => beeRequest<{ stamps: Stamp[] }>('/stamps'),
   getChainState: async () => beeRequest<ChainState>('/chainstate'),
+  getTopology: async () => beeRequest<Topology>('/topology'),
 
   buyStamp: async (amount: string, depth: number, immutable = false) =>
     beeRequest<{ batchID: string }>(`/stamps/${amount}/${depth}`, {

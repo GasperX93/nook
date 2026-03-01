@@ -1,7 +1,7 @@
 import { AlertTriangle, HardDrive, RefreshCw, Settings, Terminal, Upload, User } from 'lucide-react'
 import { useRef } from 'react'
-import { NavLink, Outlet } from 'react-router-dom'
-import { useBeeHealth } from '../api/queries'
+import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { useBeeHealth, usePeers } from '../api/queries'
 import { useAppStore } from '../store/app'
 
 const baseNavItems = [
@@ -13,7 +13,9 @@ const baseNavItems = [
 
 export default function Layout() {
   const { isError: beeOffline, isPending: beeChecking, isSuccess: beeOnline } = useBeeHealth()
+  const { data: peers } = usePeers()
   const { devMode } = useAppStore()
+  const navigate = useNavigate()
 
   const navItems = devMode ? [...baseNavItems, { to: '/dev', icon: Terminal, label: 'Developer' }] : baseNavItems
 
@@ -26,8 +28,11 @@ export default function Layout() {
   const showStarting = !beeOnline && !hasEverBeenOnline.current
   const showDown = beeOffline && !beeChecking && hasEverBeenOnline.current
 
-  const dotColor = beeChecking ? 'rgb(var(--border))' : beeOnline ? '#4ade80' : '#ef4444'
-  const dotLabel = beeChecking ? '···' : beeOnline ? 'live' : 'off'
+  const peerCount = peers?.connections ?? 0
+  const isSyncing = beeOnline && peerCount === 0
+
+  const dotColor = beeChecking ? 'rgb(var(--border))' : isSyncing ? '#f97316' : beeOnline ? '#4ade80' : '#ef4444'
+  const dotLabel = beeChecking ? '···' : isSyncing ? 'sync' : beeOnline ? 'live' : 'off'
 
   return (
     <div className="flex h-screen overflow-hidden" style={{ backgroundColor: 'rgb(var(--bg))' }}>
@@ -42,7 +47,7 @@ export default function Layout() {
         </span>
 
         {/* Node status dot */}
-        <div className="flex flex-col items-center gap-1.5 mb-5" title={`Bee node: ${dotLabel}`}>
+        <div className="flex flex-col items-center gap-1.5 mb-5" title={`Bee node: ${dotLabel}${beeOnline ? ` · ${peerCount} peers` : ''}`}>
           <div
             className="w-2 h-2 rounded-full transition-colors"
             style={{ backgroundColor: dotColor, boxShadow: beeOnline ? `0 0 6px ${dotColor}` : 'none' }}
@@ -61,6 +66,7 @@ export default function Layout() {
               key={to}
               to={to}
               title={label}
+              onClick={to === '/publish' || to === '/drive' ? () => navigate(to, { state: { ts: Date.now() } }) : undefined}
               className={({ isActive }) =>
                 [
                   'flex items-center justify-center w-9 h-9 rounded-lg transition-colors',

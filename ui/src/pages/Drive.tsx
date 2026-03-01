@@ -1,4 +1,5 @@
 import {
+  ArrowLeft,
   Check,
   ChevronDown,
   ChevronRight,
@@ -9,14 +10,15 @@ import {
   FolderOpen,
   FolderPlus,
   Globe,
+  Pencil,
   RefreshCw,
   Rss,
   Search,
   Trash2,
   Upload,
 } from 'lucide-react'
-import { useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import React, { useEffect, useRef, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { beeApi, calcStampCost, DURATION_PRESETS, getBeeUrl, topicFromString } from '../api/bee'
 import { useChainState, useTopupStamp } from '../api/queries'
 import { serverApi } from '../api/server'
@@ -241,7 +243,10 @@ function UpdateFeedModal({ record, onClose }: { record: UploadRecord; onClose: (
       update(record.id, { hash: reference })
       setPhase('done')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Update failed')
+      const raw = err instanceof Error ? err.message : ''
+      // Extract the JSON message from the server response if present
+      const match = raw.match(/"message":"([^"]+)"/)
+      setError(match ? match[1] : 'Could not publish the update. Please try again.')
       setPhase('select')
     }
   }
@@ -632,7 +637,7 @@ function RecordRow({
       <div className="flex items-center gap-2 shrink-0">
         <ExpiryBar expiresAt={record.expiresAt} uploadedAt={record.uploadedAt} />
         <span
-          className="text-[10px] uppercase tracking-widest font-semibold w-14 text-right"
+          className="text-[10px] uppercase tracking-widest font-semibold w-16 text-right whitespace-nowrap"
           style={{ color: urgent ? '#ef4444' : 'rgb(var(--fg-muted))' }}
         >
           {expiry}
@@ -641,15 +646,16 @@ function RecordRow({
 
       {/* Actions */}
       <div className="flex items-center gap-0.5 shrink-0">
-        {urgent && (
-          <button
-            onClick={() => onExtend(record.id)}
-            className="px-2 py-1 rounded text-[10px] font-semibold uppercase tracking-widest mr-1"
-            style={{ backgroundColor: 'rgba(239,68,68,0.15)', color: '#ef4444' }}
-          >
-            Extend
-          </button>
-        )}
+        <button
+          onClick={() => onExtend(record.id)}
+          className="px-2 py-1 rounded text-[10px] font-semibold uppercase tracking-widest transition-colors"
+          style={urgent
+            ? { backgroundColor: 'rgba(239,68,68,0.15)', color: '#ef4444' }
+            : { color: 'rgb(var(--fg-muted))' }
+          }
+        >
+          Top up
+        </button>
         <button
           onClick={() => onCopy(record.id, linkHash)}
           title="Copy link"
@@ -702,7 +708,13 @@ export default function Drive() {
   const [retrieveOpen, setRetrieveOpen] = useState(false)
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
 
+  const location = useLocation()
+  // Reset to root when sidebar Drive button is clicked
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { setOpenFolderId(null); setExpandedFolders(new Set()) }, [location.key])
+
   // Folder UI state
+  const [openFolderId, setOpenFolderId] = useState<string | null>(null)
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dragOverId, setDragOverId] = useState<string | 'root' | null>(null)
@@ -745,8 +757,6 @@ export default function Drive() {
 
     if (recordId) {
       moveToFolder(recordId, folderId)
-      // auto-expand the target folder
-      setExpandedFolders(prev => new Set([...prev, folderId]))
     }
     setDragOverId(null)
     setDraggingId(null)
@@ -774,23 +784,21 @@ export default function Drive() {
     setRenameValue(folder.name)
   }
 
-  function commitNewFolder() {
-    if (newFolderName.trim()) {
-      addFolder(newFolderName.trim())
-    }
-    setCreatingFolder(false)
-    setNewFolderName('')
-  }
-
   function toggleFolder(id: string) {
     setExpandedFolders(prev => {
       const next = new Set(prev)
-
       if (next.has(id)) next.delete(id)
       else next.add(id)
-
       return next
     })
+  }
+
+  function commitNewFolder() {
+    if (newFolderName.trim()) {
+      addFolder(newFolderName.trim(), openFolderId ?? undefined)
+    }
+    setCreatingFolder(false)
+    setNewFolderName('')
   }
 
   if (records.length === 0 && folders.length === 0) {
@@ -834,54 +842,176 @@ export default function Drive() {
     onDragStart: handleDragStart,
   }
 
-  // Partition records
-  const rootRecords = records.filter(r => !r.folderId)
+  // Derived: what's visible in the current view
+  const openFolder = openFolderId ? folders.find(f => f.id === openFolderId) ?? null : null
+  const visibleFolders = openFolderId
+    ? folders.filter(f => f.parentFolderId === openFolderId)
+    : folders.filter(f => !f.parentFolderId)
+  const visibleRecords = openFolderId
+    ? records.filter(r => r.folderId === openFolderId)
+    : records.filter(r => !r.folderId)
+
+  // Recursive folder row renderer — works for any nesting depth
+  function renderFolder(folder: DriveFolder, depth: number): React.ReactNode {
+    const isOver = dragOverId === folder.id
+    const isExpanded = expandedFolders.has(folder.id)
+    const childFolders = folders.filter(f => f.parentFolderId === folder.id)
+    const folderRecords = records.filter(r => r.folderId === folder.id)
+    const count = folderRecords.length + childFolders.length
+    const py = depth === 0 ? 'py-2.5' : 'py-2'
+
+    return (
+      <div key={folder.id}>
+        <div
+          onClick={() => { if (renamingFolderId !== folder.id) toggleFolder(folder.id) }}
+          onDoubleClick={() => { if (renamingFolderId !== folder.id) setOpenFolderId(folder.id) }}
+          onDragOver={e => { e.preventDefault(); setDragOverId(folder.id) }}
+          onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverId(null) }}
+          onDrop={e => handleFolderDrop(e, folder.id)}
+          className={`rounded-lg border px-4 ${py} flex items-center gap-2 cursor-pointer select-none transition-colors`}
+          style={{
+            backgroundColor: isOver ? 'rgba(247,104,8,0.08)' : 'rgb(var(--bg-surface))',
+            borderColor: isOver ? 'rgb(var(--accent))' : 'rgb(var(--border))',
+            outline: isOver ? '2px solid rgb(var(--accent))' : 'none',
+            outlineOffset: '-2px',
+          }}
+        >
+          <span style={{ color: 'rgb(var(--fg-muted))' }}>
+            {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+          </span>
+          <FolderOpen size={13} style={{ color: 'rgb(var(--fg-muted))' }} />
+          {renamingFolderId === folder.id ? (
+            <input
+              type="text"
+              autoFocus
+              value={renameValue}
+              onClick={e => e.stopPropagation()}
+              onChange={e => setRenameValue(e.target.value)}
+              onKeyDown={e => {
+                e.stopPropagation()
+                if (e.key === 'Enter') commitRename()
+                if (e.key === 'Escape') { setRenamingFolderId(null); setRenameValue('') }
+              }}
+              onBlur={commitRename}
+              className="flex-1 bg-transparent text-sm focus:outline-none"
+              style={{ color: 'rgb(var(--fg))' }}
+            />
+          ) : (
+            <span className="flex-1 text-sm font-medium">{folder.name}</span>
+          )}
+          <span className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+            {count > 0 ? count : ''}
+          </span>
+          <button
+            onClick={e => { e.stopPropagation(); startRename(folder) }}
+            title="Rename"
+            className="w-6 h-6 flex items-center justify-center rounded transition-colors"
+            style={{ color: 'rgb(var(--fg-muted))' }}
+          >
+            <Pencil size={11} />
+          </button>
+          <button
+            onClick={e => { e.stopPropagation(); removeFolder(folder.id) }}
+            title="Delete folder"
+            className="w-6 h-6 flex items-center justify-center rounded hover:text-red-400 transition-colors"
+            style={{ color: 'rgb(var(--fg-muted))' }}
+          >
+            <Trash2 size={11} />
+          </button>
+        </div>
+
+        {isExpanded && (
+          <div className="mt-1 pl-4 space-y-1">
+            {childFolders.map(child => renderFolder(child, depth + 1))}
+            {folderRecords.length === 0 && childFolders.length === 0 ? (
+              <div
+                className="ml-2 rounded-lg border-2 border-dashed px-4 py-3 text-center"
+                style={{ borderColor: 'rgb(var(--border))' }}
+              >
+                <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  Drop files here · Double-click to open
+                </p>
+              </div>
+            ) : (
+              <div className="divide-y" style={{ borderColor: 'rgb(var(--border))' }}>
+                {folderRecords.map(record => (
+                  <RecordRow key={record.id} record={record} {...commonRowProps} />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    )
+  }
 
   return (
     <div className="p-6" onDragEnd={handleDragEnd}>
       {/* Header */}
-      <div className="flex items-center gap-3 mb-6">
-        <h1
-          className="text-base font-semibold uppercase tracking-widest shrink-0"
-          style={{ color: 'rgb(var(--fg-muted))' }}
-        >
-          Drive
-        </h1>
-        <div className="flex-1 relative">
-          <Search
-            size={11}
-            className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
+      {openFolderId ? (
+        /* Folder view header */
+        <div className="flex items-center gap-2 mb-6">
+          <button
+            onClick={() => { setOpenFolderId(null); setCreatingFolder(false) }}
+            className="flex items-center gap-1.5 text-xs transition-colors"
             style={{ color: 'rgb(var(--fg-muted))' }}
-          />
-          <input
-            type="text"
-            placeholder="Filter…"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            className="w-full pl-7 pr-3 py-1.5 rounded-lg border text-xs focus:outline-none"
-            style={{ backgroundColor: 'rgb(var(--bg-surface))', color: 'rgb(var(--fg))' }}
-          />
+          >
+            <ArrowLeft size={13} />
+            Drive
+          </button>
+          <span style={{ color: 'rgb(var(--fg-muted))' }}>/</span>
+          <span className="flex-1 text-sm font-medium">{openFolder?.name}</span>
+          <button
+            onClick={() => { setCreatingFolder(true); setNewFolderName('') }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium shrink-0 transition-colors"
+            style={{ color: 'rgb(var(--fg-muted))' }}
+          >
+            <FolderPlus size={12} />
+            New subfolder
+          </button>
         </div>
-        <button
-          onClick={() => {
-            setCreatingFolder(true)
-            setNewFolderName('')
-          }}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium shrink-0 transition-colors"
-          style={{ color: 'rgb(var(--fg-muted))' }}
-        >
-          <FolderPlus size={12} />
-          Folder
-        </button>
-        <button
-          onClick={() => setRetrieveOpen(true)}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium shrink-0 transition-colors"
-          style={{ color: 'rgb(var(--fg-muted))' }}
-        >
-          <Download size={12} />
-          Retrieve
-        </button>
-      </div>
+      ) : (
+        /* Root header */
+        <div className="flex items-center gap-3 mb-6">
+          <h1
+            className="text-base font-semibold uppercase tracking-widest shrink-0"
+            style={{ color: 'rgb(var(--fg-muted))' }}
+          >
+            Drive
+          </h1>
+          <div className="flex-1 relative">
+            <Search
+              size={11}
+              className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
+              style={{ color: 'rgb(var(--fg-muted))' }}
+            />
+            <input
+              type="text"
+              placeholder="Filter…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="w-full pl-7 pr-3 py-1.5 rounded-lg border text-xs focus:outline-none"
+              style={{ backgroundColor: 'rgb(var(--bg-surface))', color: 'rgb(var(--fg))' }}
+            />
+          </div>
+          <button
+            onClick={() => { setCreatingFolder(true); setNewFolderName('') }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium shrink-0 transition-colors"
+            style={{ color: 'rgb(var(--fg-muted))' }}
+          >
+            <FolderPlus size={12} />
+            Folder
+          </button>
+          <button
+            onClick={() => setRetrieveOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium shrink-0 transition-colors"
+            style={{ color: 'rgb(var(--fg-muted))' }}
+          >
+            <Download size={12} />
+            Retrieve
+          </button>
+        </div>
+      )}
 
       {/* Search mode — flat list */}
       {search ? (
@@ -899,7 +1029,7 @@ export default function Drive() {
         </div>
       ) : (
         <div className="space-y-2">
-          {/* New folder inline input */}
+          {/* New folder / subfolder inline input */}
           {creatingFolder && (
             <div
               className="rounded-lg border px-4 py-2.5 flex items-center gap-3"
@@ -913,184 +1043,75 @@ export default function Drive() {
                 onChange={e => setNewFolderName(e.target.value)}
                 onKeyDown={e => {
                   if (e.key === 'Enter') commitNewFolder()
-
-                  if (e.key === 'Escape') {
-                    setCreatingFolder(false)
-                    setNewFolderName('')
-                  }
+                  if (e.key === 'Escape') { setCreatingFolder(false); setNewFolderName('') }
                 }}
                 onBlur={commitNewFolder}
-                placeholder="Folder name…"
+                placeholder={openFolderId ? 'Subfolder name…' : 'Folder name…'}
                 className="flex-1 bg-transparent text-sm focus:outline-none"
                 style={{ color: 'rgb(var(--fg))' }}
               />
-              <span className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-                Enter to confirm
-              </span>
+              <span className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>Enter to confirm</span>
             </div>
           )}
 
-          {/* Folders */}
-          {folders.map(folder => {
-            const folderRecords = records.filter(r => r.folderId === folder.id)
-            const isExpanded = expandedFolders.has(folder.id)
-            const isOver = dragOverId === folder.id
+          {/* Folder rows */}
+          {visibleFolders.map(folder => renderFolder(folder, 0))}
 
-            return (
-              <div key={folder.id}>
-                {/* Folder header row */}
-                <div
-                  onClick={() => toggleFolder(folder.id)}
-                  onDragOver={e => {
-                    e.preventDefault()
-                    setDragOverId(folder.id)
-                  }}
-                  onDragLeave={e => {
-                    if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverId(null)
-                  }}
-                  onDrop={e => handleFolderDrop(e, folder.id)}
-                  className="rounded-lg border px-4 py-2.5 flex items-center gap-2 cursor-pointer select-none transition-colors"
-                  style={{
-                    backgroundColor: isOver ? 'rgba(247,104,8,0.08)' : 'rgb(var(--bg-surface))',
-                    borderColor: isOver ? 'rgb(var(--accent))' : 'rgb(var(--border))',
-                    outline: isOver ? '2px solid rgb(var(--accent))' : 'none',
-                    outlineOffset: '-2px',
-                  }}
-                >
-                  <span style={{ color: 'rgb(var(--fg-muted))' }}>
-                    {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                  </span>
-                  <FolderOpen size={13} style={{ color: 'rgb(var(--fg-muted))' }} />
+          {/* Records in current view */}
+          {visibleFolders.length > 0 && visibleRecords.length > 0 && (
+            <div
+              onDragOver={e => { e.preventDefault(); setDragOverId('root') }}
+              onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverId(null) }}
+              onDrop={openFolderId ? undefined : handleRootDrop}
+              className="flex items-center gap-2 px-1 py-2"
+            >
+              <div className="h-px flex-1" style={{ backgroundColor: 'rgb(var(--border))' }} />
+              <span className="text-[10px] uppercase tracking-widest font-semibold px-1" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Files
+              </span>
+              <div className="h-px flex-1" style={{ backgroundColor: 'rgb(var(--border))' }} />
+            </div>
+          )}
 
-                  {/* Folder name — dblclick to rename */}
-                  {renamingFolderId === folder.id ? (
-                    <input
-                      type="text"
-                      autoFocus
-                      value={renameValue}
-                      onClick={e => e.stopPropagation()}
-                      onChange={e => setRenameValue(e.target.value)}
-                      onKeyDown={e => {
-                        e.stopPropagation()
-
-                        if (e.key === 'Enter') commitRename()
-
-                        if (e.key === 'Escape') {
-                          setRenamingFolderId(null)
-                          setRenameValue('')
-                        }
-                      }}
-                      onBlur={commitRename}
-                      className="flex-1 bg-transparent text-sm focus:outline-none"
-                      style={{ color: 'rgb(var(--fg))' }}
-                    />
-                  ) : (
-                    <span
-                      className="flex-1 text-sm font-medium"
-                      onDoubleClick={e => {
-                        e.stopPropagation()
-                        startRename(folder)
-                      }}
-                    >
-                      {folder.name}
-                    </span>
-                  )}
-
-                  <span className="text-xs ml-1" style={{ color: 'rgb(var(--fg-muted))' }}>
-                    {folderRecords.length > 0 ? folderRecords.length : ''}
-                  </span>
-
-                  {/* Delete folder */}
-                  <button
-                    onClick={e => {
-                      e.stopPropagation()
-                      removeFolder(folder.id)
-                    }}
-                    title="Delete folder"
-                    className="w-6 h-6 flex items-center justify-center rounded ml-1 hover:text-red-400 transition-colors"
-                    style={{ color: 'rgb(var(--fg-muted))' }}
-                  >
-                    <Trash2 size={11} />
-                  </button>
-                </div>
-
-                {/* Folder contents */}
-                {isExpanded && (
-                  <div className="mt-1 space-y-1.5 pl-4">
-                    {folderRecords.length === 0 ? (
-                      <div
-                        className="ml-2 rounded-lg border-2 border-dashed px-4 py-3 text-center"
-                        style={{ borderColor: 'rgb(var(--border))' }}
-                      >
-                        <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-                          Drop files here
-                        </p>
-                      </div>
-                    ) : (
-                      <div className="divide-y" style={{ borderColor: 'rgb(var(--border))' }}>
-                      {folderRecords.map(record => <RecordRow key={record.id} record={record} {...commonRowProps} />)}
-                    </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            )
-          })}
-
-          {/* Unorganized section */}
-          {(rootRecords.length > 0 || folders.length > 0) && (
-            <div>
-              <div
-                onDragOver={e => {
-                  e.preventDefault()
-                  setDragOverId('root')
-                }}
-                onDragLeave={e => {
-                  if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverId(null)
-                }}
-                onDrop={handleRootDrop}
-                className="flex items-center gap-2 px-1 py-2 mb-1"
-              >
-                <div
-                  className="h-px flex-1"
-                  style={{ backgroundColor: dragOverId === 'root' ? 'rgb(var(--accent))' : 'rgb(var(--border))' }}
-                />
-                <span
-                  className="text-[10px] uppercase tracking-widest font-semibold px-1"
-                  style={{ color: dragOverId === 'root' ? 'rgb(var(--accent))' : 'rgb(var(--fg-muted))' }}
-                >
-                  Unorganized {rootRecords.length > 0 ? `(${rootRecords.length})` : ''}
-                </span>
-                <div
-                  className="h-px flex-1"
-                  style={{ backgroundColor: dragOverId === 'root' ? 'rgb(var(--accent))' : 'rgb(var(--border))' }}
-                />
-              </div>
-
-              {rootRecords.length === 0 && draggingId && (
-                <div
-                  onDragOver={e => {
-                    e.preventDefault()
-                    setDragOverId('root')
-                  }}
-                  onDrop={handleRootDrop}
-                  className="rounded-lg border-2 border-dashed px-4 py-4 text-center"
-                  style={{
-                    borderColor: dragOverId === 'root' ? 'rgb(var(--accent))' : 'rgb(var(--border))',
-                    backgroundColor: dragOverId === 'root' ? 'rgba(247,104,8,0.04)' : 'transparent',
-                  }}
-                >
-                  <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-                    Drop here to unorganize
-                  </p>
-                </div>
-              )}
-
+          {visibleRecords.length > 0 && (
+            <div
+              onDragOver={!openFolderId ? e => { e.preventDefault(); setDragOverId('root') } : undefined}
+              onDragLeave={!openFolderId ? e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverId(null) } : undefined}
+              onDrop={!openFolderId ? handleRootDrop : undefined}
+            >
               <div className="divide-y" style={{ borderColor: 'rgb(var(--border))' }}>
-                {rootRecords.map(record => (
+                {visibleRecords.map(record => (
                   <RecordRow key={record.id} record={record} {...commonRowProps} />
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* Empty state for folder view */}
+          {openFolderId && visibleFolders.length === 0 && visibleRecords.length === 0 && !creatingFolder && (
+            <div
+              className="rounded-lg border-2 border-dashed px-4 py-10 text-center"
+              style={{ borderColor: 'rgb(var(--border))' }}
+            >
+              <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>This folder is empty</p>
+              <p className="text-xs mt-1" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Drag files here or publish new content and move it to this folder
+              </p>
+            </div>
+          )}
+
+          {/* Root: unorganized drop zone (only when dragging and no root records) */}
+          {!openFolderId && visibleRecords.length === 0 && draggingId && (
+            <div
+              onDragOver={e => { e.preventDefault(); setDragOverId('root') }}
+              onDrop={handleRootDrop}
+              className="rounded-lg border-2 border-dashed px-4 py-4 text-center"
+              style={{
+                borderColor: dragOverId === 'root' ? 'rgb(var(--accent))' : 'rgb(var(--border))',
+                backgroundColor: dragOverId === 'root' ? 'rgba(247,104,8,0.04)' : 'transparent',
+              }}
+            >
+              <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>Drop here to unorganize</p>
             </div>
           )}
         </div>

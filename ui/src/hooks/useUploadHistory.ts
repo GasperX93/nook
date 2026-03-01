@@ -4,6 +4,7 @@ export interface DriveFolder {
   id: string
   name: string
   createdAt: number
+  parentFolderId?: string
 }
 
 export interface UploadRecord {
@@ -82,11 +83,12 @@ export function useUploadHistory() {
     })
   }
 
-  function addFolder(name: string) {
+  function addFolder(name: string, parentFolderId?: string) {
     const folder: DriveFolder = {
       id: crypto.randomUUID(),
       name,
       createdAt: Date.now(),
+      ...(parentFolderId ? { parentFolderId } : {}),
     }
     setFolders(prev => {
       const next = [...prev, folder]
@@ -97,15 +99,22 @@ export function useUploadHistory() {
   }
 
   function removeFolder(id: string) {
+    // Collect the folder + all descendants recursively
+    const toRemove = new Set<string>()
+    const queue = [id]
+    while (queue.length > 0) {
+      const current = queue.pop()!
+      toRemove.add(current)
+      folders.filter(f => f.parentFolderId === current).forEach(f => queue.push(f.id))
+    }
     setFolders(prev => {
-      const next = prev.filter(f => f.id !== id)
+      const next = prev.filter(f => !toRemove.has(f.id))
       saveFolders(next)
 
       return next
     })
-    // unassign records from deleted folder
     setRecords(prev => {
-      const next = prev.map(r => (r.folderId === id ? { ...r, folderId: undefined } : r))
+      const next = prev.map(r => (r.folderId && toRemove.has(r.folderId) ? { ...r, folderId: undefined } : r))
       save(next)
 
       return next

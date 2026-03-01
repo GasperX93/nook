@@ -10,8 +10,8 @@ import {
   Upload,
   type LucideIcon,
 } from 'lucide-react'
-import { useCallback, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import {
   beeApi,
   calcStampCost,
@@ -294,6 +294,7 @@ export default function Publish() {
   const [toppingUpStamp, setToppingUpStamp] = useState<Stamp | null>(null)
   const [feedEnabled, setFeedEnabled] = useState(false)
   const [stampImmutable, setStampImmutable] = useState(false)
+  const [stampLabel, setStampLabel] = useState('')
   const [feedTopic, setFeedTopic] = useState('')
   const [result, setResult] = useState<PublishResult | null>(null)
   const [publishPhase, setPublishPhase] = useState('')
@@ -305,6 +306,12 @@ export default function Publish() {
   const dirInputRef = useRef<HTMLInputElement>(null)
 
   const navigate = useNavigate()
+  const location = useLocation()
+
+  // When the sidebar Publish button is clicked (new location.key), reset to start
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { reset() }, [location.key])
+
   const { isError: beeOffline, isSuccess: beeOnline, isPending: beeChecking } = useBeeHealth()
   const { data: chainState } = useChainState()
   const { data: wallet } = useWallet()
@@ -463,6 +470,7 @@ export default function Publish() {
           amount: cost!.amount,
           depth: selectedSize.depth,
           immutable: stampImmutable,
+          label: stampLabel.trim() || undefined,
         })
         batchID = res.batchID
 
@@ -931,7 +939,20 @@ export default function Publish() {
           )}
 
           {stampMode === 'new' && (
-            <div className="rounded-lg border p-3 space-y-2" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
+            <div className="rounded-lg border p-3 space-y-4" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
+              <div>
+                <p className="text-xs uppercase tracking-widest mb-2" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  Stamp name (optional)
+                </p>
+                <input
+                  type="text"
+                  value={stampLabel}
+                  onChange={e => setStampLabel(e.target.value)}
+                  placeholder="e.g. my-website"
+                  className="w-full rounded-lg border px-3 py-2 text-sm bg-transparent outline-none"
+                  style={{ borderColor: 'rgb(var(--border))', color: 'rgb(var(--fg))' }}
+                />
+              </div>
               <p className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
                 Stamp type
               </p>

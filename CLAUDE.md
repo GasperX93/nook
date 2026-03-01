@@ -25,6 +25,7 @@ npm run check:types    # TypeScript type check
 
 # Tests
 npm run test:unit      # Run Jest unit tests (verbose)
+cd ui && npm test      # Run Vitest tests for UI utility functions
 
 # Packaging
 npm run package        # Package Electron app (no installer)
@@ -60,18 +61,21 @@ The app has two main layers:
 
 **Startup sequence** (`index.ts`): migrations → splash → download Bee if needed → API key → free port → start Koa server → init Bee config → launch Bee → setup tray → keep-alive loop.
 
-**Server** (`server.ts`): Koa REST API. Public routes: `/info`, `/price`. Auth-required routes (API key header): `/status`, `/config`, `/logs/*`, `/restart`, `/swap`, `/redeem`.
+**Server** (`server.ts`): Koa REST API. Public routes: `/info`, `/price`. Auth-required routes (API key header): `/status`, `/config`, `/logs/*`, `/restart`, `/swap`, `/redeem`, `/buy-stamp`, `/feed-update`.
 
 ### Frontend (`ui/`) — Custom React app
 
-Built with Vite + React + Tailwind + TanStack Query + Zustand. Pages: Publish, Drive, Wallet, Settings, Logs. It's built separately, copied into `dist/ui/`, and served by the Koa server. The API key is injected via URL parameter.
+Built with Vite + React 19 + Tailwind + TanStack Query + Zustand. Pages: Publish, Drive, Account, Settings, Logs, Dev. It's built separately, copied into `dist/ui/`, and served by the Koa server. The API key is injected via URL parameter.
 
 Key files:
 - `ui/src/api/bee.ts` — direct Bee node API calls (port 1633). **Note:** the `immutable` flag for stamp creation is sent as an HTTP **header**, not a query param (e.g. `headers: { immutable: 'false' }`).
 - `ui/src/api/server.ts` — calls to the Nook Koa backend
 - `ui/src/pages/Publish.tsx` — multi-step publish wizard (select → storage → feed → done)
 - `ui/src/pages/Drive.tsx` — upload history, feed updates, stamp top-up
+- `ui/src/pages/Account.tsx` — two-tab page: Wallet (balances, swap, redeem, multichain top-up widget) + My Storage (stamp list with TTL bars, top-up, buy new stamp)
+- `ui/src/pages/Dev.tsx` — node config editor + live Bee logs (shown in dev mode only)
 - `ui/src/components/Layout.tsx` — sidebar nav + Bee status banner
+- `ui/src/index.css` — global styles + CSS overrides for `@upcoming/multichain-widget` internals (hiding the info banner, asterisks, adjusting min-height)
 
 ## Key data paths (runtime)
 
