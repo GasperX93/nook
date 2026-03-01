@@ -85,6 +85,14 @@ export function useBeeHealth() {
   })
 }
 
+export function useTopology() {
+  return useQuery({
+    queryKey: ['bee', 'topology'],
+    queryFn: beeApi.getTopology,
+    refetchInterval: 15_000,
+  })
+}
+
 export function useWallet() {
   return useQuery({
     queryKey: ['bee', 'wallet'],

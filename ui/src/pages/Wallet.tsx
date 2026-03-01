@@ -157,7 +157,7 @@ export default function Wallet() {
           <div className="grid gap-5 items-stretch" style={{ gridTemplateColumns: '2fr 4fr' }}>
 
             {/* Left column: balances + swap + redeem */}
-            <div className="space-y-4 flex flex-col h-full">
+            <div className="flex flex-col gap-4 h-full">
               {/* Balances */}
               <div className="flex gap-3">
                 <div className="rounded-xl border p-5 flex-1" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
@@ -224,7 +224,7 @@ export default function Wallet() {
               </div>
 
               {/* Redeem gift code */}
-              <div className="rounded-xl border p-5" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
+              <div className="rounded-xl border p-5 flex-1" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
                 <div className="flex items-center gap-2 mb-1">
                   <Gift size={13} style={{ color: 'rgb(var(--accent))' }} />
                   <p className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>

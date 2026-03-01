@@ -1,4 +1,5 @@
 import Router from '@koa/router'
+import { Bee } from '@ethersphere/bee-js'
 import Wallet from 'ethereumjs-wallet'
 import { readFile } from 'fs/promises'
 import Koa from 'koa'
@@ -83,13 +84,9 @@ export function runServer() {
   })
   router.get('/peers', async context => {
     try {
-      const beePassword = readConfigYaml().password as string
-      const response = await fetch('http://127.0.0.1:1633/peers', {
-        headers: { Authorization: `Bearer ${beePassword}` },
-      })
-      const { peers } = await response.json()
+      const peers = await makeBee().getPeers()
 
-      context.body = { connections: peers ? peers.length || 0 : 0 }
+      context.body = { connections: peers.length }
     } catch (error) {
       logger.error(error)
       context.body = { connections: 0 }
@@ -136,12 +133,8 @@ export function runServer() {
     }
     const config = readConfigYaml()
     const blockchainRpcEndpoint = Reflect.get(config, 'blockchain-rpc-endpoint') as string
-    const beePassword = Reflect.get(config, 'password') as string
     try {
-      const addrRes = await fetch('http://127.0.0.1:1633/addresses', {
-        headers: { Authorization: `Bearer ${beePassword}` },
-      })
-      const { ethereum: nodeAddress } = (await addrRes.json()) as { ethereum: string }
+      const { ethereum: nodeAddress } = await makeBee().getNodeAddresses()
       await redeemGiftCode(giftCode, nodeAddress, blockchainRpcEndpoint)
       context.body = { success: true }
     } catch (error) {
@@ -169,7 +162,7 @@ export function runServer() {
     } catch (error) {
       logger.error(error)
       context.status = 500
-      context.body = { message: 'Feed update failed', error }
+      context.body = { message: 'Could not publish the feed update. Check that your stamp has storage left and try again.' }
     }
   })
   router.post('/buy-stamp', async context => {
@@ -188,25 +181,8 @@ export function runServer() {
     }
 
     try {
-      const beePassword = readConfigYaml().password as string
-      const qs = label ? `?label=${encodeURIComponent(label)}` : ''
-      const res = await fetch(`http://127.0.0.1:1633/stamps/${amount}/${depth}${qs}`, {
-        method: 'POST',
-        headers: {
-          immutable: String(Boolean(immutable)),
-          ...(beePassword ? { Authorization: `Bearer ${beePassword}` } : {}),
-        },
-      })
-      const data = (await res.json()) as { batchID: string }
-
-      if (!res.ok) {
-        context.status = res.status
-        context.body = data
-
-        return
-      }
-
-      context.body = data
+      const batchID = await makeBee().createPostageBatch(amount, depth, { immutableFlag: Boolean(immutable), label })
+      context.body = { batchID }
     } catch (error) {
       logger.error(error)
       context.status = 500
@@ -234,145 +210,41 @@ export function runServer() {
   subscribeLogServerRequests(server)
 }
 
-// ─── SOC / Feed helpers ───────────────────────────────────────────────────────
-
-function socKeccak256(data: Uint8Array): Uint8Array {
-  return ethers.utils.arrayify(ethers.utils.keccak256(data))
-}
-
-function socConcat(...arrays: Uint8Array[]): Uint8Array {
-  const out = new Uint8Array(arrays.reduce((s, a) => s + a.length, 0))
-  let off = 0
-
-  for (const a of arrays) {
-    out.set(a, off)
-    off += a.length
-  }
-
-  return out
-}
-
-function uint64BE(n: number): Uint8Array {
-  const b = new Uint8Array(8)
-
-  new DataView(b.buffer).setBigUint64(0, BigInt(n), false)
-
-  return b
-}
-
-function uint64LE(n: number): Uint8Array {
-  const b = new Uint8Array(8)
-
-  new DataView(b.buffer).setBigUint64(0, BigInt(n), true)
-
-  return b
-}
-
-/** Binary Merkle Tree root hash — matches bee-js bmtRootHash() */
-function bmtRootHash(payload: Uint8Array): Uint8Array {
-  let input = new Uint8Array(4096)
-
-  input.set(payload)
-
-  while (input.length !== 32) {
-    const output = new Uint8Array(input.length / 2)
-
-    for (let off = 0; off < input.length; off += 64) {
-      output.set(socKeccak256(input.slice(off, off + 64)), off / 2)
-    }
-
-    input = output
-  }
-
-  return input
-}
-
-/** CAC address — matches bee-js bmtHash(span||payload) */
-function cacAddress(span: Uint8Array, payload: Uint8Array): Uint8Array {
-  return socKeccak256(socConcat(span, bmtRootHash(payload)))
-}
-
 /**
- * Create a Swarm feed update (signed SOC) and upload it to the Bee node.
- * Mirrors what swarm-cli / bee-js do internally.
+ * Create a Swarm feed update using bee-js (the reference implementation).
  * Returns the permanent feed manifest address (hex, no 0x).
  */
 async function createFeedUpdate(topicHex: string, referenceHex: string, stampId: string): Promise<string> {
   const privateKeyHex = await getPrivateKey()
   const wallet = new ethers.Wallet(privateKeyHex)
-  const owner = wallet.address.toLowerCase().replace('0x', '')
 
-  const beeUrl = 'http://127.0.0.1:1633'
-  const beePassword = readConfigYaml().password as string | undefined
-  const authHeader: Record<string, string> = beePassword ? { Authorization: `Bearer ${beePassword}` } : {}
+  const bee = makeBee()
 
-  // Determine next feed index (0 for first ever update)
-  let nextIndex = 0
+  // Signer compatible with bee-js: personal_sign via ethers wallet
+  const signer = {
+    address: ethers.utils.arrayify(wallet.address) as Uint8Array & { length: 20 },
+    sign: async (data: Uint8Array): Promise<Uint8Array & { length: 65 }> => {
+      const sig = await wallet.signMessage(data)
 
-  try {
-    const res = await fetch(`${beeUrl}/feeds/${owner}/${topicHex}?type=sequence`, { headers: authHeader })
-
-    if (res.ok) {
-      const data = (await res.json()) as { feedIndexNext: string }
-
-      nextIndex = parseInt(data.feedIndexNext, 16)
-    }
-  } catch {
-    // first update — index stays 0
-  }
-
-  // Identifier = keccak256(topic || index_uint64_be)
-  const topicBytes = ethers.utils.arrayify('0x' + topicHex.replace(/^0x/, ''))
-  const identifier = socKeccak256(socConcat(topicBytes, uint64BE(nextIndex)))
-
-  // Payload = timestamp_uint64_be(8) + reference(32)
-  const payload = socConcat(
-    uint64BE(Math.floor(Date.now() / 1000)),
-    ethers.utils.arrayify('0x' + referenceHex.replace(/^0x/, '')),
-  )
-
-  // Span = little-endian uint64 of payload length (always 40)
-  const span = uint64LE(40)
-
-  // Signing digest = keccak256(identifier || cacAddress(span||payload))
-  const digest = socKeccak256(socConcat(identifier, cacAddress(span, payload)))
-
-  // Sign with Ethereum personal-sign prefix (\x19Ethereum Signed Message:\n32)
-  const sigHex = await wallet.signMessage(digest)
-
-  // SOC body = span(8) + payload(40) — identifier and sig go in URL/params
-  const socBody = socConcat(span, payload)
-  const identifierHex = ethers.utils.hexlify(identifier).slice(2)
-  const sigQueryHex = sigHex.slice(2)
-
-  const socRes = await fetch(`${beeUrl}/soc/${owner}/${identifierHex}?sig=${sigQueryHex}`, {
-    method: 'POST',
-    headers: {
-      ...authHeader,
-      'swarm-postage-batch-id': stampId,
-      'swarm-deferred-upload': 'false',
-      'Content-Type': 'application/octet-stream',
+      return ethers.utils.arrayify(sig) as Uint8Array & { length: 65 }
     },
-    body: Buffer.from(socBody),
-  })
-
-  if (!socRes.ok) {
-    const text = await socRes.text().catch(() => '')
-
-    throw new Error(`SOC upload failed: ${socRes.status} ${text}`)
   }
 
-  // Create/fetch the permanent feed manifest address
-  const manifestRes = await fetch(`${beeUrl}/feeds/${owner}/${topicHex}`, {
-    method: 'POST',
-    headers: { ...authHeader, 'swarm-postage-batch-id': stampId },
-  })
+  const writer = bee.makeFeedWriter('sequence', topicHex, signer)
+  const refBytes = ethers.utils.arrayify('0x' + referenceHex.replace(/^0x/, '')) as Uint8Array & { length: 32 }
+  await writer.upload(stampId, refBytes)
 
-  if (!manifestRes.ok) throw new Error(`Feed manifest failed: ${manifestRes.status}`)
 
-  const { reference } = (await manifestRes.json()) as { reference: string }
+  const manifest = await bee.createFeedManifest(stampId, 'sequence', topicHex, wallet.address)
 
-  return reference
+  return manifest.reference
+}
+
+function makeBee(): Bee {
+  const beePassword = readConfigYaml().password as string | undefined
+  const requestOptions = beePassword ? { headers: { Authorization: `Bearer ${beePassword}` } } : {}
+
+  return new Bee('http://127.0.0.1:1633', requestOptions)
 }
 
 async function getPrivateKey(): Promise<string> {
