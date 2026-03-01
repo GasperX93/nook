@@ -68,14 +68,14 @@ The app has two main layers:
 Built with Vite + React 19 + Tailwind + TanStack Query + Zustand. Pages: Publish, Drive, Account, Settings, Logs, Dev. It's built separately, copied into `dist/ui/`, and served by the Koa server. The API key is injected via URL parameter.
 
 Key files:
-- `ui/src/api/bee.ts` — direct Bee node API calls (port 1633). **Note:** the `immutable` flag for stamp creation is sent as an HTTP **header**, not a query param (e.g. `headers: { immutable: 'false' }`).
+- `ui/src/api/bee.ts` — direct Bee node API calls (port 1633). **Note:** the `immutable` flag for stamp creation is sent as an HTTP **header**, not a query param (e.g. `headers: { immutable: 'false' }`). Default stamp type is **immutable** throughout the UI.
 - `ui/src/api/server.ts` — calls to the Nook Koa backend
 - `ui/src/pages/Publish.tsx` — multi-step publish wizard (select → storage → feed → done); sidebar click resets wizard via `location.key`
 - `ui/src/pages/Drive.tsx` — upload history with recursive folder tree (any depth), feed updates, extend drive modal
 - `ui/src/pages/Account.tsx` — two-tab page: Wallet (balances, swap, redeem, multichain top-up widget) + My Storage (drive list with TTL bars, extend drive, buy new drive)
 - `ui/src/pages/Settings.tsx` — two-tab page: General (RPC URL, about) + Network (peer stats, developer mode toggle)
 - `ui/src/pages/Dev.tsx` — node config editor + live Bee logs (shown in dev mode only)
-- `ui/src/components/Layout.tsx` — sidebar nav + Bee status banner; dot states: checking (gray), syncing/0 peers (orange), live (green), off (red)
+- `ui/src/components/Layout.tsx` — sidebar nav + Bee status banner; dot states: checking (gray), syncing/0 peers (orange), live (green), off (red); funding warning banner when wallet has no xDAI
 - `ui/src/hooks/useUploadHistory.ts` — localStorage records + folders with `parentFolderId` for subfolder support
 - `ui/src/index.css` — global styles + CSS overrides for `@upcoming/multichain-widget` internals (hiding the info banner, asterisks, adjusting min-height)
 - `assets/splash.html` — startup splash screen (dark theme, iA Writer font, no external dependencies)
