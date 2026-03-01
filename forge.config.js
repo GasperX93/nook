@@ -115,8 +115,8 @@ const config = {
       name: '@electron-forge/publisher-github',
       config: {
         repository: {
-          owner: 'ethersphere',
-          name: 'swarm-desktop',
+          owner: 'GasperX93',
+          name: 'nook',
         },
         prerelease: true,
         draft: false,
