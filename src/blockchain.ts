@@ -40,9 +40,8 @@ export async function redeemGiftCode(giftCode: string, toAddress: string, blockc
 
   // Check initial xDAI balance for empty-code detection
   const xdaiBalanceInitial = await provider.getBalance(giftWallet.address)
-  const xdaiToSendInitial = xdaiBalanceInitial.sub(gasCost)
 
-  if (bzzBalance.isZero() && !xdaiToSendInitial.gt(0)) {
+  if (bzzBalance.isZero() && xdaiBalanceInitial.lte(gasCost)) {
     throw new Error('Gift code is empty or has already been redeemed.')
   }
 
