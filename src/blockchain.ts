@@ -35,13 +35,14 @@ export async function redeemGiftCode(giftCode: string, toAddress: string, blockc
   const bzz = new Contract('0xdBF3Ea6F5beE45c02255B2c26a16F300502F68da', bzzContractInterface, giftWallet)
   const bzzBalance = await bzz.balanceOf(giftWallet.address)
 
-  // Transfer xDAI minus gas cost
-  const xdaiBalance = await provider.getBalance(giftWallet.address)
   const gasLimit = 21000
   const gasCost = gasPrice.mul(gasLimit)
-  const xdaiToSend = xdaiBalance.sub(gasCost)
 
-  if (bzzBalance.isZero() && !xdaiToSend.gt(0)) {
+  // Check initial xDAI balance for empty-code detection
+  const xdaiBalanceInitial = await provider.getBalance(giftWallet.address)
+  const xdaiToSendInitial = xdaiBalanceInitial.sub(gasCost)
+
+  if (bzzBalance.isZero() && !xdaiToSendInitial.gt(0)) {
     throw new Error('Gift code is empty or has already been redeemed.')
   }
 
@@ -49,6 +50,10 @@ export async function redeemGiftCode(giftCode: string, toAddress: string, blockc
     const tx = await bzz.transfer(toAddress, bzzBalance, { gasPrice })
     await tx.wait(1)
   }
+
+  // Re-fetch xDAI balance after BZZ transfer (BZZ tx consumed some xDAI for gas)
+  const xdaiBalanceAfterBzz = await provider.getBalance(giftWallet.address)
+  const xdaiToSend = xdaiBalanceAfterBzz.sub(gasCost)
 
   if (xdaiToSend.gt(0)) {
     const tx = await giftWallet.sendTransaction({ to: toAddress, value: xdaiToSend, gasPrice, gasLimit })

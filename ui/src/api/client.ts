@@ -18,7 +18,14 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   })
 
   if (!response.ok) {
-    throw new Error(`${response.status} ${response.statusText}`)
+    let message: string
+    try {
+      const body = await response.json()
+      message = (body as { message?: string }).message ?? `${response.status} ${response.statusText}`
+    } catch {
+      message = await response.text().catch(() => `${response.status} ${response.statusText}`)
+    }
+    throw new Error(message)
   }
 
   const contentType = response.headers.get('content-type') ?? ''

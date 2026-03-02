@@ -140,7 +140,7 @@ export function runServer() {
     } catch (error) {
       logger.error(error)
       context.status = 500
-      context.body = { message: 'Failed to redeem gift code', error }
+      context.body = { message: (error as Error).message ?? 'Failed to redeem gift code' }
     }
   })
   router.post('/feed-update', async context => {

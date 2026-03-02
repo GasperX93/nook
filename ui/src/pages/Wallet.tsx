@@ -97,7 +97,8 @@ export default function Wallet() {
       await api.redeem(giftCode.trim())
       setRedeemDone(true)
       setGiftCode('')
-      // Poll wallet every 3s for up to 30s to pick up balance change after tx settles
+      // Refetch immediately, then poll every 3s for up to 30s to catch delayed settlement
+      queryClient.refetchQueries({ queryKey: ['bee', 'wallet'] })
       let ticks = 0
       const poll = setInterval(() => {
         queryClient.refetchQueries({ queryKey: ['bee', 'wallet'] })
