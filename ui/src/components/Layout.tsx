@@ -1,14 +1,18 @@
-import { AlertTriangle, HardDrive, RefreshCw, Settings, Terminal, Upload, User, Wallet } from 'lucide-react'
+import { AlertTriangle, Globe, HardDrive, RefreshCw, Settings, Terminal, User, Wallet } from 'lucide-react'
 import { useRef } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useBeeHealth, usePeers, useStatus } from '../api/queries'
 import { useAppStore } from '../store/app'
 
-const baseNavItems = [
-  { to: '/publish', icon: Upload, label: 'Publish' },
+const mainNavItems = [
   { to: '/drive', icon: HardDrive, label: 'Drive' },
   { to: '/account', icon: User, label: 'Account' },
-  { to: '/settings', icon: Settings, label: 'Settings' },
+]
+
+const settingsNavItem = { to: '/settings', icon: Settings, label: 'Settings' }
+
+const appNavItems = [
+  { to: '/apps/website-publisher', icon: Globe, label: 'Publish', sublabel: 'website' },
 ]
 
 export default function Layout() {
@@ -18,7 +22,7 @@ export default function Layout() {
   const { devMode } = useAppStore()
   const navigate = useNavigate()
 
-  const navItems = devMode ? [...baseNavItems, { to: '/dev', icon: Terminal, label: 'Developer' }] : baseNavItems
+  const navItems = devMode ? [...mainNavItems, { to: '/dev', icon: Terminal, label: 'Dev mode' }] : mainNavItems
 
   // Track whether Bee has connected at least once this session.
   // Before that we show a friendly "starting" indicator instead of an error.
@@ -40,16 +44,16 @@ export default function Layout() {
     <div className="flex h-screen overflow-hidden" style={{ backgroundColor: 'rgb(var(--bg))' }}>
       {/* Sidebar */}
       <aside
-        className="w-14 flex flex-col items-center pt-5 pb-4 shrink-0 border-r"
+        className="w-16 flex flex-col items-center pt-5 pb-4 shrink-0 border-r gap-1"
         style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
       >
         {/* Wordmark */}
-        <span className="text-[10px] font-bold uppercase tracking-widest mb-4" style={{ color: 'rgb(var(--fg))' }}>
+        <span className="text-[10px] font-bold uppercase tracking-widest mb-2" style={{ color: 'rgb(var(--fg))' }}>
           Nook
         </span>
 
         {/* Node status dot */}
-        <div className="flex flex-col items-center gap-1.5 mb-5" title={`Bee node: ${dotLabel}${beeOnline ? ` · ${peerCount} peers` : ''}`}>
+        <div className="flex flex-col items-center gap-1 mb-3" title={`Bee node: ${dotLabel}${beeOnline ? ` · ${peerCount} peers` : ''}`}>
           <div
             className="w-2 h-2 rounded-full transition-colors"
             style={{ backgroundColor: dotColor, boxShadow: beeOnline ? `0 0 6px ${dotColor}` : 'none' }}
@@ -59,27 +63,71 @@ export default function Layout() {
           </span>
         </div>
 
-        <div className="w-6 border-t mb-3" />
+        <div className="w-10 mb-2" style={{ borderTop: '1px solid rgba(255,255,255,0.25)' }} />
 
-        {/* Nav */}
-        <nav className="flex flex-col gap-1 flex-1">
+        {/* Main nav — Drive + Account */}
+        <nav className="flex flex-col gap-0.5 w-full px-2">
           {navItems.map(({ to, icon: Icon, label }) => (
             <NavLink
               key={to}
               to={to}
-              title={label}
-              onClick={to === '/publish' || to === '/drive' ? () => navigate(to, { state: { ts: Date.now() } }) : undefined}
+              onClick={to === '/drive' ? () => navigate(to, { state: { ts: Date.now() } }) : undefined}
               className={({ isActive }) =>
                 [
-                  'flex items-center justify-center w-9 h-9 rounded-lg transition-colors',
+                  'flex flex-col items-center gap-0.5 py-2 rounded-lg transition-colors w-full',
                   isActive ? 'text-white' : 'text-[rgb(var(--fg-muted))] hover:text-[rgb(var(--fg))]',
                 ].join(' ')
               }
-              style={({ isActive }) => (isActive ? { backgroundColor: 'rgb(var(--accent))' } : {})}
+              style={({ isActive }) => (isActive ? { backgroundColor: 'rgba(247,104,8,0.65)' } : {})}
             >
-              <Icon size={16} />
+              <Icon size={15} />
+              <span className="text-[9px] font-medium leading-none">{label}</span>
             </NavLink>
           ))}
+        </nav>
+
+        {/* Apps section */}
+        <div className="w-10 my-3" style={{ borderTop: '1px solid rgba(255,255,255,0.25)' }} />
+        <span className="text-[8px] font-bold uppercase tracking-widest mb-1.5 w-full text-center" style={{ color: 'rgb(var(--fg-muted))' }}>
+          Apps
+        </span>
+        <nav className="flex flex-col gap-0.5 w-full px-2">
+          {appNavItems.map(({ to, icon: Icon, label, sublabel }) => (
+            <NavLink
+              key={to}
+              to={to}
+              onClick={() => navigate(to, { state: { ts: Date.now() } })}
+              className={({ isActive }) =>
+                [
+                  'flex flex-col items-center gap-0.5 py-2 rounded-lg transition-colors w-full',
+                  isActive ? 'text-white' : 'text-[rgb(var(--fg-muted))] hover:text-[rgb(var(--fg))]',
+                ].join(' ')
+              }
+              style={({ isActive }) => (isActive ? { backgroundColor: 'rgba(247,104,8,0.65)' } : {})}
+            >
+              <Icon size={15} />
+              <span className="text-[9px] font-medium leading-tight text-center">{label}<br />{sublabel}</span>
+            </NavLink>
+          ))}
+        </nav>
+
+        {/* Settings pinned to bottom */}
+        <div className="flex-1" />
+        <div className="w-10 mb-2" style={{ borderTop: '1px solid rgba(255,255,255,0.25)' }} />
+        <nav className="w-full px-2">
+          <NavLink
+            to={settingsNavItem.to}
+            className={({ isActive }) =>
+              [
+                'flex flex-col items-center gap-0.5 py-2 rounded-lg transition-colors w-full',
+                isActive ? 'text-white' : 'text-[rgb(var(--fg-muted))] hover:text-[rgb(var(--fg))]',
+              ].join(' ')
+            }
+            style={({ isActive }) => (isActive ? { backgroundColor: 'rgba(247,104,8,0.65)' } : {})}
+          >
+            <settingsNavItem.icon size={15} />
+            <span className="text-[9px] font-medium leading-none">{settingsNavItem.label}</span>
+          </NavLink>
         </nav>
       </aside>
 
