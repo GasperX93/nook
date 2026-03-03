@@ -3,6 +3,7 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  Clock,
   Copy,
   Download,
   ExternalLink,
@@ -10,7 +11,9 @@ import {
   FolderOpen,
   FolderPlus,
   Globe,
+  HardDrive,
   Pencil,
+  Plus,
   RefreshCw,
   Rss,
   Search,
@@ -18,12 +21,28 @@ import {
   Upload,
 } from 'lucide-react'
 import React, { useEffect, useRef, useState } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
-import { beeApi, calcStampCost, DURATION_PRESETS, getBeeUrl, topicFromString } from '../api/bee'
-import { useChainState, useTopupStamp } from '../api/queries'
+import { useLocation } from 'react-router-dom'
+import {
+  beeApi,
+  calcStampCost,
+  depthToCapacity,
+  DURATION_PRESETS,
+  getBeeUrl,
+  plurToBzz,
+  SIZE_PRESETS,
+  topicFromString,
+  type Stamp,
+} from '../api/bee'
 import { serverApi } from '../api/server'
-import { useUploadHistory, type DriveFolder, type UploadRecord } from '../hooks/useUploadHistory'
+import {
+  useBuyStamp,
+  useChainState,
+  useStamps,
+  useTopupStamp,
+  useWallet,
+} from '../api/queries'
 import { useAppStore } from '../store/app'
+import { useUploadHistory, type DriveFolder, type UploadRecord } from '../hooks/useUploadHistory'
 import {
   detectIndexDocument,
   fileListToEntries,
@@ -32,28 +51,87 @@ import {
   type FileEntry,
 } from '../utils/directory'
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
 function formatBytes(bytes: number): string {
   if (bytes >= 1_073_741_824) return `${(bytes / 1_073_741_824).toFixed(1)} GB`
-
   if (bytes >= 1_048_576) return `${(bytes / 1_048_576).toFixed(1)} MB`
-
   return `${(bytes / 1024).toFixed(0)} KB`
 }
 
 function timeUntil(ms: number): { label: string; urgent: boolean } {
   const diff = ms - Date.now()
-
   if (diff <= 0) return { label: 'Expired', urgent: true }
   const days = Math.floor(diff / 86_400_000)
-
   if (days === 0) return { label: 'Today', urgent: true }
-
   if (days <= 7) return { label: `${days}d left`, urgent: true }
-
   if (days < 30) return { label: `${days}d left`, urgent: false }
-
   return { label: `${Math.floor(days / 30)}mo left`, urgent: false }
 }
+
+function ttlToDays(seconds: number): string {
+  const d = Math.floor(seconds / 86400)
+  if (d <= 0) return '<1d'
+  if (d < 30) return `${d}d`
+  return `${Math.floor(d / 30)}mo`
+}
+
+function ttlColor(seconds: number): string {
+  if (seconds < 7 * 86400) return '#ef4444'
+  if (seconds < 30 * 86400) return '#f59e0b'
+  return '#4ade80'
+}
+
+function isImageFile(name: string): boolean {
+  return /\.(jpe?g|png|gif|webp|svg)$/i.test(name)
+}
+
+async function downloadFromSwarm(hash: string, filename: string) {
+  const blob = await beeApi.downloadFile(hash)
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
+async function pollStampUsable(id: string, onPhase?: (p: string) => void): Promise<void> {
+  for (let i = 0; i < 30; i++) {
+    const elapsed = i * 2
+    onPhase?.(`Waiting for drive to be ready… ${elapsed > 0 ? `(${elapsed}s)` : ''}`.trim())
+    try {
+      const s = await beeApi.getStamp(id)
+      if (s.usable) return
+    } catch {
+      // not yet confirmed
+    }
+    await new Promise(r => setTimeout(r, 2000))
+  }
+  throw new Error('Drive did not become ready. Please try again.')
+}
+
+// ─── PlanButton ────────────────────────────────────────────────────────────────
+
+function PlanButton({ label, selected, onClick }: { label: string; selected: boolean; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="px-4 py-2 rounded-lg border text-sm font-medium transition-all"
+      style={{
+        borderColor: selected ? 'rgb(var(--accent))' : 'rgb(var(--border))',
+        backgroundColor: selected ? 'rgba(247,104,8,0.08)' : 'rgb(var(--bg-surface))',
+        color: selected ? 'rgb(var(--fg))' : 'rgb(var(--fg-muted))',
+      }}
+    >
+      {label}
+    </button>
+  )
+}
+
+// ─── ExpiryBar ────────────────────────────────────────────────────────────────
 
 function ExpiryBar({ expiresAt, uploadedAt }: { expiresAt: number; uploadedAt: number }) {
   const total = expiresAt - uploadedAt
@@ -74,18 +152,166 @@ function ExpiryBar({ expiresAt, uploadedAt }: { expiresAt: number; uploadedAt: n
   )
 }
 
-// ─── Extend modal ─────────────────────────────────────────────────────────────
+// ─── BuyDriveModal ─────────────────────────────────────────────────────────────
 
-function ExtendModal({ stampId, fileName, sharedCount, onClose }: { stampId: string; fileName: string; sharedCount: number; onClose: () => void }) {
+function BuyDriveModal({ onClose }: { onClose: () => void }) {
+  const { data: chainState } = useChainState()
+  const { data: wallet } = useWallet()
+  const buyStamp = useBuyStamp()
+
+  const [driveName, setDriveName] = useState('')
+  const [sizeIdx, setSizeIdx] = useState(1)
+  const [durationIdx, setDurationIdx] = useState(1)
+  const [buying, setBuying] = useState(false)
+  const [buyDone, setBuyDone] = useState(false)
+  const [buyError, setBuyError] = useState<string | null>(null)
+
+  const selectedSize = SIZE_PRESETS[sizeIdx]
+  const selectedDuration = DURATION_PRESETS[durationIdx]
+  const cost = chainState ? calcStampCost(selectedSize.depth, selectedDuration.months, chainState.currentPrice) : null
+  const bzzBalance = wallet ? Number(plurToBzz(wallet.bzzBalance)) : null
+  const canAfford = cost && bzzBalance !== null ? bzzBalance >= Number(cost.bzzCost) : true
+
+  async function doBuy() {
+    if (!cost || !driveName.trim()) return
+    setBuying(true)
+    setBuyError(null)
+    try {
+      await buyStamp.mutateAsync({
+        amount: cost.amount,
+        depth: selectedSize.depth,
+        immutable: true,
+        label: driveName.trim(),
+      })
+      setBuyDone(true)
+      setTimeout(() => {
+        setBuyDone(false)
+        onClose()
+      }, 1500)
+    } catch (err) {
+      setBuyError(err instanceof Error ? err.message : 'Purchase failed')
+    } finally {
+      setBuying(false)
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 flex items-center justify-center z-50"
+      style={{ backgroundColor: 'rgba(0,0,0,0.6)' }}
+      onClick={onClose}
+    >
+      <div
+        className="rounded-xl border p-6 w-96 space-y-5"
+        style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
+        onClick={e => e.stopPropagation()}
+      >
+        <p className="text-sm font-semibold">New drive</p>
+
+        {/* Name */}
+        <div>
+          <p className="text-xs uppercase tracking-widest mb-2" style={{ color: 'rgb(var(--fg-muted))' }}>
+            Drive name <span style={{ color: '#ef4444' }}>*</span>
+          </p>
+          <input
+            type="text"
+            value={driveName}
+            onChange={e => setDriveName(e.target.value)}
+            placeholder="e.g. Website backup, Photos 2024…"
+            className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-none"
+            style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
+            autoFocus
+          />
+        </div>
+
+        {/* Size */}
+        <div>
+          <p className="text-xs uppercase tracking-widest mb-2" style={{ color: 'rgb(var(--fg-muted))' }}>
+            Size
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {SIZE_PRESETS.map((s, i) => (
+              <PlanButton key={s.label} label={s.label} selected={sizeIdx === i} onClick={() => setSizeIdx(i)} />
+            ))}
+          </div>
+        </div>
+
+        {/* Duration */}
+        <div>
+          <p className="text-xs uppercase tracking-widest mb-2" style={{ color: 'rgb(var(--fg-muted))' }}>
+            Duration
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {DURATION_PRESETS.map((d, i) => (
+              <PlanButton key={d.label} label={d.label} selected={durationIdx === i} onClick={() => setDurationIdx(i)} />
+            ))}
+          </div>
+        </div>
+
+        {/* Cost */}
+        {cost && (
+          <p className="text-sm">
+            <span style={{ color: 'rgb(var(--fg-muted))' }}>Estimated cost: </span>
+            <span className="font-semibold">{cost.bzzCost} BZZ</span>
+            {!canAfford && (
+              <span className="ml-2 text-xs" style={{ color: '#ef4444' }}>
+                Insufficient BZZ
+              </span>
+            )}
+          </p>
+        )}
+
+        <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+          Storage is funded upfront. You can extend the drive anytime before it expires.
+        </p>
+
+        {buyError && (
+          <p className="text-xs" style={{ color: '#ef4444' }}>
+            {buyError}
+          </p>
+        )}
+
+        <div className="flex gap-3">
+          <button
+            onClick={onClose}
+            className="flex-1 py-2 rounded-lg text-sm"
+            style={{ color: 'rgb(var(--fg-muted))' }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={doBuy}
+            disabled={buying || !cost || !canAfford || buyDone || !driveName.trim()}
+            className="flex-1 py-2 rounded-lg text-sm font-semibold disabled:opacity-40 flex items-center justify-center gap-2"
+            style={{
+              backgroundColor: buyDone ? 'rgba(74,222,128,0.15)' : 'rgb(var(--accent))',
+              color: buyDone ? '#4ade80' : '#fff',
+            }}
+          >
+            {buying && <RefreshCw size={13} className="animate-spin" />}
+            {/* eslint-disable-next-line no-nested-ternary */}
+            {buyDone ? 'Drive created!' : buying ? 'Creating…' : 'Create drive'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── ExtendModal ───────────────────────────────────────────────────────────────
+
+function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) {
   const [durationIdx, setDurationIdx] = useState(1)
   const { data: chainState } = useChainState()
   const topup = useTopupStamp()
 
-  const cost = chainState ? calcStampCost(20, DURATION_PRESETS[durationIdx].months, chainState.currentPrice) : null
+  const cost = chainState
+    ? calcStampCost(stamp.depth, DURATION_PRESETS[durationIdx].months, chainState.currentPrice)
+    : null
 
-  async function extend() {
+  async function doExtend() {
     if (!cost) return
-    await topup.mutateAsync({ id: stampId, amount: cost.amount })
+    await topup.mutateAsync({ id: stamp.batchID, amount: cost.amount })
     onClose()
   }
 
@@ -103,9 +329,10 @@ function ExtendModal({ stampId, fileName, sharedCount, onClose }: { stampId: str
         <div>
           <p className="text-sm font-semibold">Extend drive</p>
           <p className="text-xs mt-1" style={{ color: 'rgb(var(--fg-muted))' }}>
-            {sharedCount > 0
-              ? `Extends the drive holding ${fileName} and ${sharedCount} other ${sharedCount === 1 ? 'file' : 'files'}.`
-              : `Extends the drive holding ${fileName}.`}
+            {stamp.label || `${stamp.batchID.slice(0, 20)}…`}
+          </p>
+          <p className="text-xs mt-0.5" style={{ color: 'rgb(var(--fg-muted))' }}>
+            {depthToCapacity(stamp.depth)} · {ttlToDays(stamp.batchTTL)} remaining
           </p>
         </div>
 
@@ -147,12 +374,12 @@ function ExtendModal({ stampId, fileName, sharedCount, onClose }: { stampId: str
             Cancel
           </button>
           <button
-            onClick={extend}
+            onClick={doExtend}
             disabled={topup.isPending || !cost}
             className="flex-1 py-2 rounded-lg text-sm font-semibold disabled:opacity-40"
             style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
           >
-            {topup.isPending ? 'Extending…' : 'Extend'}
+            {topup.isPending ? 'Extending…' : 'Extend drive'}
           </button>
         </div>
       </div>
@@ -160,7 +387,7 @@ function ExtendModal({ stampId, fileName, sharedCount, onClose }: { stampId: str
   )
 }
 
-// ─── Update feed modal ────────────────────────────────────────────────────────
+// ─── UpdateFeedModal ───────────────────────────────────────────────────────────
 
 interface UpdateContent {
   entries: FileEntry[]
@@ -179,7 +406,6 @@ function UpdateFeedModal({ record, onClose }: { record: UploadRecord; onClose: (
   const dirInputRef = useRef<HTMLInputElement>(null)
 
   const { update } = useUploadHistory()
-  const { gatewayUrl } = useAppStore()
 
   async function handleDrop(e: React.DragEvent) {
     e.preventDefault()
@@ -187,13 +413,10 @@ function UpdateFeedModal({ record, onClose }: { record: UploadRecord; onClose: (
 
     if (record.type === 'file') {
       const file = e.dataTransfer.files[0]
-
       if (file) setContent({ entries: [{ path: file.name, file }], size: file.size, indexDocument: '' })
-
       return
     }
     const item = e.dataTransfer.items[0]
-
     if (!item) return
     try {
       const { entries } = await readDroppedDirectory(item)
@@ -201,14 +424,12 @@ function UpdateFeedModal({ record, onClose }: { record: UploadRecord; onClose: (
       setContent({ entries, size: totalSize(entries), indexDocument: index })
     } catch {
       const file = e.dataTransfer.files[0]
-
       if (file) setContent({ entries: [{ path: file.name, file }], size: file.size, indexDocument: '' })
     }
   }
 
   function handleFileInput(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
-
     if (file) setContent({ entries: [{ path: file.name, file }], size: file.size, indexDocument: '' })
   }
 
@@ -223,30 +444,25 @@ function UpdateFeedModal({ record, onClose }: { record: UploadRecord; onClose: (
     if (!content) return
     setPhase('updating')
     setError(null)
+    const stampId = record.driveId
     try {
-      // Upload new content using the existing stamp
       let reference: string
-
       if (record.type === 'file') {
-        const res = await beeApi.uploadFile(content.entries[0].file, record.stampId)
+        const res = await beeApi.uploadFile(content.entries[0].file, stampId)
         reference = res.reference
       } else {
         const opts =
           record.type === 'website' ? { indexDocument: content.indexDocument, errorDocument: '404.html' } : undefined
-        const res = await beeApi.uploadCollection(content.entries, record.stampId, opts)
+        const res = await beeApi.uploadCollection(content.entries, stampId, opts)
         reference = res.reference
       }
 
-      // Push update to the feed
       const topicHex = await topicFromString(record.feedTopic ?? record.name)
-      await serverApi.createFeedUpdate(topicHex, reference, record.stampId)
-
-      // Update the Drive record with the new content hash
+      await serverApi.createFeedUpdate(topicHex, reference, stampId)
       update(record.id, { hash: reference })
       setPhase('done')
     } catch (err) {
       const raw = err instanceof Error ? err.message : ''
-      // Extract the JSON message from the server response if present
       const match = raw.match(/"message":"([^"]+)"/)
       setError(match ? match[1] : 'Could not publish the update. Please try again.')
       setPhase('select')
@@ -264,7 +480,6 @@ function UpdateFeedModal({ record, onClose }: { record: UploadRecord; onClose: (
         style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
         onClick={e => e.stopPropagation()}
       >
-        {/* Header */}
         <div>
           <div className="flex items-center gap-2 mb-1">
             <Rss size={14} style={{ color: 'rgb(var(--accent))' }} />
@@ -277,12 +492,8 @@ function UpdateFeedModal({ record, onClose }: { record: UploadRecord; onClose: (
 
         {phase === 'select' && (
           <>
-            {/* Drop zone */}
             <div
-              onDragOver={e => {
-                e.preventDefault()
-                setDragging(true)
-              }}
+              onDragOver={e => { e.preventDefault(); setDragging(true) }}
               onDragLeave={() => setDragging(false)}
               onDrop={handleDrop}
               onClick={() => (record.type === 'file' ? fileInputRef.current?.click() : dirInputRef.current?.click())}
@@ -323,7 +534,7 @@ function UpdateFeedModal({ record, onClose }: { record: UploadRecord; onClose: (
             />
 
             <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-              Uses existing storage. If the stamp is expired or full, extend it from Drive first.
+              Uses existing storage. If the drive is expired or full, extend it first.
             </p>
 
             {error && (
@@ -421,25 +632,7 @@ function UpdateFeedModal({ record, onClose }: { record: UploadRecord; onClose: (
   )
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function isImageFile(name: string): boolean {
-  return /\.(jpe?g|png|gif|webp|svg)$/i.test(name)
-}
-
-async function downloadFromSwarm(hash: string, filename: string) {
-  const blob = await beeApi.downloadFile(hash)
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  URL.revokeObjectURL(url)
-}
-
-// ─── Retrieve modal ───────────────────────────────────────────────────────────
+// ─── RetrieveModal ─────────────────────────────────────────────────────────────
 
 function RetrieveModal({ onClose }: { onClose: () => void }) {
   const [hash, setHash] = useState('')
@@ -449,7 +642,6 @@ function RetrieveModal({ onClose }: { onClose: () => void }) {
 
   async function retrieve() {
     const h = hash.trim()
-
     if (!h) return
     setLoading(true)
     setError(null)
@@ -549,21 +741,19 @@ function RetrieveModal({ onClose }: { onClose: () => void }) {
   )
 }
 
-// ─── Record row ───────────────────────────────────────────────────────────────
+// ─── RecordRow ────────────────────────────────────────────────────────────────
 
 interface RecordRowProps {
   record: UploadRecord
   copiedId: string | null
   downloadingId: string | null
   gatewayUrl: string
-  indented?: boolean
   onCopy: (id: string, hash: string) => void
-  onExtend: (id: string) => void
   onUpdate: (id: string) => void
   onDownload: (id: string, hash: string, name: string) => void
   onRemove: (id: string) => void
-  draggable?: boolean
   onDragStart?: (e: React.DragEvent, id: string) => void
+  onDragEnd?: () => void
 }
 
 function RecordRow({
@@ -571,26 +761,22 @@ function RecordRow({
   copiedId,
   downloadingId,
   gatewayUrl,
-  indented,
   onCopy,
-  onExtend,
   onUpdate,
   onDownload,
   onRemove,
-  draggable,
   onDragStart,
+  onDragEnd,
 }: RecordRowProps) {
   const { label: expiry, urgent } = timeUntil(record.expiresAt)
   const linkHash = record.feedManifestAddress ?? record.hash
 
   return (
     <div
-      key={record.id}
-      draggable={draggable}
+      draggable={!!onDragStart}
       onDragStart={onDragStart ? e => onDragStart(e, record.id) : undefined}
-      className={`px-2 py-2 flex items-center gap-3 cursor-grab active:cursor-grabbing transition-colors hover:bg-white/[0.02]${
-        indented ? ' ml-6' : ''
-      }`}
+      onDragEnd={onDragEnd}
+      className="px-2 py-2 flex items-center gap-3 transition-colors hover:bg-white/[0.02]"
     >
       {/* Type icon or thumbnail */}
       <div
@@ -601,9 +787,7 @@ function RecordRow({
           <img
             src={`${getBeeUrl()}/bzz/${record.hash}`}
             className="w-full h-full object-cover"
-            onError={e => {
-              ;(e.target as HTMLImageElement).style.display = 'none'
-            }}
+            onError={e => { ;(e.target as HTMLImageElement).style.display = 'none' }}
             alt=""
           />
         ) : record.type === 'website' ? (
@@ -617,7 +801,19 @@ function RecordRow({
 
       {/* Name + feed badge */}
       <div className="flex items-center gap-2 flex-1 min-w-0">
-        <p className="text-xs font-medium truncate">{record.name}</p>
+        {record.type === 'folder' || record.type === 'website' ? (
+          <a
+            href={`${getBeeUrl()}/bzz/${linkHash}/`}
+            target="_blank"
+            rel="noreferrer"
+            className="text-xs font-medium truncate hover:underline"
+            style={{ color: 'rgb(var(--fg))' }}
+          >
+            {record.name}
+          </a>
+        ) : (
+          <p className="text-xs font-medium truncate">{record.name}</p>
+        )}
         {record.hasFeed && (
           <button
             onClick={() => onUpdate(record.id)}
@@ -631,7 +827,10 @@ function RecordRow({
       </div>
 
       {/* Size */}
-      <span className="text-xs shrink-0 hidden sm:block w-14 text-right tabular-nums" style={{ color: 'rgb(var(--fg-muted))' }}>
+      <span
+        className="text-xs shrink-0 hidden sm:block w-14 text-right tabular-nums"
+        style={{ color: 'rgb(var(--fg-muted))' }}
+      >
         {formatBytes(record.size)}
       </span>
 
@@ -649,16 +848,6 @@ function RecordRow({
       {/* Actions */}
       <div className="flex items-center gap-0.5 shrink-0">
         <button
-          onClick={() => onExtend(record.id)}
-          className="px-2 py-1 rounded text-[10px] font-semibold uppercase tracking-widest transition-colors"
-          style={urgent
-            ? { backgroundColor: 'rgba(239,68,68,0.15)', color: '#ef4444' }
-            : { color: 'rgb(var(--fg-muted))' }
-          }
-        >
-          Extend
-        </button>
-        <button
           onClick={() => onCopy(record.id, linkHash)}
           title="Copy link"
           className="w-6 h-6 flex items-center justify-center rounded transition-colors"
@@ -667,7 +856,7 @@ function RecordRow({
           <Copy size={12} />
         </button>
         <a
-          href={record.type === 'website' ? `${getBeeUrl()}/bzz/${linkHash}/` : `${gatewayUrl}/bzz/${linkHash}/`}
+          href={`${getBeeUrl()}/bzz/${linkHash}/`}
           target="_blank"
           rel="noreferrer"
           title="Open"
@@ -697,23 +886,527 @@ function RecordRow({
   )
 }
 
-// ─── Main component ───────────────────────────────────────────────────────────
+// ─── DriveCard ─────────────────────────────────────────────────────────────────
+
+interface DriveCardProps {
+  stamp: Stamp
+  records: UploadRecord[]
+  folders: DriveFolder[]
+  gatewayUrl: string
+  copiedId: string | null
+  downloadingId: string | null
+  customName?: string
+  onOpen: (folderId?: string) => void
+  onExtend: () => void
+  onRename: (name: string) => void
+  onCopy: (id: string, hash: string) => void
+  onUpdate: (id: string) => void
+  onDownload: (id: string, hash: string, name: string) => void
+  onRemove: (id: string) => void
+  onMoveToFolder: (recordId: string, folderId: string) => void
+}
+
+function DriveCard({ stamp, records, folders, gatewayUrl, copiedId, downloadingId, customName, onOpen, onExtend, onRename, onCopy, onUpdate, onDownload, onRemove, onMoveToFolder }: DriveCardProps) {
+  const [expanded, setExpanded] = useState(false)
+  const [expandedInlineFolders, setExpandedInlineFolders] = useState<Set<string>>(new Set())
+  const [inlineDraggingId, setInlineDraggingId] = useState<string | null>(null)
+  const [inlineDragOverFolderId, setInlineDragOverFolderId] = useState<string | null>(null)
+  const [renaming, setRenaming] = useState(false)
+  const [renameInput, setRenameInput] = useState('')
+  const MAX_TTL = 365 * 24 * 3600
+  const ttlPct = Math.min((stamp.batchTTL / MAX_TTL) * 100, 100)
+  const color = ttlColor(stamp.batchTTL)
+  const hasName = !!(customName || stamp.label)
+  const driveName = customName || stamp.label || `${stamp.batchID.slice(0, 8)}…`
+  const capacityBytes = (1 << stamp.depth) * 4096
+  const usedBytes = records.reduce((s, r) => s + r.size, 0)
+  const rootFolders = folders.filter(f => !f.parentFolderId)
+  const rootFiles = records.filter(r => !r.folderId)
+  const itemSummary = (() => {
+    const parts = []
+    if (rootFolders.length > 0) parts.push(`${rootFolders.length} folder${rootFolders.length !== 1 ? 's' : ''}`)
+    if (rootFiles.length > 0) parts.push(`${rootFiles.length} file${rootFiles.length !== 1 ? 's' : ''}`)
+    return parts.join(', ') || '0 files'
+  })()
+
+  const driveClickTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const folderClickTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
+
+  function handleDriveClick() {
+    if (driveClickTimer.current !== null) {
+      clearTimeout(driveClickTimer.current)
+      driveClickTimer.current = null
+      onOpen()
+      return
+    }
+    driveClickTimer.current = setTimeout(() => {
+      driveClickTimer.current = null
+      setExpanded(v => !v)
+    }, 300)
+  }
+
+  function handleFolderClick(id: string) {
+    if (folderClickTimers.current.has(id)) {
+      clearTimeout(folderClickTimers.current.get(id))
+      folderClickTimers.current.delete(id)
+      onOpen(id)
+      return
+    }
+    const timer = setTimeout(() => {
+      folderClickTimers.current.delete(id)
+      setExpandedInlineFolders(prev => {
+        const next = new Set(prev)
+        if (next.has(id)) next.delete(id)
+        else next.add(id)
+        return next
+      })
+    }, 300)
+    folderClickTimers.current.set(id, timer)
+  }
+
+  function renderInlineFolder(folder: DriveFolder, depth: number): React.ReactNode {
+    const isExpanded = expandedInlineFolders.has(folder.id)
+    const childFolders = folders.filter(f => f.parentFolderId === folder.id)
+    const folderFiles = records.filter(r => r.folderId === folder.id)
+    const count = childFolders.length + folderFiles.length
+    return (
+      <div key={folder.id} style={{ paddingLeft: `${depth * 12}px` }}>
+        <div
+          onClick={() => handleFolderClick(folder.id)}
+          onDragOver={e => { e.preventDefault(); setInlineDragOverFolderId(folder.id) }}
+          onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setInlineDragOverFolderId(null) }}
+          onDrop={e => {
+            e.preventDefault()
+            const recordId = e.dataTransfer.getData('recordId')
+            // Only move if the record belongs to this drive (prevent cross-drive drops)
+            if (recordId && records.find(r => r.id === recordId)) {
+              onMoveToFolder(recordId, folder.id)
+            }
+            setInlineDragOverFolderId(null)
+            setInlineDraggingId(null)
+          }}
+          className="flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer select-none transition-colors hover:bg-white/[0.04]"
+          style={{
+            backgroundColor: inlineDragOverFolderId === folder.id ? 'rgba(247,104,8,0.08)' : undefined,
+            outline: inlineDragOverFolderId === folder.id ? '2px solid rgb(var(--accent))' : 'none',
+            outlineOffset: '-2px',
+          }}
+        >
+          <span style={{ color: 'rgb(var(--fg-muted))' }}>
+            {isExpanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+          </span>
+          <FolderOpen size={11} style={{ color: 'rgb(var(--fg-muted))' }} />
+          <span className="text-xs flex-1 truncate">{folder.name}</span>
+          {count > 0 && (
+            <span className="text-xs shrink-0" style={{ color: 'rgb(var(--fg-muted))' }}>{count}</span>
+          )}
+        </div>
+        {isExpanded && (
+          <div>
+            {childFolders.map(child => renderInlineFolder(child, depth + 1))}
+            {folderFiles.map(r => (
+              <RecordRow
+                key={r.id}
+                record={r}
+                copiedId={copiedId}
+                downloadingId={downloadingId}
+                gatewayUrl={gatewayUrl}
+                onCopy={onCopy}
+                onUpdate={onUpdate}
+                onDownload={onDownload}
+                onRemove={onRemove}
+                onDragStart={(e, id) => { e.dataTransfer.setData('recordId', id); setInlineDraggingId(id) }}
+                onDragEnd={() => { setInlineDraggingId(null); setInlineDragOverFolderId(null) }}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div className="border-b" style={{ borderColor: 'rgb(var(--border))' }}>
+      <div
+        className="flex items-center gap-3 px-4 py-3 hover:bg-[rgb(var(--bg-surface))] transition-colors"
+        style={{ cursor: 'pointer' }}
+        onClick={handleDriveClick}
+      >
+        {/* Expand chevron */}
+        <span style={{ color: 'rgb(var(--fg-muted))' }}>
+          {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+        </span>
+        <HardDrive size={14} className="shrink-0" style={{ color: 'rgb(var(--fg-muted))' }} />
+
+        {/* Drive name — unnamed drives show a prompt; named drives show pencil on hover */}
+        {renaming ? (
+          <input
+            autoFocus
+            value={renameInput}
+            onChange={e => setRenameInput(e.target.value)}
+            onBlur={() => {
+              const val = renameInput.trim()
+              if (val) { onRename(val); setRenaming(false) }
+              else if (hasName) setRenaming(false)
+              // if no name and input empty, keep open
+            }}
+            onKeyDown={e => {
+              if (e.key === 'Enter') {
+                const val = renameInput.trim()
+                if (val) { onRename(val); setRenaming(false) }
+              }
+              if (e.key === 'Escape' && hasName) setRenaming(false)
+            }}
+            onClick={e => e.stopPropagation()}
+            placeholder="Name this drive…"
+            className="text-sm font-medium bg-transparent border-b outline-none flex-1 min-w-0"
+            style={{ borderColor: 'rgb(var(--accent))', color: 'rgb(var(--fg))' }}
+          />
+        ) : !hasName ? (
+          <button
+            onClick={e => { e.stopPropagation(); setRenameInput(''); setRenaming(true) }}
+            className="text-sm flex-1 text-left min-w-0"
+            style={{ color: 'rgb(var(--fg-muted))', fontStyle: 'italic' }}
+          >
+            Name this drive…
+          </button>
+        ) : (
+          <span className="text-sm font-medium truncate flex-1 group/name flex items-center gap-1 min-w-0">
+            <span className="truncate">{driveName}</span>
+            <button
+              onClick={e => { e.stopPropagation(); setRenameInput(driveName); setRenaming(true) }}
+              className="opacity-0 group-hover/name:opacity-100 transition-opacity shrink-0"
+              style={{ color: 'rgb(var(--fg-muted))' }}
+            >
+              <Pencil size={10} />
+            </button>
+          </span>
+        )}
+
+        {/* Confirming badge */}
+        {!stamp.usable && (
+          <span
+            className="text-[10px] px-1.5 py-0.5 rounded font-semibold uppercase tracking-widest animate-pulse shrink-0"
+            style={{ backgroundColor: 'rgba(247,104,8,0.1)', color: 'rgb(var(--accent))' }}
+          >
+            Confirming…
+          </span>
+        )}
+
+        {/* Item count */}
+        <span className="text-xs shrink-0" style={{ color: 'rgb(var(--fg-muted))' }}>
+          {itemSummary}
+        </span>
+
+        {/* Storage usage */}
+        <span className="text-xs shrink-0" style={{ color: 'rgb(var(--fg-muted))' }}>
+          {usedBytes > 0 ? `${formatBytes(usedBytes)} / ${formatBytes(capacityBytes)}` : formatBytes(capacityBytes)}
+        </span>
+
+        {/* TTL bar + label */}
+        <div className="flex items-center gap-1.5 shrink-0" style={{ color }}>
+          <Clock size={10} />
+          <div className="w-16 h-1 rounded-full shrink-0" style={{ backgroundColor: 'rgb(var(--border))' }}>
+            <div className="h-1 rounded-full" style={{ width: `${ttlPct}%`, backgroundColor: color }} />
+          </div>
+          <span className="text-[10px] w-10 text-right shrink-0">{ttlToDays(stamp.batchTTL)}</span>
+        </div>
+
+        {/* Extend */}
+        <button
+          onClick={e => { e.stopPropagation(); onExtend() }}
+          className="text-xs shrink-0 transition-colors"
+          style={{ color: 'rgb(var(--fg-muted))' }}
+          disabled={!stamp.usable}
+        >
+          Extend
+        </button>
+
+      </div>
+
+      {/* Inline file preview — only rendered when expanded and there's content */}
+      {expanded && (rootFolders.length > 0 || rootFiles.length > 0) && (
+        <div className="border-t" style={{ borderColor: 'rgb(var(--border))' }}>
+          <div className="py-2 px-6 space-y-0.5">
+            {rootFolders.map(folder => renderInlineFolder(folder, 0))}
+            {rootFiles.map(r => (
+              <RecordRow
+                key={r.id}
+                record={r}
+                copiedId={copiedId}
+                downloadingId={downloadingId}
+                gatewayUrl={gatewayUrl}
+                onCopy={onCopy}
+                onUpdate={onUpdate}
+                onDownload={onDownload}
+                onRemove={onRemove}
+                onDragStart={(e, id) => { e.dataTransfer.setData('recordId', id); setInlineDraggingId(id) }}
+                onDragEnd={() => { setInlineDraggingId(null); setInlineDragOverFolderId(null) }}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Inline upload panel ───────────────────────────────────────────────────────
+
+type UploadType = 'file' | 'folder'
+
+interface AddFileProps {
+  driveId: string
+  onDone: () => void
+  onAdd: (record: UploadRecord) => void
+}
+
+function generateFolderIndex(name: string, entries: FileEntry[]): FileEntry {
+  const rows = entries
+    .map(e => `<li><a href="${e.path}">${e.path}</a></li>`)
+    .join('\n')
+  const html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>${name}</title>
+<style>body{font-family:system-ui,sans-serif;max-width:800px;margin:40px auto;padding:0 20px}h1{font-weight:500;margin-bottom:20px}ul{list-style:none;padding:0}li{padding:6px 0;border-bottom:1px solid #eee}a{text-decoration:none;color:#0066cc}a:hover{text-decoration:underline}</style>
+</head><body><h1>${name}</h1><ul>
+${rows}
+</ul></body></html>`
+  // Use globalThis.File to avoid conflict with the lucide-react File icon import
+  const FileClass = globalThis.File
+  return { path: '_index.html', file: new FileClass([html], '_index.html', { type: 'text/html' }) }
+}
+
+function AddFilePanel({ driveId, onDone, onAdd }: AddFileProps) {
+  const [phase, setPhase] = useState('')
+  const [progress, setProgress] = useState<number | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [uploading, setUploading] = useState(false)
+  const [dragging, setDragging] = useState(false)
+
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const dirInputRef = useRef<HTMLInputElement>(null)
+
+  async function handleUpload(entries: FileEntry[], name: string, type: UploadType) {
+    setUploading(true)
+    setError(null)
+    setProgress(null)
+
+    // For folder uploads inject a generated directory listing so /bzz/{hash}/ resolves
+    const uploadEntries = type === 'folder' ? [...entries, generateFolderIndex(name, entries)] : entries
+    const indexDocument = type === 'folder' ? '_index.html' : undefined
+
+    try {
+      await pollStampUsable(driveId, setPhase)
+
+      async function doUpload(attempt: number): Promise<string> {
+        if (attempt > 1) {
+          setPhase(`Finalising storage… (retry ${attempt - 1})`)
+          await new Promise(r => setTimeout(r, 5000))
+        }
+        setPhase('Uploading…')
+        setProgress(0)
+
+        if (type === 'file') {
+          const res = await beeApi.uploadFileWithProgress(entries[0].file, driveId, pct => setProgress(pct))
+          return res.reference
+        }
+
+        const res = await beeApi.uploadCollectionWithProgress(uploadEntries, driveId, { indexDocument }, pct => setProgress(pct))
+        return res.reference
+      }
+
+      let reference!: string
+      for (let attempt = 1; attempt <= 4; attempt++) {
+        try {
+          reference = await doUpload(attempt)
+          break
+        } catch (err) {
+          if (attempt === 4) throw err
+        }
+      }
+
+      setProgress(null)
+
+      let expiresAt: number
+      try {
+        const stamp = await beeApi.getStamp(driveId)
+        expiresAt = Date.now() + stamp.batchTTL * 1000
+      } catch {
+        expiresAt = Date.now() + 3 * 30 * 24 * 60 * 60 * 1000
+      }
+
+      onAdd({
+        id: crypto.randomUUID(),
+        name,
+        hash: reference,
+        size: entries.reduce((sum, e) => sum + e.file.size, 0),
+        type,
+        driveId,
+        expiresAt,
+        uploadedAt: Date.now(),
+        hasFeed: false,
+      })
+
+      onDone()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Upload failed')
+      setPhase('')
+      setProgress(null)
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  function handleFileInput(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    void handleUpload([{ path: file.name, file }], file.name, 'file')
+  }
+
+  function handleDirInput(e: React.ChangeEvent<HTMLInputElement>) {
+    if (!e.target.files?.length) return
+    const { name, entries } = fileListToEntries(e.target.files)
+    void handleUpload(entries, name, 'folder')
+  }
+
+  async function handleDrop(e: React.DragEvent) {
+    e.preventDefault()
+    setDragging(false)
+    const item = e.dataTransfer.items[0]
+    if (!item) return
+    const fsEntry = item.webkitGetAsEntry?.()
+    if (fsEntry?.isDirectory) {
+      try {
+        const { name, entries } = await readDroppedDirectory(item)
+        void handleUpload(entries, name, 'folder')
+      } catch {
+        /* ignore */
+      }
+    } else {
+      const file = e.dataTransfer.files[0]
+      if (file) void handleUpload([{ path: file.name, file }], file.name, 'file')
+    }
+  }
+
+  if (uploading) {
+    return (
+      <div
+        className="max-w-xl rounded-xl border p-6 mb-4 space-y-3"
+        style={{ backgroundColor: 'rgb(var(--bg-surface))', borderColor: 'rgb(var(--border))' }}
+      >
+        <div className="flex items-center gap-2">
+          <RefreshCw size={13} className="animate-spin shrink-0" style={{ color: 'rgb(var(--accent))' }} />
+          <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>{phase || 'Preparing…'}</p>
+        </div>
+        {progress !== null && (
+          <div className="h-1 rounded-full" style={{ backgroundColor: 'rgb(var(--border))' }}>
+            <div
+              className="h-1 rounded-full transition-all"
+              style={{ width: `${progress}%`, backgroundColor: 'rgb(var(--accent))' }}
+            />
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div className="max-w-xl mb-4 space-y-3">
+      {/* Drop zone */}
+      <div
+        onDragOver={e => { e.preventDefault(); setDragging(true) }}
+        onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragging(false) }}
+        onDrop={handleDrop}
+        className="rounded-xl border-2 border-dashed transition-colors"
+        style={{
+          borderColor: dragging ? 'rgb(var(--accent))' : 'rgb(var(--border))',
+          backgroundColor: dragging ? 'rgba(247,104,8,0.04)' : 'transparent',
+        }}
+      >
+        <div className="flex flex-col items-center gap-3 py-12 px-6 text-center">
+          <Upload size={26} style={{ color: 'rgb(var(--fg-muted))' }} />
+          <div>
+            <p className="text-sm font-medium" style={{ color: 'rgb(var(--fg))' }}>
+              Drop a file or folder here
+            </p>
+            <p className="text-xs mt-1" style={{ color: 'rgb(var(--fg-muted))' }}>
+              or click to browse —{' '}
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="underline"
+                style={{ color: 'rgb(var(--fg-muted))' }}
+              >
+                file
+              </button>
+              {' · '}
+              <button
+                onClick={() => dirInputRef.current?.click()}
+                className="underline"
+                style={{ color: 'rgb(var(--fg-muted))' }}
+              >
+                folder
+              </button>
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {error && (
+        <p className="text-xs px-3 py-2 rounded text-center" style={{ backgroundColor: 'rgba(239,68,68,0.1)', color: '#ef4444' }}>
+          {error}
+        </p>
+      )}
+
+      <button
+        onClick={onDone}
+        className="text-xs"
+        style={{ color: 'rgb(var(--fg-muted))' }}
+      >
+        Cancel
+      </button>
+
+      <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileInput} />
+      <input
+        ref={dirInputRef}
+        type="file"
+        className="hidden"
+        // @ts-expect-error — webkitdirectory not in TS types
+        webkitdirectory="true"
+        onChange={handleDirInput}
+      />
+    </div>
+  )
+}
+
+// ─── Main component ────────────────────────────────────────────────────────────
 
 export default function Drive() {
-  const navigate = useNavigate()
-  const { records, folders, remove, addFolder, removeFolder, renameFolder, moveToFolder } = useUploadHistory()
+  const { data: stamps } = useStamps()
+  const { records, folders, add: addRecord, remove, addFolder, removeFolder, renameFolder, moveToFolder } = useUploadHistory()
   const { gatewayUrl } = useAppStore()
-  const [copiedId, setCopiedId] = useState<string | null>(null)
-  const [extendingId, setExtendingId] = useState<string | null>(null)
-  const [updatingId, setUpdatingId] = useState<string | null>(null)
-  const [search, setSearch] = useState('')
-  const [retrieveOpen, setRetrieveOpen] = useState(false)
-  const [downloadingId, setDownloadingId] = useState<string | null>(null)
-
   const location = useLocation()
-  // Reset to root when sidebar Drive button is clicked
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { setOpenFolderId(null); setExpandedFolders(new Set()) }, [location.key])
+
+  const [customDriveLabels, setCustomDriveLabels] = useState<Record<string, string>>(() => {
+    try { return JSON.parse(localStorage.getItem('nook-drive-labels') ?? '{}') } catch { return {} }
+  })
+
+  function renameDrive(batchID: string, name: string) {
+    setCustomDriveLabels(prev => {
+      const next = { ...prev, [batchID]: name }
+      localStorage.setItem('nook-drive-labels', JSON.stringify(next))
+      return next
+    })
+  }
+
+  const [activeDriveId, setActiveDriveId] = useState<string | null>(null)
+  const [showBuyModal, setShowBuyModal] = useState(false)
+  const [showExtendModal, setShowExtendModal] = useState<string | null>(null) // batchID
+  const [addingFile, setAddingFile] = useState(false)
+  const [search, setSearch] = useState('')
+  const [copiedId, setCopiedId] = useState<string | null>(null)
+  const [downloadingId, setDownloadingId] = useState<string | null>(null)
+  const [updatingId, setUpdatingId] = useState<string | null>(null)
+  const [retrieveOpen, setRetrieveOpen] = useState(false)
 
   // Folder UI state
   const [openFolderId, setOpenFolderId] = useState<string | null>(null)
@@ -725,7 +1418,17 @@ export default function Drive() {
   const [creatingFolder, setCreatingFolder] = useState(false)
   const [newFolderName, setNewFolderName] = useState('')
 
-  const filteredRecords = search ? records.filter(r => r.name.toLowerCase().includes(search.toLowerCase())) : records
+  // Reset on sidebar click
+  useEffect(() => {
+    setActiveDriveId(null)
+    setAddingFile(false)
+    setSearch('')
+    setOpenFolderId(null)
+    setExpandedFolders(new Set())
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.key])
+
+  const allStamps = stamps ?? []
 
   function copyHash(id: string, hash: string) {
     navigator.clipboard.writeText(`${gatewayUrl}/bzz/${hash}/`)
@@ -742,49 +1445,152 @@ export default function Drive() {
     }
   }
 
-  function handleDragStart(e: React.DragEvent, recordId: string) {
-    e.dataTransfer.setData('recordId', recordId)
-    e.dataTransfer.effectAllowed = 'move'
-    setDraggingId(recordId)
+  const activeDrive = activeDriveId ? allStamps.find(s => s.batchID === activeDriveId) : null
+  const driveRecords = activeDriveId ? records.filter(r => r.driveId === activeDriveId) : []
+
+  const updatingRecord = records.find(r => r.id === updatingId)
+  const extendingStamp = showExtendModal ? allStamps.find(s => s.batchID === showExtendModal) : null
+
+  // Search: flat list across all drives
+  const searchResults = search
+    ? records.filter(r => r.name.toLowerCase().includes(search.toLowerCase()))
+    : []
+
+  // ── Root view ────────────────────────────────────────────────────────────────
+
+  if (!activeDriveId) {
+    return (
+      <div className="p-6">
+        {/* Header */}
+        <div className="flex items-center gap-3 mb-6">
+          <h1
+            className="text-base font-semibold uppercase tracking-widest shrink-0"
+            style={{ color: 'rgb(var(--fg-muted))' }}
+          >
+            Drive
+          </h1>
+
+          <div className="flex-1 relative">
+            <Search
+              size={11}
+              className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
+              style={{ color: 'rgb(var(--fg-muted))' }}
+            />
+            <input
+              type="text"
+              placeholder="Search all files…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="w-full pl-7 pr-3 py-1.5 rounded-lg border text-xs focus:outline-none"
+              style={{ backgroundColor: 'rgb(var(--bg-surface))', color: 'rgb(var(--fg))' }}
+            />
+          </div>
+
+          <button
+            onClick={() => setRetrieveOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium shrink-0 transition-colors"
+            style={{ color: 'rgb(var(--fg-muted))' }}
+          >
+            <Download size={12} />
+            Retrieve
+          </button>
+
+          <button
+            onClick={() => setShowBuyModal(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0"
+            style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+          >
+            <Plus size={12} />
+            New drive
+          </button>
+        </div>
+
+        {/* Search results */}
+        {search ? (
+          <div>
+            {searchResults.length === 0 ? (
+              <p className="text-xs text-center py-8" style={{ color: 'rgb(var(--fg-muted))' }}>
+                No files match "{search}"
+              </p>
+            ) : (
+              <div className="divide-y" style={{ borderColor: 'rgb(var(--border))' }}>
+                {searchResults.map(record => (
+                  <RecordRow
+                    key={record.id}
+                    record={record}
+                    copiedId={copiedId}
+                    downloadingId={downloadingId}
+                    gatewayUrl={gatewayUrl}
+                    onCopy={copyHash}
+                    onUpdate={setUpdatingId}
+                    onDownload={handleDownload}
+                    onRemove={remove}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        ) : stamps === undefined ? null : allStamps.length === 0 ? (
+          /* Empty state */
+          <div className="flex flex-col items-center justify-center py-20 gap-4 text-center">
+            <div
+              className="w-12 h-12 rounded-full flex items-center justify-center"
+              style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
+            >
+              <HardDrive size={20} style={{ color: 'rgb(var(--fg-muted))' }} />
+            </div>
+            <div>
+              <p className="text-sm font-medium">No drives yet</p>
+              <p className="text-xs mt-1" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Create a drive to start storing files.
+              </p>
+            </div>
+            <button
+              onClick={() => setShowBuyModal(true)}
+              className="mt-2 px-4 py-2 rounded-lg text-sm font-semibold"
+              style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+            >
+              New drive
+            </button>
+          </div>
+        ) : (
+          /* Drive list */
+          <div className="border-t" style={{ borderColor: 'rgb(var(--border))' }}>
+            {allStamps.map(stamp => (
+              <DriveCard
+                key={stamp.batchID}
+                stamp={stamp}
+                records={records.filter(r => r.driveId === stamp.batchID)}
+                folders={folders.filter(f => f.driveId === stamp.batchID)}
+                gatewayUrl={gatewayUrl}
+                copiedId={copiedId}
+                downloadingId={downloadingId}
+                customName={customDriveLabels[stamp.batchID]}
+                onOpen={(folderId) => {
+                  setActiveDriveId(stamp.batchID)
+                  if (folderId) setOpenFolderId(folderId)
+                }}
+                onExtend={() => setShowExtendModal(stamp.batchID)}
+                onRename={(name) => renameDrive(stamp.batchID, name)}
+                onCopy={copyHash}
+                onUpdate={setUpdatingId}
+                onDownload={handleDownload}
+                onRemove={remove}
+                onMoveToFolder={moveToFolder}
+              />
+            ))}
+          </div>
+        )}
+
+        {showBuyModal && <BuyDriveModal onClose={() => setShowBuyModal(false)} />}
+        {extendingStamp && <ExtendModal stamp={extendingStamp} onClose={() => setShowExtendModal(null)} />}
+        {updatingRecord && <UpdateFeedModal record={updatingRecord} onClose={() => setUpdatingId(null)} />}
+        {retrieveOpen && <RetrieveModal onClose={() => setRetrieveOpen(false)} />}
+      </div>
+    )
   }
 
-  function handleDragEnd() {
-    setDraggingId(null)
-    setDragOverId(null)
-  }
-
-  function handleFolderDrop(e: React.DragEvent, folderId: string) {
-    e.preventDefault()
-    const recordId = e.dataTransfer.getData('recordId')
-
-    if (recordId) {
-      moveToFolder(recordId, folderId)
-    }
-    setDragOverId(null)
-    setDraggingId(null)
-  }
-
-  function handleRootDrop(e: React.DragEvent) {
-    e.preventDefault()
-    const recordId = e.dataTransfer.getData('recordId')
-
-    if (recordId) moveToFolder(recordId, null)
-    setDragOverId(null)
-    setDraggingId(null)
-  }
-
-  function commitRename() {
-    if (renamingFolderId && renameValue.trim()) {
-      renameFolder(renamingFolderId, renameValue.trim())
-    }
-    setRenamingFolderId(null)
-    setRenameValue('')
-  }
-
-  function startRename(folder: DriveFolder) {
-    setRenamingFolderId(folder.id)
-    setRenameValue(folder.name)
-  }
+  // ── Folder helpers ───────────────────────────────────────────────────────────
 
   function toggleFolder(id: string) {
     setExpandedFolders(prev => {
@@ -795,70 +1601,65 @@ export default function Drive() {
     })
   }
 
+  function startRename(folder: DriveFolder) {
+    setRenamingFolderId(folder.id)
+    setRenameValue(folder.name)
+  }
+
+  function commitRename() {
+    if (renamingFolderId && renameValue.trim()) {
+      renameFolder(renamingFolderId, renameValue.trim())
+    }
+    setRenamingFolderId(null)
+    setRenameValue('')
+  }
+
   function commitNewFolder() {
-    if (newFolderName.trim()) {
-      addFolder(newFolderName.trim(), openFolderId ?? undefined)
+    if (newFolderName.trim() && activeDriveId) {
+      addFolder(newFolderName.trim(), activeDriveId, openFolderId ?? undefined)
     }
     setCreatingFolder(false)
     setNewFolderName('')
   }
 
-  if (records.length === 0 && folders.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full gap-4 text-center p-6">
-        <div
-          className="w-12 h-12 rounded-full flex items-center justify-center"
-          style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
-        >
-          <Upload size={20} style={{ color: 'rgb(var(--fg-muted))' }} />
-        </div>
-        <div>
-          <p className="text-sm font-medium">Nothing here yet</p>
-          <p className="text-xs mt-1" style={{ color: 'rgb(var(--fg-muted))' }}>
-            Files you publish will appear here
-          </p>
-        </div>
-        <button
-          onClick={() => navigate('/publish')}
-          className="mt-2 px-4 py-2 rounded-lg text-sm font-semibold"
-          style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
-        >
-          Publish your first file
-        </button>
-      </div>
-    )
+  function handleFolderDrop(e: React.DragEvent, folderId: string) {
+    e.preventDefault()
+    const recordId = e.dataTransfer.getData('recordId')
+    if (recordId) moveToFolder(recordId, folderId)
+    setDragOverId(null)
+    setDraggingId(null)
   }
 
-  const updatingRecord = records.find(r => r.id === updatingId)
+  function handleRootDrop(e: React.DragEvent) {
+    e.preventDefault()
+    const recordId = e.dataTransfer.getData('recordId')
+    if (recordId) moveToFolder(recordId, null)
+    setDragOverId(null)
+    setDraggingId(null)
+  }
+
+  function handleRecordDragStart(e: React.DragEvent, id: string) {
+    e.dataTransfer.setData('recordId', id)
+    setDraggingId(id)
+  }
 
   const commonRowProps = {
     copiedId,
     downloadingId,
     gatewayUrl,
     onCopy: copyHash,
-    onExtend: setExtendingId,
     onUpdate: setUpdatingId,
     onDownload: handleDownload,
     onRemove: remove,
-    draggable: true,
-    onDragStart: handleDragStart,
+    onDragStart: handleRecordDragStart,
+    onDragEnd: () => { setDraggingId(null); setDragOverId(null) },
   }
 
-  // Derived: what's visible in the current view
-  const openFolder = openFolderId ? folders.find(f => f.id === openFolderId) ?? null : null
-  const visibleFolders = openFolderId
-    ? folders.filter(f => f.parentFolderId === openFolderId)
-    : folders.filter(f => !f.parentFolderId)
-  const visibleRecords = openFolderId
-    ? records.filter(r => r.folderId === openFolderId)
-    : records.filter(r => !r.folderId)
-
-  // Recursive folder row renderer — works for any nesting depth
   function renderFolder(folder: DriveFolder, depth: number): React.ReactNode {
     const isOver = dragOverId === folder.id
     const isExpanded = expandedFolders.has(folder.id)
     const childFolders = folders.filter(f => f.parentFolderId === folder.id)
-    const folderRecords = records.filter(r => r.folderId === folder.id)
+    const folderRecords = driveRecords.filter(r => r.folderId === folder.id)
     const count = folderRecords.length + childFolders.length
     const py = depth === 0 ? 'py-2.5' : 'py-2'
 
@@ -913,7 +1714,7 @@ export default function Drive() {
             <Pencil size={11} />
           </button>
           <button
-            onClick={e => { e.stopPropagation(); removeFolder(folder.id) }}
+            onClick={e => { e.stopPropagation(); removeFolder(folder.id, folders) }}
             title="Delete folder"
             className="w-6 h-6 flex items-center justify-center rounded hover:text-red-400 transition-colors"
             style={{ color: 'rgb(var(--fg-muted))' }}
@@ -925,16 +1726,7 @@ export default function Drive() {
         {isExpanded && (
           <div className="mt-1 pl-4 space-y-1">
             {childFolders.map(child => renderFolder(child, depth + 1))}
-            {folderRecords.length === 0 && childFolders.length === 0 ? (
-              <div
-                className="ml-2 rounded-lg border-2 border-dashed px-4 py-3 text-center"
-                style={{ borderColor: 'rgb(var(--border))' }}
-              >
-                <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-                  Drop files here · Double-click to open
-                </p>
-              </div>
-            ) : (
+            {folderRecords.length > 0 && (
               <div className="divide-y" style={{ borderColor: 'rgb(var(--border))' }}>
                 {folderRecords.map(record => (
                   <RecordRow key={record.id} record={record} {...commonRowProps} />
@@ -947,11 +1739,24 @@ export default function Drive() {
     )
   }
 
+  // ── Drive view ───────────────────────────────────────────────────────────────
+
+  const driveName = activeDrive?.label || (activeDriveId ? `${activeDriveId.slice(0, 8)}…` : 'Drive')
+
+  // Folders and records scoped to the active drive + current folder view
+  const driveFolders = folders.filter(f => f.driveId === activeDriveId)
+  const openFolder = openFolderId ? driveFolders.find(f => f.id === openFolderId) ?? null : null
+  const visibleFolders = openFolderId
+    ? driveFolders.filter(f => f.parentFolderId === openFolderId)
+    : driveFolders.filter(f => !f.parentFolderId)
+  const visibleRecords = openFolderId
+    ? driveRecords.filter(r => r.folderId === openFolderId)
+    : driveRecords.filter(r => !r.folderId)
+
   return (
-    <div className="p-6" onDragEnd={handleDragEnd}>
-      {/* Header */}
+    <div className="p-6">
+      {/* Breadcrumb */}
       {openFolderId ? (
-        /* Folder view header */
         <div className="flex items-center gap-2 mb-6">
           <button
             onClick={() => { setOpenFolderId(null); setCreatingFolder(false) }}
@@ -959,13 +1764,21 @@ export default function Drive() {
             style={{ color: 'rgb(var(--fg-muted))' }}
           >
             <ArrowLeft size={13} />
-            Drive
+            {driveName}
           </button>
           <span style={{ color: 'rgb(var(--fg-muted))' }}>/</span>
           <span className="flex-1 text-sm font-medium">{openFolder?.name}</span>
           <button
+            onClick={() => setAddingFile(v => !v)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0"
+            style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+          >
+            <Upload size={12} />
+            Upload
+          </button>
+          <button
             onClick={() => { setCreatingFolder(true); setNewFolderName('') }}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium shrink-0 transition-colors"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium shrink-0"
             style={{ color: 'rgb(var(--fg-muted))' }}
           >
             <FolderPlus size={12} />
@@ -973,169 +1786,124 @@ export default function Drive() {
           </button>
         </div>
       ) : (
-        /* Root header */
-        <div className="flex items-center gap-3 mb-6">
-          <h1
-            className="text-base font-semibold uppercase tracking-widest shrink-0"
+        <div className="flex items-center gap-2 mb-6">
+          <button
+            onClick={() => { setActiveDriveId(null); setAddingFile(false) }}
+            className="flex items-center gap-1.5 text-xs transition-colors"
             style={{ color: 'rgb(var(--fg-muted))' }}
           >
+            <ArrowLeft size={13} />
             Drive
-          </h1>
-          <div className="flex-1 relative">
-            <Search
-              size={11}
-              className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
-              style={{ color: 'rgb(var(--fg-muted))' }}
-            />
-            <input
-              type="text"
-              placeholder="Filter…"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              className="w-full pl-7 pr-3 py-1.5 rounded-lg border text-xs focus:outline-none"
-              style={{ backgroundColor: 'rgb(var(--bg-surface))', color: 'rgb(var(--fg))' }}
-            />
-          </div>
+          </button>
+          <span style={{ color: 'rgb(var(--fg-muted))' }}>/</span>
+          <span className="flex-1 text-sm font-medium">{driveName}</span>
+          <button
+            onClick={() => setAddingFile(v => !v)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0"
+            style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+          >
+            <Upload size={12} />
+            Upload
+          </button>
           <button
             onClick={() => { setCreatingFolder(true); setNewFolderName('') }}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium shrink-0 transition-colors"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium shrink-0"
             style={{ color: 'rgb(var(--fg-muted))' }}
           >
             <FolderPlus size={12} />
             Folder
           </button>
-          <button
-            onClick={() => setRetrieveOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium shrink-0 transition-colors"
-            style={{ color: 'rgb(var(--fg-muted))' }}
-          >
-            <Download size={12} />
-            Retrieve
-          </button>
         </div>
       )}
 
-      {/* Search mode — flat list */}
-      {search ? (
-        <div className="space-y-2">
-          {filteredRecords.length === 0 && (
-            <p className="text-xs text-center py-8" style={{ color: 'rgb(var(--fg-muted))' }}>
-              No files match "{search}"
-            </p>
-          )}
-          <div className="divide-y" style={{ borderColor: 'rgb(var(--border))' }}>
-            {filteredRecords.map(record => (
-              <RecordRow key={record.id} record={record} {...commonRowProps} draggable={false} onDragStart={undefined} />
-            ))}
-          </div>
-        </div>
-      ) : (
-        <div className="space-y-2">
-          {/* New folder / subfolder inline input */}
-          {creatingFolder && (
-            <div
-              className="rounded-lg border px-4 py-2.5 flex items-center gap-3"
-              style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
-            >
-              <FolderPlus size={14} style={{ color: 'rgb(var(--fg-muted))' }} />
-              <input
-                type="text"
-                autoFocus
-                value={newFolderName}
-                onChange={e => setNewFolderName(e.target.value)}
-                onKeyDown={e => {
-                  if (e.key === 'Enter') commitNewFolder()
-                  if (e.key === 'Escape') { setCreatingFolder(false); setNewFolderName('') }
-                }}
-                onBlur={commitNewFolder}
-                placeholder={openFolderId ? 'Subfolder name…' : 'Folder name…'}
-                className="flex-1 bg-transparent text-sm focus:outline-none"
-                style={{ color: 'rgb(var(--fg))' }}
-              />
-              <span className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>Enter to confirm</span>
-            </div>
-          )}
-
-          {/* Folder rows */}
-          {visibleFolders.map(folder => renderFolder(folder, 0))}
-
-          {/* Records in current view */}
-          {visibleFolders.length > 0 && visibleRecords.length > 0 && (
-            <div
-              onDragOver={e => { e.preventDefault(); setDragOverId('root') }}
-              onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverId(null) }}
-              onDrop={openFolderId ? undefined : handleRootDrop}
-              className="flex items-center gap-2 px-1 py-2"
-            >
-              <div className="h-px flex-1" style={{ backgroundColor: 'rgb(var(--border))' }} />
-              <span className="text-[10px] uppercase tracking-widest font-semibold px-1" style={{ color: 'rgb(var(--fg-muted))' }}>
-                Files
-              </span>
-              <div className="h-px flex-1" style={{ backgroundColor: 'rgb(var(--border))' }} />
-            </div>
-          )}
-
-          {visibleRecords.length > 0 && (
-            <div
-              onDragOver={!openFolderId ? e => { e.preventDefault(); setDragOverId('root') } : undefined}
-              onDragLeave={!openFolderId ? e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverId(null) } : undefined}
-              onDrop={!openFolderId ? handleRootDrop : undefined}
-            >
-              <div className="divide-y" style={{ borderColor: 'rgb(var(--border))' }}>
-                {visibleRecords.map(record => (
-                  <RecordRow key={record.id} record={record} {...commonRowProps} />
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Empty state for folder view */}
-          {openFolderId && visibleFolders.length === 0 && visibleRecords.length === 0 && !creatingFolder && (
-            <div
-              className="rounded-lg border-2 border-dashed px-4 py-10 text-center"
-              style={{ borderColor: 'rgb(var(--border))' }}
-            >
-              <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>This folder is empty</p>
-              <p className="text-xs mt-1" style={{ color: 'rgb(var(--fg-muted))' }}>
-                Drag files here or publish new content and move it to this folder
-              </p>
-            </div>
-          )}
-
-          {/* Root: unorganized drop zone (only when dragging and no root records) */}
-          {!openFolderId && visibleRecords.length === 0 && draggingId && (
-            <div
-              onDragOver={e => { e.preventDefault(); setDragOverId('root') }}
-              onDrop={handleRootDrop}
-              className="rounded-lg border-2 border-dashed px-4 py-4 text-center"
-              style={{
-                borderColor: dragOverId === 'root' ? 'rgb(var(--accent))' : 'rgb(var(--border))',
-                backgroundColor: dragOverId === 'root' ? 'rgba(247,104,8,0.04)' : 'transparent',
-              }}
-            >
-              <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>Drop here to unorganize</p>
-            </div>
-          )}
-        </div>
+      {/* Inline upload panel */}
+      {addingFile && (
+        <AddFilePanel
+          driveId={activeDriveId}
+          onDone={() => setAddingFile(false)}
+          onAdd={record => {
+            addRecord({ ...record, folderId: openFolderId ?? undefined })
+          }}
+        />
       )}
 
-      {extendingId && (() => {
-        const extendingRecord = records.find(r => r.id === extendingId)
-        const sharedCount = extendingRecord
-          ? records.filter(r => r.stampId === extendingRecord.stampId && r.id !== extendingId).length
-          : 0
-        return (
-          <ExtendModal
-            stampId={extendingRecord?.stampId ?? ''}
-            fileName={extendingRecord?.name ?? ''}
-            sharedCount={sharedCount}
-            onClose={() => setExtendingId(null)}
+      {/* New folder inline input */}
+      {creatingFolder && (
+        <div
+          className="rounded-lg border px-4 py-2.5 flex items-center gap-3 mb-3"
+          style={{ backgroundColor: 'rgb(var(--bg-surface))', borderColor: 'rgb(var(--border))' }}
+        >
+          <FolderPlus size={14} style={{ color: 'rgb(var(--fg-muted))' }} />
+          <input
+            type="text"
+            autoFocus
+            value={newFolderName}
+            onChange={e => setNewFolderName(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter') commitNewFolder()
+              if (e.key === 'Escape') { setCreatingFolder(false); setNewFolderName('') }
+            }}
+            onBlur={commitNewFolder}
+            placeholder={openFolderId ? 'Subfolder name…' : 'Folder name…'}
+            className="flex-1 bg-transparent text-sm focus:outline-none"
+            style={{ color: 'rgb(var(--fg))' }}
           />
+          <span className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>Enter to confirm</span>
+        </div>
+      )}
+
+      {/* Folder tree */}
+      {visibleFolders.length > 0 && (
+        <div className="space-y-1 mb-3">
+          {visibleFolders.map(folder => renderFolder(folder, 0))}
+        </div>
+      )}
+
+      {/* Files / folder separator */}
+      {visibleFolders.length > 0 && visibleRecords.length > 0 && (
+        <div className="flex items-center gap-2 px-1 py-2">
+          <div className="h-px flex-1" style={{ backgroundColor: 'rgb(var(--border))' }} />
+          <span className="text-[10px] uppercase tracking-widest font-semibold px-1" style={{ color: 'rgb(var(--fg-muted))' }}>
+            Files
+          </span>
+          <div className="h-px flex-1" style={{ backgroundColor: 'rgb(var(--border))' }} />
+        </div>
+      )}
+
+      {/* File list */}
+      {visibleRecords.length > 0 ? (
+        <div
+          onDragOver={!openFolderId ? e => { e.preventDefault(); setDragOverId('root') } : undefined}
+          onDragLeave={!openFolderId ? e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverId(null) } : undefined}
+          onDrop={!openFolderId ? handleRootDrop : undefined}
+          className="divide-y"
+          style={{ borderColor: 'rgb(var(--border))' }}
+        >
+          {visibleRecords.map(record => (
+            <RecordRow key={record.id} record={record} {...commonRowProps} />
+          ))}
+        </div>
+      ) : visibleFolders.length === 0 && !addingFile && !creatingFolder ? (
+        openFolderId ? (
+          <div
+            className="rounded-lg border-2 border-dashed px-4 py-10 text-center"
+            style={{ borderColor: 'rgb(var(--border))' }}
+          >
+            <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>This folder is empty</p>
+            <p className="text-xs mt-1" style={{ color: 'rgb(var(--fg-muted))' }}>
+              Upload files or drag them here from the drive
+            </p>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center py-16 gap-3 text-center">
+            <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>This drive is empty.</p>
+            <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>Upload a file or create a folder.</p>
+          </div>
         )
-      })()}
+      ) : null}
+
 
       {updatingRecord && <UpdateFeedModal record={updatingRecord} onClose={() => setUpdatingId(null)} />}
-
       {retrieveOpen && <RetrieveModal onClose={() => setRetrieveOpen(false)} />}
     </div>
   )
