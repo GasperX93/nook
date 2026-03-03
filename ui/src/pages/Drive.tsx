@@ -968,7 +968,6 @@ function DriveCard({ stamp, records, folders, gatewayUrl, copiedId, downloadingI
     const isExpanded = expandedInlineFolders.has(folder.id)
     const childFolders = folders.filter(f => f.parentFolderId === folder.id)
     const folderFiles = records.filter(r => r.folderId === folder.id)
-    const count = childFolders.length + folderFiles.length
     return (
       <div key={folder.id} style={{ paddingLeft: `${depth * 12}px` }}>
         <div
@@ -997,28 +996,29 @@ function DriveCard({ stamp, records, folders, gatewayUrl, copiedId, downloadingI
           </span>
           <FolderOpen size={11} style={{ color: 'rgb(var(--fg-muted))' }} />
           <span className="text-xs flex-1 truncate">{folder.name}</span>
-          {count > 0 && (
-            <span className="text-xs shrink-0" style={{ color: 'rgb(var(--fg-muted))' }}>{count}</span>
-          )}
         </div>
         {isExpanded && (
-          <div>
+          <div className="ml-3 pl-2 border-l" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>
             {childFolders.map(child => renderInlineFolder(child, depth + 1))}
-            {folderFiles.map(r => (
-              <RecordRow
-                key={r.id}
-                record={r}
-                copiedId={copiedId}
-                downloadingId={downloadingId}
-                gatewayUrl={gatewayUrl}
-                onCopy={onCopy}
-                onUpdate={onUpdate}
-                onDownload={onDownload}
-                onRemove={onRemove}
-                onDragStart={(e, id) => { e.dataTransfer.setData('recordId', id); setInlineDraggingId(id) }}
-                onDragEnd={() => { setInlineDraggingId(null); setInlineDragOverFolderId(null) }}
-              />
-            ))}
+            {folderFiles.length > 0 && (
+              <div className="divide-y" style={{ borderColor: 'rgb(var(--border))' }}>
+                {folderFiles.map(r => (
+                  <RecordRow
+                    key={r.id}
+                    record={r}
+                    copiedId={copiedId}
+                    downloadingId={downloadingId}
+                    gatewayUrl={gatewayUrl}
+                    onCopy={onCopy}
+                    onUpdate={onUpdate}
+                    onDownload={onDownload}
+                    onRemove={onRemove}
+                    onDragStart={(e, id) => { e.dataTransfer.setData('recordId', id); setInlineDraggingId(id) }}
+                    onDragEnd={() => { setInlineDraggingId(null); setInlineDragOverFolderId(null) }}
+                  />
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -1127,23 +1127,31 @@ function DriveCard({ stamp, records, folders, gatewayUrl, copiedId, downloadingI
       {/* Inline file preview — only rendered when expanded and there's content */}
       {expanded && (rootFolders.length > 0 || rootFiles.length > 0) && (
         <div className="border-t" style={{ borderColor: 'rgb(var(--border))' }}>
-          <div className="py-2 px-6 space-y-0.5">
-            {rootFolders.map(folder => renderInlineFolder(folder, 0))}
-            {rootFiles.map(r => (
-              <RecordRow
-                key={r.id}
-                record={r}
-                copiedId={copiedId}
-                downloadingId={downloadingId}
-                gatewayUrl={gatewayUrl}
-                onCopy={onCopy}
-                onUpdate={onUpdate}
-                onDownload={onDownload}
-                onRemove={onRemove}
-                onDragStart={(e, id) => { e.dataTransfer.setData('recordId', id); setInlineDraggingId(id) }}
-                onDragEnd={() => { setInlineDraggingId(null); setInlineDragOverFolderId(null) }}
-              />
-            ))}
+          <div className="py-2 px-6">
+            {rootFolders.length > 0 && (
+              <div className="space-y-0.5 mb-0.5">
+                {rootFolders.map(folder => renderInlineFolder(folder, 0))}
+              </div>
+            )}
+            {rootFiles.length > 0 && (
+              <div className="divide-y" style={{ borderColor: 'rgb(var(--border))' }}>
+                {rootFiles.map(r => (
+                  <RecordRow
+                    key={r.id}
+                    record={r}
+                    copiedId={copiedId}
+                    downloadingId={downloadingId}
+                    gatewayUrl={gatewayUrl}
+                    onCopy={onCopy}
+                    onUpdate={onUpdate}
+                    onDownload={onDownload}
+                    onRemove={onRemove}
+                    onDragStart={(e, id) => { e.dataTransfer.setData('recordId', id); setInlineDraggingId(id) }}
+                    onDragEnd={() => { setInlineDraggingId(null); setInlineDragOverFolderId(null) }}
+                  />
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}
