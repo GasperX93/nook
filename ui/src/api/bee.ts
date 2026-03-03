@@ -201,7 +201,7 @@ export const beeApi = {
     file: File,
     stampId: string,
     onProgress?: (pct: number) => void,
-    deferred = true,
+    deferred = false,
   ): Promise<UploadResult> =>
     xhrUpload(
       `${getBeeUrl()}/bzz`,
@@ -222,7 +222,7 @@ export const beeApi = {
     onProgress?: (pct: number) => void,
   ): Promise<UploadResult> => {
     const tar = await createTar(entries)
-    const deferred = options?.deferred !== false
+    const deferred = options?.deferred === true
     const headers: Record<string, string> = {
       'swarm-postage-batch-id': stampId,
       'swarm-deferred-upload': deferred ? 'true' : 'false',
