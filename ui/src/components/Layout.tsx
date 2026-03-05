@@ -53,6 +53,10 @@ export default function Layout() {
       (!stamps || stamps.length === 0) &&
       (!wallet || Number(weiToDai(wallet.nativeTokenBalance)) === 0))
 
+  // Returning users: show sync overlay while stamps endpoint isn't ready (503 during postage sync)
+  const stampsReady = stamps !== undefined
+  const showSyncOverlay = !isNewUser && beeOnline && !stampsReady
+
   const peerCount = peers?.connections ?? 0
   const isSyncing = beeOnline && peerCount === 0
 
@@ -204,7 +208,9 @@ export default function Layout() {
           </div>
         )}
 
-        <div className="flex-1 overflow-auto flex flex-col">{isNewUser ? <Onboarding /> : <Outlet />}</div>
+        <div className="flex-1 overflow-auto flex flex-col">
+          {isNewUser ? <Onboarding mode="full" /> : showSyncOverlay ? <Onboarding mode="sync" /> : <Outlet />}
+        </div>
       </main>
     </div>
   )

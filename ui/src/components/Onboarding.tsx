@@ -15,7 +15,7 @@ type Step = 'starting' | 'syncing' | 'funding' | 'ready'
 
 const STEPS: Step[] = ['starting', 'syncing', 'funding', 'ready']
 
-export default function Onboarding() {
+export default function Onboarding({ mode = 'full' }: { mode?: 'full' | 'sync' }) {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { setOnboardingCompleted } = useAppStore()
@@ -25,7 +25,7 @@ export default function Onboarding() {
   const { data: wallet } = useWallet()
   const { data: addresses } = useAddresses()
 
-  const [step, setStep] = useState<Step>('starting')
+  const [step, setStep] = useState<Step>(mode === 'sync' ? 'syncing' : 'starting')
   const [copiedAddr, setCopiedAddr] = useState(false)
   const [giftCode, setGiftCode] = useState('')
   const [redeeming, setRedeeming] = useState(false)
@@ -100,7 +100,8 @@ export default function Onboarding() {
   return (
     <div className="flex-1 flex flex-col items-center justify-center p-8 overflow-auto">
       <div className="w-full max-w-lg">
-        {/* Step indicator */}
+        {/* Step indicator — full mode only */}
+        {mode === 'full' && (
         <div className="flex items-center justify-center gap-2 mb-10">
           {STEPS.map((s, i) => (
             <div key={s} className="flex items-center gap-2">
@@ -120,6 +121,7 @@ export default function Onboarding() {
             </div>
           ))}
         </div>
+        )}
 
         {/* Step 1 — Node starting */}
         {step === 'starting' && (
@@ -285,8 +287,8 @@ export default function Onboarding() {
           </div>
         )}
 
-        {/* Skip link */}
-        {step !== 'ready' && (
+        {/* Skip link — full mode only */}
+        {mode === 'full' && step !== 'ready' && (
           <div className="text-center mt-8">
             <button
               onClick={skip}
