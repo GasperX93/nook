@@ -43,4 +43,7 @@ export const serverApi = {
    */
   buyStamp: async (amount: string, depth: number, immutable: boolean, label?: string) =>
     serverPost<{ batchID: string }>('/buy-stamp', { amount, depth, immutable, label }),
+
+  withdraw: async (token: 'bzz' | 'dai', amount: string, to: string) =>
+    serverPost<{ success: boolean; txHash: string }>('/withdraw', { token, amount, to }),
 }

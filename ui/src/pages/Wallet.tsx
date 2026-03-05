@@ -1,38 +1,18 @@
 import { useQueryClient } from '@tanstack/react-query'
-import { AlertTriangle, Check, Copy, Gift } from 'lucide-react'
+import { AlertTriangle, ArrowUpRight, Check, Copy, Gift } from 'lucide-react'
 import { useState } from 'react'
 import '@rainbow-me/rainbowkit/styles.css'
 import '@upcoming/multichain-widget/styles.css'
 import { MultichainWidget } from '@upcoming/multichain-widget'
 import { weiToDai, plurToBzz } from '../api/bee'
+
+const PLUR_PER_BZZ = 10n ** 16n
+const WEI_PER_DAI = 10n ** 18n
 import { api } from '../api/client'
+import { serverApi } from '../api/server'
 import { useAddresses, useBeeHealth, useWallet } from '../api/queries'
 import { useAppStore } from '../store/app'
-
-const WIDGET_THEME = {
-  backgroundColor: '#0f1117',
-  inputBackgroundColor: '#181b23',
-  inputBorderColor: '#262a36',
-  inputTextColor: '#f0f4f8',
-  textColor: '#f0f4f8',
-  secondaryTextColor: '#78829690',
-  buttonBackgroundColor: '#f76808',
-  buttonTextColor: '#ffffff',
-  buttonSecondaryBackgroundColor: '#262a36',
-  buttonSecondaryTextColor: '#f0f4f8',
-  errorTextColor: '#ef4444',
-  borderRadius: '8px',
-  fontFamily: "ui-monospace, 'Cascadia Code', 'Fira Code', monospace",
-  fontSize: '13px',
-  fontWeight: 400,
-  smallFontSize: '11px',
-  smallFontWeight: 400,
-  labelSpacing: '0.1em',
-  inputVerticalPadding: '8px',
-  inputHorizontalPadding: '12px',
-  buttonVerticalPadding: '10px',
-  buttonHorizontalPadding: '16px',
-}
+import { WIDGET_THEME } from '../theme'
 
 export default function Wallet() {
   const queryClient = useQueryClient()
@@ -48,6 +28,14 @@ export default function Wallet() {
   const [redeeming, setRedeeming] = useState(false)
   const [redeemError, setRedeemError] = useState<string | null>(null)
   const [redeemDone, setRedeemDone] = useState(false)
+  const [withdrawToken, setWithdrawToken] = useState<'bzz' | 'dai'>('bzz')
+  const [withdrawAmount, setWithdrawAmount] = useState('')
+  const [withdrawTo, setWithdrawTo] = useState('')
+  const [withdrawing, setWithdrawing] = useState(false)
+  const [withdrawError, setWithdrawError] = useState<string | null>(null)
+  const [withdrawDone, setWithdrawDone] = useState(false)
+  const [withdrawTxHash, setWithdrawTxHash] = useState<string | null>(null)
+  const [showWithdraw, setShowWithdraw] = useState(false)
 
   const syncing = beeOnline && walletError
   const bzz = wallet ? Number(plurToBzz(wallet.bzzBalance)).toFixed(4) : syncing ? 'syncing…' : '—'
@@ -112,6 +100,44 @@ export default function Wallet() {
     }
   }
 
+  async function withdraw() {
+    if (!withdrawAmount || !withdrawTo) return
+    setWithdrawing(true)
+    setWithdrawError(null)
+    setWithdrawDone(false)
+
+    try {
+      const raw = parseFloat(withdrawAmount)
+
+      if (isNaN(raw) || raw <= 0) throw new Error('Enter a valid amount')
+
+      const unit = withdrawToken === 'bzz' ? PLUR_PER_BZZ : WEI_PER_DAI
+      const amountSmallest = (BigInt(Math.floor(raw * 1e8)) * unit) / 100_000_000n
+
+      const { txHash } = await serverApi.withdraw(withdrawToken, amountSmallest.toString(), withdrawTo)
+      setWithdrawDone(true)
+      setWithdrawTxHash(txHash)
+      setWithdrawAmount('')
+      setWithdrawTo('')
+      queryClient.invalidateQueries({ queryKey: ['bee', 'wallet'] })
+      setTimeout(() => { setWithdrawDone(false); setWithdrawTxHash(null) }, 30_000)
+    } catch (err) {
+      setWithdrawError(err instanceof Error ? err.message : 'Withdraw failed')
+    } finally {
+      setWithdrawing(false)
+    }
+  }
+
+  function fillMax() {
+    if (!wallet) return
+
+    if (withdrawToken === 'bzz') {
+      setWithdrawAmount(plurToBzz(wallet.bzzBalance))
+    } else {
+      setWithdrawAmount(weiToDai(wallet.nativeTokenBalance))
+    }
+  }
+
   return (
     <div className="p-6 max-w-4xl">
       <h1 className="text-base font-semibold uppercase tracking-widest mb-6" style={{ color: 'rgb(var(--fg-muted))' }}>
@@ -168,6 +194,14 @@ export default function Wallet() {
                     <span className="text-sm font-medium" style={{ color: 'rgb(var(--fg-muted))' }}>BZZ</span>
                   </div>
                   <p className="text-xs mt-2" style={{ color: 'rgb(var(--fg-muted))' }}>Used to buy storage</p>
+                  <button
+                    onClick={() => { setWithdrawToken('bzz'); setWithdrawAmount(''); setWithdrawTo(''); setWithdrawError(null); setWithdrawDone(false); setShowWithdraw(true) }}
+                    className="flex items-center gap-1 text-[10px] mt-3 transition-colors"
+                    style={{ color: 'rgb(var(--fg-muted))' }}
+                  >
+                    <ArrowUpRight size={10} />
+                    Withdraw
+                  </button>
                 </div>
                 <div className="rounded-xl border p-5 flex-1" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
                   <p className="text-xs uppercase tracking-widest mb-3" style={{ color: 'rgb(var(--fg-muted))' }}>xDAI</p>
@@ -176,6 +210,14 @@ export default function Wallet() {
                     <span className="text-sm font-medium" style={{ color: 'rgb(var(--fg-muted))' }}>xDAI</span>
                   </div>
                   <p className="text-xs mt-2" style={{ color: 'rgb(var(--fg-muted))' }}>Used for gas fees</p>
+                  <button
+                    onClick={() => { setWithdrawToken('dai'); setWithdrawAmount(''); setWithdrawTo(''); setWithdrawError(null); setWithdrawDone(false); setShowWithdraw(true) }}
+                    className="flex items-center gap-1 text-[10px] mt-3 transition-colors"
+                    style={{ color: 'rgb(var(--fg-muted))' }}
+                  >
+                    <ArrowUpRight size={10} />
+                    Withdraw
+                  </button>
                 </div>
               </div>
 
@@ -268,6 +310,7 @@ export default function Wallet() {
                   </p>
                 )}
               </div>
+
             </div>
 
             {/* Right column: top up widget */}
@@ -303,6 +346,103 @@ export default function Wallet() {
 
           </div>
         </div>
+
+      {/* Withdraw modal */}
+      {showWithdraw && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          onClick={() => !withdrawing && setShowWithdraw(false)}
+        >
+          <div
+            className="rounded-xl border p-6 w-96 space-y-4"
+            style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div>
+              <p className="text-sm font-semibold">
+                Withdraw {withdrawToken === 'bzz' ? 'BZZ' : 'xDAI'}
+              </p>
+              <p className="text-xs mt-1" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Send to any address on Gnosis Chain.
+              </p>
+            </div>
+
+            {/* Amount */}
+            <div className="relative">
+              <input
+                type="number"
+                value={withdrawAmount}
+                onChange={e => setWithdrawAmount(e.target.value)}
+                placeholder="0.00"
+                min="0"
+                className="w-full rounded-lg border px-3 py-2 text-sm pr-20 focus:outline-none"
+                style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
+              />
+              <button
+                onClick={fillMax}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-semibold uppercase tracking-widest transition-colors"
+                style={{ color: 'rgb(var(--accent))' }}
+              >
+                Max
+              </button>
+            </div>
+
+            {/* Destination address */}
+            <input
+              type="text"
+              value={withdrawTo}
+              onChange={e => setWithdrawTo(e.target.value)}
+              placeholder="Destination address (0x…)"
+              className="w-full rounded-lg border px-3 py-2 text-sm font-mono focus:outline-none"
+              style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
+            />
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowWithdraw(false)}
+                disabled={withdrawing}
+                className="flex-1 px-4 py-2 rounded-lg text-sm font-semibold border transition-opacity disabled:opacity-40"
+                style={{ color: 'rgb(var(--fg-muted))' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={withdraw}
+                disabled={withdrawing || !withdrawAmount || !withdrawTo}
+                className="flex-1 px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-40 transition-opacity"
+                style={{
+                  backgroundColor: withdrawDone ? 'rgba(74,222,128,0.15)' : 'rgb(var(--accent))',
+                  color: withdrawDone ? '#4ade80' : '#fff',
+                }}
+              >
+                {withdrawing ? 'Sending…' : withdrawDone ? 'Sent' : 'Withdraw'}
+              </button>
+            </div>
+
+            {withdrawError && (
+              <p className="text-xs" style={{ color: '#ef4444' }}>
+                {withdrawError}
+              </p>
+            )}
+
+            {withdrawDone && (
+              <p className="text-xs" style={{ color: '#4ade80' }}>
+                Withdraw complete.{' '}
+                {withdrawTxHash && (
+                  <a
+                    href={`https://gnosisscan.io/tx/${withdrawTxHash}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="underline"
+                  >
+                    View transaction
+                  </a>
+                )}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

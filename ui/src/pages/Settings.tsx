@@ -1,3 +1,4 @@
+import { ExternalLink } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAddresses, useBeeHealth, useConfig, useInfo, usePeers, useTopology, useUpdateConfig } from '../api/queries'
@@ -115,13 +116,35 @@ export default function Settings() {
           </div>
 
           {/* Version info */}
-          <div className="rounded-xl border p-5 space-y-2" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
+          <div className="rounded-xl border p-5 space-y-3" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
             <p className="text-sm mb-1" style={{ color: 'rgb(var(--fg-muted))' }}>
               About
             </p>
             <div className="flex justify-between text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
               <span>Nook</span>
               <span className="font-mono">{info?.version ?? '—'}</span>
+            </div>
+            <div className="flex flex-col gap-2 pt-1">
+              <a
+                href="https://github.com/GasperX93/nook"
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-2 text-xs transition-colors hover:underline"
+                style={{ color: 'rgb(var(--fg-muted))' }}
+              >
+                <ExternalLink size={11} />
+                GitHub
+              </a>
+              <a
+                href="https://github.com/GasperX93/nook/issues/new/choose"
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-2 text-xs transition-colors hover:underline"
+                style={{ color: 'rgb(var(--fg-muted))' }}
+              >
+                <ExternalLink size={11} />
+                Report an issue or give feedback
+              </a>
             </div>
           </div>
         </>

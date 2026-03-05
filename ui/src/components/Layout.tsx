@@ -1,8 +1,10 @@
 import { AlertTriangle, Globe, HardDrive, RefreshCw, Settings, Terminal, User, Wallet } from 'lucide-react'
 import { useRef } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
-import { useBeeHealth, usePeers, useStatus } from '../api/queries'
+import { weiToDai } from '../api/bee'
+import { useBeeHealth, usePeers, useStamps, useStatus, useWallet } from '../api/queries'
 import { useAppStore } from '../store/app'
+import Onboarding from './Onboarding'
 
 const mainNavItems = [
   { to: '/drive', icon: HardDrive, label: 'Drive' },
@@ -11,15 +13,15 @@ const mainNavItems = [
 
 const settingsNavItem = { to: '/settings', icon: Settings, label: 'Settings' }
 
-const appNavItems = [
-  { to: '/apps/website-publisher', icon: Globe, label: 'Publish', sublabel: 'website' },
-]
+const appNavItems = [{ to: '/apps/website-publisher', icon: Globe, label: 'Publish', sublabel: 'website' }]
 
 export default function Layout() {
   const { isError: beeOffline, isPending: beeChecking, isSuccess: beeOnline } = useBeeHealth()
   const { data: peers } = usePeers()
   const { data: status } = useStatus()
-  const { devMode } = useAppStore()
+  const { data: stamps } = useStamps()
+  const { data: wallet } = useWallet()
+  const { devMode, onboardingCompleted } = useAppStore()
   const navigate = useNavigate()
 
   const navItems = devMode ? [...mainNavItems, { to: '/dev', icon: Terminal, label: 'Dev mode' }] : mainNavItems
@@ -30,9 +32,26 @@ export default function Layout() {
 
   if (beeOnline) hasEverBeenOnline.current = true
 
+  // Latch needsFunding so the banner doesn't disappear when Bee restarts.
+  // Cleared when wallet gets funded (xDAI > 0).
+  const needsFundingLatch = useRef(false)
+
+  if (status?.needsFunding) needsFundingLatch.current = true
+
+  if (wallet && Number(weiToDai(wallet.nativeTokenBalance)) > 0) needsFundingLatch.current = false
+
   const showStarting = !beeOnline && !hasEverBeenOnline.current
   const showDown = beeOffline && !beeChecking && hasEverBeenOnline.current
-  const showFundingWarning = status?.needsFunding && !beeOnline && !beeChecking
+  const showFundingWarning = needsFundingLatch.current && !beeOnline && !beeChecking
+
+  // Show onboarding for new users: no stamps, no wallet balance, not previously completed.
+  // localStorage 'nook:force-onboarding' can override for testing.
+  const forceOnboarding = localStorage.getItem('nook:force-onboarding') === 'true'
+  const isNewUser =
+    forceOnboarding ||
+    (!onboardingCompleted &&
+      (!stamps || stamps.length === 0) &&
+      (!wallet || Number(weiToDai(wallet.nativeTokenBalance)) === 0))
 
   const peerCount = peers?.connections ?? 0
   const isSyncing = beeOnline && peerCount === 0
@@ -53,7 +72,10 @@ export default function Layout() {
         </span>
 
         {/* Node status dot */}
-        <div className="flex flex-col items-center gap-1 mb-3" title={`Bee node: ${dotLabel}${beeOnline ? ` · ${peerCount} peers` : ''}`}>
+        <div
+          className="flex flex-col items-center gap-1 mb-3"
+          title={`Bee node: ${dotLabel}${beeOnline ? ` · ${peerCount} peers` : ''}`}
+        >
           <div
             className="w-2 h-2 rounded-full transition-colors"
             style={{ backgroundColor: dotColor, boxShadow: beeOnline ? `0 0 6px ${dotColor}` : 'none' }}
@@ -88,7 +110,10 @@ export default function Layout() {
 
         {/* Apps section */}
         <div className="w-10 my-3" style={{ borderTop: '1px solid rgba(255,255,255,0.25)' }} />
-        <span className="text-[8px] font-bold uppercase tracking-widest mb-1.5 w-full text-center" style={{ color: 'rgb(var(--fg-muted))' }}>
+        <span
+          className="text-[8px] font-bold uppercase tracking-widest mb-1.5 w-full text-center"
+          style={{ color: 'rgb(var(--fg-muted))' }}
+        >
           Apps
         </span>
         <nav className="flex flex-col gap-0.5 w-full px-2">
@@ -106,7 +131,11 @@ export default function Layout() {
               style={({ isActive }) => (isActive ? { backgroundColor: 'rgba(247,104,8,0.65)' } : {})}
             >
               <Icon size={15} />
-              <span className="text-[9px] font-medium leading-tight text-center">{label}<br />{sublabel}</span>
+              <span className="text-[9px] font-medium leading-tight text-center">
+                {label}
+                <br />
+                {sublabel}
+              </span>
             </NavLink>
           ))}
         </nav>
@@ -134,7 +163,7 @@ export default function Layout() {
       {/* Main content */}
       <main className="flex-1 overflow-auto flex flex-col">
         {/* Starting up — friendly indicator */}
-        {showStarting && (
+        {showStarting && !isNewUser && (
           <div
             className="flex items-center gap-2.5 px-4 py-2.5 text-xs shrink-0"
             style={{ backgroundColor: 'rgba(247,104,8,0.08)', borderBottom: '1px solid rgba(247,104,8,0.15)' }}
@@ -156,7 +185,7 @@ export default function Layout() {
         )}
 
         {/* Needs funding — shown when Bee exits because wallet has no xDAI */}
-        {showFundingWarning && (
+        {showFundingWarning && !isNewUser && (
           <div
             className="flex items-center gap-2.5 px-4 py-2.5 text-xs shrink-0"
             style={{ backgroundColor: 'rgba(247,104,8,0.08)', borderBottom: '1px solid rgba(247,104,8,0.15)' }}
@@ -175,9 +204,7 @@ export default function Layout() {
           </div>
         )}
 
-        <div className="flex-1 overflow-auto">
-          <Outlet />
-        </div>
+        <div className="flex-1 overflow-auto flex flex-col">{isNewUser ? <Onboarding /> : <Outlet />}</div>
       </main>
     </div>
   )

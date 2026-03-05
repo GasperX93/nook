@@ -113,11 +113,32 @@ export function weiToDai(wei: string): string {
   return `${whole}.${String(frac).padStart(4, '0')}`
 }
 
-/** Human-readable capacity for a given stamp depth */
-export function depthToCapacity(depth: number): string {
-  const bytes = (1 << depth) * 4096
+// Effective (realistic) capacity per depth — accounts for bucket overflow.
+// Values from Beeport / Swarm docs. Theoretical capacity is never fully usable
+// because chunks distribute unevenly across 2^16 buckets.
+const EFFECTIVE_CAPACITY: Record<number, number> = {
+  17: 7_000_000, // ~7 MB
+  18: 34_000_000, // ~34 MB
+  19: 112_000_000, // ~110 MB
+  20: 688_000_000, // ~680 MB
+  21: 2_600_000_000, // ~2.6 GB
+  22: 7_700_000_000, // ~7.7 GB
+  23: 20_000_000_000, // ~20 GB
+  24: 47_000_000_000, // ~47 GB
+  25: 105_000_000_000, // ~105 GB
+  26: 228_000_000_000, // ~228 GB
+}
 
-  if (bytes >= 1_073_741_824) return `${(bytes / 1_073_741_824).toFixed(0)} GB`
+/** Effective capacity in bytes for a given stamp depth */
+export function depthToBytes(depth: number): number {
+  return EFFECTIVE_CAPACITY[depth] ?? (1 << depth) * 4096
+}
+
+/** Human-readable effective capacity for a given stamp depth */
+export function depthToCapacity(depth: number): string {
+  const bytes = depthToBytes(depth)
+
+  if (bytes >= 1_073_741_824) return `${(bytes / 1_073_741_824).toFixed(1)} GB`
 
   return `${(bytes / 1_048_576).toFixed(0)} MB`
 }
@@ -157,10 +178,10 @@ export async function topicFromString(name: string): Promise<string> {
 // ─── Storage plan presets ─────────────────────────────────────────────────────
 
 export const SIZE_PRESETS = [
-  { label: '500 MB', depth: 17 },
-  { label: '2 GB', depth: 19 },
-  { label: '5 GB', depth: 20 },
-  { label: '20 GB', depth: 22 },
+  { label: '110 MB', depth: 19 },
+  { label: '680 MB', depth: 20 },
+  { label: '2.6 GB', depth: 21 },
+  { label: '7.7 GB', depth: 22 },
 ] as const
 
 export const DURATION_PRESETS = [
@@ -201,7 +222,7 @@ export const beeApi = {
     file: File,
     stampId: string,
     onProgress?: (pct: number) => void,
-    deferred = false,
+    deferred = true,
   ): Promise<UploadResult> =>
     xhrUpload(
       `${getBeeUrl()}/bzz`,
@@ -222,7 +243,7 @@ export const beeApi = {
     onProgress?: (pct: number) => void,
   ): Promise<UploadResult> => {
     const tar = await createTar(entries)
-    const deferred = options?.deferred === true
+    const deferred = options?.deferred !== false
     const headers: Record<string, string> = {
       'swarm-postage-batch-id': stampId,
       'swarm-deferred-upload': deferred ? 'true' : 'false',
@@ -237,12 +258,29 @@ export const beeApi = {
     return xhrUpload(`${getBeeUrl()}/bzz`, tar as XMLHttpRequestBodyInit, headers, onProgress)
   },
 
-  downloadFile: async (hash: string): Promise<Blob> => {
-    const r = await fetch(`${getBeeUrl()}/bzz/${hash}`)
+  downloadFile: async (hash: string, onProgress?: (pct: number) => void): Promise<Blob> => {
+    if (!onProgress) {
+      const r = await fetch(`${getBeeUrl()}/bzz/${hash}`)
 
-    if (!r.ok) throw new Error(`Download failed: ${r.status}`)
+      if (!r.ok) throw new Error(`Download failed: ${r.status}`)
 
-    return r.blob()
+      return r.blob()
+    }
+
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest()
+      xhr.open('GET', `${getBeeUrl()}/bzz/${hash}`)
+      xhr.responseType = 'blob'
+      xhr.onprogress = e => {
+        if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100))
+      }
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) resolve(xhr.response as Blob)
+        else reject(new Error(`Download failed: ${xhr.status}`))
+      }
+      xhr.onerror = () => reject(new Error('Download failed'))
+      xhr.send()
+    })
   },
 
   uploadFile: async (file: File, stampId: string): Promise<UploadResult> => {
