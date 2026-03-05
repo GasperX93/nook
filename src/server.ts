@@ -13,7 +13,7 @@ import { ethers } from 'ethers'
 
 import PACKAGE_JSON from '../package.json'
 import { getApiKey } from './api-key'
-import { redeemGiftCode } from './blockchain'
+import { redeemGiftCode, sendBzzTransaction, sendNativeTransaction } from './blockchain'
 import { readConfigYaml, readWalletPasswordOrThrow, writeConfigYaml } from './config'
 import { runLauncher } from './launcher'
 import { BeeManager } from './lifecycle'
@@ -191,6 +191,40 @@ export function runServer() {
         ? 'Bee is syncing postage state from the chain. This can take a few minutes on first start — please try again shortly.'
         : 'Failed to create drive. Please try again.'
       context.body = { message }
+    }
+  })
+
+  router.post('/withdraw', async context => {
+    const { token, amount, to } = context.request.body as { token: string; amount: string; to: string }
+
+    if (!token || !amount || !to) {
+      context.status = 400
+      context.body = { message: 'token, amount, and to are required' }
+
+      return
+    }
+
+    if (!ethers.utils.isAddress(to)) {
+      context.status = 400
+      context.body = { message: 'Invalid destination address' }
+
+      return
+    }
+
+    const config = readConfigYaml()
+    const blockchainRpcEndpoint = Reflect.get(config, 'blockchain-rpc-endpoint') as string
+    const privateKeyString = await getPrivateKey()
+
+    try {
+      const result = token === 'bzz'
+        ? await sendBzzTransaction(privateKeyString, to, amount, blockchainRpcEndpoint)
+        : await sendNativeTransaction(privateKeyString, to, amount, blockchainRpcEndpoint)
+
+      context.body = { success: true, txHash: result.transaction.hash }
+    } catch (error) {
+      logger.error(error)
+      context.status = 500
+      context.body = { message: (error as Error).message ?? 'Withdraw failed' }
     }
   })
 

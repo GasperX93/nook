@@ -25,6 +25,7 @@ import { useLocation } from 'react-router-dom'
 import {
   beeApi,
   calcStampCost,
+  depthToBytes,
   depthToCapacity,
   DURATION_PRESETS,
   getBeeUrl,
@@ -86,8 +87,8 @@ function isImageFile(name: string): boolean {
   return /\.(jpe?g|png|gif|webp|svg)$/i.test(name)
 }
 
-async function downloadFromSwarm(hash: string, filename: string) {
-  const blob = await beeApi.downloadFile(hash)
+async function downloadFromSwarm(hash: string, filename: string, onProgress?: (pct: number) => void) {
+  const blob = await beeApi.downloadFile(hash, onProgress)
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
@@ -747,6 +748,7 @@ interface RecordRowProps {
   record: UploadRecord
   copiedId: string | null
   downloadingId: string | null
+  downloadPct: number | null
   gatewayUrl: string
   onCopy: (id: string, hash: string) => void
   onUpdate: (id: string) => void
@@ -760,6 +762,7 @@ function RecordRow({
   record,
   copiedId,
   downloadingId,
+  downloadPct,
   gatewayUrl,
   onCopy,
   onUpdate,
@@ -865,14 +868,23 @@ function RecordRow({
         >
           <ExternalLink size={12} />
         </a>
-        <button
-          onClick={() => onDownload(record.id, record.hash, record.name)}
-          title="Download"
-          className="w-6 h-6 flex items-center justify-center rounded transition-colors"
-          style={{ color: 'rgb(var(--fg-muted))' }}
-        >
-          {downloadingId === record.id ? <RefreshCw size={12} className="animate-spin" /> : <Download size={12} />}
-        </button>
+        {downloadingId === record.id && downloadPct !== null ? (
+          <span
+            className="text-[10px] tabular-nums px-1 shrink-0"
+            style={{ color: 'rgb(var(--accent))' }}
+          >
+            {downloadPct}%
+          </span>
+        ) : (
+          <button
+            onClick={() => onDownload(record.id, record.hash, record.name)}
+            title="Download"
+            className="w-6 h-6 flex items-center justify-center rounded transition-colors"
+            style={{ color: 'rgb(var(--fg-muted))' }}
+          >
+            {downloadingId === record.id ? <RefreshCw size={12} className="animate-spin" /> : <Download size={12} />}
+          </button>
+        )}
         <button
           onClick={() => onRemove(record.id)}
           title="Remove from Drive"
@@ -895,6 +907,7 @@ interface DriveCardProps {
   gatewayUrl: string
   copiedId: string | null
   downloadingId: string | null
+  downloadPct: number | null
   customName?: string
   onOpen: (folderId?: string) => void
   onExtend: () => void
@@ -906,7 +919,7 @@ interface DriveCardProps {
   onMoveToFolder: (recordId: string, folderId: string) => void
 }
 
-function DriveCard({ stamp, records, folders, gatewayUrl, copiedId, downloadingId, customName, onOpen, onExtend, onRename, onCopy, onUpdate, onDownload, onRemove, onMoveToFolder }: DriveCardProps) {
+function DriveCard({ stamp, records, folders, gatewayUrl, copiedId, downloadingId, downloadPct, customName, onOpen, onExtend, onRename, onCopy, onUpdate, onDownload, onRemove, onMoveToFolder }: DriveCardProps) {
   const [expanded, setExpanded] = useState(false)
   const [expandedInlineFolders, setExpandedInlineFolders] = useState<Set<string>>(new Set())
   const [inlineDraggingId, setInlineDraggingId] = useState<string | null>(null)
@@ -918,8 +931,11 @@ function DriveCard({ stamp, records, folders, gatewayUrl, copiedId, downloadingI
   const color = ttlColor(stamp.batchTTL)
   const hasName = !!(customName || stamp.label)
   const driveName = customName || stamp.label || `${stamp.batchID.slice(0, 8)}…`
-  const capacityBytes = (1 << stamp.depth) * 4096
+  const capacityBytes = depthToBytes(stamp.depth)
   const usedBytes = records.reduce((s, r) => s + r.size, 0)
+  const maxUtilization = 1 << (stamp.depth - stamp.bucketDepth)
+  const utilizationPct = Math.round((stamp.utilization / maxUtilization) * 100)
+  const isFull = stamp.utilization >= maxUtilization
   const rootFolders = folders.filter(f => !f.parentFolderId)
   const rootFiles = records.filter(r => !r.folderId)
   const itemSummary = (() => {
@@ -1008,6 +1024,7 @@ function DriveCard({ stamp, records, folders, gatewayUrl, copiedId, downloadingI
                     record={r}
                     copiedId={copiedId}
                     downloadingId={downloadingId}
+                    downloadPct={downloadPct}
                     gatewayUrl={gatewayUrl}
                     onCopy={onCopy}
                     onUpdate={onUpdate}
@@ -1098,10 +1115,19 @@ function DriveCard({ stamp, records, folders, gatewayUrl, copiedId, downloadingI
           {itemSummary}
         </span>
 
-        {/* Storage usage */}
+        {/* Storage usage + utilization */}
         <span className="text-xs shrink-0" style={{ color: 'rgb(var(--fg-muted))' }}>
           {usedBytes > 0 ? `${formatBytes(usedBytes)} / ${formatBytes(capacityBytes)}` : formatBytes(capacityBytes)}
         </span>
+
+        {isFull && (
+          <span
+            className="text-[10px] font-semibold px-1.5 py-0.5 rounded shrink-0"
+            style={{ backgroundColor: 'rgba(239,68,68,0.15)', color: '#ef4444' }}
+          >
+            Full
+          </span>
+        )}
 
         {/* TTL bar + label */}
         <div className="flex items-center gap-1.5 shrink-0" style={{ color }}>
@@ -1141,6 +1167,7 @@ function DriveCard({ stamp, records, folders, gatewayUrl, copiedId, downloadingI
                     record={r}
                     copiedId={copiedId}
                     downloadingId={downloadingId}
+                    downloadPct={downloadPct}
                     gatewayUrl={gatewayUrl}
                     onCopy={onCopy}
                     onUpdate={onUpdate}
@@ -1257,7 +1284,14 @@ function AddFilePanel({ driveId, onDone, onAdd }: AddFileProps) {
 
       onDone()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Upload failed')
+      const msg = err instanceof Error ? err.message : 'Upload failed'
+
+      if (msg.includes('402') || msg.toLowerCase().includes('overissued')) {
+        setError('Drive is full. Create a new drive or extend this one.')
+      } else {
+        setError(msg)
+      }
+
       setPhase('')
       setProgress(null)
     } finally {
@@ -1413,6 +1447,7 @@ export default function Drive() {
   const [search, setSearch] = useState('')
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
+  const [downloadPct, setDownloadPct] = useState<number | null>(null)
   const [updatingId, setUpdatingId] = useState<string | null>(null)
   const [retrieveOpen, setRetrieveOpen] = useState(false)
 
@@ -1446,10 +1481,12 @@ export default function Drive() {
 
   async function handleDownload(id: string, hash: string, name: string) {
     setDownloadingId(id)
+    setDownloadPct(0)
     try {
-      await downloadFromSwarm(hash, name)
+      await downloadFromSwarm(hash, name, pct => setDownloadPct(pct))
     } finally {
       setDownloadingId(null)
+      setDownloadPct(null)
     }
   }
 
@@ -1528,6 +1565,7 @@ export default function Drive() {
                     record={record}
                     copiedId={copiedId}
                     downloadingId={downloadingId}
+                    downloadPct={downloadPct}
                     gatewayUrl={gatewayUrl}
                     onCopy={copyHash}
                     onUpdate={setUpdatingId}
@@ -1573,6 +1611,7 @@ export default function Drive() {
                 gatewayUrl={gatewayUrl}
                 copiedId={copiedId}
                 downloadingId={downloadingId}
+                downloadPct={downloadPct}
                 customName={customDriveLabels[stamp.batchID]}
                 onOpen={(folderId) => {
                   setActiveDriveId(stamp.batchID)
@@ -1654,6 +1693,7 @@ export default function Drive() {
   const commonRowProps = {
     copiedId,
     downloadingId,
+    downloadPct,
     gatewayUrl,
     onCopy: copyHash,
     onUpdate: setUpdatingId,

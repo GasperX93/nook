@@ -66,27 +66,25 @@ describe('weiToDai', () => {
 // ─── depthToCapacity ──────────────────────────────────────────────────────────
 
 describe('depthToCapacity', () => {
-  it('returns MB for values under 1 GB', () => {
-    // depth 17: 2^17 * 4096 = 536 870 912 bytes = 512 MB
-    expect(depthToCapacity(17)).toBe('512 MB')
+  it('returns effective capacity for depth 17 (~7 MB)', () => {
+    expect(depthToCapacity(17)).toBe('7 MB')
   })
 
-  it('returns MB for depth 16 (256 MB)', () => {
-    // depth 16: 2^16 * 4096 = 268 435 456 bytes = 256 MB
+  it('returns effective capacity for depth 19 (~110 MB)', () => {
+    expect(depthToCapacity(19)).toBe('107 MB')
+  })
+
+  it('returns effective capacity for depth 20 (~680 MB)', () => {
+    expect(depthToCapacity(20)).toBe('656 MB')
+  })
+
+  it('returns effective capacity for depth 22 (~7.7 GB)', () => {
+    expect(depthToCapacity(22)).toBe('7.2 GB')
+  })
+
+  it('falls back to theoretical for unknown depths', () => {
+    // depth 16 not in lookup → theoretical: 2^16 * 4096 = 256 MB
     expect(depthToCapacity(16)).toBe('256 MB')
-  })
-
-  it('returns GB for depth 19 (2 GB)', () => {
-    // depth 19: 2^19 * 4096 = 2 147 483 648 bytes = 2 GB
-    expect(depthToCapacity(19)).toBe('2 GB')
-  })
-
-  it('returns GB for depth 20 (4 GB)', () => {
-    expect(depthToCapacity(20)).toBe('4 GB')
-  })
-
-  it('returns GB for depth 22 (16 GB)', () => {
-    expect(depthToCapacity(22)).toBe('16 GB')
   })
 })
 
@@ -133,6 +131,11 @@ describe('calcStampCost', () => {
 describe('SIZE_PRESETS', () => {
   it('has 4 entries', () => {
     expect(SIZE_PRESETS).toHaveLength(4)
+  })
+
+  it('minimum depth is 19 (no depth 17)', () => {
+    const minDepth = Math.min(...SIZE_PRESETS.map(p => p.depth))
+    expect(minDepth).toBeGreaterThanOrEqual(19)
   })
 
   it('depths are in ascending order', () => {

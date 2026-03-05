@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
   calcStampCost,
+  depthToBytes,
   DURATION_PRESETS,
   getBeeUrl,
   plurToBzz,
@@ -114,7 +115,7 @@ const selectedSize = SIZE_PRESETS[sizeIdx]
   function acceptContent(c: SelectedContent) {
     setContent(c)
     // Auto-select cheapest tier that fits the content size
-    const idx = SIZE_PRESETS.findIndex(s => (1 << s.depth) * 4096 >= c.size)
+    const idx = SIZE_PRESETS.findIndex(s => depthToBytes(s.depth) >= c.size)
     setSizeIdx(idx === -1 ? SIZE_PRESETS.length - 1 : idx)
     setStep('options')
   }
@@ -156,7 +157,7 @@ const selectedSize = SIZE_PRESETS[sizeIdx]
       const res = await buyStamp.mutateAsync({
         amount: cost.amount,
         depth: selectedSize.depth,
-        immutable: false,
+        immutable: true,
         label: driveName.trim() || undefined,
       })
       const batchID = res.batchID
