@@ -7,20 +7,21 @@ import '@upcoming/multichain-widget/styles.css'
 import { MultichainWidget } from '@upcoming/multichain-widget'
 import { weiToDai } from '../api/bee'
 import { api } from '../api/client'
-import { useAddresses, useBeeHealth, useStamps, useWallet } from '../api/queries'
+import { useAddresses, useBeeHealth, useStamps, useStatus, useWallet } from '../api/queries'
 import { useAppStore } from '../store/app'
 import { WIDGET_THEME } from '../theme'
 
-type Step = 'starting' | 'syncing' | 'funding' | 'ready'
+type Step = 'starting' | 'funding' | 'syncing' | 'ready'
 
-const STEPS: Step[] = ['starting', 'syncing', 'funding', 'ready']
+const STEPS: Step[] = ['starting', 'funding', 'syncing', 'ready']
 
-export default function Onboarding({ mode = 'full' }: { mode?: 'full' | 'sync' }) {
+export default function Onboarding({ skipReady = false }: { skipReady?: boolean }) {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { setOnboardingCompleted } = useAppStore()
 
   const { isSuccess: beeOnline } = useBeeHealth()
+  const { data: status } = useStatus()
   const { isSuccess: stampsReady } = useStamps()
   const { data: wallet } = useWallet()
   const { data: addresses } = useAddresses()
@@ -31,28 +32,38 @@ export default function Onboarding({ mode = 'full' }: { mode?: 'full' | 'sync' }
   const [redeeming, setRedeeming] = useState(false)
   const [redeemError, setRedeemError] = useState<string | null>(null)
   const [redeemDone, setRedeemDone] = useState(false)
+  const [topUpReceived, setTopUpReceived] = useState(false)
 
-  const address = addresses?.ethereum ?? ''
+  const address = addresses?.ethereum ?? (status?.address ? `0x${status.address}` : '')
   const hasFunds = wallet ? Number(weiToDai(wallet.nativeTokenBalance)) > 0 : false
 
   // Debug: lock to a specific step via localStorage (e.g. 'starting', 'syncing', 'funding')
   const lockedStep = localStorage.getItem('nook:onboarding-step') as Step | null
 
-  // Auto-advance logic (disabled when step is locked for testing)
+  // Unified auto-advance logic (disabled when step is locked for testing)
+  // starting → check wallet → funding (if no funds) or syncing (if funded) → ready
   useEffect(() => {
-    if (!lockedStep && step === 'starting' && beeOnline) setStep('syncing')
-  }, [step, beeOnline, lockedStep])
+    if (lockedStep) return
+    if (step !== 'starting') return
+    // If Bee explicitly says needsFunding, go straight to funding (wallet data not needed)
+    if (status?.needsFunding) { setStep('funding'); return }
+    // Wait for Bee to be online AND wallet data to load before deciding
+    if (beeOnline && wallet) {
+      if (hasFunds) setStep('syncing')
+      else setStep('funding')
+    }
+  }, [step, beeOnline, wallet, status?.needsFunding, hasFunds, lockedStep])
 
-  // In sync mode, stop at 'syncing' — Layout dismisses the overlay when ready.
   useEffect(() => {
-    if (mode === 'sync') return
-    if (!lockedStep && step === 'syncing' && stampsReady) setStep('funding')
-  }, [step, stampsReady, lockedStep, mode])
+    if (!lockedStep && step === 'funding' && hasFunds) setStep('syncing')
+  }, [step, hasFunds, lockedStep])
 
   useEffect(() => {
-    if (mode === 'sync') return
-    if (!lockedStep && step === 'funding' && hasFunds) setStep('ready')
-  }, [step, hasFunds, lockedStep, mode])
+    if (!lockedStep && step === 'syncing' && stampsReady) {
+      if (skipReady) return // Layout handles dismissal for returning users
+      setStep('ready')
+    }
+  }, [step, stampsReady, lockedStep, skipReady])
 
   // Apply locked step
   useEffect(() => {
@@ -73,15 +84,16 @@ export default function Onboarding({ mode = 'full' }: { mode?: 'full' | 'sync' }
     try {
       await api.redeem(giftCode.trim())
       setRedeemDone(true)
+      setTopUpReceived(true)
       setGiftCode('')
-      queryClient.refetchQueries({ queryKey: ['bee', 'wallet'] })
+      // Restart Bee immediately so it detects the new funds
+      try { await api.restart() } catch {}
+      // Poll wallet aggressively so the step advances quickly
       let ticks = 0
       const poll = setInterval(() => {
         queryClient.refetchQueries({ queryKey: ['bee', 'wallet'] })
-
         if (++ticks >= 10) clearInterval(poll)
       }, 3000)
-      setTimeout(() => setRedeemDone(false), 30_000)
     } catch (err) {
       setRedeemError(err instanceof Error ? err.message : 'Redeem failed')
     } finally {
@@ -103,8 +115,8 @@ export default function Onboarding({ mode = 'full' }: { mode?: 'full' | 'sync' }
   return (
     <div className="flex-1 flex flex-col items-center justify-center p-8 overflow-auto">
       <div className="w-full max-w-lg">
-        {/* Step indicator — full mode only */}
-        {mode === 'full' && (
+        {/* Step indicator — new users only */}
+        {!skipReady && (
         <div className="flex items-center justify-center gap-2 mb-10">
           {STEPS.map((s, i) => (
             <div key={s} className="flex items-center gap-2">
@@ -150,7 +162,7 @@ export default function Onboarding({ mode = 'full' }: { mode?: 'full' | 'sync' }
               Your node is syncing with the Swarm network. It discovers peers and catches up with the latest state.
             </p>
             <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-              This can take 1–5 minutes.
+              This can take 1–5 minutes. First-time setup may take up to 30 minutes.
             </p>
           </div>
         )}
@@ -201,7 +213,15 @@ export default function Onboarding({ mode = 'full' }: { mode?: 'full' | 'sync' }
                   theme={WIDGET_THEME}
                   hooks={{
                     onCompletion: async () => {
-                      queryClient.invalidateQueries({ queryKey: ['bee', 'wallet'] })
+                      setTopUpReceived(true)
+                      // Restart Bee immediately so it detects the new funds
+                      try { await api.restart() } catch {}
+                      // Poll wallet aggressively so the step advances quickly
+                      let ticks = 0
+                      const poll = setInterval(() => {
+                        queryClient.refetchQueries({ queryKey: ['bee', 'wallet'] })
+                        if (++ticks >= 10) clearInterval(poll)
+                      }, 3000)
                     },
                   }}
                 />
@@ -260,9 +280,21 @@ export default function Onboarding({ mode = 'full' }: { mode?: 'full' | 'sync' }
               )}
             </div>
 
-            <p className="text-xs text-center" style={{ color: 'rgb(var(--fg-muted))' }}>
-              This step will advance automatically once xDAI is detected in your wallet.
-            </p>
+            {topUpReceived ? (
+              <div
+                className="flex items-center justify-center gap-3 rounded-xl border px-5 py-4"
+                style={{ backgroundColor: 'rgba(74,222,128,0.1)', borderColor: 'rgba(74,222,128,0.25)' }}
+              >
+                <Loader2 size={16} className="animate-spin shrink-0" style={{ color: '#4ade80' }} />
+                <p className="text-sm font-medium" style={{ color: '#4ade80' }}>
+                  Payment received — restarting node…
+                </p>
+              </div>
+            ) : (
+              <p className="text-xs text-center" style={{ color: 'rgb(var(--fg-muted))' }}>
+                This step will advance automatically once xDAI is detected in your wallet.
+              </p>
+            )}
           </div>
         )}
 
@@ -290,8 +322,8 @@ export default function Onboarding({ mode = 'full' }: { mode?: 'full' | 'sync' }
           </div>
         )}
 
-        {/* Skip link — full mode only */}
-        {mode === 'full' && step !== 'ready' && (
+        {/* Skip link — new users only */}
+        {!skipReady && step !== 'ready' && (
           <div className="text-center mt-8">
             <button
               onClick={skip}

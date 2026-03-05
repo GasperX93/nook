@@ -20,6 +20,7 @@ import {
   Trash2,
   Upload,
 } from 'lucide-react'
+import { useQueryClient } from '@tanstack/react-query'
 import React, { useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import {
@@ -303,8 +304,10 @@ function BuyDriveModal({ onClose }: { onClose: () => void }) {
 
 function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) {
   const [durationIdx, setDurationIdx] = useState(1)
+  const [extendError, setExtendError] = useState<string | null>(null)
   const { data: chainState } = useChainState()
   const topup = useTopupStamp()
+  const queryClient = useQueryClient()
 
   const cost = chainState
     ? calcStampCost(stamp.depth, DURATION_PRESETS[durationIdx].months, chainState.currentPrice)
@@ -312,8 +315,18 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
 
   async function doExtend() {
     if (!cost) return
-    await topup.mutateAsync({ id: stamp.batchID, amount: cost.amount })
-    onClose()
+    setExtendError(null)
+    try {
+      await topup.mutateAsync({ id: stamp.batchID, amount: cost.amount })
+      queryClient.refetchQueries({ queryKey: ['bee', 'stamps'] })
+      queryClient.refetchQueries({ queryKey: ['bee', 'wallet'] })
+      onClose()
+    } catch (err: any) {
+      const msg = err?.response?.status === 402 || err?.message?.includes('402')
+        ? 'Insufficient BZZ. Top up your wallet first.'
+        : err?.message || 'Failed to extend drive.'
+      setExtendError(msg)
+    }
   }
 
   return (
@@ -364,6 +377,10 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
             <span style={{ color: 'rgb(var(--fg-muted))' }}>Cost: </span>
             <span className="font-semibold">{cost.bzzCost} BZZ</span>
           </p>
+        )}
+
+        {extendError && (
+          <p className="text-xs" style={{ color: '#ef4444' }}>{extendError}</p>
         )}
 
         <div className="flex gap-3">

@@ -49,32 +49,21 @@ export default function Layout() {
   if (!onboardingCompleted && stampsLoaded && stamps && stamps.length > 0) setOnboardingCompleted()
   if (!onboardingCompleted && walletLoaded && wallet && Number(weiToDai(wallet.nativeTokenBalance)) > 0) setOnboardingCompleted()
 
-  // Show onboarding for new users: no stamps, no wallet balance, not previously completed.
-  // Wait until queries have loaded to avoid false positive during initial fetch.
-  const forceOnboarding = localStorage.getItem('nook:force-onboarding') === 'true'
-  const dataLoaded = stampsLoaded || walletLoaded
-  const isNewUser =
-    forceOnboarding ||
-    (!onboardingCompleted && dataLoaded &&
-      (!stamps || stamps.length === 0) &&
-      (!wallet || Number(weiToDai(wallet.nativeTokenBalance)) === 0))
+  const peerCount = peers?.connections ?? 0
+  const isSyncing = beeOnline && (peerCount === 0 || !stampsLoaded)
 
-  // Returning users: always show startup overlay on app load, dismiss once node is fully ready.
-  // useState ensures the overlay starts visible even if bee is already online (e.g. dev mode / fast start).
+  // Returning users: show startup overlay on app load, dismiss once node is fully ready.
+  // Wait for peers + stamps so the status dot is green when the overlay lifts.
   const [startupDone, setStartupDone] = useState(false)
 
   useEffect(() => {
-    if (startupDone || isNewUser || !onboardingCompleted) return
-    if (!beeOnline || !stampsLoaded) return
-    // Small delay so the overlay is visible even on instant startup
+    if (startupDone || !onboardingCompleted) return
+    if (!beeOnline || !stampsLoaded || peerCount === 0) return
     const timer = setTimeout(() => setStartupDone(true), 800)
     return () => clearTimeout(timer)
-  }, [beeOnline, stampsLoaded, startupDone, isNewUser, onboardingCompleted])
+  }, [beeOnline, stampsLoaded, peerCount, startupDone, onboardingCompleted])
 
-  const showStartupOverlay = !isNewUser && onboardingCompleted && !startupDone
-
-  const peerCount = peers?.connections ?? 0
-  const isSyncing = beeOnline && (peerCount === 0 || !stampsLoaded)
+  const showOnboarding = !onboardingCompleted || (onboardingCompleted && !startupDone)
 
   const dotColor = beeChecking ? 'rgb(var(--border))' : isSyncing ? '#f97316' : beeOnline ? '#4ade80' : '#ef4444'
   const dotLabel = beeChecking ? '···' : isSyncing ? 'sync' : beeOnline ? 'live' : 'off'
@@ -183,7 +172,7 @@ export default function Layout() {
       {/* Main content */}
       <main className="flex-1 overflow-auto flex flex-col">
         {/* Starting up — friendly indicator */}
-        {showStarting && !isNewUser && !showStartupOverlay && (
+        {showStarting && !showOnboarding && (
           <div
             className="flex items-center gap-2.5 px-4 py-2.5 text-xs shrink-0"
             style={{ backgroundColor: 'rgba(247,104,8,0.08)', borderBottom: '1px solid rgba(247,104,8,0.15)' }}
@@ -205,7 +194,7 @@ export default function Layout() {
         )}
 
         {/* Needs funding — shown when Bee exits because wallet has no xDAI */}
-        {showFundingWarning && !isNewUser && (
+        {showFundingWarning && !showOnboarding && (
           <div
             className="flex items-center gap-2.5 px-4 py-2.5 text-xs shrink-0"
             style={{ backgroundColor: 'rgba(247,104,8,0.08)', borderBottom: '1px solid rgba(247,104,8,0.15)' }}
@@ -225,7 +214,7 @@ export default function Layout() {
         )}
 
         <div className="flex-1 overflow-auto flex flex-col">
-          {isNewUser ? <Onboarding mode="full" /> : showStartupOverlay ? <Onboarding mode="sync" /> : <Outlet />}
+          {showOnboarding ? <Onboarding skipReady={onboardingCompleted} /> : <Outlet />}
         </div>
       </main>
     </div>
