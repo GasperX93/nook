@@ -25,7 +25,7 @@ export default function Onboarding({ mode = 'full' }: { mode?: 'full' | 'sync' }
   const { data: wallet } = useWallet()
   const { data: addresses } = useAddresses()
 
-  const [step, setStep] = useState<Step>(mode === 'sync' ? 'syncing' : 'starting')
+  const [step, setStep] = useState<Step>('starting')
   const [copiedAddr, setCopiedAddr] = useState(false)
   const [giftCode, setGiftCode] = useState('')
   const [redeeming, setRedeeming] = useState(false)

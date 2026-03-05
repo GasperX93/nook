@@ -19,9 +19,9 @@ export default function Layout() {
   const { isError: beeOffline, isPending: beeChecking, isSuccess: beeOnline } = useBeeHealth()
   const { data: peers } = usePeers()
   const { data: status } = useStatus()
-  const { data: stamps } = useStamps()
-  const { data: wallet } = useWallet()
-  const { devMode, onboardingCompleted } = useAppStore()
+  const { data: stamps, isSuccess: stampsLoaded } = useStamps()
+  const { data: wallet, isSuccess: walletLoaded } = useWallet()
+  const { devMode, onboardingCompleted, setOnboardingCompleted } = useAppStore()
   const navigate = useNavigate()
 
   const navItems = devMode ? [...mainNavItems, { to: '/dev', icon: Terminal, label: 'Dev mode' }] : mainNavItems
@@ -44,18 +44,23 @@ export default function Layout() {
   const showDown = beeOffline && !beeChecking && hasEverBeenOnline.current
   const showFundingWarning = needsFundingLatch.current && !beeOnline && !beeChecking
 
+  // Auto-complete onboarding for existing users upgrading from v0.2.0 (they never had the flag).
+  // Once stamps or wallet data loads and shows existing activity, mark onboarding done.
+  if (!onboardingCompleted && stampsLoaded && stamps && stamps.length > 0) setOnboardingCompleted()
+  if (!onboardingCompleted && walletLoaded && wallet && Number(weiToDai(wallet.nativeTokenBalance)) > 0) setOnboardingCompleted()
+
   // Show onboarding for new users: no stamps, no wallet balance, not previously completed.
-  // localStorage 'nook:force-onboarding' can override for testing.
+  // Wait until queries have loaded to avoid false positive during initial fetch.
   const forceOnboarding = localStorage.getItem('nook:force-onboarding') === 'true'
+  const dataLoaded = stampsLoaded || walletLoaded
   const isNewUser =
     forceOnboarding ||
-    (!onboardingCompleted &&
+    (!onboardingCompleted && dataLoaded &&
       (!stamps || stamps.length === 0) &&
       (!wallet || Number(weiToDai(wallet.nativeTokenBalance)) === 0))
 
-  // Returning users: show sync overlay while stamps endpoint isn't ready (503 during postage sync)
-  const stampsReady = stamps !== undefined
-  const showSyncOverlay = !isNewUser && beeOnline && !stampsReady
+  // Returning users: show startup overlay (starting + syncing) until stamps are ready
+  const showStartupOverlay = !isNewUser && onboardingCompleted && !stampsLoaded
 
   const peerCount = peers?.connections ?? 0
   const isSyncing = beeOnline && peerCount === 0
@@ -209,7 +214,7 @@ export default function Layout() {
         )}
 
         <div className="flex-1 overflow-auto flex flex-col">
-          {isNewUser ? <Onboarding mode="full" /> : showSyncOverlay ? <Onboarding mode="sync" /> : <Outlet />}
+          {isNewUser ? <Onboarding mode="full" /> : showStartupOverlay ? <Onboarding mode="sync" /> : <Outlet />}
         </div>
       </main>
     </div>
