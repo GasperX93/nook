@@ -43,13 +43,16 @@ export default function Onboarding({ mode = 'full' }: { mode?: 'full' | 'sync' }
     if (!lockedStep && step === 'starting' && beeOnline) setStep('syncing')
   }, [step, beeOnline, lockedStep])
 
+  // In sync mode, stop at 'syncing' — Layout dismisses the overlay when ready.
   useEffect(() => {
+    if (mode === 'sync') return
     if (!lockedStep && step === 'syncing' && stampsReady) setStep('funding')
-  }, [step, stampsReady, lockedStep])
+  }, [step, stampsReady, lockedStep, mode])
 
   useEffect(() => {
+    if (mode === 'sync') return
     if (!lockedStep && step === 'funding' && hasFunds) setStep('ready')
-  }, [step, hasFunds, lockedStep])
+  }, [step, hasFunds, lockedStep, mode])
 
   // Apply locked step
   useEffect(() => {

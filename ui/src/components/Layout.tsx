@@ -1,5 +1,5 @@
 import { AlertTriangle, Globe, HardDrive, RefreshCw, Settings, Terminal, User, Wallet } from 'lucide-react'
-import { useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { weiToDai } from '../api/bee'
 import { useBeeHealth, usePeers, useStamps, useStatus, useWallet } from '../api/queries'
@@ -59,11 +59,22 @@ export default function Layout() {
       (!stamps || stamps.length === 0) &&
       (!wallet || Number(weiToDai(wallet.nativeTokenBalance)) === 0))
 
-  // Returning users: show startup overlay (starting + syncing) until stamps are ready
-  const showStartupOverlay = !isNewUser && onboardingCompleted && !stampsLoaded
+  // Returning users: always show startup overlay on app load, dismiss once node is fully ready.
+  // useState ensures the overlay starts visible even if bee is already online (e.g. dev mode / fast start).
+  const [startupDone, setStartupDone] = useState(false)
+
+  useEffect(() => {
+    if (startupDone || isNewUser || !onboardingCompleted) return
+    if (!beeOnline || !stampsLoaded) return
+    // Small delay so the overlay is visible even on instant startup
+    const timer = setTimeout(() => setStartupDone(true), 800)
+    return () => clearTimeout(timer)
+  }, [beeOnline, stampsLoaded, startupDone, isNewUser, onboardingCompleted])
+
+  const showStartupOverlay = !isNewUser && onboardingCompleted && !startupDone
 
   const peerCount = peers?.connections ?? 0
-  const isSyncing = beeOnline && peerCount === 0
+  const isSyncing = beeOnline && (peerCount === 0 || !stampsLoaded)
 
   const dotColor = beeChecking ? 'rgb(var(--border))' : isSyncing ? '#f97316' : beeOnline ? '#4ade80' : '#ef4444'
   const dotLabel = beeChecking ? '···' : isSyncing ? 'sync' : beeOnline ? 'live' : 'off'
@@ -172,7 +183,7 @@ export default function Layout() {
       {/* Main content */}
       <main className="flex-1 overflow-auto flex flex-col">
         {/* Starting up — friendly indicator */}
-        {showStarting && !isNewUser && (
+        {showStarting && !isNewUser && !showStartupOverlay && (
           <div
             className="flex items-center gap-2.5 px-4 py-2.5 text-xs shrink-0"
             style={{ backgroundColor: 'rgba(247,104,8,0.08)', borderBottom: '1px solid rgba(247,104,8,0.15)' }}
