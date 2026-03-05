@@ -1,0 +1,66 @@
+name: Bug Report / Feature Request
+description: Report a bug or suggest a feature for Nook
+title: "[Feedback]: "
+labels: []
+body:
+  - type: dropdown
+    id: type
+    attributes:
+      label: Type
+      description: What kind of feedback is this?
+      options:
+        - Bug report
+        - Feature request
+        - UX improvement
+        - Question
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Describe the bug or feature request in detail.
+      placeholder: Tell us what happened or what you'd like to see...
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce (bugs only)
+      description: If this is a bug, how can we reproduce it?
+      placeholder: |
+        1. Go to...
+        2. Click on...
+        3. See error...
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: Nook version
+      description: Found in Settings > General > About
+      placeholder: e.g. 0.2.0
+    validations:
+      required: false
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Windows
+        - Linux
+    validations:
+      required: false
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots
+      description: If applicable, add screenshots to help explain the issue.
+    validations:
+      required: false
