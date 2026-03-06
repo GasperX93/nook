@@ -32,17 +32,9 @@ export default function Layout() {
 
   if (beeOnline) hasEverBeenOnline.current = true
 
-  // Latch needsFunding so the banner doesn't disappear when Bee restarts.
-  // Cleared when wallet gets funded (xDAI > 0).
-  const needsFundingLatch = useRef(false)
-
-  if (status?.needsFunding) needsFundingLatch.current = true
-
-  if (wallet && Number(weiToDai(wallet.nativeTokenBalance)) > 0) needsFundingLatch.current = false
-
   const showStarting = !beeOnline && !hasEverBeenOnline.current
   const showDown = beeOffline && !beeChecking && hasEverBeenOnline.current
-  const showFundingWarning = needsFundingLatch.current && !beeOnline && !beeChecking
+  const showFundingWarning = status?.mode === 'ultra-light'
 
   // Auto-complete onboarding for existing users upgrading from v0.2.0 (they never had the flag).
   // Once stamps or wallet data loads and shows existing activity, mark onboarding done.
@@ -183,7 +175,7 @@ export default function Layout() {
         )}
 
         {/* Bee down — only shown after it was previously online */}
-        {showDown && (
+        {showDown && !showOnboarding && (
           <div
             className="flex items-center gap-2 px-4 py-2.5 text-xs shrink-0"
             style={{ backgroundColor: 'rgba(239,68,68,0.1)', borderBottom: '1px solid rgba(239,68,68,0.2)' }}

@@ -1,5 +1,4 @@
-import { useQueryClient } from '@tanstack/react-query'
-import { Check, Copy, Gift, Loader2 } from 'lucide-react'
+import { AlertTriangle, Check, Copy, Gift, Loader2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import '@rainbow-me/rainbowkit/styles.css'
@@ -11,13 +10,12 @@ import { useAddresses, useBeeHealth, useStamps, useStatus, useWallet } from '../
 import { useAppStore } from '../store/app'
 import { WIDGET_THEME } from '../theme'
 
-type Step = 'starting' | 'funding' | 'syncing' | 'ready'
+type Step = 'starting' | 'info' | 'funding' | 'syncing' | 'ready'
 
-const STEPS: Step[] = ['starting', 'funding', 'syncing', 'ready']
+const STEPS: Step[] = ['starting', 'info', 'funding', 'syncing', 'ready']
 
 export default function Onboarding({ skipReady = false }: { skipReady?: boolean }) {
   const navigate = useNavigate()
-  const queryClient = useQueryClient()
   const { setOnboardingCompleted } = useAppStore()
 
   const { isSuccess: beeOnline } = useBeeHealth()
@@ -32,7 +30,6 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
   const [redeeming, setRedeeming] = useState(false)
   const [redeemError, setRedeemError] = useState<string | null>(null)
   const [redeemDone, setRedeemDone] = useState(false)
-  const [topUpReceived, setTopUpReceived] = useState(false)
 
   const address = addresses?.ethereum ?? (status?.address ? `0x${status.address}` : '')
   const hasFunds = wallet ? Number(weiToDai(wallet.nativeTokenBalance)) > 0 : false
@@ -40,19 +37,23 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
   // Debug: lock to a specific step via localStorage (e.g. 'starting', 'syncing', 'funding')
   const lockedStep = localStorage.getItem('nook:onboarding-step') as Step | null
 
+  // Show the "starting" step for at least 3s so the user sees it
+  const [startingMinElapsed, setStartingMinElapsed] = useState(false)
+  useEffect(() => {
+    const timer = setTimeout(() => setStartingMinElapsed(true), 3000)
+    return () => clearTimeout(timer)
+  }, [])
+
   // Unified auto-advance logic (disabled when step is locked for testing)
-  // starting → check wallet → funding (if no funds) or syncing (if funded) → ready
+  // starting → info (manual continue) → funding → syncing → ready
+  // Returning users (skipReady): skip info+funding, go straight to syncing
   useEffect(() => {
     if (lockedStep) return
-    if (step !== 'starting') return
-    // If Bee explicitly says needsFunding, go straight to funding (wallet data not needed)
-    if (status?.needsFunding) { setStep('funding'); return }
-    // Wait for Bee to be online AND wallet data to load before deciding
-    if (beeOnline && wallet) {
-      if (hasFunds) setStep('syncing')
-      else setStep('funding')
-    }
-  }, [step, beeOnline, wallet, status?.needsFunding, hasFunds, lockedStep])
+    if (step !== 'starting' || !startingMinElapsed) return
+    if (skipReady && beeOnline) { setStep('syncing'); return }
+    // Once Bee is online or mode is known, advance to info step
+    if (status?.mode === 'ultra-light' || beeOnline) setStep('info')
+  }, [step, beeOnline, status?.mode, lockedStep, startingMinElapsed, skipReady])
 
   useEffect(() => {
     if (!lockedStep && step === 'funding' && hasFunds) setStep('syncing')
@@ -84,16 +85,8 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
     try {
       await api.redeem(giftCode.trim())
       setRedeemDone(true)
-      setTopUpReceived(true)
       setGiftCode('')
-      // Restart Bee immediately so it detects the new funds
-      try { await api.restart() } catch {}
-      // Poll wallet aggressively so the step advances quickly
-      let ticks = 0
-      const poll = setInterval(() => {
-        queryClient.refetchQueries({ queryKey: ['bee', 'wallet'] })
-        if (++ticks >= 10) clearInterval(poll)
-      }, 3000)
+      setStep('syncing')
     } catch (err) {
       setRedeemError(err instanceof Error ? err.message : 'Redeem failed')
     } finally {
@@ -153,7 +146,34 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
           </div>
         )}
 
-        {/* Step 2 — Syncing */}
+        {/* Step 2 — Info / disclaimer */}
+        {step === 'info' && (
+          <div className="text-center space-y-5">
+            <h2 className="text-lg font-semibold">Next, fund your node wallet.</h2>
+            <p className="text-sm leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
+              Your node needs xDAI for transaction fees and xBZZ for storage space on the Swarm network.
+            </p>
+            <div
+              className="flex items-start gap-3 rounded-xl border px-5 py-4 text-left"
+              style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
+            >
+              <AlertTriangle size={16} className="shrink-0 mt-0.5" style={{ color: '#f97316' }} />
+              <p className="text-xs leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Nook is beta software. Use small amounts only — features may change, bugs may exist, and stored data may
+                need to be re-uploaded after updates.
+              </p>
+            </div>
+            <button
+              onClick={() => setStep('funding')}
+              className="px-6 py-3 rounded-lg text-sm font-semibold transition-opacity"
+              style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+            >
+              Continue →
+            </button>
+          </div>
+        )}
+
+        {/* Step 3 — Syncing */}
         {step === 'syncing' && (
           <div className="text-center space-y-4">
             <Loader2 size={32} className="animate-spin mx-auto" style={{ color: '#f97316' }} />
@@ -167,15 +187,16 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
           </div>
         )}
 
-        {/* Step 3 — Fund wallet */}
+        {/* Step 4 — Fund wallet */}
         {step === 'funding' && (
           <div className="space-y-5">
             <div className="text-center space-y-3">
-              <h2 className="text-lg font-semibold">Fund your node wallet</h2>
+              <h2 className="text-lg font-semibold">Fund your node wallet.</h2>
               <p className="text-sm leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
-
-                Your node needs xDAI for transaction fees and BZZ for storage space on the Swarm network. Fund your
-                node wallet from any chain and any token.
+                Your node needs xDAI for transaction fees and xBZZ for storage space on the Swarm network.
+              </p>
+              <p className="text-sm leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
+                You can fund it from any EVM-compatible chain using any token — it will be swapped to the required assets.
               </p>
             </div>
 
@@ -211,19 +232,7 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
                   destination={address}
                   intent="arbitrary"
                   theme={WIDGET_THEME}
-                  hooks={{
-                    onCompletion: async () => {
-                      setTopUpReceived(true)
-                      // Restart Bee immediately so it detects the new funds
-                      try { await api.restart() } catch {}
-                      // Poll wallet aggressively so the step advances quickly
-                      let ticks = 0
-                      const poll = setInterval(() => {
-                        queryClient.refetchQueries({ queryKey: ['bee', 'wallet'] })
-                        if (++ticks >= 10) clearInterval(poll)
-                      }, 3000)
-                    },
-                  }}
+                  hooks={{ onCompletion: async () => setStep('syncing') }}
                 />
               ) : (
                 <div className="flex items-center gap-2">
@@ -280,21 +289,9 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
               )}
             </div>
 
-            {topUpReceived ? (
-              <div
-                className="flex items-center justify-center gap-3 rounded-xl border px-5 py-4"
-                style={{ backgroundColor: 'rgba(74,222,128,0.1)', borderColor: 'rgba(74,222,128,0.25)' }}
-              >
-                <Loader2 size={16} className="animate-spin shrink-0" style={{ color: '#4ade80' }} />
-                <p className="text-sm font-medium" style={{ color: '#4ade80' }}>
-                  Payment received — restarting node…
-                </p>
-              </div>
-            ) : (
-              <p className="text-xs text-center" style={{ color: 'rgb(var(--fg-muted))' }}>
-                This step will advance automatically once xDAI is detected in your wallet.
-              </p>
-            )}
+            <p className="text-xs text-center" style={{ color: 'rgb(var(--fg-muted))' }}>
+              This step will advance automatically once xDAI is detected in your wallet.
+            </p>
           </div>
         )}
 

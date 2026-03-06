@@ -188,10 +188,10 @@ export default function Wallet() {
               {/* Balances */}
               <div className="flex gap-3">
                 <div className="rounded-xl border p-5 flex-1" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
-                  <p className="text-xs uppercase tracking-widest mb-3" style={{ color: 'rgb(var(--fg-muted))' }}>BZZ</p>
+                  <p className="text-xs uppercase tracking-widest mb-3" style={{ color: 'rgb(var(--fg-muted))' }}>xBZZ</p>
                   <div className="flex items-baseline gap-2">
                     <span className="text-3xl font-bold tabular-nums">{bzz}</span>
-                    <span className="text-sm font-medium" style={{ color: 'rgb(var(--fg-muted))' }}>BZZ</span>
+                    <span className="text-sm font-medium" style={{ color: 'rgb(var(--fg-muted))' }}>xBZZ</span>
                   </div>
                   <p className="text-xs mt-2" style={{ color: 'rgb(var(--fg-muted))' }}>Used to buy storage</p>
                   <button
@@ -221,53 +221,8 @@ export default function Wallet() {
                 </div>
               </div>
 
-              {/* Swap */}
-              <div className="rounded-xl border p-5" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
-                <p className="text-xs uppercase tracking-widest mb-1" style={{ color: 'rgb(var(--fg-muted))' }}>
-                  Swap xDAI → BZZ
-                </p>
-                <p className="text-xs mb-4" style={{ color: 'rgb(var(--fg-muted))' }}>
-                  Convert xDAI to BZZ to fund storage purchases.
-                </p>
-                <div className="flex gap-3">
-                  <div className="relative flex-1">
-                    <input
-                      type="number"
-                      value={swapAmount}
-                      onChange={e => setSwapAmount(e.target.value)}
-                      placeholder="0.00"
-                      min="0"
-                      className="w-full rounded-lg border px-3 py-2 text-sm pr-14 focus:outline-none"
-                      style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
-                    />
-                    <span
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium"
-                      style={{ color: 'rgb(var(--fg-muted))' }}
-                    >
-                      xDAI
-                    </span>
-                  </div>
-                  <button
-                    onClick={swap}
-                    disabled={swapping || !swapAmount}
-                    className="px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-40 transition-opacity shrink-0"
-                    style={{
-                      backgroundColor: swapDone ? 'rgba(74,222,128,0.15)' : 'rgb(var(--accent))',
-                      color: swapDone ? '#4ade80' : '#fff',
-                    }}
-                  >
-                    {swapping ? 'Swapping…' : swapDone ? 'Done' : 'Swap'}
-                  </button>
-                </div>
-                {swapError && (
-                  <p className="text-xs mt-3" style={{ color: '#ef4444' }}>
-                    {swapError}
-                  </p>
-                )}
-              </div>
-
               {/* Redeem gift code */}
-              <div className="rounded-xl border p-5 flex-1" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
+              <div className="rounded-xl border p-5" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
                 <div className="flex items-center gap-2 mb-1">
                   <Gift size={13} style={{ color: 'rgb(var(--accent))' }} />
                   <p className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
@@ -275,7 +230,7 @@ export default function Wallet() {
                   </p>
                 </div>
                 <p className="text-xs mb-4" style={{ color: 'rgb(var(--fg-muted))' }}>
-                  Paste a gift code to transfer its BZZ and xDAI to your node wallet.
+                  Paste a gift code to transfer its xBZZ and xDAI to your node wallet.
                 </p>
                 <div className="flex gap-3">
                   <input
@@ -360,7 +315,7 @@ export default function Wallet() {
           >
             <div>
               <p className="text-sm font-semibold">
-                Withdraw {withdrawToken === 'bzz' ? 'BZZ' : 'xDAI'}
+                Withdraw {withdrawToken === 'bzz' ? 'xBZZ' : 'xDAI'}
               </p>
               <p className="text-xs mt-1" style={{ color: 'rgb(var(--fg-muted))' }}>
                 Send to any address on Gnosis Chain.

@@ -23,10 +23,6 @@ export function runMigrations() {
     writeConfigYaml({ 'blockchain-rpc-endpoint': 'https://rpc.gnosischain.com' })
   }
 
-  if (config['swap-enable'] === 'false' || config['swap-enable'] === false) {
-    writeConfigYaml({ 'swap-enable': true })
-  }
-
   if (config['chain-enable'] !== undefined) {
     deleteKeyFromConfigYaml('chain-enable')
   }

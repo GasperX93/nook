@@ -7,6 +7,7 @@ import { openDashboardInBrowser } from './browser'
 import { getDesktopVersionFromFile, writeDesktopVersionFile } from './config'
 import { runDownloader } from './downloader'
 import { runElectronTray } from './electron'
+import { startMonitorIfNeeded } from './funding-monitor'
 import { initializeBee, runKeepAliveLoop, runLauncher } from './launcher'
 import { logger } from './logger'
 import { findFreePort } from './port'
@@ -18,7 +19,6 @@ import { getStatus } from './status'
 // @ts-ignore
 import squirrelInstallingExecution from 'electron-squirrel-startup'
 import { runMigrations } from './migration'
-import { runScreenshot } from './plugins/screenshot'
 import { initSplash, Splash } from './splash'
 
 runMigrations()
@@ -76,6 +76,7 @@ async function main() {
   }
 
   runLauncher().catch(errorHandler)
+  startMonitorIfNeeded()
   runElectronTray()
 
   if (process.env.NODE_ENV !== 'development') openDashboardInBrowser()
@@ -83,10 +84,6 @@ async function main() {
   splash = undefined
 
   runKeepAliveLoop()
-
-  app.whenReady().then(() => {
-    runScreenshot()
-  })
 }
 
 main().catch(errorHandler)

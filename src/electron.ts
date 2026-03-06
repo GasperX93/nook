@@ -1,14 +1,12 @@
-import { app, BrowserWindow, Menu, Tray } from 'electron'
+import { app, Menu, Tray } from 'electron'
 import opener from 'opener'
 import { openDashboardInBrowser } from './browser'
 import { runLauncher } from './launcher'
 import { BeeManager } from './lifecycle'
 import { createNotification } from './notify'
 import { getAssetPath, paths } from './path'
-import * as screenshot from './plugins/screenshot'
 
 let tray: Tray
-let sCaptureWindow: BrowserWindow
 
 export function rebuildElectronTray() {
   if (!tray) {
@@ -31,29 +29,6 @@ export function rebuildElectronTray() {
       },
     },
     { type: 'separator' },
-    {
-      label: 'Nook Screenshot',
-      click: () => {
-        const { captureWindow, previewWindow } = screenshot
-
-        if (sCaptureWindow && !sCaptureWindow.isDestroyed() && sCaptureWindow.isVisible()) {
-          sCaptureWindow.focus()
-
-          return
-        }
-
-        if (previewWindow && !previewWindow.isDestroyed() && previewWindow.isVisible()) {
-          previewWindow.focus()
-
-          return
-        }
-
-        if (!sCaptureWindow || sCaptureWindow.isDestroyed()) {
-          sCaptureWindow = captureWindow.screenCaptureWindow()
-        }
-        sCaptureWindow.show()
-      },
-    },
     {
       label: 'Logs',
       click: async () => {

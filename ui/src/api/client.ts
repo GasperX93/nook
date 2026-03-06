@@ -45,10 +45,12 @@ export interface Info {
   autoUpdateEnabled: boolean
 }
 
+export type BeeMode = 'ultra-light' | 'light'
+
 export interface Status {
   bee: NodeStatus
   config: Record<string, unknown> | null
-  needsFunding: boolean
+  mode: BeeMode
   address?: string
 }
 

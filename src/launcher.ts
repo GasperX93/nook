@@ -8,12 +8,6 @@ import { BeeManager } from './lifecycle'
 import { logger } from './logger'
 import { checkPath, getLogPath, getPath } from './path'
 
-let needsFunding = false
-
-export function getNeedsFunding() {
-  return needsFunding
-}
-
 export function runKeepAliveLoop() {
   setInterval(() => {
     if (!BeeManager.isRunning() && BeeManager.shouldRestart()) {
@@ -32,7 +26,7 @@ function getBeeExecutable() {
 
 function createConfiguration() {
   return `api-addr: 127.0.0.1:1633
-swap-enable: true
+swap-enable: false
 mainnet: true
 full-node: false
 cors-allowed-origins: '*'
@@ -64,7 +58,6 @@ export async function runLauncher() {
     mkdirSync(getPath('data-dir'))
   }
 
-  needsFunding = false
   BeeManager.setUserIntention(true)
   const subprocess = launchBee(abortController).catch(reason => {
     logger.error(reason)
@@ -96,12 +89,6 @@ async function runProcess(command: string, args: string[], abortController: Abor
     // Print the logs to console
     subprocess.stdout.pipe(process.stdout)
     subprocess.stderr.pipe(process.stderr)
-
-    subprocess.stdout.on('data', (chunk: Buffer) => {
-      if (chunk.toString().includes('cannot continue until there is at least min xDAI')) {
-        needsFunding = true
-      }
-    })
 
     // Also store the logs to log dir
     const fileStream = FileStreamRotator.getStream({
