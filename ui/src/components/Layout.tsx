@@ -34,7 +34,8 @@ export default function Layout() {
 
   const showStarting = !beeOnline && !hasEverBeenOnline.current
   const showDown = beeOffline && !beeChecking && hasEverBeenOnline.current
-  const showFundingWarning = status?.mode === 'ultra-light'
+  const noFunds = walletLoaded && wallet && Number(weiToDai(wallet.nativeTokenBalance)) === 0
+  const showFundingWarning = status?.mode === 'ultra-light' || (beeOnline && noFunds)
 
   // Auto-complete onboarding for existing users upgrading from v0.2.0 (they never had the flag).
   // Once stamps or wallet data loads and shows existing activity, mark onboarding done.

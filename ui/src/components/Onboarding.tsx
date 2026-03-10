@@ -62,9 +62,10 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
   useEffect(() => {
     if (!lockedStep && step === 'syncing' && stampsReady) {
       if (skipReady) return // Layout handles dismissal for returning users
+      if (status?.mode !== 'light') return // Wait for backend to switch to light mode
       setStep('ready')
     }
-  }, [step, stampsReady, lockedStep, skipReady])
+  }, [step, stampsReady, lockedStep, skipReady, status?.mode])
 
   // Apply locked step
   useEffect(() => {
@@ -96,7 +97,7 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
 
   function finish() {
     setOnboardingCompleted()
-    navigate('/account')
+    navigate('/drive')
   }
 
   function skip() {
@@ -106,7 +107,7 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
   const stepIndex = STEPS.indexOf(step)
 
   return (
-    <div className="flex-1 flex flex-col items-center justify-center p-8 overflow-auto">
+    <div className="flex-1 flex flex-col items-center p-8 pt-16 overflow-auto">
       <div className="w-full max-w-lg">
         {/* Step indicator — new users only */}
         {!skipReady && (

@@ -255,7 +255,7 @@ function BuyDriveModal({ onClose }: { onClose: () => void }) {
           <p className="text-sm">
             <span style={{ color: 'rgb(var(--fg-muted))' }}>Estimated cost: </span>
             <span className="font-semibold">{cost.bzzCost} BZZ</span>
-            {!canAfford && (
+            {!canAfford && !buying && !buyDone && (
               <span className="ml-2 text-xs" style={{ color: '#ef4444' }}>
                 Insufficient BZZ
               </span>

@@ -187,9 +187,15 @@ export function runServer() {
       logger.error(error)
       context.status = 500
       const beeMessage: string = (error as any)?.responseBody?.message ?? ''
-      const message = beeMessage.toLowerCase().includes('syncing')
-        ? 'Bee is syncing postage state from the chain. This can take a few minutes on first start — please try again shortly.'
-        : 'Failed to create drive. Please try again.'
+      const errString = String(error)
+      let message: string
+      if (beeMessage.toLowerCase().includes('syncing')) {
+        message = 'Your node is still syncing with the network. This can take a few minutes — please try again shortly.'
+      } else if (errString.includes('ECONNREFUSED') || errString.includes('fetch failed')) {
+        message = 'Your node is still starting up. Please wait a moment and try again.'
+      } else {
+        message = 'Failed to create drive. Please try again.'
+      }
       context.body = { message }
     }
   })
