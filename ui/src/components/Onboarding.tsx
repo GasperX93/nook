@@ -183,7 +183,7 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
               Your node is syncing with the Swarm network. It discovers peers and catches up with the latest state.
             </p>
             <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-              This can take 1–5 minutes. First-time setup may take up to 30 minutes.
+              This can take 1–5 minutes.
             </p>
           </div>
         )}

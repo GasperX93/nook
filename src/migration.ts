@@ -7,8 +7,8 @@ export function runMigrations() {
 
   const config = readConfigYaml()
 
-  if (config['skip-postage-snapshot'] !== true && config['skip-postage-snapshot'] !== 'true') {
-    writeConfigYaml({ 'skip-postage-snapshot': true })
+  if (config['skip-postage-snapshot'] !== false && config['skip-postage-snapshot'] !== 'false') {
+    writeConfigYaml({ 'skip-postage-snapshot': false })
   }
 
   if (config['storage-incentives-enable'] === undefined) {
@@ -19,7 +19,8 @@ export function runMigrations() {
     writeConfigYaml({ 'blockchain-rpc-endpoint': config['swap-endpoint'] })
   }
 
-  if (!config['blockchain-rpc-endpoint'] || config['blockchain-rpc-endpoint'] === 'https://xdai.fairdatasociety.org') {
+  // Only upgrade old RPC for existing users who already have one set — don't add it for new ultra-light installs
+  if (config['blockchain-rpc-endpoint'] === 'https://xdai.fairdatasociety.org') {
     writeConfigYaml({ 'blockchain-rpc-endpoint': 'https://rpc.gnosischain.com' })
   }
 

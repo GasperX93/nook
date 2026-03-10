@@ -1,6 +1,6 @@
 import { ExternalLink } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAddresses, useBeeHealth, useConfig, useInfo, usePeers, useTopology, useUpdateConfig } from '../api/queries'
 import { useAppStore } from '../store/app'
 
@@ -9,7 +9,11 @@ type SettingsTab = 'general' | 'network'
 const DEFAULT_RPC = 'https://rpc.gnosischain.com'
 
 export default function Settings() {
-  const [tab, setTab] = useState<SettingsTab>('general')
+  const [searchParams] = useSearchParams()
+  const [tab, setTab] = useState<SettingsTab>(() => {
+    const t = searchParams.get('tab')
+    return t === 'network' ? 'network' : 'general'
+  })
   const navigate = useNavigate()
 
   const { data: config, isLoading, isError: configError } = useConfig()

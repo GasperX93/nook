@@ -132,7 +132,7 @@ export function runServer() {
       return
     }
     const config = readConfigYaml()
-    const blockchainRpcEndpoint = Reflect.get(config, 'blockchain-rpc-endpoint') as string
+    const blockchainRpcEndpoint = (Reflect.get(config, 'blockchain-rpc-endpoint') as string) || 'https://rpc.gnosischain.com'
     try {
       const { ethereum: nodeAddress } = await makeBee().getNodeAddresses()
       await redeemGiftCode(giftCode, nodeAddress, blockchainRpcEndpoint)
@@ -218,7 +218,7 @@ export function runServer() {
     }
 
     const config = readConfigYaml()
-    const blockchainRpcEndpoint = Reflect.get(config, 'blockchain-rpc-endpoint') as string
+    const blockchainRpcEndpoint = (Reflect.get(config, 'blockchain-rpc-endpoint') as string) || 'https://rpc.gnosischain.com'
     const privateKeyString = await getPrivateKey()
 
     try {
@@ -236,7 +236,7 @@ export function runServer() {
 
   router.post('/swap', async context => {
     const config = readConfigYaml()
-    const blockchainRpcEndpoint = Reflect.get(config, 'blockchain-rpc-endpoint') as string
+    const blockchainRpcEndpoint = (Reflect.get(config, 'blockchain-rpc-endpoint') as string) || 'https://rpc.gnosischain.com'
     const privateKeyString = await getPrivateKey()
     try {
       await swap(privateKeyString, (context.request.body as Record<string, string>).dai, '10000', blockchainRpcEndpoint)

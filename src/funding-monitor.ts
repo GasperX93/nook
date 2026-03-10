@@ -11,6 +11,7 @@ export type BeeMode = 'ultra-light' | 'light'
 
 const MIN_XDAI = '0.001'
 const POLL_INTERVAL_MS = 15_000
+const RPC_ENDPOINT = 'https://rpc.gnosischain.com'
 
 let currentMode: BeeMode = 'light'
 let pollTimer: ReturnType<typeof setInterval> | null = null
@@ -37,16 +38,15 @@ export function startMonitorIfNeeded() {
   if (pollTimer) return
 
   const address = readAddress()
-  const rpc = readRpc()
 
-  if (!address || !rpc) {
-    logger.warn('Cannot start funding monitor — missing address or RPC endpoint')
+  if (!address) {
+    logger.warn('Cannot start funding monitor — missing address')
     return
   }
 
   logger.info(`Starting funding monitor for 0x${address} (polling every ${POLL_INTERVAL_MS / 1000}s)`)
 
-  pollTimer = setInterval(() => checkBalance(address, rpc), POLL_INTERVAL_MS)
+  pollTimer = setInterval(() => checkBalance(address, RPC_ENDPOINT), POLL_INTERVAL_MS)
 }
 
 function readAddress(): string | undefined {
@@ -54,15 +54,6 @@ function readAddress(): string | undefined {
     const keyPath = getPath(join('data-dir', 'keys', 'swarm.key'))
     const v3 = JSON.parse(readFileSync(keyPath, 'utf-8'))
     return v3.address as string
-  } catch {
-    return undefined
-  }
-}
-
-function readRpc(): string | undefined {
-  try {
-    const config = readConfigYaml()
-    return (config['blockchain-rpc-endpoint'] as string) || undefined
   } catch {
     return undefined
   }
@@ -87,14 +78,17 @@ async function checkBalance(address: string, rpc: string) {
 async function switchToLightMode() {
   stopMonitor()
 
-  writeConfigYaml({ 'swap-enable': true })
+  logger.info('Funding detected — stopping Bee, updating config, restarting in light mode')
+
+  // 1. Stop Bee first (per Bee dev guidance)
+  BeeManager.stop()
+  await BeeManager.waitForSigtermToFinish()
+
+  // 2. Write blockchain-rpc-endpoint and swap-enable AFTER Bee is stopped
+  writeConfigYaml({ 'blockchain-rpc-endpoint': RPC_ENDPOINT, 'swap-enable': true })
   currentMode = 'light'
 
-  logger.info('Config updated: swap-enable: true — restarting Bee')
-
-  BeeManager.stop()
-  // Wait for Bee process to finish before restarting
-  await BeeManager.waitForSigtermToFinish()
+  // 3. Start Bee in light mode
   runLauncher().catch(err => logger.error(`Failed to restart Bee: ${err}`))
 }
 

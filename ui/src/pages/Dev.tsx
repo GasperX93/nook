@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useBeeLogs, useConfig, useDesktopLogs, useUpdateConfig } from '../api/queries'
+import { useAppStore } from '../store/app'
 
 type LogTab = 'bee' | 'desktop'
 
@@ -8,6 +10,8 @@ export default function Dev() {
   const { data: beeLogs } = useBeeLogs()
   const { data: desktopLogs } = useDesktopLogs()
   const bottomRef = useRef<HTMLDivElement>(null)
+  const navigate = useNavigate()
+  const { setDevMode } = useAppStore()
 
   const { data: config, isLoading, isError: configError } = useConfig()
   const updateConfig = useUpdateConfig()
@@ -36,9 +40,18 @@ export default function Dev() {
 
   return (
     <div className="flex flex-col h-full p-6 gap-6">
-      <h1 className="text-base font-semibold uppercase tracking-widest shrink-0" style={{ color: 'rgb(var(--fg-muted))' }}>
-        Developer
-      </h1>
+      <div className="flex items-center justify-between shrink-0">
+        <h1 className="text-base font-semibold uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
+          Developer
+        </h1>
+        <button
+          onClick={() => { setDevMode(false); navigate('/settings?tab=network') }}
+          className="text-xs font-medium transition-colors"
+          style={{ color: 'rgb(var(--fg-muted))' }}
+        >
+          Exit Developer Mode
+        </button>
+      </div>
 
       {/* Logs */}
       <div className="flex flex-col min-h-0" style={{ flex: 2 }}>

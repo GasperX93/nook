@@ -31,12 +31,11 @@ mainnet: true
 full-node: false
 cors-allowed-origins: '*'
 use-postage-snapshot: false
-skip-postage-snapshot: true
+skip-postage-snapshot: false
 resolver-options: https://cloudflare-eth.com
 data-dir: ${getPath('data-dir')}
 password: ${v4()}
-storage-incentives-enable: false
-blockchain-rpc-endpoint: https://rpc.gnosischain.com`
+storage-incentives-enable: false`
 }
 
 export async function initializeBee() {
