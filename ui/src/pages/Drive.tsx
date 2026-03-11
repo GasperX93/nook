@@ -52,6 +52,7 @@ import {
   totalSize,
   type FileEntry,
 } from '../utils/directory'
+import ENSModal from '../components/ENSModal'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -771,6 +772,7 @@ interface RecordRowProps {
   onUpdate: (id: string) => void
   onDownload: (id: string, hash: string, name: string) => void
   onRemove: (id: string) => void
+  onSetENS?: (id: string) => void
   onDragStart?: (e: React.DragEvent, id: string) => void
   onDragEnd?: () => void
 }
@@ -785,6 +787,7 @@ function RecordRow({
   onUpdate,
   onDownload,
   onRemove,
+  onSetENS,
   onDragStart,
   onDragEnd,
 }: RecordRowProps) {
@@ -844,6 +847,19 @@ function RecordRow({
             Update content
           </button>
         )}
+        {record.ensDomain && (
+          <a
+            href={`https://${record.ensDomain}.limo`}
+            target="_blank"
+            rel="noreferrer"
+            title={`${record.ensDomain}.limo`}
+            className="shrink-0 flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium transition-opacity hover:opacity-80"
+            style={{ backgroundColor: 'rgba(74,222,128,0.12)', color: '#4ade80' }}
+          >
+            {record.ensDomain}
+            <ExternalLink size={8} />
+          </a>
+        )}
       </div>
 
       {/* Size */}
@@ -867,6 +883,17 @@ function RecordRow({
 
       {/* Actions */}
       <div className="flex items-center gap-0.5 shrink-0">
+        {record.type === 'website' && onSetENS && (
+          <button
+            onClick={() => onSetENS(record.id)}
+            title={record.ensDomain ? `Update ENS (${record.ensDomain})` : 'Set ENS domain'}
+            className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors mr-1"
+            style={{ color: 'rgb(var(--fg-muted))' }}
+          >
+            <Globe size={11} />
+            {record.ensDomain ? 'ENS' : 'Set ENS'}
+          </button>
+        )}
         <button
           onClick={() => onCopy(record.id, linkHash)}
           title="Copy link"
@@ -933,10 +960,11 @@ interface DriveCardProps {
   onUpdate: (id: string) => void
   onDownload: (id: string, hash: string, name: string) => void
   onRemove: (id: string) => void
+  onSetENS: (id: string) => void
   onMoveToFolder: (recordId: string, folderId: string) => void
 }
 
-function DriveCard({ stamp, records, folders, gatewayUrl, copiedId, downloadingId, downloadPct, customName, onOpen, onExtend, onRename, onCopy, onUpdate, onDownload, onRemove, onMoveToFolder }: DriveCardProps) {
+function DriveCard({ stamp, records, folders, gatewayUrl, copiedId, downloadingId, downloadPct, customName, onOpen, onExtend, onRename, onCopy, onUpdate, onDownload, onRemove, onSetENS, onMoveToFolder }: DriveCardProps) {
   const [expanded, setExpanded] = useState(false)
   const [expandedInlineFolders, setExpandedInlineFolders] = useState<Set<string>>(new Set())
   const [inlineDraggingId, setInlineDraggingId] = useState<string | null>(null)
@@ -1047,6 +1075,7 @@ function DriveCard({ stamp, records, folders, gatewayUrl, copiedId, downloadingI
                     onUpdate={onUpdate}
                     onDownload={onDownload}
                     onRemove={onRemove}
+                    onSetENS={onSetENS}
                     onDragStart={(e, id) => { e.dataTransfer.setData('recordId', id); setInlineDraggingId(id) }}
                     onDragEnd={() => { setInlineDraggingId(null); setInlineDragOverFolderId(null) }}
                   />
@@ -1190,6 +1219,7 @@ function DriveCard({ stamp, records, folders, gatewayUrl, copiedId, downloadingI
                     onUpdate={onUpdate}
                     onDownload={onDownload}
                     onRemove={onRemove}
+                    onSetENS={onSetENS}
                     onDragStart={(e, id) => { e.dataTransfer.setData('recordId', id); setInlineDraggingId(id) }}
                     onDragEnd={() => { setInlineDraggingId(null); setInlineDragOverFolderId(null) }}
                   />
@@ -1441,7 +1471,7 @@ function AddFilePanel({ driveId, onDone, onAdd }: AddFileProps) {
 
 export default function Drive() {
   const { data: stamps } = useStamps()
-  const { records, folders, add: addRecord, remove, addFolder, removeFolder, renameFolder, moveToFolder } = useUploadHistory()
+  const { records, folders, add: addRecord, remove, update: updateRecord, addFolder, removeFolder, renameFolder, moveToFolder } = useUploadHistory()
   const { gatewayUrl } = useAppStore()
   const location = useLocation()
 
@@ -1467,6 +1497,7 @@ export default function Drive() {
   const [downloadPct, setDownloadPct] = useState<number | null>(null)
   const [updatingId, setUpdatingId] = useState<string | null>(null)
   const [retrieveOpen, setRetrieveOpen] = useState(false)
+  const [ensRecordId, setEnsRecordId] = useState<string | null>(null)
 
   // Folder UI state
   const [openFolderId, setOpenFolderId] = useState<string | null>(null)
@@ -1583,6 +1614,7 @@ export default function Drive() {
                     onUpdate={setUpdatingId}
                     onDownload={handleDownload}
                     onRemove={remove}
+                    onSetENS={setEnsRecordId}
                   />
                 ))}
               </div>
@@ -1635,6 +1667,7 @@ export default function Drive() {
                 onUpdate={setUpdatingId}
                 onDownload={handleDownload}
                 onRemove={remove}
+                onSetENS={setEnsRecordId}
                 onMoveToFolder={moveToFolder}
               />
             ))}
@@ -1645,6 +1678,23 @@ export default function Drive() {
         {extendingStamp && <ExtendModal stamp={extendingStamp} onClose={() => setShowExtendModal(null)} />}
         {updatingRecord && <UpdateFeedModal record={updatingRecord} onClose={() => setUpdatingId(null)} />}
         {retrieveOpen && <RetrieveModal onClose={() => setRetrieveOpen(false)} />}
+        {ensRecordId && (() => {
+          const rec = records.find(r => r.id === ensRecordId)
+          if (!rec) return null
+          return (
+            <ENSModal
+              isOpen
+              onClose={() => setEnsRecordId(null)}
+              swarmHash={rec.hash}
+              feedManifest={rec.feedManifestAddress}
+              currentDomain={rec.ensDomain}
+              onLinked={domain => {
+                updateRecord(ensRecordId, { ensDomain: domain })
+                setEnsRecordId(null)
+              }}
+            />
+          )
+        })()}
       </div>
     )
   }
@@ -1711,6 +1761,7 @@ export default function Drive() {
     onUpdate: setUpdatingId,
     onDownload: handleDownload,
     onRemove: remove,
+    onSetENS: setEnsRecordId,
     onDragStart: handleRecordDragStart,
     onDragEnd: () => { setDraggingId(null); setDragOverId(null) },
   }
@@ -1965,6 +2016,23 @@ export default function Drive() {
 
       {updatingRecord && <UpdateFeedModal record={updatingRecord} onClose={() => setUpdatingId(null)} />}
       {retrieveOpen && <RetrieveModal onClose={() => setRetrieveOpen(false)} />}
+      {ensRecordId && (() => {
+        const rec = records.find(r => r.id === ensRecordId)
+        if (!rec) return null
+        return (
+          <ENSModal
+            isOpen
+            onClose={() => setEnsRecordId(null)}
+            swarmHash={rec.hash}
+            feedManifest={rec.feedManifestAddress}
+            currentDomain={rec.ensDomain}
+            onLinked={domain => {
+              updateRecord(ensRecordId, { ensDomain: domain })
+              setEnsRecordId(null)
+            }}
+          />
+        )
+      })()}
     </div>
   )
 }

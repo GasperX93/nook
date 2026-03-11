@@ -6,6 +6,6 @@ export const wagmiConfig = createConfig({
   chains: [mainnet],
   connectors: [injected()],
   transports: {
-    [mainnet.id]: http('https://eth.merkle.io'),
+    [mainnet.id]: http('https://ethereum-rpc.publicnode.com'),
   },
 })

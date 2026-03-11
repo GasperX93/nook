@@ -28,6 +28,8 @@ export interface UploadRecord {
   feedManifestAddress?: string
   /** Virtual folder this record belongs to; undefined = root level */
   folderId?: string
+  /** Linked ENS domain name (e.g. "yourname.eth") */
+  ensDomain?: string
 }
 
 const STORAGE_KEY = 'swarm-drive'
