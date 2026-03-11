@@ -140,11 +140,7 @@ export default function Wallet() {
   }
 
   return (
-    <div className="p-6 max-w-4xl">
-      <h1 className="text-base font-semibold uppercase tracking-widest mb-6" style={{ color: 'rgb(var(--fg-muted))' }}>
-        Wallet
-      </h1>
-
+    <div>
       <div className="space-y-5">
         {/* Address — full width slim row */}
           <div className="flex items-center gap-3 px-1">

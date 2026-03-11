@@ -53,10 +53,6 @@ export default function Settings() {
 
   return (
     <div className="p-6 max-w-xl space-y-6">
-      <h1 className="text-base font-semibold uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
-        Settings
-      </h1>
-
       {/* Tabs */}
       <div className="flex gap-1 mb-6 border-b" style={{ borderColor: 'rgb(var(--border))' }}>
         {(['general', 'network'] as SettingsTab[]).map(t => (

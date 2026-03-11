@@ -1525,14 +1525,7 @@ export default function Drive() {
       <div className="p-6">
         {/* Header */}
         <div className="flex items-center gap-3 mb-6">
-          <h1
-            className="text-base font-semibold uppercase tracking-widest shrink-0"
-            style={{ color: 'rgb(var(--fg-muted))' }}
-          >
-            Drive
-          </h1>
-
-          <div className="flex-1 relative">
+          <div className="relative w-full max-w-[500px]">
             <Search
               size={11}
               className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
@@ -1547,6 +1540,8 @@ export default function Drive() {
               style={{ backgroundColor: 'rgb(var(--bg-surface))', color: 'rgb(var(--fg))' }}
             />
           </div>
+
+          <div className="flex-1" />
 
           <button
             onClick={() => setRetrieveOpen(true)}

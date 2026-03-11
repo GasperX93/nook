@@ -221,10 +221,6 @@ const selectedSize = SIZE_PRESETS[sizeIdx]
       }
       onDrop={step === 'select' ? handleDrop : undefined}
     >
-      <h1 className="text-base font-semibold uppercase tracking-widest mb-6" style={{ color: 'rgb(var(--fg-muted))' }}>
-        Website Publisher
-      </h1>
-
       {/* ── Step: Step dots (select / options) ── */}
       {(step === 'select' || step === 'options') && (
         <div className="flex items-center gap-2 mb-8">

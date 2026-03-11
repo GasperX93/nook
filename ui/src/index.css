@@ -37,6 +37,25 @@
   }
 }
 
+/* RainbowKit — match Nook's monospace font */
+[data-rk] button {
+  font-family: ui-monospace, 'Cascadia Code', 'Fira Code', monospace !important;
+}
+
+/* Prevent multichain widget's RainbowKit CSS from overriding our global connect button */
+.nook-wallet-btn {
+  background: transparent !important;
+  border: 1px solid rgb(var(--border)) !important;
+  color: rgb(var(--fg-muted)) !important;
+}
+.nook-wallet-btn:hover {
+  border-color: rgb(var(--fg-muted)) !important;
+  color: rgb(var(--fg)) !important;
+}
+.nook-wallet-btn.connected {
+  color: rgb(var(--fg)) !important;
+}
+
 /* Hide the multichain-widget intent description banner (info icon + text row) */
 .multichain__wrapper > .multichain__row:first-child {
   display: none !important;

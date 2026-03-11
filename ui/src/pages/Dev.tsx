@@ -40,10 +40,7 @@ export default function Dev() {
 
   return (
     <div className="flex flex-col h-full p-6 gap-6">
-      <div className="flex items-center justify-between shrink-0">
-        <h1 className="text-base font-semibold uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
-          Developer
-        </h1>
+      <div className="flex items-center justify-end shrink-0">
         <button
           onClick={() => { setDevMode(false); navigate('/settings?tab=network') }}
           className="text-xs font-medium transition-colors"

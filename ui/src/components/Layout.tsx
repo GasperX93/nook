@@ -1,6 +1,8 @@
-import { AlertTriangle, Globe, HardDrive, RefreshCw, Settings, Terminal, User, Wallet } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
-import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { ConnectButton } from '@rainbow-me/rainbowkit'
+import { AlertTriangle, Copy, Globe, HardDrive, LogOut, RefreshCw, Settings, Terminal, User, Wallet } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
+import { useDisconnect } from 'wagmi'
 import { weiToDai } from '../api/bee'
 import { useBeeHealth, usePeers, useStamps, useStatus, useWallet } from '../api/queries'
 import { useAppStore } from '../store/app'
@@ -15,6 +17,66 @@ const settingsNavItem = { to: '/settings', icon: Settings, label: 'Settings' }
 
 const appNavItems = [{ to: '/apps/website-publisher', icon: Globe, label: 'Publish', sublabel: 'website' }]
 
+function WalletDropdown({ displayName, address }: { displayName: string; address: string }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  const { disconnect } = useDisconnect()
+
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(address)
+    setOpen(false)
+  }, [address])
+
+  const handleDisconnect = useCallback(() => {
+    disconnect()
+    setOpen(false)
+  }, [disconnect])
+
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen(!open)}
+        className="nook-wallet-btn connected flex items-center gap-2 px-3 py-1.5 rounded-full text-xs transition-colors border"
+      >
+        {displayName}
+      </button>
+      {open && (
+        <div
+          className="absolute right-0 top-full mt-1 rounded-lg border py-1 z-50 min-w-[180px]"
+          style={{ backgroundColor: 'rgb(var(--bg-surface))', borderColor: 'rgb(var(--border))' }}
+        >
+          <button
+            onClick={handleCopy}
+            className="flex items-center gap-2.5 w-full px-3 py-2 text-xs transition-colors hover:bg-white/5"
+            style={{ color: 'rgb(var(--fg))' }}
+          >
+            <Copy size={13} style={{ color: 'rgb(var(--fg-muted))' }} />
+            {address.slice(0, 6)}...{address.slice(-4)}
+          </button>
+          <button
+            onClick={handleDisconnect}
+            className="flex items-center gap-2.5 w-full px-3 py-2 text-xs transition-colors hover:bg-white/5"
+            style={{ color: '#ef4444' }}
+          >
+            <LogOut size={13} />
+            Disconnect
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function Layout() {
   const { isError: beeOffline, isPending: beeChecking, isSuccess: beeOnline } = useBeeHealth()
   const { data: peers } = usePeers()
@@ -23,6 +85,16 @@ export default function Layout() {
   const { data: wallet, isSuccess: walletLoaded } = useWallet()
   const { devMode, onboardingCompleted, setOnboardingCompleted } = useAppStore()
   const navigate = useNavigate()
+  const location = useLocation()
+
+  const pageTitles: Record<string, string> = {
+    '/drive': 'Drive',
+    '/account': 'Account',
+    '/settings': 'Settings',
+    '/dev': 'Dev mode',
+    '/apps/website-publisher': 'Publish website',
+  }
+  const pageTitle = pageTitles[location.pathname] ?? ''
 
   const navItems = devMode ? [...mainNavItems, { to: '/dev', icon: Terminal, label: 'Dev mode' }] : mainNavItems
 
@@ -164,6 +236,32 @@ export default function Layout() {
 
       {/* Main content */}
       <main className="flex-1 overflow-auto flex flex-col">
+        {/* Top bar — page title + wallet connect */}
+        <div className="flex items-center justify-between px-6 shrink-0 relative" style={{ height: 52 }}>
+          <h1
+            className="text-sm font-semibold uppercase tracking-widest"
+            style={{ color: 'rgb(var(--fg-muted))' }}
+          >
+            {pageTitle}
+          </h1>
+          <ConnectButton.Custom>
+            {({ account, chain, openConnectModal, mounted }) => {
+              if (!mounted) return null
+              if (!account || !chain) {
+                return (
+                  <button
+                    onClick={openConnectModal}
+                    className="nook-wallet-btn flex items-center gap-2 px-3 py-1.5 rounded-full text-xs transition-colors border"
+                  >
+                    Connect Wallet
+                  </button>
+                )
+              }
+              return <WalletDropdown displayName={account.displayName} address={account.address} />
+            }}
+          </ConnectButton.Custom>
+        </div>
+
         {/* Starting up — friendly indicator */}
         {showStarting && !showOnboarding && (
           <div
