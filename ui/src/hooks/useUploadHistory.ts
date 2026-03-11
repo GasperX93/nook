@@ -173,5 +173,18 @@ export function useUploadHistory() {
     })
   }
 
-  return { records, folders, add, remove, update, addFolder, removeFolder, renameFolder, moveToFolder }
+  /** Set an ENS domain on a record, removing it from any other record that had it */
+  function setEnsDomain(recordId: string, domain: string) {
+    setRecords(prev => {
+      const next = prev.map(r => {
+        if (r.id === recordId) return { ...r, ensDomain: domain }
+        if (r.ensDomain === domain) return { ...r, ensDomain: undefined }
+        return r
+      })
+      save(next)
+      return next
+    })
+  }
+
+  return { records, folders, add, remove, update, addFolder, removeFolder, renameFolder, moveToFolder, setEnsDomain }
 }

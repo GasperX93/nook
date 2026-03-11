@@ -1156,6 +1156,17 @@ function DriveCard({ stamp, records, folders, gatewayUrl, copiedId, downloadingI
           </span>
         )}
 
+        {/* Website badge */}
+        {records.some(r => r.type === 'website') && (
+          <span
+            className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0"
+            style={{ backgroundColor: 'rgba(74,222,128,0.1)', color: '#4ade80' }}
+          >
+            <Globe size={9} />
+            Website
+          </span>
+        )}
+
         {/* Item count */}
         <span className="text-xs shrink-0" style={{ color: 'rgb(var(--fg-muted))' }}>
           {itemSummary}
@@ -1471,7 +1482,7 @@ function AddFilePanel({ driveId, onDone, onAdd }: AddFileProps) {
 
 export default function Drive() {
   const { data: stamps } = useStamps()
-  const { records, folders, add: addRecord, remove, update: updateRecord, addFolder, removeFolder, renameFolder, moveToFolder } = useUploadHistory()
+  const { records, folders, add: addRecord, remove, update: updateRecord, addFolder, removeFolder, renameFolder, moveToFolder, setEnsDomain } = useUploadHistory()
   const { gatewayUrl } = useAppStore()
   const location = useLocation()
 
@@ -1689,7 +1700,7 @@ export default function Drive() {
               feedManifest={rec.feedManifestAddress}
               currentDomain={rec.ensDomain}
               onLinked={domain => {
-                updateRecord(ensRecordId, { ensDomain: domain })
+                setEnsDomain(ensRecordId, domain)
                 setEnsRecordId(null)
               }}
             />
@@ -2027,7 +2038,7 @@ export default function Drive() {
             feedManifest={rec.feedManifestAddress}
             currentDomain={rec.ensDomain}
             onLinked={domain => {
-              updateRecord(ensRecordId, { ensDomain: domain })
+              setEnsDomain(ensRecordId, domain)
               setEnsRecordId(null)
             }}
           />

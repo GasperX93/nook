@@ -17,7 +17,7 @@ const settingsNavItem = { to: '/settings', icon: Settings, label: 'Settings' }
 
 const appNavItems = [{ to: '/apps/website-publisher', icon: Globe, label: 'Publish', sublabel: 'website' }]
 
-function WalletDropdown({ displayName, address }: { displayName: string; address: string }) {
+function WalletDropdown({ displayName, address, avatar }: { displayName: string; address: string; avatar?: string }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   const { disconnect } = useDisconnect()
@@ -48,6 +48,11 @@ function WalletDropdown({ displayName, address }: { displayName: string; address
         onClick={() => setOpen(!open)}
         className="nook-wallet-btn connected flex items-center gap-2 px-3 py-1.5 rounded-full text-xs transition-colors border"
       >
+        {avatar ? (
+          <img src={avatar} alt="" className="w-4 h-4 rounded-full" />
+        ) : (
+          <div className="w-4 h-4 rounded-full" style={{ backgroundColor: 'rgb(var(--fg-muted))' }} />
+        )}
         {displayName}
       </button>
       {open && (
@@ -257,7 +262,7 @@ export default function Layout() {
                   </button>
                 )
               }
-              return <WalletDropdown displayName={account.displayName} address={account.address} />
+              return <WalletDropdown displayName={account.displayName} address={account.address} avatar={account.ensAvatar} />
             }}
           </ConnectButton.Custom>
         </div>

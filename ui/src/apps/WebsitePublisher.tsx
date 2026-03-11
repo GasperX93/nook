@@ -1,4 +1,4 @@
-import { Check, ChevronRight, Copy, ExternalLink, Globe, RefreshCw, Upload } from 'lucide-react'
+import { Check, ChevronRight, Copy, ExternalLink, Globe, Link, RefreshCw, Upload } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
@@ -17,6 +17,7 @@ import {
 } from '../api/queries'
 import { useAppStore } from '../store/app'
 import { useUpload } from '../hooks/useUpload'
+import ENSModal from '../components/ENSModal'
 import {
   detectIndexDocument,
   fileListToEntries,
@@ -40,6 +41,7 @@ interface PublishResult {
   hash: string
   expiresAt: number
   feedManifestAddress?: string
+  recordId: string
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -88,6 +90,8 @@ export default function WebsitePublisher() {
   // Done state
   const [result, setResult] = useState<PublishResult | null>(null)
   const [copied, setCopied] = useState(false)
+  const [ensModalOpen, setEnsModalOpen] = useState(false)
+  const [linkedDomain, setLinkedDomain] = useState('')
 
   const dirInputRef = useRef<HTMLInputElement>(null)
   const navigate = useNavigate()
@@ -102,7 +106,7 @@ export default function WebsitePublisher() {
   const { data: wallet } = useWallet()
   const { gatewayUrl } = useAppStore()
   const buyStamp = useBuyStamp()
-  const { upload } = useUpload()
+  const { upload, setEnsDomain } = useUpload()
 
 const selectedSize = SIZE_PRESETS[sizeIdx]
   const selectedDuration = DURATION_PRESETS[durationIdx]
@@ -648,6 +652,21 @@ const selectedSize = SIZE_PRESETS[sizeIdx]
             )}
           </div>
 
+          {linkedDomain && (
+            <div className="flex items-center gap-2 rounded-lg p-3" style={{ backgroundColor: 'rgba(74,222,128,0.08)' }}>
+              <Globe size={13} style={{ color: '#4ade80' }} />
+              <a
+                href={`https://${linkedDomain}.limo`}
+                target="_blank"
+                rel="noreferrer"
+                className="text-xs font-medium transition-opacity hover:opacity-80"
+                style={{ color: '#4ade80' }}
+              >
+                {linkedDomain}.limo
+              </a>
+            </div>
+          )}
+
           <div className="flex gap-3">
             <button
               onClick={() => navigate('/drive')}
@@ -657,14 +676,36 @@ const selectedSize = SIZE_PRESETS[sizeIdx]
               View in Drive
             </button>
             <button
-              onClick={reset}
-              className="flex-1 px-4 py-2 rounded-lg text-sm font-semibold border"
+              onClick={() => setEnsModalOpen(true)}
+              className="flex-1 px-4 py-2 rounded-lg text-sm font-semibold flex items-center justify-center gap-1.5 border"
               style={{ backgroundColor: 'rgb(var(--bg-surface))', color: 'rgb(var(--fg))' }}
             >
-              Publish another
+              <Link size={13} />
+              Link ENS domain
             </button>
           </div>
+          <button
+            onClick={reset}
+            className="text-xs transition-colors hover:underline mx-auto block"
+            style={{ color: 'rgb(var(--fg-muted))' }}
+          >
+            Publish another
+          </button>
         </div>
+      )}
+
+      {result && (
+        <ENSModal
+          isOpen={ensModalOpen}
+          onClose={() => setEnsModalOpen(false)}
+          swarmHash={result.hash}
+          feedManifest={result.feedManifestAddress}
+          currentDomain={linkedDomain || undefined}
+          onLinked={(domain) => {
+            setLinkedDomain(domain)
+            setEnsDomain(result.recordId, domain)
+          }}
+        />
       )}
     </div>
   )

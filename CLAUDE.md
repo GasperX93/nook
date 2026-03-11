@@ -51,6 +51,8 @@ The app has two main layers:
 | `server.ts` | Koa HTTP server — REST API + serves React dashboard at `/dashboard` |
 | `launcher.ts` | Spawns the Bee binary as a child process, streams logs |
 | `lifecycle.ts` | `BeeManager`: start/stop/restart Bee; keep-alive loop |
+| `funding-monitor.ts` | Detects ultra-light/light mode, polls wallet balance via RPC, auto-switches to light mode when funded |
+| `status.ts` | `/status` endpoint — exposes `mode` (ultra-light/light), `assetsReady` |
 | `config.ts` | Reads/writes Bee YAML config |
 | `downloader.ts` | Downloads the correct Bee binary version |
 | `blockchain.ts` | Wallet management, BZZ/DAI transactions |
@@ -59,9 +61,11 @@ The app has two main layers:
 | `path.ts` | Platform-specific data/log paths |
 | `port.ts` | Finds a free local port |
 
-**Startup sequence** (`index.ts`): migrations → splash → download Bee if needed → API key → free port → start Koa server → init Bee config → launch Bee → setup tray → keep-alive loop.
+**Startup sequence** (`index.ts`): migrations → splash → download Bee if needed → API key → free port → start Koa server → init Bee config → launch Bee → start funding monitor → setup tray → keep-alive loop.
 
-**Server** (`server.ts`): Koa REST API. Public routes: `/info`, `/price`. Auth-required routes (API key header): `/status`, `/config`, `/logs/*`, `/restart`, `/swap`, `/redeem`, `/buy-stamp`, `/feed-update`.
+**Ultra-light / light mode**: New installs start in ultra-light mode (`swap-enable: false`, no `blockchain-rpc-endpoint`). Bee API is available immediately without funds. The funding monitor polls wallet balance every 15s. When xDAI is detected: stop Bee → write `blockchain-rpc-endpoint` and `swap-enable: true` → restart in light mode. Postage sync takes ~2–3 minutes thanks to clean snapshot loading.
+
+**Server** (`server.ts`): Koa REST API. Public routes: `/info`, `/price`. Auth-required routes (API key header): `/status`, `/config`, `/logs/*`, `/restart`, `/swap`, `/redeem`, `/buy-stamp`, `/feed-update`, `/withdraw`, `/peers`.
 
 ### Frontend (`ui/`) — Custom React app
 
@@ -72,10 +76,11 @@ Key files:
 - `ui/src/api/server.ts` — calls to the Nook Koa backend
 - `ui/src/pages/Publish.tsx` — multi-step publish wizard (select → storage → feed → done); sidebar click resets wizard via `location.key`
 - `ui/src/pages/Drive.tsx` — upload history with recursive folder tree (any depth), feed updates, extend drive modal
-- `ui/src/pages/Account.tsx` — two-tab page: Wallet (balances, swap, redeem, multichain top-up widget) + My Storage (drive list with TTL bars, extend drive, buy new drive)
-- `ui/src/pages/Settings.tsx` — two-tab page: General (RPC URL, about) + Network (peer stats, developer mode toggle)
-- `ui/src/pages/Dev.tsx` — node config editor + live Bee logs (shown in dev mode only)
-- `ui/src/components/Layout.tsx` — sidebar nav + Bee status banner; dot states: checking (gray), syncing/0 peers (orange), live (green), off (red); funding warning banner when wallet has no xDAI
+- `ui/src/pages/Wallet.tsx` — balances (xDAI/BZZ), collapsible multichain top-up widget, redeem gift code, swap
+- `ui/src/pages/Account.tsx` — two-tab page: Wallet (navigates to Wallet page) + My Storage (drive list with TTL bars, extend drive, buy new drive)
+- `ui/src/pages/Settings.tsx` — two-tab page: General (RPC URL, about) + Network (peer stats, developer mode toggle). Supports `?tab=network` query param.
+- `ui/src/pages/Dev.tsx` — node config editor + live Bee logs + "Exit Developer Mode" button (shown in dev mode only)
+- `ui/src/components/Layout.tsx` — sidebar nav + Bee status banner; dot states: checking (gray), syncing/0 peers (orange), live (green), off (red); funding warning banner when mode is ultra-light
 - `ui/src/hooks/useUploadHistory.ts` — localStorage records + folders with `parentFolderId` for subfolder support
 - `ui/src/index.css` — global styles + CSS overrides for `@upcoming/multichain-widget` internals (hiding the info banner, asterisks, adjusting min-height)
 - `assets/splash.html` — startup splash screen (dark theme, iA Writer font, no external dependencies)

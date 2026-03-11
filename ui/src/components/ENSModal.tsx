@@ -1,7 +1,10 @@
 import { AlertTriangle, Check, ChevronDown, ExternalLink, Globe, RefreshCw, X } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { namehash } from 'viem'
-import { useAccount, usePublicClient, useWalletClient } from 'wagmi'
+import { useAccount, usePublicClient, useSwitchChain, useWalletClient } from 'wagmi'
+import { getWalletClient } from '@wagmi/core'
+import { mainnet } from 'wagmi/chains'
+import { wagmiConfig } from '../wagmi'
 
 // EIP-1577 / ENSIP-7: Swarm content hash encoding
 const SWARM_PREFIX = 'e40101fa011b20'
@@ -83,14 +86,16 @@ interface ENSModalProps {
 }
 
 export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, currentDomain, onLinked }: ENSModalProps) {
-  const { address, isConnected } = useAccount()
+  const { address, isConnected, chainId } = useAccount()
   const publicClient = usePublicClient()
   const { data: walletClient } = useWalletClient()
+  const { switchChainAsync } = useSwitchChain()
+
+  const needsChainSwitch = chainId !== mainnet.id
 
   const [state, setState] = useState<ModalState>('loading')
   const [domains, setDomains] = useState<string[]>([])
   const [ensName, setEnsName] = useState(currentDomain ?? '')
-  const [manualMode, setManualMode] = useState(false)
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const [resolverAddr, setResolverAddr] = useState<`0x${string}` | null>(null)
   const [currentHash, setCurrentHash] = useState<{ protocol: string; hash: string } | null>(null)
@@ -98,6 +103,7 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
   const [txHash, setTxHash] = useState('')
 
   const hashToSet = feedManifest ?? swarmHash
+  const alreadySet = currentHash?.protocol === 'bzz' && currentHash.hash.toLowerCase() === hashToSet.toLowerCase()
 
   // Fetch owned domains when modal opens
   useEffect(() => {
@@ -105,7 +111,6 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
     setState('loading')
     fetchOwnedDomains(address).then(names => {
       setDomains(names)
-      if (names.length === 0) setManualMode(true)
       setState('select')
     })
   }, [isOpen, isConnected, address])
@@ -160,15 +165,28 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
   }, [publicClient, ensName])
 
   const linkDomain = useCallback(async () => {
-    if (!walletClient || !resolverAddr || !publicClient) return
+    if (!resolverAddr || !publicClient) return
     const name = ensName.trim().toLowerCase()
 
     setState('confirming')
     setError('')
 
     try {
+      // Switch to mainnet if needed
+      if (needsChainSwitch) {
+        await switchChainAsync({ chainId: mainnet.id })
+      }
+
+      // Fetch fresh wallet client (hook value is stale after chain switch)
+      const client = await getWalletClient(wagmiConfig, { chainId: mainnet.id })
+      if (!client) {
+        setError('Wallet not available. Please try again.')
+        setState('error')
+        return
+      }
+
       const encoded = encodeSwarmContentHash(hashToSet)
-      const tx = await walletClient.writeContract({
+      const tx = await client.writeContract({
         address: resolverAddr,
         abi: RESOLVER_ABI,
         functionName: 'setContenthash',
@@ -186,7 +204,7 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
       setError(msg)
       setState('error')
     }
-  }, [walletClient, resolverAddr, ensName, hashToSet, publicClient, onLinked])
+  }, [walletClient, resolverAddr, ensName, hashToSet, publicClient, onLinked, needsChainSwitch, switchChainAsync])
 
   const reset = useCallback(() => {
     setState('select')
@@ -240,12 +258,11 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
             {/* Domain selection */}
             {(state === 'select' || state === 'checking' || state === 'error') && (
               <div className="space-y-3">
-                {!manualMode && domains.length > 0 ? (
+                {domains.length > 0 ? (
                   <div>
                     <label className="text-xs mb-1.5 block" style={{ color: 'rgb(var(--fg-muted))' }}>
                       Select domain
                     </label>
-                    {/* Custom dropdown */}
                     <div className="relative">
                       <button
                         onClick={() => setDropdownOpen(!dropdownOpen)}
@@ -274,38 +291,22 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
                         </div>
                       )}
                     </div>
-                    <button
-                      onClick={() => { setManualMode(true); setEnsName('') }}
-                      className="text-[10px] mt-1.5 transition-colors hover:underline"
-                      style={{ color: 'rgb(var(--fg-muted))' }}
-                    >
-                      Enter manually instead
-                    </button>
                   </div>
                 ) : (
-                  <div>
-                    <label className="text-xs mb-1.5 block" style={{ color: 'rgb(var(--fg-muted))' }}>
-                      ENS domain name
-                    </label>
-                    <input
-                      type="text"
-                      value={ensName}
-                      onChange={e => setEnsName(e.target.value)}
-                      onKeyDown={e => e.key === 'Enter' && lookupDomain()}
-                      placeholder="yourname.eth"
-                      className="w-full rounded-lg border px-3 py-2 text-xs font-mono focus:outline-none"
-                      style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
-                      disabled={state === 'checking'}
-                    />
-                    {domains.length > 0 && (
-                      <button
-                        onClick={() => { setManualMode(false); setEnsName('') }}
-                        className="text-[10px] mt-1.5 transition-colors hover:underline"
-                        style={{ color: 'rgb(var(--fg-muted))' }}
-                      >
-                        Select from your domains
-                      </button>
-                    )}
+                  <div className="text-center py-4 space-y-2">
+                    <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                      No ENS domains found for this wallet.
+                    </p>
+                    <a
+                      href="https://app.ens.domains"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-xs font-medium transition-opacity hover:opacity-80"
+                      style={{ color: 'rgb(var(--accent))' }}
+                    >
+                      Register a domain at app.ens.domains
+                      <ExternalLink size={10} />
+                    </a>
                   </div>
                 )}
 
@@ -333,6 +334,19 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
                 >
                   {state === 'checking' ? 'Checking...' : 'Continue'}
                 </button>
+
+                <p className="text-[10px] text-center" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  Don't have a domain?{' '}
+                  <a
+                    href="https://app.ens.domains"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="underline transition-opacity hover:opacity-80"
+                    style={{ color: 'rgb(var(--fg-muted))' }}
+                  >
+                    Register at app.ens.domains
+                  </a>
+                </p>
               </div>
             )}
 
@@ -371,6 +385,19 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
                   )}
                 </div>
 
+                {alreadySet ? (
+                  <div className="flex items-center gap-2 rounded-lg p-3" style={{ backgroundColor: 'rgba(74,222,128,0.08)' }}>
+                    <Check size={14} style={{ color: '#4ade80' }} />
+                    <p className="text-xs" style={{ color: '#4ade80' }}>
+                      This content hash is already set on {ensName}.
+                    </p>
+                  </div>
+                ) : needsChainSwitch ? (
+                  <p className="text-[10px]" style={{ color: 'rgb(var(--fg-muted))' }}>
+                    Your wallet is on a different network. Clicking "Link domain" will prompt you to switch to Ethereum mainnet.
+                  </p>
+                ) : null}
+
                 <div className="flex gap-2">
                   <button
                     onClick={reset}
@@ -379,13 +406,15 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
                   >
                     Back
                   </button>
-                  <button
-                    onClick={linkDomain}
-                    className="flex-1 px-4 py-2 rounded-lg text-xs font-semibold transition-colors"
-                    style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
-                  >
-                    Link domain
-                  </button>
+                  {!alreadySet && (
+                    <button
+                      onClick={linkDomain}
+                      className="flex-1 px-4 py-2 rounded-lg text-xs font-semibold transition-colors"
+                      style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+                    >
+                      {needsChainSwitch ? 'Switch network & link' : 'Link domain'}
+                    </button>
+                  )}
                 </div>
               </div>
             )}

@@ -139,8 +139,19 @@ export function runServer() {
       context.body = { success: true }
     } catch (error) {
       logger.error(error)
+      const msg = (error as Error).message ?? ''
+      let friendly = 'Failed to redeem gift code'
+      if (msg.includes('REPLACEMENT_UNDERPRICED') || msg.includes('replacement transaction underpriced')) {
+        friendly = 'A previous transaction is still pending. Please wait a moment and try again.'
+      } else if (msg.includes('NONCE_EXPIRED') || msg.includes('nonce too low')) {
+        friendly = 'A previous transaction just completed. Please try again.'
+      } else if (msg.includes('INSUFFICIENT_FUNDS') || msg.includes('insufficient funds')) {
+        friendly = 'Gift wallet has insufficient funds to cover gas fees.'
+      } else if (msg) {
+        friendly = msg
+      }
       context.status = 500
-      context.body = { message: (error as Error).message ?? 'Failed to redeem gift code' }
+      context.body = { message: friendly }
     }
   })
   router.post('/feed-update', async context => {
@@ -229,8 +240,17 @@ export function runServer() {
       context.body = { success: true, txHash: result.transaction.hash }
     } catch (error) {
       logger.error(error)
+      const msg = (error as Error).message ?? ''
+      let friendly = 'Withdraw failed'
+      if (msg.includes('REPLACEMENT_UNDERPRICED') || msg.includes('replacement transaction underpriced')) {
+        friendly = 'A previous transaction is still pending. Please wait a moment and try again.'
+      } else if (msg.includes('INSUFFICIENT_FUNDS') || msg.includes('insufficient funds')) {
+        friendly = 'Insufficient funds to cover gas fees.'
+      } else if (msg) {
+        friendly = msg
+      }
       context.status = 500
-      context.body = { message: (error as Error).message ?? 'Withdraw failed' }
+      context.body = { message: friendly }
     }
   })
 
@@ -243,8 +263,17 @@ export function runServer() {
       context.body = { success: true }
     } catch (error) {
       logger.error(error)
+      const msg = (error as Error).message ?? ''
+      let friendly = 'Failed to swap'
+      if (msg.includes('REPLACEMENT_UNDERPRICED') || msg.includes('replacement transaction underpriced')) {
+        friendly = 'A previous transaction is still pending. Please wait a moment and try again.'
+      } else if (msg.includes('INSUFFICIENT_FUNDS') || msg.includes('insufficient funds')) {
+        friendly = 'Insufficient funds to cover gas fees.'
+      } else if (msg) {
+        friendly = msg
+      }
       context.status = 500
-      context.body = { message: 'Failed to swap', error }
+      context.body = { message: friendly }
     }
   })
 

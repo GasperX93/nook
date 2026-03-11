@@ -19,6 +19,7 @@ export interface UploadResult {
   hash: string
   expiresAt: number
   feedManifestAddress?: string
+  recordId: string
 }
 
 /**
@@ -49,7 +50,7 @@ async function pollStampUsable(
 }
 
 export function useUpload() {
-  const { add: addRecord } = useUploadHistory()
+  const { add: addRecord, update: updateRecord, setEnsDomain } = useUploadHistory()
 
   async function upload(options: UploadOptions): Promise<UploadResult> {
     const {
@@ -146,8 +147,9 @@ export function useUpload() {
       expiresAt = Date.now() + 3 * 30 * 24 * 60 * 60 * 1000
     }
 
+    const recordId = crypto.randomUUID()
     addRecord({
-      id: crypto.randomUUID(),
+      id: recordId,
       name,
       hash: reference,
       size: entries.reduce((sum, e) => sum + e.file.size, 0),
@@ -160,8 +162,8 @@ export function useUpload() {
       feedManifestAddress,
     })
 
-    return { hash: reference, expiresAt, feedManifestAddress }
+    return { hash: reference, expiresAt, feedManifestAddress, recordId }
   }
 
-  return { upload }
+  return { upload, updateRecord, setEnsDomain }
 }
