@@ -10,7 +10,6 @@ export default defineConfig(({ command }) => ({
     // Proxy all backend API routes to the Koa server in dev
     proxy: {
       '/info': 'http://localhost:3000',
-      '/price': 'http://localhost:3000',
       '/status': 'http://localhost:3000',
       '/peers': 'http://localhost:3000',
       '/config': 'http://localhost:3000',
