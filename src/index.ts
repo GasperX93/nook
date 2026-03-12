@@ -1,5 +1,5 @@
 import { app, dialog } from 'electron'
-import updater from 'update-electron-app'
+import { updateElectronApp } from 'update-electron-app'
 
 import PACKAGE_JSON from '../package.json'
 import { ensureApiKey } from './api-key'
@@ -48,8 +48,14 @@ async function main() {
   splash = await initSplash()
 
   // Auto updater
-  // @ts-ignore: https://github.com/electron/update-electron-app/pull/96
-  updater({ logger: { log: (...args) => logger.info(...args) } })
+  updateElectronApp({
+    logger: {
+      log: (...args) => logger.info(...args),
+      info: (...args) => logger.info(...args),
+      error: (...args) => logger.error(...args),
+      warn: (...args) => logger.warn(...args),
+    },
+  })
 
   // check if the assets and the bee binary matches the desktop version
   const desktopFileVersion = getDesktopVersionFromFile()

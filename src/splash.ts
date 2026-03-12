@@ -8,18 +8,24 @@ export interface Splash {
 }
 
 export async function initSplash(): Promise<Splash> {
-  return new Promise((resolve, reject) => {
-    app.on('ready', () => {
-      const splashPath = path.resolve(__dirname, '..', '..', '..', 'assets', 'splash.html')
-      logger.info(`Serving splash screen from path ${splashPath}`)
+  await app.whenReady()
 
-      const splash = new BrowserWindow({ width: 800, height: 600, frame: false })
-      splash.loadURL(`file://${splashPath}`).catch(reject)
+  const splashPath = path.resolve(__dirname, '..', '..', '..', 'assets', 'splash.html')
+  logger.info(`Serving splash screen from path ${splashPath}`)
 
-      resolve({
-        hide: () => splash.hide(),
-        setMessage: async (msg: string) => splash.loadURL(`file://${splashPath}?msg=${encodeURI(msg)}`),
-      })
-    })
+  const splash = new BrowserWindow({
+    width: 800,
+    height: 600,
+    frame: false,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
   })
+  await splash.loadURL(`file://${splashPath}`)
+
+  return {
+    hide: () => splash.hide(),
+    setMessage: async (msg: string) => splash.loadURL(`file://${splashPath}?msg=${encodeURI(msg)}`),
+  }
 }
