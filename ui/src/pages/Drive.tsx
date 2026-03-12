@@ -1555,9 +1555,10 @@ export default function Drive() {
   const updatingRecord = records.find(r => r.id === updatingId)
   const extendingStamp = showExtendModal ? allStamps.find(s => s.batchID === showExtendModal) : null
 
-  // Search: flat list across all drives
+  // Search: flat list across active drives only (exclude expired stamps)
+  const activeBatchIds = new Set(allStamps.map(s => s.batchID))
   const searchResults = search
-    ? records.filter(r => r.name.toLowerCase().includes(search.toLowerCase()))
+    ? records.filter(r => r.name.toLowerCase().includes(search.toLowerCase()) && activeBatchIds.has(r.driveId))
     : []
 
   // ── Root view ────────────────────────────────────────────────────────────────
