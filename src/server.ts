@@ -6,7 +6,6 @@ import Koa from 'koa'
 import koaBodyparser from 'koa-bodyparser'
 import mount from 'koa-mount'
 import serve from 'koa-static'
-import fetch from 'node-fetch'
 import * as path from 'path'
 
 import { ethers } from 'ethers'
@@ -55,17 +54,6 @@ export function runServer() {
       autoUpdateEnabled: AUTO_UPDATE_ENABLED_PLATFORMS.includes(process.platform),
     }
   })
-  router.get('/price', async context => {
-    try {
-      const response = await fetch('https://tokenservice.ethswarm.org/token_price')
-      context.body = await response.text()
-    } catch (error) {
-      logger.error(error)
-      context.status = 503
-      context.body = { message: 'Failed to fetch price from token service', error }
-    }
-  })
-
   router.use(async (context, next) => {
     const { authorization } = context.headers
 
@@ -135,7 +123,7 @@ export function runServer() {
     const blockchainRpcEndpoint = (Reflect.get(config, 'blockchain-rpc-endpoint') as string) || 'https://rpc.gnosischain.com'
     try {
       const { ethereum: nodeAddress } = await makeBee().getNodeAddresses()
-      await redeemGiftCode(giftCode, nodeAddress, blockchainRpcEndpoint)
+      await redeemGiftCode(giftCode, nodeAddress.toString(), blockchainRpcEndpoint)
       context.body = { success: true }
     } catch (error) {
       logger.error(error)
@@ -193,7 +181,7 @@ export function runServer() {
 
     try {
       const batchID = await makeBee().createPostageBatch(amount, depth, { immutableFlag: Boolean(immutable), label })
-      context.body = { batchID }
+      context.body = { batchID: batchID.toString() }
     } catch (error) {
       logger.error(error)
       context.status = 500
@@ -293,24 +281,13 @@ async function createFeedUpdate(topicHex: string, referenceHex: string, stampId:
 
   const bee = makeBee()
 
-  // Signer compatible with bee-js: personal_sign via ethers wallet
-  const signer = {
-    address: ethers.utils.arrayify(wallet.address) as Uint8Array & { length: 20 },
-    sign: async (data: Uint8Array): Promise<Uint8Array & { length: 65 }> => {
-      const sig = await wallet.signMessage(data)
+  // bee-js v11: pass private key directly, no custom signer needed
+  const writer = bee.makeFeedWriter(topicHex, privateKeyHex)
+  await writer.upload(stampId, referenceHex)
 
-      return ethers.utils.arrayify(sig) as Uint8Array & { length: 65 }
-    },
-  }
+  const manifest = await bee.createFeedManifest(stampId, topicHex, wallet.address)
 
-  const writer = bee.makeFeedWriter('sequence', topicHex, signer)
-  const refBytes = ethers.utils.arrayify('0x' + referenceHex.replace(/^0x/, '')) as Uint8Array & { length: 32 }
-  await writer.upload(stampId, refBytes)
-
-
-  const manifest = await bee.createFeedManifest(stampId, 'sequence', topicHex, wallet.address)
-
-  return manifest.reference
+  return manifest.toString()
 }
 
 function makeBee(): Bee {

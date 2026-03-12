@@ -91,10 +91,10 @@
     "rimraf": "^3.0.2",
     "ts-jest": "^29.4.6",
     "ts-node": "^10.7.0",
-    "typescript": "~5.3.3"
+    "typescript": "^5.9.3"
   },
   "dependencies": {
-    "@ethersphere/bee-js": "^8.3.1",
+    "@ethersphere/bee-js": "^11.1.1",
     "@koa/router": "^10.1.1",
     "cross-zip": "^4.0.0",
     "electron-squirrel-startup": "^1.0.0",
@@ -103,8 +103,8 @@
     "ethers": "^5.6.6",
     "file-stream-rotator": "^0.6.1",
     "fs-extra": "^10.1.0",
-    "js-yaml": "^4.1.0",
-    "koa": "^2.13.4",
+    "js-yaml": "^4.1.1",
+    "koa": "^2.16.4",
     "koa-bodyparser": "^4.3.0",
     "koa-mount": "^4.0.0",
     "koa-static": "^5.0.0",
@@ -114,6 +114,6 @@
     "request-stats": "^3.0.0",
     "update-electron-app": "^2.0.1",
     "uuid": "^8.3.2",
-    "winston": "^3.7.2"
+    "winston": "^3.19.0"
   }
 }
