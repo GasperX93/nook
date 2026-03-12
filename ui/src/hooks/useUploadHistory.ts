@@ -147,9 +147,7 @@ export function useUploadHistory() {
       return next
     })
     setRecords(prev => {
-      const next = prev.map(r =>
-        r.folderId && toRemove.has(r.folderId) ? { ...r, folderId: undefined } : r,
-      )
+      const next = prev.map(r => (r.folderId && toRemove.has(r.folderId) ? { ...r, folderId: undefined } : r))
       save(next)
       return next
     })
@@ -165,9 +163,7 @@ export function useUploadHistory() {
 
   function moveToFolder(recordId: string, folderId: string | null) {
     setRecords(prev => {
-      const next = prev.map(r =>
-        r.id === recordId ? { ...r, folderId: folderId ?? undefined } : r,
-      )
+      const next = prev.map(r => (r.id === recordId ? { ...r, folderId: folderId ?? undefined } : r))
       save(next)
       return next
     })

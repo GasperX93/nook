@@ -1,12 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  calcStampCost,
-  depthToCapacity,
-  DURATION_PRESETS,
-  plurToBzz,
-  SIZE_PRESETS,
-  weiToDai,
-} from './bee'
+import { calcStampCost, depthToCapacity, DURATION_PRESETS, plurToBzz, SIZE_PRESETS, weiToDai } from './bee'
 
 // ─── plurToBzz ────────────────────────────────────────────────────────────────
 

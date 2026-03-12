@@ -26,15 +26,10 @@ export interface UploadResult {
  * Poll until the stamp is usable, with elapsed-time feedback.
  * Throws if stamp does not become usable within 2 minutes.
  */
-async function pollStampUsable(
-  id: string,
-  onPhase?: (phase: string) => void,
-): Promise<void> {
+async function pollStampUsable(id: string, onPhase?: (phase: string) => void): Promise<void> {
   for (let i = 0; i < 60; i++) {
     const elapsed = i * 2
-    onPhase?.(
-      `Waiting for storage confirmation… ${elapsed > 0 ? `(${elapsed}s)` : ''}`.trim(),
-    )
+    onPhase?.(`Waiting for storage confirmation… ${elapsed > 0 ? `(${elapsed}s)` : ''}`.trim())
 
     try {
       const s = await beeApi.getStamp(id)
@@ -53,17 +48,7 @@ export function useUpload() {
   const { add: addRecord, update: updateRecord, setEnsDomain } = useUploadHistory()
 
   async function upload(options: UploadOptions): Promise<UploadResult> {
-    const {
-      entries,
-      type,
-      driveId,
-      name,
-      indexDocument,
-      feedEnabled = false,
-      feedTopic,
-      onPhase,
-      onProgress,
-    } = options
+    const { entries, type, driveId, name, indexDocument, feedEnabled = false, feedTopic, onPhase, onProgress } = options
 
     // Poll stamp usability before uploading
     await pollStampUsable(driveId, onPhase)
@@ -88,12 +73,7 @@ export function useUpload() {
       onProgress?.(0)
 
       if (type === 'file') {
-        const res = await beeApi.uploadFileWithProgress(
-          entries[0].file,
-          driveId,
-          pct => onProgress?.(pct),
-          true,
-        )
+        const res = await beeApi.uploadFileWithProgress(entries[0].file, driveId, pct => onProgress?.(pct), true)
         return res.reference
       }
 
@@ -102,12 +82,7 @@ export function useUpload() {
         type === 'website'
           ? { indexDocument: autoIndex, errorDocument: '404.html', deferred: true }
           : { deferred: true }
-      const res = await beeApi.uploadCollectionWithProgress(
-        entries,
-        driveId,
-        opts,
-        pct => onProgress?.(pct),
-      )
+      const res = await beeApi.uploadCollectionWithProgress(entries, driveId, opts, pct => onProgress?.(pct))
       return res.reference
     }
 
@@ -158,7 +133,7 @@ export function useUpload() {
       expiresAt,
       uploadedAt: Date.now(),
       hasFeed: feedEnabled,
-      feedTopic: feedEnabled ? (feedTopic?.trim() || name) : undefined,
+      feedTopic: feedEnabled ? feedTopic?.trim() || name : undefined,
       feedManifestAddress,
     })
 

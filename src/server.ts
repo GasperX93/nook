@@ -120,7 +120,8 @@ export function runServer() {
       return
     }
     const config = readConfigYaml()
-    const blockchainRpcEndpoint = (Reflect.get(config, 'blockchain-rpc-endpoint') as string) || 'https://rpc.gnosischain.com'
+    const blockchainRpcEndpoint =
+      (Reflect.get(config, 'blockchain-rpc-endpoint') as string) || 'https://rpc.gnosischain.com'
     try {
       const { ethereum: nodeAddress } = await makeBee().getNodeAddresses()
       await redeemGiftCode(giftCode, nodeAddress.toString(), blockchainRpcEndpoint)
@@ -161,7 +162,9 @@ export function runServer() {
     } catch (error) {
       logger.error(error)
       context.status = 500
-      context.body = { message: 'Could not publish the feed update. Check that your stamp has storage left and try again.' }
+      context.body = {
+        message: 'Could not publish the feed update. Check that your stamp has storage left and try again.',
+      }
     }
   })
   router.post('/buy-stamp', async context => {
@@ -217,13 +220,15 @@ export function runServer() {
     }
 
     const config = readConfigYaml()
-    const blockchainRpcEndpoint = (Reflect.get(config, 'blockchain-rpc-endpoint') as string) || 'https://rpc.gnosischain.com'
+    const blockchainRpcEndpoint =
+      (Reflect.get(config, 'blockchain-rpc-endpoint') as string) || 'https://rpc.gnosischain.com'
     const privateKeyString = await getPrivateKey()
 
     try {
-      const result = token === 'bzz'
-        ? await sendBzzTransaction(privateKeyString, to, amount, blockchainRpcEndpoint)
-        : await sendNativeTransaction(privateKeyString, to, amount, blockchainRpcEndpoint)
+      const result =
+        token === 'bzz'
+          ? await sendBzzTransaction(privateKeyString, to, amount, blockchainRpcEndpoint)
+          : await sendNativeTransaction(privateKeyString, to, amount, blockchainRpcEndpoint)
 
       context.body = { success: true, txHash: result.transaction.hash }
     } catch (error) {
@@ -244,7 +249,8 @@ export function runServer() {
 
   router.post('/swap', async context => {
     const config = readConfigYaml()
-    const blockchainRpcEndpoint = (Reflect.get(config, 'blockchain-rpc-endpoint') as string) || 'https://rpc.gnosischain.com'
+    const blockchainRpcEndpoint =
+      (Reflect.get(config, 'blockchain-rpc-endpoint') as string) || 'https://rpc.gnosischain.com'
     const privateKeyString = await getPrivateKey()
     try {
       await swap(privateKeyString, (context.request.body as Record<string, string>).dai, '10000', blockchainRpcEndpoint)
