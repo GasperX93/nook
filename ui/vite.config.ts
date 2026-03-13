@@ -15,7 +15,6 @@ export default defineConfig(({ command }) => ({
       '/config': 'http://localhost:3000',
       '/logs': 'http://localhost:3000',
       '/restart': 'http://localhost:3000',
-      '/gift-wallet': 'http://localhost:3000',
       '/swap': 'http://localhost:3000',
       '/redeem': 'http://localhost:3000',
       '/withdraw': 'http://localhost:3000',
