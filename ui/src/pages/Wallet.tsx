@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query'
-import { AlertTriangle, ArrowUpRight, Check, ChevronDown, ChevronUp, Copy, Gift, Wallet as WalletIcon } from 'lucide-react'
+import { AlertTriangle, ArrowUpRight, Check, ChevronDown, ChevronUp, Copy, Gift, Info, Wallet as WalletIcon } from 'lucide-react'
 import { useState } from 'react'
 import '@rainbow-me/rainbowkit/styles.css'
 import '@upcoming/multichain-widget/styles.css'
@@ -10,7 +10,7 @@ const PLUR_PER_BZZ = 10n ** 16n
 const WEI_PER_DAI = 10n ** 18n
 import { api } from '../api/client'
 import { serverApi } from '../api/server'
-import { useAddresses, useBeeHealth, useWallet } from '../api/queries'
+import { useAddresses, useBeeHealth, useChequebookBalance, useWallet } from '../api/queries'
 import { useAppStore } from '../store/app'
 import { WIDGET_THEME } from '../theme'
 
@@ -19,6 +19,7 @@ export default function Wallet() {
   const { data: wallet, isError: walletError } = useWallet()
   const { data: addresses } = useAddresses()
   const { isSuccess: beeOnline } = useBeeHealth()
+  const { data: chequebook } = useChequebookBalance()
   const [copiedAddr, setCopiedAddr] = useState(false)
   const [swapAmount, setSwapAmount] = useState('')
   const [swapping, setSwapping] = useState(false)
@@ -115,12 +116,27 @@ export default function Wallet() {
       const unit = withdrawToken === 'bzz' ? PLUR_PER_BZZ : WEI_PER_DAI
       const amountSmallest = (BigInt(Math.floor(raw * 1e8)) * unit) / 100_000_000n
 
+      // For BZZ: if amount exceeds wallet balance, pull deficit from chequebook first
+      if (withdrawToken === 'bzz' && wallet) {
+        const walletPlur = BigInt(wallet.bzzBalance)
+        if (amountSmallest > walletPlur) {
+          const deficit = amountSmallest - walletPlur
+          const chequebookAvail = chequebook ? BigInt(chequebook.availableBalance) : 0n
+          if (deficit > chequebookAvail) throw new Error('Insufficient total balance (wallet + bandwidth)')
+          await serverApi.chequebookWithdraw(deficit.toString())
+          // Wait briefly for the on-chain tx to settle and wallet balance to update
+          await new Promise(r => setTimeout(r, 5000))
+          await queryClient.refetchQueries({ queryKey: ['bee', 'wallet'] })
+        }
+      }
+
       const { txHash } = await serverApi.withdraw(withdrawToken, amountSmallest.toString(), withdrawTo)
       setWithdrawDone(true)
       setWithdrawTxHash(txHash)
       setWithdrawAmount('')
       setWithdrawTo('')
       queryClient.invalidateQueries({ queryKey: ['bee', 'wallet'] })
+      queryClient.invalidateQueries({ queryKey: ['bee', 'chequebook'] })
       setTimeout(() => { setWithdrawDone(false); setWithdrawTxHash(null) }, 30_000)
     } catch (err) {
       setWithdrawError(err instanceof Error ? err.message : 'Withdraw failed')
@@ -133,14 +149,17 @@ export default function Wallet() {
     if (!wallet) return
 
     if (withdrawToken === 'bzz') {
-      setWithdrawAmount(plurToBzz(wallet.bzzBalance))
+      const walletPlur = BigInt(wallet.bzzBalance)
+      const chequebookPlur = chequebook ? BigInt(chequebook.availableBalance) : 0n
+      const totalPlur = walletPlur + chequebookPlur
+      setWithdrawAmount(plurToBzz(totalPlur.toString()))
     } else {
       setWithdrawAmount(weiToDai(wallet.nativeTokenBalance))
     }
   }
 
   return (
-    <div>
+    <div className="max-w-xl">
       <div className="space-y-5">
         {/* Address — full width slim row */}
           <div className="flex items-center gap-3 px-1">
@@ -185,7 +204,24 @@ export default function Wallet() {
                 <span className="text-3xl font-bold tabular-nums">{bzz}</span>
                 <span className="text-sm font-medium" style={{ color: 'rgb(var(--fg-muted))' }}>xBZZ</span>
               </div>
-              <p className="text-xs mt-2" style={{ color: 'rgb(var(--fg-muted))' }}>Used to buy storage</p>
+              <div className="flex items-center gap-1 mt-2">
+                <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>Used for storage and bandwidth</p>
+                <span className="relative group">
+                  <Info size={10} className="cursor-help" style={{ color: 'rgb(var(--fg-muted))' }} />
+                  <span
+                    className="absolute bottom-full left-0 mb-1 px-2 py-1.5 rounded text-[10px] leading-tight w-48 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10"
+                    style={{ backgroundColor: 'rgb(var(--fg))', color: 'rgb(var(--bg))' }}
+                  >
+                    {chequebook && BigInt(chequebook.availableBalance) > 0 && (
+                      <>
+                        <span className="font-semibold">Bandwidth: {Number(plurToBzz(chequebook.availableBalance)).toFixed(4)} xBZZ</span>
+                        <br />
+                      </>
+                    )}
+                    xBZZ set aside for network bandwidth on large transfers. Auto-managed — tops up when low.
+                  </span>
+                </span>
+              </div>
               <button
                 onClick={() => { setWithdrawToken('bzz'); setWithdrawAmount(''); setWithdrawTo(''); setWithdrawError(null); setWithdrawDone(false); setShowWithdraw(true) }}
                 className="flex items-center gap-1 text-[10px] mt-3 transition-colors"

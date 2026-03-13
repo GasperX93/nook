@@ -1,6 +1,7 @@
 import { providers, utils } from 'ethers'
 import { readFileSync } from 'fs'
 import { join } from 'path'
+import { onLightModeSwitch } from './chequebook-monitor'
 import { readConfigYaml, writeConfigYaml } from './config'
 import { runLauncher } from './launcher'
 import { BeeManager } from './lifecycle'
@@ -90,6 +91,9 @@ async function switchToLightMode() {
 
   // 3. Start Bee in light mode
   runLauncher().catch(err => logger.error(`Failed to restart Bee: ${err}`))
+
+  // 4. Schedule chequebook funding after Bee is ready
+  onLightModeSwitch()
 }
 
 function stopMonitor() {

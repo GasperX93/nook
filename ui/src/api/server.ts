@@ -46,4 +46,7 @@ export const serverApi = {
 
   withdraw: async (token: 'bzz' | 'dai', amount: string, to: string) =>
     serverPost<{ success: boolean; txHash: string }>('/withdraw', { token, amount, to }),
+
+  chequebookWithdraw: async (amount: string) =>
+    serverPost<{ success: boolean; transactionHash: string }>('/chequebook-withdraw', { amount }),
 }

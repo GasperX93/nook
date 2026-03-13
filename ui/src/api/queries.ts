@@ -121,6 +121,15 @@ export function useStamps() {
   })
 }
 
+export function useChequebookBalance() {
+  return useQuery({
+    queryKey: ['bee', 'chequebook'],
+    queryFn: beeApi.getChequebookBalance,
+    refetchInterval: query => (query.state.status === 'error' ? 60_000 : 30_000),
+    retry: false,
+  })
+}
+
 export function useChainState() {
   return useQuery({
     queryKey: ['bee', 'chainstate'],

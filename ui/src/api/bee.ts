@@ -199,7 +199,13 @@ export interface Topology {
   depth: number
 }
 
+export interface ChequebookBalance {
+  totalBalance: string
+  availableBalance: string
+}
+
 export const beeApi = {
+  getChequebookBalance: async () => beeRequest<ChequebookBalance>('/chequebook/balance'),
   health: async () => beeRequest<{ status: string; version?: string }>('/health'),
   getWallet: async () => beeRequest<WalletInfo>('/wallet'),
   getAddresses: async () => beeRequest<NodeAddresses>('/addresses'),

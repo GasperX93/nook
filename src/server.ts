@@ -247,6 +247,49 @@ export function runServer() {
     }
   })
 
+  router.post('/chequebook-withdraw', async context => {
+    const { amount } = context.request.body as { amount: string }
+
+    if (!amount) {
+      context.status = 400
+      context.body = { message: 'amount is required' }
+      return
+    }
+
+    try {
+      const result = await makeBee().getChequebookBalance()
+      const available = result.availableBalance.toPLURBigInt()
+      const requested = BigInt(amount)
+
+      if (requested > available) {
+        context.status = 400
+        context.body = { message: 'Insufficient chequebook balance' }
+        return
+      }
+
+      const beePassword = readConfigYaml().password as string | undefined
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (beePassword) headers['Authorization'] = `Bearer ${beePassword}`
+
+      const res = await fetch(`http://127.0.0.1:1633/chequebook/withdraw?amount=${amount}`, {
+        method: 'POST',
+        headers,
+      })
+
+      if (!res.ok) {
+        const text = await res.text()
+        throw new Error(text || `Bee returned ${res.status}`)
+      }
+
+      const data = await res.json()
+      context.body = { success: true, transactionHash: data.transactionHash }
+    } catch (error) {
+      logger.error(error)
+      context.status = 500
+      context.body = { message: (error as Error).message || 'Failed to withdraw from chequebook' }
+    }
+  })
+
   router.post('/swap', async context => {
     const config = readConfigYaml()
     const blockchainRpcEndpoint =
