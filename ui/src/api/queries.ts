@@ -8,7 +8,7 @@ export const queryKeys = {
   status: ['status'] as const,
   peers: ['peers'] as const,
   config: ['config'] as const,
-  desktopLogs: ['logs', 'desktop'] as const,
+  nookLogs: ['logs', 'desktop'] as const,
   beeLogs: ['logs', 'bee'] as const,
 }
 
@@ -37,10 +37,10 @@ export function useConfig() {
   return useQuery({ queryKey: queryKeys.config, queryFn: api.getConfig })
 }
 
-export function useDesktopLogs() {
+export function useNookLogs() {
   return useQuery({
-    queryKey: queryKeys.desktopLogs,
-    queryFn: api.getDesktopLogs,
+    queryKey: queryKeys.nookLogs,
+    queryFn: api.getNookLogs,
     refetchInterval: 10_000,
   })
 }

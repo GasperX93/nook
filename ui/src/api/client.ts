@@ -1,7 +1,7 @@
 import { useAppStore } from '../store/app'
 
 function getBaseUrl(): string {
-  return import.meta.env.VITE_BEE_DESKTOP_URL ?? `${window.location.protocol}//${window.location.host}`
+  return import.meta.env.VITE_NOOK_URL ?? `${window.location.protocol}//${window.location.host}`
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -65,7 +65,7 @@ export const api = {
   getConfig: async () => request<Record<string, unknown>>('/config'),
   updateConfig: async (config: Record<string, unknown>) =>
     request<Record<string, unknown>>('/config', { method: 'POST', body: JSON.stringify(config) }),
-  getDesktopLogs: async () => request<string>('/logs/bee-desktop'),
+  getNookLogs: async () => request<string>('/logs/nook'),
   getBeeLogs: async () => request<string>('/logs/bee'),
   restart: async () => request<{ success: boolean }>('/restart', { method: 'POST' }),
   redeem: async (giftCode: string) =>

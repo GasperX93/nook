@@ -16,7 +16,7 @@ import { redeemGiftCode, sendBzzTransaction, sendNativeTransaction } from './blo
 import { readConfigYaml, readWalletPasswordOrThrow, writeConfigYaml } from './config'
 import { runLauncher } from './launcher'
 import { BeeManager } from './lifecycle'
-import { logger, readBeeDesktopLogs, readBeeLogs, subscribeLogServerRequests } from './logger'
+import { logger, readNookLogs, readBeeLogs, subscribeLogServerRequests } from './logger'
 import { getPath } from './path'
 import { port } from './port'
 import { getStatus } from './status'
@@ -49,7 +49,7 @@ export function runServer() {
   // Open endpoints without any authentication
   router.get('/info', context => {
     context.body = {
-      name: 'bee-desktop',
+      name: 'nook',
       version: PACKAGE_JSON.version,
       autoUpdateEnabled: AUTO_UPDATE_ENABLED_PLATFORMS.includes(process.platform),
     }
@@ -87,8 +87,8 @@ export function runServer() {
   router.get('/config', context => {
     context.body = readConfigYaml()
   })
-  router.get('/logs/bee-desktop', async context => {
-    context.body = await readBeeDesktopLogs()
+  router.get('/logs/nook', async context => {
+    context.body = await readNookLogs()
   })
   router.get('/logs/bee', async context => {
     try {

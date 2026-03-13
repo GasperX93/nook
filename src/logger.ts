@@ -23,7 +23,7 @@ export const logger: Logger = createLogger({
   transports: [
     new transports.Console({ level: logLevel, format: format.colorize({ all: true }) }),
     new transports.File({
-      filename: getLogPath('bee-desktop.log'),
+      filename: getLogPath('nook.log'),
       maxsize: 1_000_000,
       maxFiles: 10,
       tailable: true,
@@ -70,8 +70,8 @@ export function subscribeLogServerRequests(server: Server): void {
   })
 }
 
-export async function readBeeDesktopLogs(): Promise<string> {
-  return readFile(getLogPath('bee-desktop.log'), { encoding: 'utf8' })
+export async function readNookLogs(): Promise<string> {
+  return readFile(getLogPath('nook.log'), { encoding: 'utf8' })
 }
 
 export async function readBeeLogs(): Promise<string> {

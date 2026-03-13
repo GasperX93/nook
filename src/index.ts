@@ -4,7 +4,7 @@ import { updateElectronApp } from 'update-electron-app'
 import PACKAGE_JSON from '../package.json'
 import { ensureApiKey } from './api-key'
 import { openDashboardInBrowser } from './browser'
-import { getDesktopVersionFromFile, writeDesktopVersionFile } from './config'
+import { getNookVersionFromFile, writeNookVersionFile } from './config'
 import { runDownloader } from './downloader'
 import { runElectronTray } from './electron'
 import { startMonitorIfNeeded } from './funding-monitor'
@@ -58,7 +58,7 @@ async function main() {
   })
 
   // check if the assets and the bee binary matches the desktop version
-  const desktopFileVersion = getDesktopVersionFromFile()
+  const desktopFileVersion = getNookVersionFromFile()
   const force = desktopFileVersion !== PACKAGE_JSON.version
 
   logger.info(
@@ -68,7 +68,7 @@ async function main() {
   if (force) {
     splash.setMessage('Downloading Bee')
     await runDownloader(true)
-    writeDesktopVersionFile()
+    writeNookVersionFile()
   }
 
   ensureApiKey()

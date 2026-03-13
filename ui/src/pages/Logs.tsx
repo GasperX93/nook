@@ -1,15 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
-import { useBeeLogs, useDesktopLogs } from '../api/queries'
+import { useBeeLogs, useNookLogs } from '../api/queries'
 
 type LogTab = 'bee' | 'desktop'
 
 export default function Logs() {
   const [tab, setTab] = useState<LogTab>('bee')
   const { data: beeLogs } = useBeeLogs()
-  const { data: desktopLogs } = useDesktopLogs()
+  const { data: nookLogs } = useNookLogs()
   const bottomRef = useRef<HTMLDivElement>(null)
 
-  const logs = tab === 'bee' ? beeLogs : desktopLogs
+  const logs = tab === 'bee' ? beeLogs : nookLogs
 
   // Auto-scroll to bottom when new logs arrive
   useEffect(() => {

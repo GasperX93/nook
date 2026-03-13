@@ -5,7 +5,7 @@ import { getPath } from './path'
 
 export const SUPPORTED_LEVELS = ['critical', 'error', 'warn', 'info', 'verbose', 'debug']
 export const DEFAULT_LOG_LEVEL = 'info'
-const DESKTOP_VERSION_FILE = 'desktop.version'
+const NOOK_VERSION_FILE = 'nook.version'
 
 export const logLevel =
   process.env.LOG_LEVEL && SUPPORTED_LEVELS.includes(process.env.LOG_LEVEL) ? process.env.LOG_LEVEL : DEFAULT_LOG_LEVEL
@@ -37,9 +37,9 @@ export function deleteKeyFromConfigYaml(key: string) {
   writeFileSync(getPath('config.yaml'), dump(data))
 }
 
-export function getDesktopVersionFromFile(): string | undefined {
+export function getNookVersionFromFile(): string | undefined {
   try {
-    const desktopFile = readFileSync(getPath(DESKTOP_VERSION_FILE))
+    const desktopFile = readFileSync(getPath(NOOK_VERSION_FILE))
 
     return desktopFile.toString('utf-8')
   } catch (e) {
@@ -47,8 +47,8 @@ export function getDesktopVersionFromFile(): string | undefined {
   }
 }
 
-export function writeDesktopVersionFile() {
-  writeFileSync(getPath(DESKTOP_VERSION_FILE), PACKAGE_JSON.version)
+export function writeNookVersionFile() {
+  writeFileSync(getPath(NOOK_VERSION_FILE), PACKAGE_JSON.version)
 }
 
 export function readWalletPasswordOrThrow(): string {

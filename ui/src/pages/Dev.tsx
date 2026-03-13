@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useBeeLogs, useConfig, useDesktopLogs, useUpdateConfig } from '../api/queries'
+import { useBeeLogs, useConfig, useNookLogs, useUpdateConfig } from '../api/queries'
 import { useAppStore } from '../store/app'
 
 type LogTab = 'bee' | 'desktop'
@@ -8,7 +8,7 @@ type LogTab = 'bee' | 'desktop'
 export default function Dev() {
   const [logTab, setLogTab] = useState<LogTab>('bee')
   const { data: beeLogs } = useBeeLogs()
-  const { data: desktopLogs } = useDesktopLogs()
+  const { data: nookLogs } = useNookLogs()
   const bottomRef = useRef<HTMLDivElement>(null)
   const navigate = useNavigate()
   const { setDevMode } = useAppStore()
@@ -18,7 +18,7 @@ export default function Dev() {
   const [draft, setDraft] = useState<string>('')
   const [editMode, setEditMode] = useState(false)
 
-  const logs = logTab === 'bee' ? beeLogs : desktopLogs
+  const logs = logTab === 'bee' ? beeLogs : nookLogs
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })

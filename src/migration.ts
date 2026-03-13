@@ -1,6 +1,22 @@
+import { existsSync, renameSync, unlinkSync } from 'fs'
 import { configYamlExists, deleteKeyFromConfigYaml, readConfigYaml, writeConfigYaml } from './config'
+import { getLogPath, getPath } from './path'
+
+function migrateFile(oldPath: string, newPath: string) {
+  const oldExists = existsSync(oldPath)
+  const newExists = existsSync(newPath)
+  if (oldExists && !newExists) {
+    renameSync(oldPath, newPath)
+  } else if (oldExists && newExists) {
+    unlinkSync(oldPath)
+  }
+}
 
 export function runMigrations() {
+  // Rename legacy files from swarm-desktop era
+  migrateFile(getPath('desktop.version'), getPath('nook.version'))
+  migrateFile(getLogPath('bee-desktop.log'), getLogPath('nook.log'))
+
   if (!configYamlExists()) {
     return
   }

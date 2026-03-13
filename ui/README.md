@@ -1,6 +1,6 @@
-# Swarm Desktop UI
+# Nook UI
 
-React frontend for Swarm Desktop. Served by the Electron backend's Koa server at `/dashboard`.
+React frontend for Nook. Served by the Electron backend's Koa server at `/dashboard`.
 
 ## Stack
 
@@ -26,7 +26,7 @@ In development the Vite dev server proxies all API routes (`/info`, `/status`, `
 
 | Variable | Default | Description |
 |---|---|---|
-| `VITE_BEE_DESKTOP_URL` | same-origin | Backend base URL. Set in `.env.development`. |
+| `VITE_NOOK_URL` | same-origin | Backend base URL. Set in `.env.development`. |
 | `VITE_API_KEY` | — | API key for dev without the Electron wrapper. |
 
 In production the API key is injected by the Electron backend as a `?v=` URL parameter when it opens the dashboard window. The app reads it from `window.location.search` on startup.
