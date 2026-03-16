@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.6](https://github.com/GasperX93/nook/releases/tag/v0.3.6) (2026-03-16)
+
+### Features
+
+* Chequebook auto-funding: automatically deposits 0.7 xBZZ for bandwidth when balance drops below 0.5 xBZZ, keeps 0.5 xBZZ wallet reserve
+* Bandwidth balance shown in xBZZ tooltip (hover the info icon next to "Used for storage and bandwidth")
+* Max BZZ withdraw now includes chequebook balance — auto-pulls from chequebook if wallet balance is insufficient
+* xBZZ card updated: "Used for storage and bandwidth"
+
+### UI improvements
+
+* Wallet page content width constrained for better proportions
+
 ## [0.3.5](https://github.com/GasperX93/nook/releases/tag/v0.3.5) (2026-03-12)
 
 ### Dependency upgrades
