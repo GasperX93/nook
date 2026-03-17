@@ -29,11 +29,11 @@ describe('runMigrations', () => {
   })
 
   describe('legacy key removal', () => {
-    it('removes skip-postage-snapshot when present', () => {
+    it('overwrites skip-postage-snapshot with false when not already false', () => {
       mockExists.mockReturnValue(true)
       mockRead.mockReturnValue({ 'skip-postage-snapshot': true, 'use-postage-snapshot': false })
       runMigrations()
-      expect(mockDelete).toHaveBeenCalledWith('skip-postage-snapshot')
+      expect(mockWrite).toHaveBeenCalledWith({ 'skip-postage-snapshot': false })
     })
 
     it('removes chain-enable when present', () => {
@@ -105,13 +105,13 @@ describe('runMigrations', () => {
       expect(mockWrite).not.toHaveBeenCalledWith({ 'blockchain-rpc-endpoint': 'https://old.rpc' })
     })
 
-    it('sets default blockchain-rpc-endpoint when both are absent', () => {
+    it('does not set default blockchain-rpc-endpoint when both are absent (ultra-light installs)', () => {
       mockExists.mockReturnValue(true)
       mockRead.mockReturnValue({ 'use-postage-snapshot': false })
       runMigrations()
-      expect(mockWrite).toHaveBeenCalledWith({
-        'blockchain-rpc-endpoint': 'https://xdai.fairdatasociety.org',
-      })
+      expect(mockWrite).not.toHaveBeenCalledWith(
+        expect.objectContaining({ 'blockchain-rpc-endpoint': expect.any(String) }),
+      )
     })
 
     it('does not set default when blockchain-rpc-endpoint already exists', () => {
@@ -124,26 +124,12 @@ describe('runMigrations', () => {
     })
   })
 
-  describe('swap-enable migration', () => {
-    it('sets swap-enable to true when it is the string "false"', () => {
+  describe('swap-enable (no longer migrated)', () => {
+    it('does not modify swap-enable regardless of value', () => {
       mockExists.mockReturnValue(true)
-      mockRead.mockReturnValue({ 'swap-enable': 'false', 'blockchain-rpc-endpoint': 'http://x', 'use-postage-snapshot': false })
+      mockRead.mockReturnValue({ 'swap-enable': false, 'blockchain-rpc-endpoint': 'http://x', 'use-postage-snapshot': false, 'storage-incentives-enable': false })
       runMigrations()
-      expect(mockWrite).toHaveBeenCalledWith({ 'swap-enable': true })
-    })
-
-    it('sets swap-enable to true when it is the boolean false', () => {
-      mockExists.mockReturnValue(true)
-      mockRead.mockReturnValue({ 'swap-enable': false, 'blockchain-rpc-endpoint': 'http://x', 'use-postage-snapshot': false })
-      runMigrations()
-      expect(mockWrite).toHaveBeenCalledWith({ 'swap-enable': true })
-    })
-
-    it('does not touch swap-enable when already true', () => {
-      mockExists.mockReturnValue(true)
-      mockRead.mockReturnValue({ 'swap-enable': true, 'blockchain-rpc-endpoint': 'http://x', 'use-postage-snapshot': false })
-      runMigrations()
-      expect(mockWrite).not.toHaveBeenCalledWith({ 'swap-enable': true })
+      expect(mockWrite).not.toHaveBeenCalledWith(expect.objectContaining({ 'swap-enable': expect.anything() }))
     })
   })
 
