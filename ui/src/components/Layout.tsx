@@ -1,5 +1,16 @@
 import { ConnectButton } from '@rainbow-me/rainbowkit'
-import { AlertTriangle, Copy, Globe, HardDrive, LogOut, RefreshCw, Settings, Terminal, User, Wallet } from 'lucide-react'
+import {
+  AlertTriangle,
+  Copy,
+  Globe,
+  HardDrive,
+  LogOut,
+  RefreshCw,
+  Settings,
+  Terminal,
+  User,
+  Wallet,
+} from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useDisconnect } from 'wagmi'
@@ -39,6 +50,7 @@ function WalletDropdown({ displayName, address, avatar }: { displayName: string;
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
     }
     document.addEventListener('mousedown', handler)
+
     return () => document.removeEventListener('mousedown', handler)
   }, [open])
 
@@ -117,7 +129,10 @@ export default function Layout() {
   // Auto-complete onboarding for existing users upgrading from v0.2.0 (they never had the flag).
   // Once stamps or wallet data loads and shows existing activity, mark onboarding done.
   if (!onboardingCompleted && stampsLoaded && stamps && stamps.length > 0) setOnboardingCompleted()
-  if (!onboardingCompleted && walletLoaded && wallet && Number(weiToDai(wallet.nativeTokenBalance)) > 0) setOnboardingCompleted()
+
+  if (!onboardingCompleted && walletLoaded && wallet && Number(weiToDai(wallet.nativeTokenBalance)) > 0) {
+    setOnboardingCompleted()
+  }
 
   const peerCount = peers?.connections ?? 0
   const isSyncing = beeOnline && (peerCount === 0 || !stampsLoaded)
@@ -128,8 +143,10 @@ export default function Layout() {
 
   useEffect(() => {
     if (startupDone || !onboardingCompleted) return
+
     if (!beeOnline || !stampsLoaded || peerCount === 0) return
     const timer = setTimeout(() => setStartupDone(true), 800)
+
     return () => clearTimeout(timer)
   }, [beeOnline, stampsLoaded, peerCount, startupDone, onboardingCompleted])
 
@@ -243,15 +260,13 @@ export default function Layout() {
       <main className="flex-1 overflow-auto flex flex-col">
         {/* Top bar — page title + wallet connect */}
         <div className="flex items-center justify-between px-6 shrink-0 relative" style={{ height: 52 }}>
-          <h1
-            className="text-sm font-semibold uppercase tracking-widest"
-            style={{ color: 'rgb(var(--fg-muted))' }}
-          >
+          <h1 className="text-sm font-semibold uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
             {pageTitle}
           </h1>
           <ConnectButton.Custom>
             {({ account, chain, openConnectModal, mounted }) => {
               if (!mounted) return null
+
               if (!account || !chain) {
                 return (
                   <button
@@ -262,7 +277,14 @@ export default function Layout() {
                   </button>
                 )
               }
-              return <WalletDropdown displayName={account.displayName} address={account.address} avatar={account.ensAvatar} />
+
+              return (
+                <WalletDropdown
+                  displayName={account.displayName}
+                  address={account.address}
+                  avatar={account.ensAvatar}
+                />
+              )
             }}
           </ConnectButton.Custom>
         </div>

@@ -33,6 +33,7 @@ async function pollStampUsable(id: string, onPhase?: (phase: string) => void): P
 
     try {
       const s = await beeApi.getStamp(id)
+
       if (s.usable) return
     } catch {
       // stamp not yet confirmed — keep polling
@@ -74,6 +75,7 @@ export function useUpload() {
 
       if (type === 'file') {
         const res = await beeApi.uploadFileWithProgress(entries[0].file, driveId, pct => onProgress?.(pct), true)
+
         return res.reference
       }
 
@@ -83,6 +85,7 @@ export function useUpload() {
           ? { indexDocument: autoIndex, errorDocument: '404.html', deferred: true }
           : { deferred: true }
       const res = await beeApi.uploadCollectionWithProgress(entries, driveId, opts, pct => onProgress?.(pct))
+
       return res.reference
     }
 
@@ -93,8 +96,10 @@ export function useUpload() {
         break
       } catch (err) {
         const msg = err instanceof Error ? err.message : ''
+
         // Overissued stamp cannot be recovered by retrying — fail immediately
         if (msg.includes('overissued') || msg.includes('402')) throw err
+
         if (attempt === 8) throw err
         // stamp issuer may not be loaded yet — retry
       }
@@ -104,6 +109,7 @@ export function useUpload() {
 
     // Create feed if enabled (only for Website Publisher, not Drive uploads)
     let feedManifestAddress: string | undefined
+
     if (feedEnabled) {
       onPhase?.('Creating feed…')
       const topicName = feedTopic?.trim() || name

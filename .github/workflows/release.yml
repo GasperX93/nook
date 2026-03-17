@@ -1,0 +1,117 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: darwin
+            arch: arm64
+          - os: macos-13
+            platform: darwin
+            arch: x64
+          - os: ubuntu-latest
+            platform: linux
+            arch: x64
+          - os: windows-latest
+            platform: win32
+            arch: x64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            ui/package-lock.json
+
+      - run: npm ci
+      - run: cd ui && npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Install RPM tools (Linux)
+        if: matrix.platform == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y rpm
+
+      - name: Import signing certificate (macOS)
+        if: matrix.platform == 'darwin'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          CERTIFICATE_PATH=$RUNNER_TEMP/certificate.p12
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
+
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$CERTIFICATE_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          security import "$CERTIFICATE_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+
+          security set-key-partition-list -S apple-tool:,apple: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          security list-keychain -d user -s "$KEYCHAIN_PATH" login.keychain-db
+
+      - name: Make distributables
+        env:
+          CI: 'true'
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+        run: npx electron-forge make --platform=${{ matrix.platform }} --arch=${{ matrix.arch }}
+
+      - name: Upload artifacts to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          shopt -s nullglob
+
+          FILES=()
+
+          # macOS: DMG + ZIP
+          FILES+=(out/make/*.dmg)
+          FILES+=(out/make/zip/**/*.zip)
+
+          # Linux: DEB + RPM
+          FILES+=(out/make/deb/x64/*.deb)
+          FILES+=(out/make/rpm/x64/*.rpm)
+
+          # Windows: Squirrel installer
+          FILES+=(out/make/squirrel.windows/x64/*Setup*.exe)
+
+          if [ ${#FILES[@]} -eq 0 ]; then
+            echo "No artifacts found in out/make/"
+            ls -R out/make/ || true
+            exit 1
+          fi
+
+          echo "Uploading ${#FILES[@]} artifact(s) for $TAG:"
+          printf '  %s\n' "${FILES[@]}"
+
+          gh release upload "$TAG" "${FILES[@]}" --clobber
+
+      - name: Cleanup keychain (macOS)
+        if: matrix.platform == 'darwin' && always()
+        run: security delete-keychain $RUNNER_TEMP/app-signing.keychain-db 2>/dev/null || true

@@ -36,24 +36,27 @@ export function startMonitorIfNeeded() {
   logger.info(`Bee mode: ${currentMode}`)
 
   if (currentMode === 'light') return
+
   if (pollTimer) return
 
   const address = readAddress()
 
   if (!address) {
     logger.warn('Cannot start funding monitor — missing address')
+
     return
   }
 
   logger.info(`Starting funding monitor for 0x${address} (polling every ${POLL_INTERVAL_MS / 1000}s)`)
 
-  pollTimer = setInterval(() => checkBalance(address, RPC_ENDPOINT), POLL_INTERVAL_MS)
+  pollTimer = setInterval(async () => checkBalance(address, RPC_ENDPOINT), POLL_INTERVAL_MS)
 }
 
 function readAddress(): string | undefined {
   try {
     const keyPath = getPath(join('data-dir', 'keys', 'swarm.key'))
     const v3 = JSON.parse(readFileSync(keyPath, 'utf-8'))
+
     return v3.address as string
   } catch {
     return undefined

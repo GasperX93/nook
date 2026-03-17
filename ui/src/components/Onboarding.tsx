@@ -41,6 +41,7 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
   const [startingMinElapsed, setStartingMinElapsed] = useState(false)
   useEffect(() => {
     const timer = setTimeout(() => setStartingMinElapsed(true), 3000)
+
     return () => clearTimeout(timer)
   }, [])
 
@@ -49,8 +50,15 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
   // Returning users (skipReady): skip info+funding, go straight to syncing
   useEffect(() => {
     if (lockedStep) return
+
     if (step !== 'starting' || !startingMinElapsed) return
-    if (skipReady && beeOnline) { setStep('syncing'); return }
+
+    if (skipReady && beeOnline) {
+      setStep('syncing')
+
+      return
+    }
+
     // Once Bee is online or mode is known, advance to info step
     if (status?.mode === 'ultra-light' || beeOnline) setStep('info')
   }, [step, beeOnline, status?.mode, lockedStep, startingMinElapsed, skipReady])
@@ -62,6 +70,7 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
   useEffect(() => {
     if (!lockedStep && step === 'syncing' && stampsReady) {
       if (skipReady) return // Layout handles dismissal for returning users
+
       if (status?.mode !== 'light') return // Wait for backend to switch to light mode
       setStep('ready')
     }
@@ -111,25 +120,25 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
       <div className="w-full max-w-lg">
         {/* Step indicator — new users only */}
         {!skipReady && (
-        <div className="flex items-center justify-center gap-2 mb-10">
-          {STEPS.map((s, i) => (
-            <div key={s} className="flex items-center gap-2">
-              <div
-                className="w-2 h-2 rounded-full transition-all"
-                style={{
-                  backgroundColor: i <= stepIndex ? 'rgb(var(--accent))' : 'rgb(var(--border))',
-                  boxShadow: i === stepIndex ? '0 0 8px rgba(247,104,8,0.5)' : 'none',
-                }}
-              />
-              {i < STEPS.length - 1 && (
+          <div className="flex items-center justify-center gap-2 mb-10">
+            {STEPS.map((s, i) => (
+              <div key={s} className="flex items-center gap-2">
                 <div
-                  className="w-8 h-px"
-                  style={{ backgroundColor: i < stepIndex ? 'rgb(var(--accent))' : 'rgb(var(--border))' }}
+                  className="w-2 h-2 rounded-full transition-all"
+                  style={{
+                    backgroundColor: i <= stepIndex ? 'rgb(var(--accent))' : 'rgb(var(--border))',
+                    boxShadow: i === stepIndex ? '0 0 8px rgba(247,104,8,0.5)' : 'none',
+                  }}
                 />
-              )}
-            </div>
-          ))}
-        </div>
+                {i < STEPS.length - 1 && (
+                  <div
+                    className="w-8 h-px"
+                    style={{ backgroundColor: i < stepIndex ? 'rgb(var(--accent))' : 'rgb(var(--border))' }}
+                  />
+                )}
+              </div>
+            ))}
+          </div>
         )}
 
         {/* Step 1 — Node starting */}
@@ -197,7 +206,8 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
                 Your node needs xDAI for transaction fees and xBZZ for storage space on the Swarm network.
               </p>
               <p className="text-sm leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
-                You can fund it from any EVM-compatible chain using any token — it will be swapped to the required assets.
+                You can fund it from any EVM-compatible chain using any token — it will be swapped to the required
+                assets.
               </p>
             </div>
 

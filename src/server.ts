@@ -130,6 +130,7 @@ export function runServer() {
       logger.error(error)
       const msg = (error as Error).message ?? ''
       let friendly = 'Failed to redeem gift code'
+
       if (msg.includes('REPLACEMENT_UNDERPRICED') || msg.includes('replacement transaction underpriced')) {
         friendly = 'A previous transaction is still pending. Please wait a moment and try again.'
       } else if (msg.includes('NONCE_EXPIRED') || msg.includes('nonce too low')) {
@@ -191,6 +192,7 @@ export function runServer() {
       const beeMessage: string = (error as any)?.responseBody?.message ?? ''
       const errString = String(error)
       let message: string
+
       if (beeMessage.toLowerCase().includes('syncing')) {
         message = 'Your node is still syncing with the network. This can take a few minutes — please try again shortly.'
       } else if (errString.includes('ECONNREFUSED') || errString.includes('fetch failed')) {
@@ -235,6 +237,7 @@ export function runServer() {
       logger.error(error)
       const msg = (error as Error).message ?? ''
       let friendly = 'Withdraw failed'
+
       if (msg.includes('REPLACEMENT_UNDERPRICED') || msg.includes('replacement transaction underpriced')) {
         friendly = 'A previous transaction is still pending. Please wait a moment and try again.'
       } else if (msg.includes('INSUFFICIENT_FUNDS') || msg.includes('insufficient funds')) {
@@ -253,6 +256,7 @@ export function runServer() {
     if (!amount) {
       context.status = 400
       context.body = { message: 'amount is required' }
+
       return
     }
 
@@ -264,12 +268,14 @@ export function runServer() {
       if (requested > available) {
         context.status = 400
         context.body = { message: 'Insufficient chequebook balance' }
+
         return
       }
 
       const beePassword = readConfigYaml().password as string | undefined
       const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-      if (beePassword) headers['Authorization'] = `Bearer ${beePassword}`
+
+      if (beePassword) headers.Authorization = `Bearer ${beePassword}`
 
       const res = await fetch(`http://127.0.0.1:1633/chequebook/withdraw?amount=${amount}`, {
         method: 'POST',
@@ -302,6 +308,7 @@ export function runServer() {
       logger.error(error)
       const msg = (error as Error).message ?? ''
       let friendly = 'Failed to swap'
+
       if (msg.includes('REPLACEMENT_UNDERPRICED') || msg.includes('replacement transaction underpriced')) {
         friendly = 'A previous transaction is still pending. Please wait a moment and try again.'
       } else if (msg.includes('INSUFFICIENT_FUNDS') || msg.includes('insufficient funds')) {

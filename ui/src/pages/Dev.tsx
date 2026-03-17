@@ -42,7 +42,10 @@ export default function Dev() {
     <div className="flex flex-col h-full p-6 gap-6">
       <div className="flex items-center justify-end shrink-0">
         <button
-          onClick={() => { setDevMode(false); navigate('/settings?tab=network') }}
+          onClick={() => {
+            setDevMode(false)
+            navigate('/settings?tab=network')
+          }}
           className="text-xs font-medium transition-colors"
           style={{ color: 'rgb(var(--fg-muted))' }}
         >
@@ -126,7 +129,9 @@ export default function Dev() {
         </div>
 
         {isLoading ? (
-          <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>Loading…</p>
+          <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
+            Loading…
+          </p>
         ) : configError ? (
           <p className="text-xs py-1" style={{ color: 'rgb(var(--fg-muted))' }}>
             Nook backend not available. Start the app to configure node settings.

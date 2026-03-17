@@ -16,18 +16,23 @@ function getBeeUrl(): string {
 
 function getAuthHeaders(): Record<string, string> {
   const password = readConfigYaml().password as string | undefined
+
   return password ? { Authorization: `Bearer ${password}` } : {}
 }
 
 async function beeGet<T>(path: string): Promise<T> {
   const res = await fetch(`${getBeeUrl()}${path}`, { headers: getAuthHeaders() })
+
   if (!res.ok) throw new Error(`Bee ${path}: ${res.status}`)
+
   return res.json() as Promise<T>
 }
 
 async function beePost<T>(path: string): Promise<T> {
   const res = await fetch(`${getBeeUrl()}${path}`, { method: 'POST', headers: getAuthHeaders() })
+
   if (!res.ok) throw new Error(`Bee ${path}: ${res.status}`)
+
   return res.json() as Promise<T>
 }
 
@@ -51,17 +56,14 @@ async function checkAndFundChequebook() {
 
     if (available >= threshold) return
 
-    logger.info(
-      `Chequebook balance low (${available} PLUR, threshold ${threshold} PLUR) — attempting refill`,
-    )
+    logger.info(`Chequebook balance low (${available} PLUR, threshold ${threshold} PLUR) — attempting refill`)
 
     const wallet = await beeGet<WalletInfo>('/wallet')
     const walletBzz = BigInt(wallet.bzzBalance)
 
     if (walletBzz <= WALLET_RESERVE_PLUR) {
-      logger.warn(
-        `Wallet BZZ too low to fund chequebook (${walletBzz} PLUR, reserve ${WALLET_RESERVE_PLUR} PLUR)`,
-      )
+      logger.warn(`Wallet BZZ too low to fund chequebook (${walletBzz} PLUR, reserve ${WALLET_RESERVE_PLUR} PLUR)`)
+
       return
     }
 
@@ -88,6 +90,7 @@ async function checkAndFundChequebook() {
  */
 export function startChequebookMonitor() {
   if (pollTimer) return
+
   if (getMode() !== 'light') return
 
   logger.info('Starting chequebook monitor (polling every 60s)')
@@ -100,7 +103,7 @@ export function startChequebookMonitor() {
     }
   }, 30_000)
 
-  pollTimer = setInterval(() => checkAndFundChequebook(), POLL_INTERVAL_MS)
+  pollTimer = setInterval(async () => checkAndFundChequebook(), POLL_INTERVAL_MS)
 }
 
 /**

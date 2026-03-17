@@ -11,14 +11,19 @@ const SWARM_PREFIX = 'e40101fa011b20'
 
 function encodeSwarmContentHash(swarmHash: string): `0x${string}` {
   const clean = swarmHash.startsWith('0x') ? swarmHash.slice(2) : swarmHash
+
   return `0x${SWARM_PREFIX}${clean}`
 }
 
 function decodeContentHash(hex: string): { protocol: string; hash: string } | null {
   const clean = hex.startsWith('0x') ? hex.slice(2) : hex
+
   if (!clean || clean === '') return null
+
   if (clean.startsWith(SWARM_PREFIX)) return { protocol: 'bzz', hash: clean.slice(SWARM_PREFIX.length) }
+
   if (clean.startsWith('e3010170')) return { protocol: 'ipfs', hash: clean.slice(8) }
+
   return { protocol: 'unknown', hash: clean }
 }
 
@@ -68,6 +73,7 @@ async function fetchOwnedDomains(address: string): Promise<string[]> {
     }
     for (const d of json.data?.domains ?? []) addName(d.name)
     for (const d of json.data?.wrappedDomains ?? []) addName(d.name)
+
     return [...names].sort()
   } catch {
     return []
@@ -123,9 +129,11 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
   const lookupDomain = useCallback(async () => {
     if (!publicClient || !ensName.trim()) return
     const name = ensName.trim().toLowerCase()
+
     if (!name.endsWith('.eth')) {
       setError('Please enter a .eth domain name')
       setState('error')
+
       return
     }
 
@@ -134,9 +142,11 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
 
     try {
       const resolver = await publicClient.getEnsResolver({ name })
+
       if (!resolver) {
         setError('No resolver found for this domain.')
         setState('error')
+
         return
       }
       setResolverAddr(resolver)
@@ -148,6 +158,7 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
           functionName: 'contenthash',
           args: [namehash(name)],
         })
+
         if (hash && hash !== '0x') {
           setCurrentHash(decodeContentHash(hash))
         } else {
@@ -179,9 +190,11 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
 
       // Fetch fresh wallet client (hook value is stale after chain switch)
       const client = await getWalletClient(wagmiConfig, { chainId: mainnet.id })
+
       if (!client) {
         setError('Wallet not available. Please try again.')
         setState('error')
+
         return
       }
 
@@ -197,8 +210,10 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
       onLinked(name)
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Transaction failed'
+
       if (msg.includes('User rejected') || msg.includes('denied')) {
         setState('ready')
+
         return
       }
       setError(msg)
@@ -251,7 +266,9 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
             {state === 'loading' && (
               <div className="text-center py-6 space-y-2">
                 <RefreshCw size={16} className="animate-spin mx-auto" style={{ color: 'rgb(var(--accent))' }} />
-                <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>Loading your ENS domains...</p>
+                <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  Loading your ENS domains...
+                </p>
               </div>
             )}
 
@@ -268,7 +285,10 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
                         onClick={() => setDropdownOpen(!dropdownOpen)}
                         disabled={state === 'checking'}
                         className="w-full flex items-center justify-between rounded-lg border px-3 py-2 text-xs font-mono focus:outline-none"
-                        style={{ backgroundColor: 'rgb(var(--bg))', color: ensName ? 'rgb(var(--fg))' : 'rgb(var(--fg-muted))' }}
+                        style={{
+                          backgroundColor: 'rgb(var(--bg))',
+                          color: ensName ? 'rgb(var(--fg))' : 'rgb(var(--fg-muted))',
+                        }}
                       >
                         <span>{ensName || 'Choose a domain...'}</span>
                         <ChevronDown size={12} style={{ color: 'rgb(var(--fg-muted))' }} />
@@ -359,7 +379,10 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
                   </p>
                   {currentHash ? (
                     <div>
-                      <p className="text-[10px] uppercase tracking-widest mb-0.5" style={{ color: 'rgb(var(--fg-muted))' }}>
+                      <p
+                        className="text-[10px] uppercase tracking-widest mb-0.5"
+                        style={{ color: 'rgb(var(--fg-muted))' }}
+                      >
                         Current content hash ({currentHash.protocol})
                       </p>
                       <p className="text-[10px] font-mono break-all" style={{ color: 'rgb(var(--fg-muted))' }}>
@@ -367,7 +390,9 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
                       </p>
                     </div>
                   ) : (
-                    <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>No content hash set</p>
+                    <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                      No content hash set
+                    </p>
                   )}
                 </div>
 
@@ -386,7 +411,10 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
                 </div>
 
                 {alreadySet ? (
-                  <div className="flex items-center gap-2 rounded-lg p-3" style={{ backgroundColor: 'rgba(74,222,128,0.08)' }}>
+                  <div
+                    className="flex items-center gap-2 rounded-lg p-3"
+                    style={{ backgroundColor: 'rgba(74,222,128,0.08)' }}
+                  >
                     <Check size={14} style={{ color: '#4ade80' }} />
                     <p className="text-xs" style={{ color: '#4ade80' }}>
                       This content hash is already set on {ensName}.
@@ -394,7 +422,8 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
                   </div>
                 ) : needsChainSwitch ? (
                   <p className="text-[10px]" style={{ color: 'rgb(var(--fg-muted))' }}>
-                    Your wallet is on a different network. Clicking "Link domain" will prompt you to switch to Ethereum mainnet.
+                    Your wallet is on a different network. Clicking "Link domain" will prompt you to switch to Ethereum
+                    mainnet.
                   </p>
                 ) : null}
 
@@ -423,7 +452,9 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
             {state === 'confirming' && (
               <div className="text-center py-6 space-y-3">
                 <RefreshCw size={20} className="animate-spin mx-auto" style={{ color: 'rgb(var(--accent))' }} />
-                <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>Confirm in your wallet...</p>
+                <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  Confirm in your wallet...
+                </p>
               </div>
             )}
 

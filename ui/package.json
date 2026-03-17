@@ -37,7 +37,7 @@
     "autoprefixer": "^10.4.27",
     "cross-env": "^10.1.0",
     "eslint-config-prettier": "^8.3.0",
-    "eslint-plugin-prettier": "^4.0.0",
+    "eslint-plugin-prettier": "^5.5.5",
     "eslint-plugin-unused-imports": "^2.0.0",
     "file-stream-rotator": "^1.0.0",
     "postcss": "^8.5.8",

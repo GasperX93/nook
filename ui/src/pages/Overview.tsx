@@ -63,7 +63,7 @@ export default function Overview() {
         />
         <StatCard
           label="Peers"
-          value={peersLoading ? <span style={{ color: 'rgb(var(--fg-muted))' }}>—</span> : peers?.connections ?? 0}
+          value={peersLoading ? <span style={{ color: 'rgb(var(--fg-muted))' }}>—</span> : (peers?.connections ?? 0)}
         />
         <StatCard
           label="Version"
