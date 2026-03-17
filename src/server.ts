@@ -242,6 +242,8 @@ export function runServer() {
         friendly = 'A previous transaction is still pending. Please wait a moment and try again.'
       } else if (msg.includes('INSUFFICIENT_FUNDS') || msg.includes('insufficient funds')) {
         friendly = 'Insufficient funds to cover gas fees.'
+      } else if (msg.includes('UNPREDICTABLE_GAS_LIMIT')) {
+        friendly = 'Transaction failed — make sure no other Bee node is running on the same port.'
       } else if (msg) {
         friendly = msg
       }
@@ -313,6 +315,8 @@ export function runServer() {
         friendly = 'A previous transaction is still pending. Please wait a moment and try again.'
       } else if (msg.includes('INSUFFICIENT_FUNDS') || msg.includes('insufficient funds')) {
         friendly = 'Insufficient funds to cover gas fees.'
+      } else if (msg.includes('UNPREDICTABLE_GAS_LIMIT')) {
+        friendly = 'Transaction failed — make sure no other Bee node is running on the same port.'
       } else if (msg) {
         friendly = msg
       }
