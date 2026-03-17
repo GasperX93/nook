@@ -69,22 +69,28 @@ function loadAll(): { records: UploadRecord[]; folders: DriveFolder[] } {
     }
   })().map((r: UploadRecord) => {
     let rec = r
+
     // Migrate old stampId → driveId
     if (!rec.driveId && rec.stampId) {
       rec = { ...rec, driveId: rec.stampId }
       changed = true
     }
+
     // Repair cross-drive drag corruption: folderId must belong to a folder in the same drive
     if (rec.folderId) {
       const validFolders = rec.driveId ? driveFolderIds.get(rec.driveId) : undefined
+
       if (!validFolders || !validFolders.has(rec.folderId)) {
         rec = { ...rec, folderId: undefined }
         changed = true
       }
     }
+
     return rec
   })
+
   if (changed) save(records)
+
   return { records, folders }
 }
 
@@ -97,6 +103,7 @@ export function useUploadHistory() {
     setRecords(prev => {
       const next = [record, ...prev]
       save(next)
+
       return next
     })
   }
@@ -105,6 +112,7 @@ export function useUploadHistory() {
     setRecords(prev => {
       const next = prev.filter(r => r.id !== id)
       save(next)
+
       return next
     })
   }
@@ -113,6 +121,7 @@ export function useUploadHistory() {
     setRecords(prev => {
       const next = prev.map(r => (r.id === id ? { ...r, ...changes } : r))
       save(next)
+
       return next
     })
   }
@@ -128,6 +137,7 @@ export function useUploadHistory() {
     setFolders(prev => {
       const next = [...prev, folder]
       saveFolders(next)
+
       return next
     })
   }
@@ -144,11 +154,13 @@ export function useUploadHistory() {
     setFolders(prev => {
       const next = prev.filter(f => !toRemove.has(f.id))
       saveFolders(next)
+
       return next
     })
     setRecords(prev => {
       const next = prev.map(r => (r.folderId && toRemove.has(r.folderId) ? { ...r, folderId: undefined } : r))
       save(next)
+
       return next
     })
   }
@@ -157,6 +169,7 @@ export function useUploadHistory() {
     setFolders(prev => {
       const next = prev.map(f => (f.id === id ? { ...f, name } : f))
       saveFolders(next)
+
       return next
     })
   }
@@ -165,6 +178,7 @@ export function useUploadHistory() {
     setRecords(prev => {
       const next = prev.map(r => (r.id === recordId ? { ...r, folderId: folderId ?? undefined } : r))
       save(next)
+
       return next
     })
   }
@@ -174,10 +188,13 @@ export function useUploadHistory() {
     setRecords(prev => {
       const next = prev.map(r => {
         if (r.id === recordId) return { ...r, ensDomain: domain }
+
         if (r.ensDomain === domain) return { ...r, ensDomain: undefined }
+
         return r
       })
       save(next)
+
       return next
     })
   }

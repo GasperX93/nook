@@ -1,5 +1,15 @@
 import { useQueryClient } from '@tanstack/react-query'
-import { AlertTriangle, ArrowUpRight, Check, ChevronDown, ChevronUp, Copy, Gift, Info, Wallet as WalletIcon } from 'lucide-react'
+import {
+  AlertTriangle,
+  ArrowUpRight,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  Copy,
+  Gift,
+  Info,
+  Wallet as WalletIcon,
+} from 'lucide-react'
 import { useState } from 'react'
 import '@rainbow-me/rainbowkit/styles.css'
 import '@upcoming/multichain-widget/styles.css'
@@ -44,9 +54,7 @@ export default function Wallet() {
   const dai = wallet ? Number(weiToDai(wallet.nativeTokenBalance)).toFixed(4) : syncing ? 'syncing…' : '—'
   const address = addresses?.ethereum ?? ''
   const isEmpty =
-    wallet &&
-    Number(plurToBzz(wallet.bzzBalance)) === 0 &&
-    Number(weiToDai(wallet.nativeTokenBalance)) === 0
+    wallet && Number(plurToBzz(wallet.bzzBalance)) === 0 && Number(weiToDai(wallet.nativeTokenBalance)) === 0
 
   function copyAddress() {
     navigator.clipboard.writeText(address)
@@ -66,6 +74,7 @@ export default function Wallet() {
         headers: { 'Content-Type': 'application/json', ...(apiKey ? { authorization: apiKey } : {}) },
         body: JSON.stringify({ dai: swapAmount }),
       })
+
       if (!res.ok) throw new Error(`Swap failed: ${res.status}`)
       setSwapDone(true)
       setSwapAmount('')
@@ -92,6 +101,7 @@ export default function Wallet() {
       let ticks = 0
       const poll = setInterval(() => {
         queryClient.refetchQueries({ queryKey: ['bee', 'wallet'] })
+
         if (++ticks >= 10) clearInterval(poll)
       }, 3000)
       setTimeout(() => setRedeemDone(false), 30_000)
@@ -119,9 +129,11 @@ export default function Wallet() {
       // For BZZ: if amount exceeds wallet balance, pull deficit from chequebook first
       if (withdrawToken === 'bzz' && wallet) {
         const walletPlur = BigInt(wallet.bzzBalance)
+
         if (amountSmallest > walletPlur) {
           const deficit = amountSmallest - walletPlur
           const chequebookAvail = chequebook ? BigInt(chequebook.availableBalance) : 0n
+
           if (deficit > chequebookAvail) throw new Error('Insufficient total balance (wallet + bandwidth)')
           await serverApi.chequebookWithdraw(deficit.toString())
           // Wait briefly for the on-chain tx to settle and wallet balance to update
@@ -137,7 +149,10 @@ export default function Wallet() {
       setWithdrawTo('')
       queryClient.invalidateQueries({ queryKey: ['bee', 'wallet'] })
       queryClient.invalidateQueries({ queryKey: ['bee', 'chequebook'] })
-      setTimeout(() => { setWithdrawDone(false); setWithdrawTxHash(null) }, 30_000)
+      setTimeout(() => {
+        setWithdrawDone(false)
+        setWithdrawTxHash(null)
+      }, 30_000)
     } catch (err) {
       setWithdrawError(err instanceof Error ? err.message : 'Withdraw failed')
     } finally {
@@ -162,188 +177,219 @@ export default function Wallet() {
     <div className="max-w-xl">
       <div className="space-y-5">
         {/* Address — full width slim row */}
-          <div className="flex items-center gap-3 px-1">
-            <span className="text-xs uppercase tracking-widest shrink-0" style={{ color: 'rgb(var(--fg-muted))' }}>
-              Address
-            </span>
-            {address ? (
-              <div className="flex items-center gap-1 min-w-0">
-                <p className="font-mono text-xs min-w-0 truncate" style={{ color: 'rgb(var(--fg-muted))' }}>
-                  {address}
-                </p>
-                <button
-                  onClick={copyAddress}
-                  className="w-6 h-6 flex items-center justify-center rounded shrink-0 transition-colors"
-                  style={{ color: copiedAddr ? '#4ade80' : 'rgb(var(--fg-muted))' }}
-                >
-                  {copiedAddr ? <Check size={12} /> : <Copy size={12} />}
-                </button>
-              </div>
-            ) : (
-              <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-                Not available
+        <div className="flex items-center gap-3 px-1">
+          <span className="text-xs uppercase tracking-widest shrink-0" style={{ color: 'rgb(var(--fg-muted))' }}>
+            Address
+          </span>
+          {address ? (
+            <div className="flex items-center gap-1 min-w-0">
+              <p className="font-mono text-xs min-w-0 truncate" style={{ color: 'rgb(var(--fg-muted))' }}>
+                {address}
               </p>
-            )}
-          </div>
-
-          {/* Empty wallet warning — full width */}
-          {isEmpty && (
-            <div className="flex items-start gap-2 rounded-lg px-4 py-3" style={{ backgroundColor: 'rgba(247,104,8,0.08)', border: '1px solid rgba(247,104,8,0.25)' }}>
-              <AlertTriangle size={13} className="shrink-0 mt-0.5" style={{ color: '#f76808' }} />
-              <p className="text-xs" style={{ color: '#f76808' }}>
-                Your wallet is empty. You need funds to buy storage — top up below.
-              </p>
-            </div>
-          )}
-
-          {/* Balances */}
-          <div className="flex gap-3">
-            <div className="rounded-xl border p-5 flex-1" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
-              <p className="text-xs uppercase tracking-widest mb-3" style={{ color: 'rgb(var(--fg-muted))' }}>xBZZ</p>
-              <div className="flex items-baseline gap-2">
-                <span className="text-3xl font-bold tabular-nums">{bzz}</span>
-                <span className="text-sm font-medium" style={{ color: 'rgb(var(--fg-muted))' }}>xBZZ</span>
-              </div>
-              <div className="flex items-center gap-1 mt-2">
-                <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>Used for storage and bandwidth</p>
-                <span className="relative group">
-                  <Info size={10} className="cursor-help" style={{ color: 'rgb(var(--fg-muted))' }} />
-                  <span
-                    className="absolute bottom-full left-0 mb-1 px-2 py-1.5 rounded text-[10px] leading-tight w-48 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10"
-                    style={{ backgroundColor: 'rgb(var(--fg))', color: 'rgb(var(--bg))' }}
-                  >
-                    {chequebook && BigInt(chequebook.availableBalance) > 0 && (
-                      <>
-                        <span className="font-semibold">Bandwidth: {Number(plurToBzz(chequebook.availableBalance)).toFixed(4)} xBZZ</span>
-                        <br />
-                      </>
-                    )}
-                    xBZZ set aside for network bandwidth on large transfers. Auto-managed — tops up when low.
-                  </span>
-                </span>
-              </div>
               <button
-                onClick={() => { setWithdrawToken('bzz'); setWithdrawAmount(''); setWithdrawTo(''); setWithdrawError(null); setWithdrawDone(false); setShowWithdraw(true) }}
-                className="flex items-center gap-1 text-[10px] mt-3 transition-colors"
-                style={{ color: 'rgb(var(--fg-muted))' }}
+                onClick={copyAddress}
+                className="w-6 h-6 flex items-center justify-center rounded shrink-0 transition-colors"
+                style={{ color: copiedAddr ? '#4ade80' : 'rgb(var(--fg-muted))' }}
               >
-                <ArrowUpRight size={10} />
-                Withdraw
+                {copiedAddr ? <Check size={12} /> : <Copy size={12} />}
               </button>
             </div>
-            <div className="rounded-xl border p-5 flex-1" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
-              <p className="text-xs uppercase tracking-widest mb-3" style={{ color: 'rgb(var(--fg-muted))' }}>xDAI</p>
-              <div className="flex items-baseline gap-2">
-                <span className="text-3xl font-bold tabular-nums">{dai}</span>
-                <span className="text-sm font-medium" style={{ color: 'rgb(var(--fg-muted))' }}>xDAI</span>
-              </div>
-              <p className="text-xs mt-2" style={{ color: 'rgb(var(--fg-muted))' }}>Used for gas fees</p>
-              <button
-                onClick={() => { setWithdrawToken('dai'); setWithdrawAmount(''); setWithdrawTo(''); setWithdrawError(null); setWithdrawDone(false); setShowWithdraw(true) }}
-                className="flex items-center gap-1 text-[10px] mt-3 transition-colors"
-                style={{ color: 'rgb(var(--fg-muted))' }}
-              >
-                <ArrowUpRight size={10} />
-                Withdraw
-              </button>
-            </div>
-          </div>
-
-          {/* Top up widget (collapsible) */}
-          <div className="rounded-xl border" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
-            <button
-              onClick={() => setTopUpOpen(!topUpOpen)}
-              className="flex items-center justify-between w-full p-5 text-left"
-            >
-              <div>
-                <div className="flex items-center gap-2">
-                  <WalletIcon size={13} style={{ color: 'rgb(var(--accent))' }} />
-                  <p className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--accent))' }}>
-                    Top up
-                  </p>
-                </div>
-                <p className="text-xs mt-1" style={{ color: 'rgb(var(--fg-muted))' }}>
-                  Fund your node wallet from any EVM-compatible chain using any token.
-                </p>
-              </div>
-              {topUpOpen ? (
-                <ChevronUp size={14} className="shrink-0 ml-3" style={{ color: 'rgb(var(--fg-muted))' }} />
-              ) : (
-                <ChevronDown size={14} className="shrink-0 ml-3" style={{ color: 'rgb(var(--fg-muted))' }} />
-              )}
-            </button>
-            {topUpOpen && (
-              <div className="px-5 pb-5">
-                {address ? (
-                  <>
-                    <p className="text-xs mb-3" style={{ color: 'rgb(var(--fg-muted))' }}>
-                      Set how much xDAI and xBZZ you want to top up to your node.
-                    </p>
-                    <MultichainWidget
-                      destination={address}
-                      intent="arbitrary"
-                      theme={WIDGET_THEME}
-                      hooks={{
-                        onCompletion: async () => {
-                          queryClient.invalidateQueries({ queryKey: ['bee', 'wallet'] })
-                        },
-                      }}
-                    />
-                  </>
-                ) : (
-                  <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-                    Wallet address not available.
-                  </p>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Redeem gift code */}
-          <div className="rounded-xl border p-5" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
-            <div className="flex items-center gap-2 mb-1">
-              <Gift size={13} style={{ color: 'rgb(var(--accent))' }} />
-              <p className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
-                Redeem gift code
-              </p>
-            </div>
-            <p className="text-xs mb-4" style={{ color: 'rgb(var(--fg-muted))' }}>
-              Paste a gift code to transfer its xBZZ and xDAI to your node wallet.
+          ) : (
+            <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+              Not available
             </p>
-            <div className="flex gap-3">
-              <input
-                type="text"
-                value={giftCode}
-                onChange={e => setGiftCode(e.target.value)}
-                onKeyDown={async e => e.key === 'Enter' && redeem()}
-                placeholder="Gift code…"
-                className="flex-1 rounded-lg border px-3 py-2 text-sm font-mono focus:outline-none"
-                style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
-              />
-              <button
-                onClick={redeem}
-                disabled={redeeming || !giftCode.trim()}
-                className="px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-40 transition-opacity shrink-0"
-                style={{
-                  backgroundColor: redeemDone ? 'rgba(74,222,128,0.15)' : 'rgb(var(--accent))',
-                  color: redeemDone ? '#4ade80' : '#fff',
-                }}
-              >
-                {redeeming ? 'Redeeming…' : redeemDone ? 'Done' : 'Redeem'}
-              </button>
+          )}
+        </div>
+
+        {/* Empty wallet warning — full width */}
+        {isEmpty && (
+          <div
+            className="flex items-start gap-2 rounded-lg px-4 py-3"
+            style={{ backgroundColor: 'rgba(247,104,8,0.08)', border: '1px solid rgba(247,104,8,0.25)' }}
+          >
+            <AlertTriangle size={13} className="shrink-0 mt-0.5" style={{ color: '#f76808' }} />
+            <p className="text-xs" style={{ color: '#f76808' }}>
+              Your wallet is empty. You need funds to buy storage — top up below.
+            </p>
+          </div>
+        )}
+
+        {/* Balances */}
+        <div className="flex gap-3">
+          <div className="rounded-xl border p-5 flex-1" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
+            <p className="text-xs uppercase tracking-widest mb-3" style={{ color: 'rgb(var(--fg-muted))' }}>
+              xBZZ
+            </p>
+            <div className="flex items-baseline gap-2">
+              <span className="text-3xl font-bold tabular-nums">{bzz}</span>
+              <span className="text-sm font-medium" style={{ color: 'rgb(var(--fg-muted))' }}>
+                xBZZ
+              </span>
             </div>
-            {redeemError && (
-              <p className="text-xs mt-3" style={{ color: '#ef4444' }}>
-                {redeemError}
+            <div className="flex items-center gap-1 mt-2">
+              <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Used for storage and bandwidth
               </p>
-            )}
-            {redeemDone && (
-              <p className="text-xs mt-3" style={{ color: '#4ade80' }}>
-                Gift code redeemed — balance updated.
-              </p>
-            )}
+              <span className="relative group">
+                <Info size={10} className="cursor-help" style={{ color: 'rgb(var(--fg-muted))' }} />
+                <span
+                  className="absolute bottom-full left-0 mb-1 px-2 py-1.5 rounded text-[10px] leading-tight w-48 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10"
+                  style={{ backgroundColor: 'rgb(var(--fg))', color: 'rgb(var(--bg))' }}
+                >
+                  {chequebook && BigInt(chequebook.availableBalance) > 0 && (
+                    <>
+                      <span className="font-semibold">
+                        Bandwidth: {Number(plurToBzz(chequebook.availableBalance)).toFixed(4)} xBZZ
+                      </span>
+                      <br />
+                    </>
+                  )}
+                  xBZZ set aside for network bandwidth on large transfers. Auto-managed — tops up when low.
+                </span>
+              </span>
+            </div>
+            <button
+              onClick={() => {
+                setWithdrawToken('bzz')
+                setWithdrawAmount('')
+                setWithdrawTo('')
+                setWithdrawError(null)
+                setWithdrawDone(false)
+                setShowWithdraw(true)
+              }}
+              className="flex items-center gap-1 text-[10px] mt-3 transition-colors"
+              style={{ color: 'rgb(var(--fg-muted))' }}
+            >
+              <ArrowUpRight size={10} />
+              Withdraw
+            </button>
+          </div>
+          <div className="rounded-xl border p-5 flex-1" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
+            <p className="text-xs uppercase tracking-widest mb-3" style={{ color: 'rgb(var(--fg-muted))' }}>
+              xDAI
+            </p>
+            <div className="flex items-baseline gap-2">
+              <span className="text-3xl font-bold tabular-nums">{dai}</span>
+              <span className="text-sm font-medium" style={{ color: 'rgb(var(--fg-muted))' }}>
+                xDAI
+              </span>
+            </div>
+            <p className="text-xs mt-2" style={{ color: 'rgb(var(--fg-muted))' }}>
+              Used for gas fees
+            </p>
+            <button
+              onClick={() => {
+                setWithdrawToken('dai')
+                setWithdrawAmount('')
+                setWithdrawTo('')
+                setWithdrawError(null)
+                setWithdrawDone(false)
+                setShowWithdraw(true)
+              }}
+              className="flex items-center gap-1 text-[10px] mt-3 transition-colors"
+              style={{ color: 'rgb(var(--fg-muted))' }}
+            >
+              <ArrowUpRight size={10} />
+              Withdraw
+            </button>
           </div>
         </div>
+
+        {/* Top up widget (collapsible) */}
+        <div className="rounded-xl border" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
+          <button
+            onClick={() => setTopUpOpen(!topUpOpen)}
+            className="flex items-center justify-between w-full p-5 text-left"
+          >
+            <div>
+              <div className="flex items-center gap-2">
+                <WalletIcon size={13} style={{ color: 'rgb(var(--accent))' }} />
+                <p className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--accent))' }}>
+                  Top up
+                </p>
+              </div>
+              <p className="text-xs mt-1" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Fund your node wallet from any EVM-compatible chain using any token.
+              </p>
+            </div>
+            {topUpOpen ? (
+              <ChevronUp size={14} className="shrink-0 ml-3" style={{ color: 'rgb(var(--fg-muted))' }} />
+            ) : (
+              <ChevronDown size={14} className="shrink-0 ml-3" style={{ color: 'rgb(var(--fg-muted))' }} />
+            )}
+          </button>
+          {topUpOpen && (
+            <div className="px-5 pb-5">
+              {address ? (
+                <>
+                  <p className="text-xs mb-3" style={{ color: 'rgb(var(--fg-muted))' }}>
+                    Set how much xDAI and xBZZ you want to top up to your node.
+                  </p>
+                  <MultichainWidget
+                    destination={address}
+                    intent="arbitrary"
+                    theme={WIDGET_THEME}
+                    hooks={{
+                      onCompletion: async () => {
+                        queryClient.invalidateQueries({ queryKey: ['bee', 'wallet'] })
+                      },
+                    }}
+                  />
+                </>
+              ) : (
+                <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  Wallet address not available.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Redeem gift code */}
+        <div className="rounded-xl border p-5" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
+          <div className="flex items-center gap-2 mb-1">
+            <Gift size={13} style={{ color: 'rgb(var(--accent))' }} />
+            <p className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
+              Redeem gift code
+            </p>
+          </div>
+          <p className="text-xs mb-4" style={{ color: 'rgb(var(--fg-muted))' }}>
+            Paste a gift code to transfer its xBZZ and xDAI to your node wallet.
+          </p>
+          <div className="flex gap-3">
+            <input
+              type="text"
+              value={giftCode}
+              onChange={e => setGiftCode(e.target.value)}
+              onKeyDown={async e => e.key === 'Enter' && redeem()}
+              placeholder="Gift code…"
+              className="flex-1 rounded-lg border px-3 py-2 text-sm font-mono focus:outline-none"
+              style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
+            />
+            <button
+              onClick={redeem}
+              disabled={redeeming || !giftCode.trim()}
+              className="px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-40 transition-opacity shrink-0"
+              style={{
+                backgroundColor: redeemDone ? 'rgba(74,222,128,0.15)' : 'rgb(var(--accent))',
+                color: redeemDone ? '#4ade80' : '#fff',
+              }}
+            >
+              {redeeming ? 'Redeeming…' : redeemDone ? 'Done' : 'Redeem'}
+            </button>
+          </div>
+          {redeemError && (
+            <p className="text-xs mt-3" style={{ color: '#ef4444' }}>
+              {redeemError}
+            </p>
+          )}
+          {redeemDone && (
+            <p className="text-xs mt-3" style={{ color: '#4ade80' }}>
+              Gift code redeemed — balance updated.
+            </p>
+          )}
+        </div>
+      </div>
 
       {/* Withdraw modal */}
       {showWithdraw && (
@@ -357,9 +403,7 @@ export default function Wallet() {
             onClick={e => e.stopPropagation()}
           >
             <div>
-              <p className="text-sm font-semibold">
-                Withdraw {withdrawToken === 'bzz' ? 'xBZZ' : 'xDAI'}
-              </p>
+              <p className="text-sm font-semibold">Withdraw {withdrawToken === 'bzz' ? 'xBZZ' : 'xDAI'}</p>
               <p className="text-xs mt-1" style={{ color: 'rgb(var(--fg-muted))' }}>
                 Send to any address on Gnosis Chain.
               </p>

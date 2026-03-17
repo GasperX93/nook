@@ -1,20 +1,8 @@
-import { Check, ChevronRight, Copy, ExternalLink, Globe, Link, RefreshCw, Upload } from 'lucide-react'
+import { Check, ChevronRight, Copy, ExternalLink, Globe, Link, RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import {
-  calcStampCost,
-  depthToBytes,
-  DURATION_PRESETS,
-  getBeeUrl,
-  plurToBzz,
-  SIZE_PRESETS,
-} from '../api/bee'
-import {
-  useBeeHealth,
-  useBuyStamp,
-  useChainState,
-  useWallet,
-} from '../api/queries'
+import { calcStampCost, depthToBytes, DURATION_PRESETS, getBeeUrl, plurToBzz, SIZE_PRESETS } from '../api/bee'
+import { useBeeHealth, useBuyStamp, useChainState, useWallet } from '../api/queries'
 import { useAppStore } from '../store/app'
 import { useUpload } from '../hooks/useUpload'
 import ENSModal from '../components/ENSModal'
@@ -48,7 +36,9 @@ interface PublishResult {
 
 function formatBytes(bytes: number): string {
   if (bytes >= 1_073_741_824) return `${(bytes / 1_073_741_824).toFixed(1)} GB`
+
   if (bytes >= 1_048_576) return `${(bytes / 1_048_576).toFixed(1)} MB`
+
   return `${(bytes / 1024).toFixed(0)} KB`
 }
 
@@ -98,8 +88,10 @@ export default function WebsitePublisher() {
   const location = useLocation()
 
   // Reset when sidebar item is clicked (new location.key)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { reset() }, [location.key])
+  // eslint-disable-next-line
+  useEffect(() => {
+    reset()
+  }, [location.key])
 
   const { isError: beeOffline, isSuccess: beeOnline } = useBeeHealth()
   const { data: chainState } = useChainState()
@@ -108,7 +100,7 @@ export default function WebsitePublisher() {
   const buyStamp = useBuyStamp()
   const { upload, setEnsDomain } = useUpload()
 
-const selectedSize = SIZE_PRESETS[sizeIdx]
+  const selectedSize = SIZE_PRESETS[sizeIdx]
   const selectedDuration = DURATION_PRESETS[durationIdx]
   const cost = chainState ? calcStampCost(selectedSize.depth, selectedDuration.months, chainState.currentPrice) : null
   const bzzBalance = wallet ? Number(plurToBzz(wallet.bzzBalance)) : null
@@ -129,6 +121,7 @@ const selectedSize = SIZE_PRESETS[sizeIdx]
     setDragging(false)
 
     const item = e.dataTransfer.items[0]
+
     if (!item) return
 
     try {
@@ -138,7 +131,7 @@ const selectedSize = SIZE_PRESETS[sizeIdx]
     } catch {
       // Fallback: user may have dropped a zip or wrong item
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line
   }, [])
 
   function handleDirInput(e: React.ChangeEvent<HTMLInputElement>) {
@@ -200,6 +193,7 @@ const selectedSize = SIZE_PRESETS[sizeIdx]
     setUploadProgress(null)
     setResult(null)
     setCopied(false)
+
     if (dirInputRef.current) dirInputRef.current.value = ''
   }
 
@@ -231,6 +225,7 @@ const selectedSize = SIZE_PRESETS[sizeIdx]
           {(['select', 'options'] as const).map((s, i) => {
             const labels = ['Select', 'Options']
             const currentIdx = ['select', 'options'].indexOf(step)
+
             return (
               <div key={s} className="flex items-center gap-2">
                 <div className="flex items-center gap-1.5">
@@ -474,7 +469,6 @@ const selectedSize = SIZE_PRESETS[sizeIdx]
             )}
           </div>
 
-
           <p className="text-xs leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
             Storage is funded upfront. When it runs out, your content may become unavailable. You can extend it anytime
             from Drive.
@@ -561,9 +555,7 @@ const selectedSize = SIZE_PRESETS[sizeIdx]
             <div className="rounded-lg border p-4 space-y-2" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
               <p className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
                 Permanent address{' '}
-                <span className="normal-case tracking-normal font-normal">
-                  — always points to the latest version
-                </span>
+                <span className="normal-case tracking-normal font-normal">— always points to the latest version</span>
               </p>
               <p className="font-mono text-sm break-all">{result.feedManifestAddress}</p>
               <div className="flex gap-2 flex-wrap">
@@ -653,7 +645,10 @@ const selectedSize = SIZE_PRESETS[sizeIdx]
           </div>
 
           {linkedDomain && (
-            <div className="flex items-center gap-2 rounded-lg p-3" style={{ backgroundColor: 'rgba(74,222,128,0.08)' }}>
+            <div
+              className="flex items-center gap-2 rounded-lg p-3"
+              style={{ backgroundColor: 'rgba(74,222,128,0.08)' }}
+            >
               <Globe size={13} style={{ color: '#4ade80' }} />
               <a
                 href={`https://${linkedDomain}.limo`}
@@ -701,7 +696,7 @@ const selectedSize = SIZE_PRESETS[sizeIdx]
           swarmHash={result.hash}
           feedManifest={result.feedManifestAddress}
           currentDomain={linkedDomain || undefined}
-          onLinked={(domain) => {
+          onLinked={domain => {
             setLinkedDomain(domain)
             setEnsDomain(result.recordId, domain)
           }}

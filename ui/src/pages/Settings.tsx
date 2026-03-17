@@ -12,6 +12,7 @@ export default function Settings() {
   const [searchParams] = useSearchParams()
   const [tab, setTab] = useState<SettingsTab>(() => {
     const t = searchParams.get('tab')
+
     return t === 'network' ? 'network' : 'general'
   })
   const navigate = useNavigate()
@@ -86,9 +87,13 @@ export default function Settings() {
               </p>
             </div>
             {isLoading ? (
-              <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>Loading…</p>
+              <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Loading…
+              </p>
             ) : configError ? (
-              <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>Nook backend not available.</p>
+              <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Nook backend not available.
+              </p>
             ) : (
               <div className="flex gap-3">
                 <input
@@ -165,7 +170,9 @@ export default function Settings() {
               className="rounded-xl border px-5 py-4 flex items-center justify-between gap-4"
               style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
             >
-              <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>{label}</p>
+              <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
+                {label}
+              </p>
               <p
                 className={`text-xs text-right break-all ${mono ? 'font-mono' : 'font-semibold tabular-nums'}`}
                 style={{ color: 'rgb(var(--fg))' }}
@@ -179,8 +186,12 @@ export default function Settings() {
           <div className="rounded-xl border p-5 space-y-3" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm mb-1" style={{ color: 'rgb(var(--fg-muted))' }}>Developer mode</p>
-                <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>Shows logs and node configuration.</p>
+                <p className="text-sm mb-1" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  Developer mode
+                </p>
+                <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  Shows logs and node configuration.
+                </p>
               </div>
               <button
                 role="switch"
