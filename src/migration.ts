@@ -5,6 +5,7 @@ import { getLogPath, getPath } from './path'
 function migrateFile(oldPath: string, newPath: string) {
   const oldExists = existsSync(oldPath)
   const newExists = existsSync(newPath)
+
   if (oldExists && !newExists) {
     renameSync(oldPath, newPath)
   } else if (oldExists && newExists) {
