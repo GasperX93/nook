@@ -69,7 +69,7 @@ async function fetchOwnedDomains(address: string): Promise<string[]> {
     const json = await res.json()
     const names = new Set<string>()
     const addName = (n: string | undefined) => {
-      if (n?.endsWith('.eth') && !n.includes('[')) names.add(n)
+      if (n && !n.includes('[')) names.add(n)
     }
     for (const d of json.data?.domains ?? []) addName(d.name)
     for (const d of json.data?.wrappedDomains ?? []) addName(d.name)
@@ -129,13 +129,6 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
   const lookupDomain = useCallback(async () => {
     if (!publicClient || !ensName.trim()) return
     const name = ensName.trim().toLowerCase()
-
-    if (!name.endsWith('.eth')) {
-      setError('Please enter a .eth domain name')
-      setState('error')
-
-      return
-    }
 
     setState('checking')
     setError('')
