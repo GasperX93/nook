@@ -80,7 +80,7 @@ describe('runMigrations', () => {
 
     it('does not delete keys that are absent', () => {
       mockExists.mockReturnValue(true)
-      mockRead.mockReturnValue({ 'use-postage-snapshot': false, 'blockchain-rpc-endpoint': 'http://x', 'storage-incentives-enable': false })
+      mockRead.mockReturnValue({ 'blockchain-rpc-endpoint': 'http://x', 'storage-incentives-enable': false })
       runMigrations()
       expect(mockDelete).not.toHaveBeenCalled()
     })
@@ -133,33 +133,26 @@ describe('runMigrations', () => {
     })
   })
 
-  describe('use-postage-snapshot migration', () => {
-    it('sets use-postage-snapshot to false when not already false', () => {
-      mockExists.mockReturnValue(true)
-      mockRead.mockReturnValue({ 'blockchain-rpc-endpoint': 'http://x' })
-      runMigrations()
-      expect(mockWrite).toHaveBeenCalledWith({ 'use-postage-snapshot': false })
-    })
-
-    it('does not write use-postage-snapshot when already false (boolean)', () => {
+  describe('use-postage-snapshot migration (removed in Bee v2.7.1)', () => {
+    it('deletes use-postage-snapshot when present', () => {
       mockExists.mockReturnValue(true)
       mockRead.mockReturnValue({ 'blockchain-rpc-endpoint': 'http://x', 'use-postage-snapshot': false })
       runMigrations()
-      expect(mockWrite).not.toHaveBeenCalledWith({ 'use-postage-snapshot': false })
+      expect(mockDelete).toHaveBeenCalledWith('use-postage-snapshot')
     })
 
-    it('does not write use-postage-snapshot when already the string "false"', () => {
+    it('does not delete use-postage-snapshot when absent', () => {
       mockExists.mockReturnValue(true)
-      mockRead.mockReturnValue({ 'blockchain-rpc-endpoint': 'http://x', 'use-postage-snapshot': 'false' })
+      mockRead.mockReturnValue({ 'blockchain-rpc-endpoint': 'http://x' })
       runMigrations()
-      expect(mockWrite).not.toHaveBeenCalledWith({ 'use-postage-snapshot': false })
+      expect(mockDelete).not.toHaveBeenCalledWith('use-postage-snapshot')
     })
   })
 
   describe('storage-incentives-enable default', () => {
     it('sets storage-incentives-enable to false when absent', () => {
       mockExists.mockReturnValue(true)
-      mockRead.mockReturnValue({ 'blockchain-rpc-endpoint': 'http://x', 'use-postage-snapshot': false })
+      mockRead.mockReturnValue({ 'blockchain-rpc-endpoint': 'http://x' })
       runMigrations()
       expect(mockWrite).toHaveBeenCalledWith({ 'storage-incentives-enable': false })
     })

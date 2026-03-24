@@ -1,10 +1,5 @@
 import { connectorsForWallets } from '@rainbow-me/rainbowkit'
-import {
-  injectedWallet,
-  walletConnectWallet,
-  ledgerWallet,
-  coinbaseWallet,
-} from '@rainbow-me/rainbowkit/wallets'
+import { injectedWallet, walletConnectWallet, ledgerWallet, coinbaseWallet } from '@rainbow-me/rainbowkit/wallets'
 import { http, createConfig } from 'wagmi'
 import { mainnet } from 'wagmi/chains'
 

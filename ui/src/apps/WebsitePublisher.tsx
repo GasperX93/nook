@@ -413,7 +413,7 @@ export default function WebsitePublisher() {
                   {bzzBalance === 0 ? 'Your wallet has no BZZ' : 'Not enough BZZ'}
                 </p>
                 <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-                  Swap xDAI to fund this upload.
+                  Top up your wallet with BZZ to fund this upload.
                 </p>
               </div>
               <button
@@ -421,7 +421,7 @@ export default function WebsitePublisher() {
                 className="shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold"
                 style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
               >
-                Swap xDAI → BZZ
+                Go to Wallet
               </button>
             </div>
           )}
