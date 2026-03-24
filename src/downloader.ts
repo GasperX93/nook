@@ -68,7 +68,9 @@ export async function runDownloader(force = false): Promise<void> {
     const installedVersion = getInstalledBeeVersion()
 
     if (installedVersion && installedVersion !== EXPECTED_BEE_VERSION) {
-      logger.info(`Bee version mismatch (installed: ${installedVersion}, expected: ${EXPECTED_BEE_VERSION}) — upgrading`)
+      logger.info(
+        `Bee version mismatch (installed: ${installedVersion}, expected: ${EXPECTED_BEE_VERSION}) — upgrading`,
+      )
       force = true
     }
   }
