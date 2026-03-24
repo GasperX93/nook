@@ -27,8 +27,30 @@ const platformTable = {
   linux: 'linux',
 }
 
+const EXPECTED_BEE_VERSION = '2.7.1'
+
 export function isBeeAssetReady(): boolean {
   return existsSync(getPath(process.platform === 'win32' ? 'bee.exe' : 'bee'))
+}
+
+function getInstalledBeeVersion(): string | null {
+  const beePath = getPath(process.platform === 'win32' ? 'bee.exe' : 'bee')
+
+  if (!existsSync(beePath)) {
+    return null
+  }
+
+  try {
+    const output = execSync(`"${beePath}" version`, { timeout: 5000 }).toString().trim()
+    // Output format: "2.7.1-61fab37b" — extract version before the dash
+    const version = output.split('-')[0]
+
+    return version || null
+  } catch {
+    logger.warn('Could not determine installed Bee version')
+
+    return null
+  }
 }
 
 export async function runDownloader(force = false): Promise<void> {
@@ -40,8 +62,19 @@ export async function runDownloader(force = false): Promise<void> {
     throw Error(`Unsupported system: arch=${arch()} platform=${platform()}`)
   }
   await ensureDir(paths.data)
+
+  // Check if installed Bee version matches expected version
+  if (!force) {
+    const installedVersion = getInstalledBeeVersion()
+
+    if (installedVersion && installedVersion !== EXPECTED_BEE_VERSION) {
+      logger.info(`Bee version mismatch (installed: ${installedVersion}, expected: ${EXPECTED_BEE_VERSION}) — upgrading`)
+      force = true
+    }
+  }
+
   await ensureAsset(
-    `https://github.com/ethersphere/bee/releases/download/v2.7.1/bee-${platformString}-${archString}${suffixString}`,
+    `https://github.com/ethersphere/bee/releases/download/v${EXPECTED_BEE_VERSION}/bee-${platformString}-${archString}${suffixString}`,
     `bee${suffixString}`,
     { chmod: process.platform !== 'win32', force },
   )
