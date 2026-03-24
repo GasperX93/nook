@@ -690,7 +690,15 @@ function RetrieveModal({ onClose }: { onClose: () => void }) {
     setLoading(true)
     setError(null)
     try {
-      const blob = await beeApi.downloadFile(h)
+      let blob: Blob
+
+      try {
+        blob = await beeApi.downloadFile(h)
+      } catch {
+        // Manifest download failed — try raw bytes fallback
+        blob = await beeApi.downloadBytes(h)
+      }
+
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
