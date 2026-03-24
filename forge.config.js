@@ -100,13 +100,14 @@ const config = {
       /^\/node_modules\/typescript/,
       /^\/node_modules\/undici-types/,
     ],
-    osxSign: {
-      identity: 'Developer ID Application: Swarm Association (9J9SPHU9RP)',
-      hardenedRuntime: true,
-      'gatekeeper-assess': false,
-      entitlements: 'assets/entitlements.plist',
-      'entitlements-inherit': 'assets/entitlements.plist',
-    },
+    // TODO: Re-enable when Apple Developer certificate is available
+    // osxSign: {
+    //   identity: 'Developer ID Application: Swarm Association (9J9SPHU9RP)',
+    //   hardenedRuntime: true,
+    //   'gatekeeper-assess': false,
+    //   entitlements: 'assets/entitlements.plist',
+    //   'entitlements-inherit': 'assets/entitlements.plist',
+    // },
   },
   electronInstallerDebian: {
     bin: 'Nook',
