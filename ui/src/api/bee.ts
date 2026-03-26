@@ -289,6 +289,14 @@ export const beeApi = {
     })
   },
 
+  downloadBytes: async (hash: string): Promise<Blob> => {
+    const r = await fetch(`${getBeeUrl()}/bytes/${hash}`)
+
+    if (!r.ok) throw new Error(`Download failed: ${r.status}`)
+
+    return r.blob()
+  },
+
   uploadFile: async (file: File, stampId: string): Promise<UploadResult> => {
     return fetch(`${getBeeUrl()}/bzz`, {
       method: 'POST',
