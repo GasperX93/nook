@@ -3,6 +3,14 @@ import { useNavigate } from 'react-router-dom'
 import { useBeeLogs, useConfig, useNookLogs, useUpdateConfig } from '../api/queries'
 import { useAppStore } from '../store/app'
 import { useDerivedKey } from '../hooks/useDerivedKey'
+import {
+  initSwarmId,
+  connectSwarmId,
+  disconnectSwarmId,
+  getSwarmIdClient,
+  isSwarmIdAuthenticated,
+  onSwarmIdAuthChange,
+} from '../swarm-id'
 
 function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes)
@@ -91,6 +99,233 @@ function KeyDerivationTest() {
 
 type LogTab = 'bee' | 'desktop'
 
+function SwarmIdPoc() {
+  const [status, setStatus] = useState<string>('Not initialized')
+  const [authenticated, setAuthenticated] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [log, setLog] = useState<string[]>([])
+  const [downloadRef, setDownloadRef] = useState('')
+
+  function addLog(msg: string) {
+    setLog(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`])
+  }
+
+  useEffect(() => {
+    return onSwarmIdAuthChange(auth => {
+      setAuthenticated(auth)
+      addLog(`Auth changed: ${auth}`)
+    })
+  }, [])
+
+  async function handleInit() {
+    setLoading(true)
+    try {
+      await initSwarmId()
+      setStatus('Initialized')
+      setAuthenticated(isSwarmIdAuthenticated())
+      addLog('Client initialized')
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      setStatus(`Init failed: ${msg}`)
+      addLog(`Init error: ${msg}`)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleConnect() {
+    setLoading(true)
+    try {
+      await connectSwarmId()
+      addLog('Connect popup opened')
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      addLog(`Connect error: ${msg}`)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleDisconnect() {
+    try {
+      await disconnectSwarmId()
+      addLog('Disconnected')
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      addLog(`Disconnect error: ${msg}`)
+    }
+  }
+
+  async function handleGetBatch() {
+    const client = getSwarmIdClient()
+
+    if (!client) return addLog('Client not initialized')
+    try {
+      const batch = await client.getPostageBatch()
+
+      if (batch) {
+        addLog(`Batch: ${batch.batchID.slice(0, 16)}... depth=${batch.depth} ttl=${batch.batchTTL}`)
+      } else {
+        addLog('No postage batch found')
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      addLog(`Batch error: ${msg}`)
+    }
+  }
+
+  async function handleUpload() {
+    const client = getSwarmIdClient()
+
+    if (!client) return addLog('Client not initialized')
+    try {
+      const testData = new TextEncoder().encode(`Nook POC test: ${new Date().toISOString()}`)
+      addLog(`Uploading ${testData.byteLength} bytes...`)
+      const result = await client.uploadData(testData)
+      addLog(`Upload OK! ref: ${result.reference}`)
+      setDownloadRef(result.reference)
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      addLog(`Upload error: ${msg}`)
+    }
+  }
+
+  async function handleDownload() {
+    const client = getSwarmIdClient()
+
+    if (!client || !downloadRef) return addLog('Client not initialized or no reference')
+    try {
+      addLog(`Downloading ${downloadRef.slice(0, 16)}...`)
+      const data = await client.downloadData(downloadRef)
+      const text = new TextDecoder().decode(data)
+      addLog(`Download OK! Content: ${text}`)
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      addLog(`Download error: ${msg}`)
+    }
+  }
+
+  async function handleFeedTest() {
+    const client = getSwarmIdClient()
+
+    if (!client) return addLog('Client not initialized')
+    try {
+      const topic =
+        '0x' +
+        Array.from(crypto.getRandomValues(new Uint8Array(32)))
+          .map(b => b.toString(16).padStart(2, '0'))
+          .join('')
+      addLog(`Testing feed with topic: ${topic.slice(0, 16)}...`)
+
+      const writer = client.makeSequentialFeedWriter({ topic })
+      const testPayload = new TextEncoder().encode(`feed test ${Date.now()}`)
+      const writeResult = await writer.uploadRawPayload(testPayload)
+      addLog(`Feed write OK! ref: ${writeResult.reference}`)
+
+      const reader = client.makeSequentialFeedReader({ topic })
+      const readResult = await reader.downloadRawPayload()
+      const readText = new TextDecoder().decode(readResult.payload)
+      addLog(`Feed read OK! Content: ${readText}`)
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      addLog(`Feed error: ${msg}`)
+    }
+  }
+
+  async function handleConnectionInfo() {
+    const client = getSwarmIdClient()
+
+    if (!client) return addLog('Client not initialized')
+    try {
+      const info = await client.getConnectionInfo()
+      addLog(`Connection info: ${JSON.stringify(info)}`)
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      addLog(`Connection info error: ${msg}`)
+    }
+  }
+
+  const btnClass =
+    'px-3 py-1.5 rounded text-xs font-semibold uppercase tracking-widest transition-opacity disabled:opacity-40'
+  const btnStyle = { backgroundColor: 'rgb(var(--bg))', border: '1px solid rgb(var(--border))' }
+  const accentBtnStyle = { backgroundColor: 'rgb(var(--accent))', color: '#fff' }
+
+  return (
+    <div className="rounded-xl border p-5 space-y-4 shrink-0" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
+      <div>
+        <p className="text-xs uppercase tracking-widest mb-1" style={{ color: 'rgb(var(--fg-muted))' }}>
+          Swarm ID POC
+        </p>
+        <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+          Status: {status} | Auth: {authenticated ? 'Connected' : 'Not connected'}
+        </p>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        <button onClick={handleInit} disabled={loading} className={btnClass} style={btnStyle}>
+          1. Init
+        </button>
+        <button
+          onClick={handleConnect}
+          disabled={loading || status !== 'Initialized'}
+          className={btnClass}
+          style={accentBtnStyle}
+        >
+          2. Connect
+        </button>
+        <button onClick={handleConnectionInfo} disabled={!authenticated} className={btnClass} style={btnStyle}>
+          3. Info
+        </button>
+        <button onClick={handleGetBatch} disabled={!authenticated} className={btnClass} style={btnStyle}>
+          4. Get Batch
+        </button>
+        <button onClick={handleUpload} disabled={!authenticated} className={btnClass} style={accentBtnStyle}>
+          5. Upload
+        </button>
+        <button
+          onClick={handleDownload}
+          disabled={!authenticated || !downloadRef}
+          className={btnClass}
+          style={btnStyle}
+        >
+          6. Download
+        </button>
+        <button onClick={handleFeedTest} disabled={!authenticated} className={btnClass} style={accentBtnStyle}>
+          7. Feed Test
+        </button>
+        <button
+          onClick={handleDisconnect}
+          disabled={!authenticated}
+          className={btnClass}
+          style={{ color: 'rgb(var(--fg-muted))' }}
+        >
+          Disconnect
+        </button>
+      </div>
+
+      {downloadRef && (
+        <div className="flex items-center gap-2">
+          <input
+            value={downloadRef}
+            onChange={e => setDownloadRef(e.target.value)}
+            placeholder="Swarm reference to download"
+            className="flex-1 rounded border px-3 py-1.5 text-xs font-mono"
+            style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
+          />
+        </div>
+      )}
+
+      {log.length > 0 && (
+        <div className="rounded-lg border p-3 max-h-48 overflow-auto" style={{ backgroundColor: 'rgb(var(--bg))' }}>
+          <pre className="text-xs whitespace-pre-wrap break-all" style={{ color: 'rgb(var(--fg-muted))' }}>
+            {log.join('\n')}
+          </pre>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function Dev() {
   const [logTab, setLogTab] = useState<LogTab>('bee')
   const { data: beeLogs } = useBeeLogs()
@@ -172,6 +407,9 @@ export default function Dev() {
           <div ref={bottomRef} />
         </div>
       </div>
+
+      {/* Swarm ID POC */}
+      <SwarmIdPoc />
 
       {/* Node config */}
       <div className="rounded-xl border p-5 space-y-4 shrink-0" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
