@@ -2,6 +2,92 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useBeeLogs, useConfig, useNookLogs, useUpdateConfig } from '../api/queries'
 import { useAppStore } from '../store/app'
+import { useDerivedKey } from '../hooks/useDerivedKey'
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes)
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('')
+}
+
+function KeyDerivationTest() {
+  const { signer, deriving, error, walletConnected, derive, clear } = useDerivedKey()
+  const [log, setLog] = useState<string[]>([])
+
+  function addLog(msg: string) {
+    setLog(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`])
+  }
+
+  async function handleDerive() {
+    addLog('Requesting signature...')
+    const result = await derive()
+
+    if (result) {
+      addLog(`Derived! Address: ${result.getAddress()}`)
+      addLog(`Public key: ${bytesToHex(result.getPublicKey()).slice(0, 32)}...`)
+      addLog(`Signing key (first 8): ${bytesToHex(result.getSigningKey()).slice(0, 16)}...`)
+      addLog(`Encryption key (first 8): ${bytesToHex(result.getEncryptionKey()).slice(0, 16)}...`)
+    } else {
+      addLog('Derivation failed or rejected')
+    }
+  }
+
+  async function handleDeriveAgain() {
+    addLog('Deriving again (should match)...')
+    const result = await derive()
+
+    if (result) {
+      addLog(`Address: ${result.getAddress()}`)
+      addLog('Compare with previous — should be identical')
+    }
+  }
+
+  function handleClear() {
+    clear()
+    addLog('Signer cleared')
+  }
+
+  const btnClass =
+    'px-3 py-1.5 rounded text-xs font-semibold uppercase tracking-widest transition-opacity disabled:opacity-40'
+  const btnStyle = { backgroundColor: 'rgb(var(--bg))', border: '1px solid rgb(var(--border))' }
+  const accentStyle = { backgroundColor: 'rgb(var(--accent))', color: '#fff' }
+
+  return (
+    <div className="rounded-xl border p-5 space-y-4 shrink-0" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
+      <div>
+        <p className="text-xs uppercase tracking-widest mb-1" style={{ color: 'rgb(var(--fg-muted))' }}>
+          Wallet Key Derivation
+        </p>
+        <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+          Wallet: {walletConnected ? 'Connected' : 'Not connected'} | Signer:{' '}
+          {signer ? signer.getAddress().slice(0, 10) + '...' : 'None'}
+          {deriving ? ' | Deriving...' : ''}
+          {error ? ` | Error: ${error}` : ''}
+        </p>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        <button onClick={handleDerive} disabled={!walletConnected || deriving} className={btnClass} style={accentStyle}>
+          1. Derive Key
+        </button>
+        <button onClick={handleDeriveAgain} disabled={!signer} className={btnClass} style={btnStyle}>
+          2. Derive Again (compare)
+        </button>
+        <button onClick={handleClear} disabled={!signer} className={btnClass} style={{ color: 'rgb(var(--fg-muted))' }}>
+          Clear
+        </button>
+      </div>
+
+      {log.length > 0 && (
+        <div className="rounded-lg border p-3 max-h-48 overflow-auto" style={{ backgroundColor: 'rgb(var(--bg))' }}>
+          <pre className="text-xs whitespace-pre-wrap break-all" style={{ color: 'rgb(var(--fg-muted))' }}>
+            {log.join('\n')}
+          </pre>
+        </div>
+      )}
+    </div>
+  )
+}
 
 type LogTab = 'bee' | 'desktop'
 
@@ -52,6 +138,9 @@ export default function Dev() {
           Exit Developer Mode
         </button>
       </div>
+
+      {/* Key Derivation Test */}
+      <KeyDerivationTest />
 
       {/* Logs */}
       <div className="flex flex-col min-h-0" style={{ flex: 2 }}>
