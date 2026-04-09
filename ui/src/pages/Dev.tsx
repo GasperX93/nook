@@ -139,9 +139,6 @@ export default function Dev() {
         </button>
       </div>
 
-      {/* Key Derivation Test */}
-      <KeyDerivationTest />
-
       {/* Logs */}
       <div className="flex flex-col min-h-0" style={{ flex: 2 }}>
         <div className="flex items-center justify-between mb-3 shrink-0">
@@ -242,6 +239,9 @@ export default function Dev() {
           </pre>
         )}
       </div>
+
+      {/* Key Derivation Test */}
+      <KeyDerivationTest />
     </div>
   )
 }
