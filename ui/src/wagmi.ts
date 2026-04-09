@@ -19,6 +19,10 @@ export const wagmiConfig = createConfig({
   chains: [mainnet],
   connectors,
   transports: {
-    [mainnet.id]: http('https://ethereum-rpc.publicnode.com'),
+    [mainnet.id]: http('https://ethereum-rpc.publicnode.com', {
+      timeout: 30_000,
+      retryCount: 3,
+      retryDelay: 1_000,
+    }),
   },
 })
