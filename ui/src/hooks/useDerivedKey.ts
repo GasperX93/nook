@@ -46,8 +46,20 @@ export function useDerivedKey() {
     setError(null)
 
     try {
-      const signature = await signMessageAsync({ message: SIGN_MESSAGE })
-      const newSigner = createWalletSigner(signature)
+      const signature1 = await signMessageAsync({ message: SIGN_MESSAGE })
+      const signature2 = await signMessageAsync({ message: SIGN_MESSAGE })
+
+      if (signature1 !== signature2) {
+        setError(
+          'Your wallet produced different signatures for the same message. ' +
+            'Encryption features cannot work reliably with this wallet. ' +
+            'Try using MetaMask or another software wallet.',
+        )
+
+        return null
+      }
+
+      const newSigner = createWalletSigner(signature1)
 
       setSigner(newSigner, address)
 
