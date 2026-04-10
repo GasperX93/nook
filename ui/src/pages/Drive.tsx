@@ -12,6 +12,7 @@ import {
   FolderPlus,
   Globe,
   HardDrive,
+  Lock,
   Pencil,
   Plus,
   RefreshCw,
@@ -23,6 +24,7 @@ import {
 import { useQueryClient } from '@tanstack/react-query'
 import React, { useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
+import { useAccount } from 'wagmi'
 import {
   beeApi,
   calcStampCost,
@@ -38,6 +40,8 @@ import {
 import { serverApi } from '../api/server'
 import { useBuyStamp, useChainState, useStamps, useTopupStamp, useWallet } from '../api/queries'
 import { useAppStore } from '../store/app'
+import { useDerivedKey } from '../hooks/useDerivedKey'
+import { useDriveMetadata } from '../hooks/useDriveMetadata'
 import { useUploadHistory, type DriveFolder, type UploadRecord } from '../hooks/useUploadHistory'
 import {
   detectIndexDocument,
@@ -47,6 +51,7 @@ import {
   type FileEntry,
 } from '../utils/directory'
 import ENSModal from '../components/ENSModal'
+import WalletGate from '../components/WalletGate'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -164,14 +169,23 @@ function ExpiryBar({ expiresAt, uploadedAt }: { expiresAt: number; uploadedAt: n
 
 // ─── BuyDriveModal ─────────────────────────────────────────────────────────────
 
-function BuyDriveModal({ onClose }: { onClose: () => void }) {
+function BuyDriveModal({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void
+  onCreated?: (batchId: string, encrypted: boolean) => void
+}) {
   const { data: chainState } = useChainState()
   const { data: wallet } = useWallet()
   const buyStamp = useBuyStamp()
+  const { isConnected } = useAccount()
+  const { derive } = useDerivedKey()
 
   const [driveName, setDriveName] = useState('')
   const [sizeIdx, setSizeIdx] = useState(1)
   const [durationIdx, setDurationIdx] = useState(1)
+  const [isEncrypted, setIsEncrypted] = useState(false)
   const [buying, setBuying] = useState(false)
   const [buyDone, setBuyDone] = useState(false)
   const [buyError, setBuyError] = useState<string | null>(null)
@@ -184,15 +198,31 @@ function BuyDriveModal({ onClose }: { onClose: () => void }) {
 
   async function doBuy() {
     if (!cost || !driveName.trim()) return
+
+    // If encrypting, derive wallet key now (confirms wallet works + caches for later use)
+    if (isEncrypted) {
+      const derivedSigner = await derive()
+
+      if (!derivedSigner) {
+        setBuyError('Wallet signature required for encrypted drives')
+
+        return
+      }
+    }
+
     setBuying(true)
     setBuyError(null)
     try {
-      await buyStamp.mutateAsync({
+      const result = await buyStamp.mutateAsync({
         amount: cost.amount,
         depth: selectedSize.depth,
         immutable: true,
         label: driveName.trim(),
       })
+
+      // Save encrypted flag immediately (ACT grantee setup deferred to first upload
+      // because the stamp isn't usable yet at this point — it needs on-chain confirmation)
+      onCreated?.(result.batchID, isEncrypted)
       setBuyDone(true)
       setTimeout(() => {
         setBuyDone(false)
@@ -263,6 +293,24 @@ function BuyDriveModal({ onClose }: { onClose: () => void }) {
           </div>
         </div>
 
+        {/* Encrypt */}
+        <label className="flex items-start gap-2 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={isEncrypted}
+            onChange={e => setIsEncrypted(e.target.checked)}
+            className="mt-0.5 accent-orange-500"
+          />
+          <div>
+            <p className="text-xs font-medium">Encrypt this drive</p>
+            <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+              Only you can read files on this drive. Requires wallet connection.
+            </p>
+          </div>
+        </label>
+
+        {isEncrypted && !isConnected && <WalletGate />}
+
         {/* Cost */}
         {cost && (
           <p className="text-sm">
@@ -296,7 +344,7 @@ function BuyDriveModal({ onClose }: { onClose: () => void }) {
           </button>
           <button
             onClick={doBuy}
-            disabled={buying || !cost || !canAfford || buyDone || !driveName.trim()}
+            disabled={buying || !cost || !canAfford || buyDone || !driveName.trim() || (isEncrypted && !isConnected)}
             className="flex-1 py-2 rounded-lg text-sm font-semibold disabled:opacity-40 flex items-center justify-center gap-2"
             style={{
               backgroundColor: buyDone ? 'rgba(74,222,128,0.15)' : 'rgb(var(--accent))',
@@ -985,6 +1033,8 @@ interface DriveCardProps {
   downloadingId: string | null
   downloadPct: number | null
   customName?: string
+  encrypted?: boolean
+  granteeCount?: number
   onOpen: (folderId?: string) => void
   onExtend: () => void
   onRename: (name: string) => void
@@ -1013,6 +1063,8 @@ function DriveCard({
   onDownload,
   onRemove,
   onSetENS,
+  encrypted,
+  granteeCount,
   onMoveToFolder,
 }: DriveCardProps) {
   const [expanded, setExpanded] = useState(false)
@@ -1169,7 +1221,11 @@ function DriveCard({
         <span style={{ color: 'rgb(var(--fg-muted))' }}>
           {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
         </span>
-        <HardDrive size={14} className="shrink-0" style={{ color: 'rgb(var(--fg-muted))' }} />
+        {encrypted ? (
+          <Lock size={14} className="shrink-0" style={{ color: 'rgb(var(--accent))' }} />
+        ) : (
+          <HardDrive size={14} className="shrink-0" style={{ color: 'rgb(var(--fg-muted))' }} />
+        )}
 
         {/* Drive name — unnamed drives show a prompt; named drives show pencil on hover */}
         {renaming ? (
@@ -1239,6 +1295,17 @@ function DriveCard({
             style={{ backgroundColor: 'rgba(247,104,8,0.1)', color: 'rgb(var(--accent))' }}
           >
             Confirming…
+          </span>
+        )}
+
+        {/* Encrypted badge */}
+        {encrypted && (
+          <span
+            className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0"
+            style={{ backgroundColor: 'rgba(247,104,8,0.1)', color: 'rgb(var(--accent))' }}
+          >
+            <Lock size={9} />
+            {granteeCount && granteeCount > 1 ? `${granteeCount - 1} shared` : 'Encrypted'}
           </span>
         )}
 
@@ -1601,6 +1668,7 @@ export default function Drive() {
   } = useUploadHistory()
   const { gatewayUrl } = useAppStore()
   const location = useLocation()
+  const driveMetadata = useDriveMetadata()
 
   const [customDriveLabels, setCustomDriveLabels] = useState<Record<string, string>>(() => {
     try {
@@ -1790,6 +1858,8 @@ export default function Drive() {
                 downloadingId={downloadingId}
                 downloadPct={downloadPct}
                 customName={customDriveLabels[stamp.batchID]}
+                encrypted={driveMetadata.isEncrypted(stamp.batchID)}
+                granteeCount={driveMetadata.get(stamp.batchID)?.granteeCount}
                 onOpen={folderId => {
                   setActiveDriveId(stamp.batchID)
 
@@ -1808,7 +1878,16 @@ export default function Drive() {
           </div>
         )}
 
-        {showBuyModal && <BuyDriveModal onClose={() => setShowBuyModal(false)} />}
+        {showBuyModal && (
+          <BuyDriveModal
+            onClose={() => setShowBuyModal(false)}
+            onCreated={(batchId, encrypted) => {
+              if (encrypted) {
+                driveMetadata.set(batchId, { encrypted: true })
+              }
+            }}
+          />
+        )}
         {extendingStamp && <ExtendModal stamp={extendingStamp} onClose={() => setShowExtendModal(null)} />}
         {updatingRecord && <UpdateFeedModal record={updatingRecord} onClose={() => setUpdatingId(null)} />}
         {retrieveOpen && <RetrieveModal onClose={() => setRetrieveOpen(false)} />}
