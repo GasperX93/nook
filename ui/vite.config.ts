@@ -20,6 +20,7 @@ export default defineConfig(({ command }) => ({
       '/withdraw': 'http://localhost:3000',
       '/feed-update': 'http://localhost:3000',
       '/buy-stamp': 'http://localhost:3000',
+      '/grantee': 'http://localhost:3000',
       '/chequebook-withdraw': 'http://localhost:3000',
       // Bee node API — proxied to avoid CORS issues in dev
       '/bee-api': {

@@ -204,6 +204,78 @@ export function runServer() {
     }
   })
 
+  // ─── ACT proxy endpoints ──────────────────────────────────────────────────
+  // Bee ACT endpoints require Bearer auth. We proxy them through Koa so the
+  // browser UI doesn't need the Bee password.
+
+  router.post('/grantee', async context => {
+    const { stampId, grantees } = context.request.body as { stampId: string; grantees: string[] }
+
+    if (!stampId || !grantees?.length) {
+      context.status = 400
+      context.body = { message: 'stampId and grantees are required' }
+
+      return
+    }
+
+    try {
+      const bee = makeBee()
+      const result = await bee.createGrantees(stampId, grantees)
+      context.body = {
+        ref: result.ref.toString(),
+        historyRef: result.historyref.toString(),
+      }
+    } catch (error) {
+      logger.error(error)
+      context.status = 500
+      context.body = { message: 'Failed to create grantee list' }
+    }
+  })
+
+  router.get('/grantee/:ref', async context => {
+    const { ref } = context.params
+
+    try {
+      const bee = makeBee()
+      const result = await bee.getGrantees(ref)
+      context.body = { grantees: result.grantees.map(String) }
+    } catch (error) {
+      logger.error(error)
+      context.status = 500
+      context.body = { message: 'Failed to get grantees' }
+    }
+  })
+
+  router.patch('/grantee/:ref', async context => {
+    const { ref } = context.params
+    const { stampId, historyRef, add, revoke } = context.request.body as {
+      stampId: string
+      historyRef: string
+      add?: string[]
+      revoke?: string[]
+    }
+
+    if (!stampId || !historyRef) {
+      context.status = 400
+      context.body = { message: 'stampId and historyRef are required' }
+
+      return
+    }
+
+    try {
+      const bee = makeBee()
+      const result = await bee.patchGrantees(stampId, ref, historyRef, { add, revoke })
+      context.body = {
+        ref: result.ref.toString(),
+        historyRef: result.historyref.toString(),
+      }
+    } catch (error) {
+      logger.error(error)
+      context.status = 500
+      context.body = { message: 'Failed to update grantees' }
+    }
+  })
+
   router.post('/withdraw', async context => {
     const { token, amount, to } = context.request.body as { token: string; amount: string; to: string }
 

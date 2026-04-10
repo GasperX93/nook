@@ -28,6 +28,46 @@ async function serverPost<T>(path: string, body: unknown): Promise<T> {
   return response.json() as Promise<T>
 }
 
+async function serverGet<T>(path: string): Promise<T> {
+  const response = await fetch(path, {
+    headers: authHeaders(),
+  })
+
+  if (!response.ok) {
+    let message: string
+    try {
+      const body = await response.json()
+      message = body.message ?? `${response.status} error`
+    } catch {
+      message = await response.text().catch(() => `${response.status} error`)
+    }
+    throw new Error(message)
+  }
+
+  return response.json() as Promise<T>
+}
+
+async function serverPatch<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(path, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(body),
+  })
+
+  if (!response.ok) {
+    let message: string
+    try {
+      const body = await response.json()
+      message = body.message ?? `${response.status} error`
+    } catch {
+      message = await response.text().catch(() => `${response.status} error`)
+    }
+    throw new Error(message)
+  }
+
+  return response.json() as Promise<T>
+}
+
 export const serverApi = {
   /**
    * Create a Swarm feed update (signed SOC) using the Bee node's private key.
@@ -49,4 +89,14 @@ export const serverApi = {
 
   chequebookWithdraw: async (amount: string) =>
     serverPost<{ success: boolean; transactionHash: string }>('/chequebook-withdraw', { amount }),
+
+  // ─── ACT grantee management ────────────────────────────────────────────
+
+  createGrantees: async (stampId: string, grantees: string[]) =>
+    serverPost<{ ref: string; historyRef: string }>('/grantee', { stampId, grantees }),
+
+  getGrantees: async (ref: string) => serverGet<{ grantees: string[] }>(`/grantee/${ref}`),
+
+  patchGrantees: async (ref: string, stampId: string, historyRef: string, add?: string[], revoke?: string[]) =>
+    serverPatch<{ ref: string; historyRef: string }>(`/grantee/${ref}`, { stampId, historyRef, add, revoke }),
 }

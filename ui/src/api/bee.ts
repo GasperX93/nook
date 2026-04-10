@@ -63,6 +63,7 @@ export interface NodeAddresses {
   overlay: string
   underlay: string[]
   ethereum: string // wallet address
+  publicKey: string // secp256k1 public key (sharing key for ACT)
 }
 
 export interface Stamp {
@@ -87,6 +88,10 @@ export interface ChainState {
 
 export interface UploadResult {
   reference: string // Swarm hash
+}
+
+export interface ACTUploadResult extends UploadResult {
+  historyAddress: string // ACT history reference (returned when swarm-act: true)
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -342,5 +347,103 @@ export const beeApi = {
     if (!r.ok) throw new Error(`Upload failed: ${r.status}`)
 
     return r.json() as Promise<UploadResult>
+  },
+
+  // ─── ACT (encrypted drives) ──────────────────────────────────────────────
+
+  /** Upload a single file with ACT encryption */
+  uploadFileWithACT: async (
+    file: File,
+    stampId: string,
+    historyRef?: string,
+    onProgress?: (pct: number) => void,
+  ): Promise<ACTUploadResult> => {
+    const headers: Record<string, string> = {
+      'swarm-postage-batch-id': stampId,
+      'swarm-deferred-upload': 'true',
+      'swarm-act': 'true',
+      'Content-Type': file.type || 'application/octet-stream',
+      'Content-Disposition': `inline; filename="${encodeURIComponent(file.name)}"`,
+    }
+
+    if (historyRef) headers['swarm-act-history-address'] = historyRef
+
+    // xhrUpload returns UploadResult but Bee includes historyAddress for ACT uploads
+    const result = (await xhrUpload(`${getBeeUrl()}/bzz`, file, headers, onProgress)) as ACTUploadResult
+
+    return { reference: result.reference, historyAddress: result.historyAddress ?? '' }
+  },
+
+  /** Upload a collection (folder/website) with ACT encryption */
+  uploadCollectionWithACT: async (
+    entries: FileEntry[],
+    stampId: string,
+    historyRef?: string,
+    options?: { indexDocument?: string; errorDocument?: string },
+    onProgress?: (pct: number) => void,
+  ): Promise<ACTUploadResult> => {
+    const tar = await createTar(entries)
+    const headers: Record<string, string> = {
+      'swarm-postage-batch-id': stampId,
+      'swarm-deferred-upload': 'true',
+      'swarm-collection': 'true',
+      'swarm-act': 'true',
+      'Content-Type': 'application/x-tar',
+    }
+
+    if (historyRef) headers['swarm-act-history-address'] = historyRef
+
+    if (options?.indexDocument) headers['swarm-index-document'] = options.indexDocument
+
+    if (options?.errorDocument) headers['swarm-error-document'] = options.errorDocument
+
+    const result = (await xhrUpload(
+      `${getBeeUrl()}/bzz`,
+      tar as XMLHttpRequestBodyInit,
+      headers,
+      onProgress,
+    )) as ACTUploadResult
+
+    return { reference: result.reference, historyAddress: result.historyAddress ?? '' }
+  },
+
+  /** Download a file from an ACT-encrypted drive */
+  downloadFileWithACT: async (
+    hash: string,
+    actPublisher: string,
+    historyRef: string,
+    onProgress?: (pct: number) => void,
+  ): Promise<Blob> => {
+    const headers: Record<string, string> = {
+      'swarm-act': 'true',
+      'swarm-act-publisher': actPublisher,
+      'swarm-act-history-address': historyRef,
+    }
+
+    if (!onProgress) {
+      const r = await fetch(`${getBeeUrl()}/bzz/${hash}`, { headers })
+
+      if (!r.ok) throw new Error(`ACT download failed: ${r.status}`)
+
+      return r.blob()
+    }
+
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest()
+      xhr.open('GET', `${getBeeUrl()}/bzz/${hash}`)
+
+      for (const [k, v] of Object.entries(headers)) xhr.setRequestHeader(k, v)
+
+      xhr.responseType = 'blob'
+      xhr.onprogress = e => {
+        if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100))
+      }
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) resolve(xhr.response as Blob)
+        else reject(new Error(`ACT download failed: ${xhr.status}`))
+      }
+      xhr.onerror = () => reject(new Error('ACT download failed'))
+      xhr.send()
+    })
   },
 }
