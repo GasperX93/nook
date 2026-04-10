@@ -38,7 +38,7 @@ import {
   type Stamp,
 } from '../api/bee'
 import { serverApi } from '../api/server'
-import { useBuyStamp, useChainState, useStamps, useTopupStamp, useWallet } from '../api/queries'
+import { useAddresses, useBuyStamp, useChainState, useStamps, useTopupStamp, useWallet } from '../api/queries'
 import { useAppStore } from '../store/app'
 import { useDerivedKey } from '../hooks/useDerivedKey'
 import { useDriveMetadata } from '../hooks/useDriveMetadata'
@@ -100,8 +100,15 @@ function isImageFile(name: string): boolean {
   return /\.(jpe?g|png|gif|webp|svg)$/i.test(name)
 }
 
-async function downloadFromSwarm(hash: string, filename: string, onProgress?: (pct: number) => void) {
-  const blob = await beeApi.downloadFile(hash, onProgress)
+async function downloadFromSwarm(
+  hash: string,
+  filename: string,
+  onProgress?: (pct: number) => void,
+  actOptions?: { actPublisher: string; actHistoryRef: string },
+) {
+  const blob = actOptions
+    ? await beeApi.downloadFileWithACT(hash, actOptions.actPublisher, actOptions.actHistoryRef, onProgress)
+    : await beeApi.downloadFile(hash, onProgress)
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
@@ -1409,8 +1416,11 @@ type UploadType = 'file' | 'folder'
 
 interface AddFileProps {
   driveId: string
+  encrypted?: boolean
+  actHistoryRef?: string
   onDone: () => void
   onAdd: (record: UploadRecord) => void
+  onActHistoryUpdate?: (historyRef: string) => void
 }
 
 function generateFolderIndex(name: string, entries: FileEntry[]): FileEntry {
@@ -1427,7 +1437,8 @@ ${rows}
   return { path: '_index.html', file: new FileClass([html], '_index.html', { type: 'text/html' }) }
 }
 
-function AddFilePanel({ driveId, onDone, onAdd }: AddFileProps) {
+function AddFilePanel({ driveId, encrypted, actHistoryRef, onDone, onAdd, onActHistoryUpdate }: AddFileProps) {
+  const { data: addresses } = useAddresses()
   const [phase, setPhase] = useState('')
   const [progress, setProgress] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -1449,31 +1460,52 @@ function AddFilePanel({ driveId, onDone, onAdd }: AddFileProps) {
     try {
       await pollStampUsable(driveId, setPhase)
 
-      async function doUpload(attempt: number): Promise<string> {
+      let currentHistoryRef = actHistoryRef
+
+      async function doUpload(attempt: number): Promise<{ reference: string; historyAddress?: string }> {
         if (attempt > 1) {
           setPhase(`Finalising storage… (retry ${attempt - 1})`)
           await new Promise(r => setTimeout(r, 5000))
         }
-        setPhase('Uploading…')
+        setPhase(encrypted ? 'Encrypting & uploading…' : 'Uploading…')
         setProgress(0)
+
+        if (encrypted) {
+          if (type === 'file') {
+            return beeApi.uploadFileWithACT(entries[0].file, driveId, currentHistoryRef, pct => setProgress(pct))
+          }
+
+          return beeApi.uploadCollectionWithACT(uploadEntries, driveId, currentHistoryRef, { indexDocument }, pct =>
+            setProgress(pct),
+          )
+        }
 
         if (type === 'file') {
           const res = await beeApi.uploadFileWithProgress(entries[0].file, driveId, pct => setProgress(pct))
 
-          return res.reference
+          return { reference: res.reference }
         }
 
         const res = await beeApi.uploadCollectionWithProgress(uploadEntries, driveId, { indexDocument }, pct =>
           setProgress(pct),
         )
 
-        return res.reference
+        return { reference: res.reference }
       }
 
       let reference!: string
+      let uploadHistoryAddress: string | undefined
+
       for (let attempt = 1; attempt <= 4; attempt++) {
         try {
-          reference = await doUpload(attempt)
+          const result = await doUpload(attempt)
+          reference = result.reference
+          uploadHistoryAddress = result.historyAddress
+
+          if (uploadHistoryAddress) {
+            currentHistoryRef = uploadHistoryAddress
+            onActHistoryUpdate?.(uploadHistoryAddress)
+          }
           break
         } catch (err) {
           if (attempt === 4) throw err
@@ -1500,6 +1532,9 @@ function AddFilePanel({ driveId, onDone, onAdd }: AddFileProps) {
         expiresAt,
         uploadedAt: Date.now(),
         hasFeed: false,
+        isEncrypted: encrypted || undefined,
+        actPublisher: encrypted ? addresses?.publicKey : undefined,
+        actHistoryRef: uploadHistoryAddress || undefined,
       })
 
       onDone()
@@ -1731,7 +1766,14 @@ export default function Drive() {
     setDownloadingId(id)
     setDownloadPct(0)
     try {
-      await downloadFromSwarm(hash, name, pct => setDownloadPct(pct))
+      // Check if file is encrypted — find the record and its drive metadata
+      const record = records.find(r => r.id === id)
+      const actOptions =
+        record?.isEncrypted && record?.actPublisher && record?.actHistoryRef
+          ? { actPublisher: record.actPublisher, actHistoryRef: record.actHistoryRef }
+          : undefined
+
+      await downloadFromSwarm(hash, name, pct => setDownloadPct(pct), actOptions)
     } finally {
       setDownloadingId(null)
       setDownloadPct(null)
@@ -2186,9 +2228,14 @@ export default function Drive() {
       {addingFile && (
         <AddFilePanel
           driveId={activeDriveId}
+          encrypted={driveMetadata.isEncrypted(activeDriveId)}
+          actHistoryRef={driveMetadata.get(activeDriveId)?.actHistoryRef}
           onDone={() => setAddingFile(false)}
           onAdd={record => {
             addRecord({ ...record, folderId: openFolderId ?? undefined })
+          }}
+          onActHistoryUpdate={historyRef => {
+            driveMetadata.update(activeDriveId, { actHistoryRef: historyRef })
           }}
         />
       )}

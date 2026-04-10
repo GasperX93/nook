@@ -205,8 +205,52 @@ export function runServer() {
   })
 
   // ─── ACT proxy endpoints ──────────────────────────────────────────────────
-  // Bee ACT endpoints require Bearer auth. We proxy them through Koa so the
-  // browser UI doesn't need the Bee password.
+  // Bee ACT endpoints require Bearer auth. We proxy them so the browser UI
+  // doesn't need the Bee password. Downloads are also proxied because the
+  // browser strips custom headers (swarm-act-*) on cross-origin requests.
+
+  router.get('/act/download/:hash', async context => {
+    const { hash } = context.params
+    const actPublisher = context.query['publisher'] as string
+    const actHistoryRef = context.query['history'] as string
+
+    if (!actPublisher || !actHistoryRef) {
+      context.status = 400
+      context.body = { message: 'publisher and history query params are required' }
+
+      return
+    }
+
+    try {
+      const beePassword = readConfigYaml().password as string | undefined
+      const headers: Record<string, string> = {
+        'swarm-act': 'true',
+        'swarm-act-publisher': actPublisher,
+        'swarm-act-history-address': actHistoryRef,
+      }
+
+      if (beePassword) headers['Authorization'] = `Bearer ${beePassword}`
+
+      const response = await fetch(`http://127.0.0.1:1633/bzz/${hash}/`, { headers, redirect: 'follow' })
+
+      if (!response.ok) {
+        context.status = response.status
+        context.body = { message: `ACT download failed: ${response.statusText}` }
+
+        return
+      }
+
+      const buffer = await response.arrayBuffer()
+      const contentType = response.headers.get('content-type')
+
+      if (contentType) context.type = contentType
+      context.body = Buffer.from(buffer)
+    } catch (error) {
+      logger.error(error)
+      context.status = 500
+      context.body = { message: 'ACT download failed' }
+    }
+  })
 
   router.post('/grantee', async context => {
     const { stampId, grantees } = context.request.body as { stampId: string; grantees: string[] }

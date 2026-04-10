@@ -11,6 +11,10 @@ export interface UploadOptions {
   indexDocument?: string
   feedEnabled?: boolean
   feedTopic?: string
+  /** Whether this drive uses ACT encryption */
+  encrypted?: boolean
+  /** ACT history reference (from previous upload or grantee creation) */
+  actHistoryRef?: string
   onPhase?: (phase: string) => void
   onProgress?: (pct: number | null) => void
 }
@@ -20,6 +24,8 @@ export interface UploadResult {
   expiresAt: number
   feedManifestAddress?: string
   recordId: string
+  /** Updated ACT history ref (if encrypted upload) */
+  actHistoryRef?: string
 }
 
 /**
@@ -49,7 +55,19 @@ export function useUpload() {
   const { add: addRecord, update: updateRecord, setEnsDomain } = useUploadHistory()
 
   async function upload(options: UploadOptions): Promise<UploadResult> {
-    const { entries, type, driveId, name, indexDocument, feedEnabled = false, feedTopic, onPhase, onProgress } = options
+    const {
+      entries,
+      type,
+      driveId,
+      name,
+      indexDocument,
+      feedEnabled = false,
+      feedTopic,
+      encrypted = false,
+      actHistoryRef,
+      onPhase,
+      onProgress,
+    } = options
 
     // Poll stamp usability before uploading
     await pollStampUsable(driveId, onPhase)
@@ -64,19 +82,34 @@ export function useUpload() {
 
     // Upload with retry — Bee's stamp issuer may need a moment to load
     // even after the stamp reports as usable via REST.
-    async function doUpload(attempt: number): Promise<string> {
+    let currentHistoryRef = actHistoryRef
+
+    async function doUpload(attempt: number): Promise<{ reference: string; historyAddress?: string }> {
       if (attempt > 1) {
         onPhase?.(`Finalising storage… (retry ${attempt - 1})`)
         await new Promise(r => setTimeout(r, 10000))
       }
 
-      onPhase?.('Uploading…')
+      onPhase?.(encrypted ? 'Encrypting & uploading…' : 'Uploading…')
       onProgress?.(0)
 
+      if (encrypted) {
+        // ACT-encrypted upload
+        if (type === 'file') {
+          return beeApi.uploadFileWithACT(entries[0].file, driveId, currentHistoryRef, pct => onProgress?.(pct))
+        }
+
+        const autoIndex = indexDocument ?? detectIndexDocument(entries) ?? 'index.html'
+        const opts = type === 'website' ? { indexDocument: autoIndex, errorDocument: '404.html' } : undefined
+
+        return beeApi.uploadCollectionWithACT(entries, driveId, currentHistoryRef, opts, pct => onProgress?.(pct))
+      }
+
+      // Regular (non-encrypted) upload
       if (type === 'file') {
         const res = await beeApi.uploadFileWithProgress(entries[0].file, driveId, pct => onProgress?.(pct), true)
 
-        return res.reference
+        return { reference: res.reference }
       }
 
       const autoIndex = indexDocument ?? detectIndexDocument(entries) ?? 'index.html'
@@ -86,13 +119,20 @@ export function useUpload() {
           : { deferred: true }
       const res = await beeApi.uploadCollectionWithProgress(entries, driveId, opts, pct => onProgress?.(pct))
 
-      return res.reference
+      return { reference: res.reference }
     }
 
     let reference!: string
+    let uploadHistoryAddress: string | undefined
+
     for (let attempt = 1; attempt <= 8; attempt++) {
       try {
-        reference = await doUpload(attempt)
+        const result = await doUpload(attempt)
+        reference = result.reference
+        uploadHistoryAddress = result.historyAddress
+
+        // Update history ref for next upload in same session
+        if (uploadHistoryAddress) currentHistoryRef = uploadHistoryAddress
         break
       } catch (err) {
         const msg = err instanceof Error ? err.message : ''
@@ -141,9 +181,11 @@ export function useUpload() {
       hasFeed: feedEnabled,
       feedTopic: feedEnabled ? feedTopic?.trim() || name : undefined,
       feedManifestAddress,
+      isEncrypted: encrypted || undefined,
+      actHistoryRef: uploadHistoryAddress || undefined,
     })
 
-    return { hash: reference, expiresAt, feedManifestAddress, recordId }
+    return { hash: reference, expiresAt, feedManifestAddress, recordId, actHistoryRef: uploadHistoryAddress }
   }
 
   return { upload, updateRecord, setEnsDomain }

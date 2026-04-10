@@ -3,6 +3,11 @@
 
 import { createTar } from '../utils/tar'
 import type { FileEntry } from '../utils/directory'
+import { useAppStore } from '../store/app'
+
+function useAppStoreApiKey(): string {
+  return useAppStore.getState().apiKey ?? ''
+}
 
 export function getBeeUrl(): string {
   return import.meta.env.VITE_BEE_API_URL ?? 'http://localhost:1633'
@@ -26,8 +31,15 @@ async function xhrUpload(
       }
     }
     xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) resolve(xhr.response as UploadResult)
-      else reject(new Error(`Upload failed: ${xhr.status}`))
+      if (xhr.status >= 200 && xhr.status < 300) {
+        const result = xhr.response as UploadResult
+
+        // ACT uploads return historyAddress as a response header, not in the body
+        const actHistory = xhr.getResponseHeader('Swarm-Act-History-Address')
+
+        if (actHistory) (result as ACTUploadResult).historyAddress = actHistory
+        resolve(result)
+      } else reject(new Error(`Upload failed: ${xhr.status}`))
     }
     xhr.onerror = () => reject(new Error('Upload failed'))
     xhr.send(body)
@@ -368,10 +380,9 @@ export const beeApi = {
 
     if (historyRef) headers['swarm-act-history-address'] = historyRef
 
-    // xhrUpload returns UploadResult but Bee includes historyAddress for ACT uploads
-    const result = (await xhrUpload(`${getBeeUrl()}/bzz`, file, headers, onProgress)) as ACTUploadResult
+    const result = await xhrUpload(`${getBeeUrl()}/bzz`, file, headers, onProgress)
 
-    return { reference: result.reference, historyAddress: result.historyAddress ?? '' }
+    return result as ACTUploadResult
   },
 
   /** Upload a collection (folder/website) with ACT encryption */
@@ -397,53 +408,25 @@ export const beeApi = {
 
     if (options?.errorDocument) headers['swarm-error-document'] = options.errorDocument
 
-    const result = (await xhrUpload(
-      `${getBeeUrl()}/bzz`,
-      tar as XMLHttpRequestBodyInit,
-      headers,
-      onProgress,
-    )) as ACTUploadResult
+    const result = await xhrUpload(`${getBeeUrl()}/bzz`, tar as XMLHttpRequestBodyInit, headers, onProgress)
 
-    return { reference: result.reference, historyAddress: result.historyAddress ?? '' }
+    return result as ACTUploadResult
   },
 
-  /** Download a file from an ACT-encrypted drive */
+  /** Download a file from an ACT-encrypted drive (proxied through Koa to avoid CORS) */
   downloadFileWithACT: async (
     hash: string,
     actPublisher: string,
     historyRef: string,
-    onProgress?: (pct: number) => void,
+    _onProgress?: (pct: number) => void,
   ): Promise<Blob> => {
-    const headers: Record<string, string> = {
-      'swarm-act': 'true',
-      'swarm-act-publisher': actPublisher,
-      'swarm-act-history-address': historyRef,
-    }
-
-    if (!onProgress) {
-      const r = await fetch(`${getBeeUrl()}/bzz/${hash}`, { headers })
-
-      if (!r.ok) throw new Error(`ACT download failed: ${r.status}`)
-
-      return r.blob()
-    }
-
-    return new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest()
-      xhr.open('GET', `${getBeeUrl()}/bzz/${hash}`)
-
-      for (const [k, v] of Object.entries(headers)) xhr.setRequestHeader(k, v)
-
-      xhr.responseType = 'blob'
-      xhr.onprogress = e => {
-        if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100))
-      }
-      xhr.onload = () => {
-        if (xhr.status >= 200 && xhr.status < 300) resolve(xhr.response as Blob)
-        else reject(new Error(`ACT download failed: ${xhr.status}`))
-      }
-      xhr.onerror = () => reject(new Error('ACT download failed'))
-      xhr.send()
+    const params = new URLSearchParams({ publisher: actPublisher, history: historyRef })
+    const r = await fetch(`/act/download/${hash}?${params}`, {
+      headers: { Authorization: useAppStoreApiKey() },
     })
+
+    if (!r.ok) throw new Error(`ACT download failed: ${r.status}`)
+
+    return r.blob()
   },
 }
