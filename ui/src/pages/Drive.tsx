@@ -881,6 +881,13 @@ function RecordRow({
 }: RecordRowProps) {
   const { label: expiry, urgent } = timeUntil(record.expiresAt)
   const linkHash = record.feedManifestAddress ?? record.hash
+  const isEnc = record.isEncrypted && record.actPublisher && record.actHistoryRef
+
+  // For encrypted files, build a proxy URL that includes ACT headers
+  const actProxyUrl = isEnc
+    ? `/act/download/${record.hash}?publisher=${record.actPublisher}&history=${record.actHistoryRef}`
+    : null
+  const openUrl = actProxyUrl ?? `${getBeeUrl()}/bzz/${linkHash}/`
 
   return (
     <div
@@ -894,7 +901,9 @@ function RecordRow({
         className="w-6 h-6 rounded overflow-hidden flex items-center justify-center shrink-0"
         style={{ backgroundColor: 'rgb(var(--bg))' }}
       >
-        {record.type === 'file' && isImageFile(record.name) ? (
+        {record.isEncrypted ? (
+          <Lock size={12} style={{ color: 'rgb(var(--accent))' }} />
+        ) : record.type === 'file' && isImageFile(record.name) ? (
           <img
             src={`${getBeeUrl()}/bzz/${record.hash}`}
             className="w-full h-full object-cover"
@@ -914,7 +923,7 @@ function RecordRow({
 
       {/* Name + feed badge */}
       <div className="flex items-center gap-2 flex-1 min-w-0">
-        {record.type === 'folder' || record.type === 'website' ? (
+        {(record.type === 'folder' || record.type === 'website') && !isEnc ? (
           <a
             href={`${getBeeUrl()}/bzz/${linkHash}/`}
             target="_blank"
@@ -984,24 +993,28 @@ function RecordRow({
             {record.ensDomain ? 'ENS' : 'Set ENS'}
           </button>
         )}
-        <button
-          onClick={() => onCopy(record.id, linkHash)}
-          title="Copy link"
-          className="w-6 h-6 flex items-center justify-center rounded transition-colors"
-          style={{ color: copiedId === record.id ? '#4ade80' : 'rgb(var(--fg-muted))' }}
-        >
-          <Copy size={12} />
-        </button>
-        <a
-          href={`${getBeeUrl()}/bzz/${linkHash}/`}
-          target="_blank"
-          rel="noreferrer"
-          title="Open"
-          className="w-6 h-6 flex items-center justify-center rounded"
-          style={{ color: 'rgb(var(--fg-muted))' }}
-        >
-          <ExternalLink size={12} />
-        </a>
+        {!isEnc && (
+          <button
+            onClick={() => onCopy(record.id, linkHash)}
+            title="Copy link"
+            className="w-6 h-6 flex items-center justify-center rounded transition-colors"
+            style={{ color: copiedId === record.id ? '#4ade80' : 'rgb(var(--fg-muted))' }}
+          >
+            <Copy size={12} />
+          </button>
+        )}
+        {!isEnc && (
+          <a
+            href={`${getBeeUrl()}/bzz/${linkHash}/`}
+            target="_blank"
+            rel="noreferrer"
+            title="Open"
+            className="w-6 h-6 flex items-center justify-center rounded"
+            style={{ color: 'rgb(var(--fg-muted))' }}
+          >
+            <ExternalLink size={12} />
+          </a>
+        )}
         {downloadingId === record.id && downloadPct !== null ? (
           <span className="text-[10px] tabular-nums px-1 shrink-0" style={{ color: 'rgb(var(--accent))' }}>
             {downloadPct}%
