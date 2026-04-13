@@ -1,5 +1,6 @@
 /**
  * AddSharedDriveModal — paste a share link to add a drive shared by someone else.
+ * Downloads ACT-encrypted metadata to verify access and get the file list.
  */
 import { Download, RefreshCw, X } from 'lucide-react'
 import { useState } from 'react'
@@ -7,9 +8,22 @@ import { useState } from 'react'
 import { beeApi } from '../api/bee'
 import { parseShareLink } from '../hooks/useSharedDrives'
 
+interface SharedFile {
+  name: string
+  reference: string
+  historyRef: string
+  size: number
+}
+
 interface AddSharedDriveModalProps {
   onClose: () => void
-  onAdd: (drive: { name: string; reference: string; actPublisher: string; actHistoryRef: string }) => void
+  onAdd: (drive: {
+    name: string
+    reference: string
+    actPublisher: string
+    actHistoryRef: string
+    files?: SharedFile[]
+  }) => void
 }
 
 export default function AddSharedDriveModal({ onClose, onAdd }: AddSharedDriveModalProps) {
@@ -31,14 +45,29 @@ export default function AddSharedDriveModal({ onClose, onAdd }: AddSharedDriveMo
     setError(null)
 
     try {
-      // Verify we can actually access the content
-      await beeApi.downloadFileWithACT(parsed.reference, parsed.actPublisher, parsed.actHistoryRef)
+      // Download the ACT-encrypted metadata
+      const blob = await beeApi.downloadFileWithACT(parsed.reference, parsed.actPublisher, parsed.actHistoryRef)
+      const text = await blob.text()
+
+      let driveName = name.trim() || 'Shared drive'
+      let files: SharedFile[] | undefined
+
+      try {
+        const metadata = JSON.parse(text)
+
+        if (metadata.name) driveName = name.trim() || metadata.name
+
+        if (metadata.files?.length) files = metadata.files
+      } catch {
+        // Not JSON metadata — single file share (legacy format)
+      }
 
       onAdd({
-        name: name.trim() || 'Shared drive',
+        name: driveName,
         reference: parsed.reference,
         actPublisher: parsed.actPublisher,
         actHistoryRef: parsed.actHistoryRef,
+        files,
       })
       onClose()
     } catch {

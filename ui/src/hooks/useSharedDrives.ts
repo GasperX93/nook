@@ -6,6 +6,13 @@ import { useState } from 'react'
 
 const STORAGE_KEY = 'nook-shared-drives'
 
+export interface SharedFile {
+  name: string
+  reference: string
+  historyRef: string
+  size: number
+}
+
 export interface SharedDrive {
   id: string
   name: string
@@ -13,6 +20,7 @@ export interface SharedDrive {
   actPublisher: string
   actHistoryRef: string
   addedAt: number
+  files?: SharedFile[]
 }
 
 function load(): SharedDrive[] {

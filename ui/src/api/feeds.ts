@@ -2,16 +2,18 @@
  * Per-stamp metadata feeds for encrypted drives.
  *
  * Each encrypted drive stores its metadata in a Swarm feed signed by
- * the wallet-derived key. This makes drive metadata portable (same wallet
- * = same feeds on any Bee node) and independent of the Bee node's identity.
+ * the wallet-derived key. Metadata content is ACT-encrypted so only
+ * grantees can read it.
  *
  * Feed topic: keccak256(batchId + "nook-drive-meta")
  * Signer: wallet-derived signing key (from Phase 1 NookSigner)
+ * Content: ACT-encrypted JSON (file list, drive info)
  */
 import { Bee } from '@ethersphere/bee-js'
 
-import { getBeeUrl } from './bee'
+import { beeApi, getBeeUrl } from './bee'
 import { topicFromString } from './bee'
+import { serverApi } from './server'
 import type { NookSigner } from '../crypto/signer'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -30,7 +32,7 @@ export interface DriveMetadata {
   encrypted: boolean
   created: number
   actPublisher: string // Bee node's publicKey that encrypted the content
-  actHistoryRef: string // latest ACT history reference
+  actHistoryRef: string // latest ACT history reference for metadata
   granteeRef: string // grantee list reference
   granteeCount: number
   files: DriveFileEntry[]
@@ -57,60 +59,52 @@ function makeBeeWithSigner(signer: NookSigner): Bee {
 
 /**
  * Read drive metadata from a per-stamp feed.
- * Returns null if the feed doesn't exist (drive has no metadata yet).
+ * Returns null if the feed doesn't exist or can't be decrypted.
+ * Requires ACT access (must be a grantee).
  */
-export async function readDriveMetadata(signer: NookSigner, batchId: string): Promise<DriveMetadata | null> {
+export async function readDriveMetadata(
+  signer: NookSigner,
+  batchId: string,
+  actPublisher: string,
+  actHistoryRef: string,
+): Promise<DriveMetadata | null> {
   try {
     const bee = makeBeeWithSigner(signer)
     const topic = await driveFeedTopic(batchId)
     const reader = bee.makeFeedReader(topic, signer.getAddress())
     const result = await reader.downloadReference()
-    const data = await bee.downloadData(result.reference.toHex())
-    const text = new TextDecoder().decode(data.toUint8Array())
+    const ref = result.reference.toHex()
+
+    // Download via ACT proxy (metadata is ACT-encrypted)
+    const blob = await beeApi.downloadFileWithACT(ref, actPublisher, actHistoryRef)
+    const text = await blob.text()
 
     return JSON.parse(text) as DriveMetadata
   } catch {
-    // Feed doesn't exist yet — this is expected for new or non-encrypted drives
     return null
   }
 }
 
 /**
  * Write drive metadata to a per-stamp feed.
- * Uses the wallet-derived key as the feed signer.
+ * Content is ACT-encrypted so only grantees can read it.
  */
-export async function writeDriveMetadata(signer: NookSigner, batchId: string, metadata: DriveMetadata): Promise<void> {
+export async function writeDriveMetadata(
+  signer: NookSigner,
+  batchId: string,
+  metadata: DriveMetadata,
+): Promise<{ metadataRef: string; metadataHistoryRef: string }> {
   const bee = makeBeeWithSigner(signer)
   const topic = await driveFeedTopic(batchId)
-  const data = new TextEncoder().encode(JSON.stringify(metadata))
-  const uploaded = await bee.uploadData(batchId, data)
-  const writer = bee.makeFeedWriter(topic) // signer already set on Bee instance
+  const jsonStr = JSON.stringify(metadata)
+
+  // Upload metadata with ACT encryption via server proxy
+  const uploaded = await serverApi.uploadACTMetadata(batchId, jsonStr, metadata.actHistoryRef || undefined)
+
+  // Write the ACT-encrypted reference to the feed
+  const writer = bee.makeFeedWriter(topic)
 
   await writer.uploadReference(batchId, uploaded.reference)
-}
 
-/**
- * Scan all stamps and return metadata for encrypted drives.
- * Non-encrypted drives (no feed) return null and are skipped.
- */
-export async function discoverEncryptedDrives(
-  signer: NookSigner,
-  stamps: { batchID: string; usable: boolean }[],
-): Promise<{ batchId: string; metadata: DriveMetadata }[]> {
-  const results: { batchId: string; metadata: DriveMetadata }[] = []
-
-  // Check feeds in parallel (but with a concurrency limit to avoid flooding)
-  const promises = stamps
-    .filter(s => s.usable)
-    .map(async stamp => {
-      const metadata = await readDriveMetadata(signer, stamp.batchID)
-
-      if (metadata?.encrypted) {
-        results.push({ batchId: stamp.batchID, metadata })
-      }
-    })
-
-  await Promise.allSettled(promises)
-
-  return results
+  return { metadataRef: uploaded.reference, metadataHistoryRef: uploaded.historyRef }
 }

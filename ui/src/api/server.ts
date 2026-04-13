@@ -90,6 +90,12 @@ export const serverApi = {
   chequebookWithdraw: async (amount: string) =>
     serverPost<{ success: boolean; transactionHash: string }>('/chequebook-withdraw', { amount }),
 
+  // ─── ACT operations ─────────────────────────────────────────────────────
+
+  /** Upload a small data blob with ACT encryption (for metadata) */
+  uploadACTMetadata: async (stampId: string, data: string, historyRef?: string) =>
+    serverPost<{ reference: string; historyRef: string }>('/act/upload-metadata', { stampId, data, historyRef }),
+
   // ─── ACT grantee management ────────────────────────────────────────────
 
   createGrantees: async (stampId: string, grantees: string[]) =>

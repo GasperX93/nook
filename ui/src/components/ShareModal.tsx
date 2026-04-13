@@ -8,16 +8,23 @@ import { useState } from 'react'
 
 import { serverApi } from '../api/server'
 
+interface ShareFileEntry {
+  name: string
+  reference: string
+  historyRef: string
+  size: number
+}
+
 interface ShareModalProps {
   driveName: string
   stampId: string
-  /** First file's hash (used as the drive reference in share link) */
-  driveReference?: string
   actPublisher?: string
   actHistoryRef?: string
   granteeRef?: string
   /** Node's own publicKey — to show "you" label in grantee list */
   myPublicKey?: string
+  /** Files in the drive — used to build the encrypted metadata for sharing */
+  files?: ShareFileEntry[]
   onClose: () => void
   onUpdate: (data: { granteeRef: string; historyRef: string; granteeCount: number }) => void
 }
@@ -32,11 +39,11 @@ function isValidPublicKey(key: string): boolean {
 export default function ShareModal({
   driveName,
   stampId,
-  driveReference,
   actPublisher,
   actHistoryRef,
   granteeRef,
   myPublicKey,
+  files,
   onClose,
   onUpdate,
 }: ShareModalProps) {
@@ -171,12 +178,26 @@ export default function ShareModal({
     }
   }
 
-  function copyShareLink() {
-    if (!driveReference || !actPublisher || !actHistoryRef) return
-    const link = `swarm://${driveReference}?publisher=${actPublisher}&history=${actHistoryRef}`
-    navigator.clipboard.writeText(link)
-    setCopiedLink(true)
-    setTimeout(() => setCopiedLink(false), 2000)
+  async function copyShareLink() {
+    if (!actPublisher || !actHistoryRef || !files?.length) return
+    setLoading(true)
+
+    try {
+      // Upload file list as ACT-encrypted metadata
+      const metadata = JSON.stringify({
+        name: driveName,
+        files: files.map(f => ({ name: f.name, reference: f.reference, historyRef: f.historyRef, size: f.size })),
+      })
+      const uploaded = await serverApi.uploadACTMetadata(stampId, metadata, actHistoryRef)
+      const link = `swarm://${uploaded.reference}?publisher=${actPublisher}&history=${uploaded.historyRef}`
+      navigator.clipboard.writeText(link)
+      setCopiedLink(true)
+      setTimeout(() => setCopiedLink(false), 2000)
+    } catch {
+      setError('Failed to generate share link')
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -301,7 +322,7 @@ export default function ShareModal({
         )}
 
         {/* Share link */}
-        {driveReference && actPublisher && actHistoryRef && grantees.length > 0 && (
+        {actPublisher && actHistoryRef && files && files.length > 0 && grantees.length > 0 && (
           <div className="border-t pt-4" style={{ borderColor: 'rgb(var(--border))' }}>
             <div className="flex items-center justify-between mb-2">
               <p className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>

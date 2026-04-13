@@ -209,6 +209,59 @@ export function runServer() {
   // doesn't need the Bee password. Downloads are also proxied because the
   // browser strips custom headers (swarm-act-*) on cross-origin requests.
 
+  router.post('/act/upload-metadata', async context => {
+    const { stampId, data, historyRef } = context.request.body as {
+      stampId: string
+      data: string // JSON string
+      historyRef?: string
+    }
+
+    if (!stampId || !data) {
+      context.status = 400
+      context.body = { message: 'stampId and data are required' }
+
+      return
+    }
+
+    try {
+      const beePassword = readConfigYaml().password as string | undefined
+      const headers: Record<string, string> = {
+        'swarm-postage-batch-id': stampId,
+        'swarm-deferred-upload': 'true',
+        'swarm-act': 'true',
+        'Content-Type': 'application/octet-stream',
+      }
+
+      if (historyRef) headers['swarm-act-history-address'] = historyRef
+
+      if (beePassword) headers['Authorization'] = `Bearer ${beePassword}`
+
+      const response = await fetch('http://127.0.0.1:1633/bytes', {
+        method: 'POST',
+        headers,
+        body: Buffer.from(data, 'utf-8'),
+      })
+
+      if (!response.ok) {
+        context.status = response.status
+        context.body = { message: `ACT upload failed: ${response.statusText}` }
+
+        return
+      }
+
+      const result = (await response.json()) as { reference: string }
+      const actHistory = response.headers.get('swarm-act-history-address')
+      context.body = {
+        reference: result.reference,
+        historyRef: actHistory ?? '',
+      }
+    } catch (error) {
+      logger.error(error)
+      context.status = 500
+      context.body = { message: 'ACT metadata upload failed' }
+    }
+  })
+
   router.get('/act/download/:hash', async context => {
     const { hash } = context.params
     const actPublisher = context.query['publisher'] as string
@@ -231,7 +284,12 @@ export function runServer() {
 
       if (beePassword) headers['Authorization'] = `Bearer ${beePassword}`
 
-      const response = await fetch(`http://127.0.0.1:1633/bzz/${hash}/`, { headers, redirect: 'follow' })
+      // Try /bzz first (files/collections), then /bytes (raw data like metadata)
+      let response = await fetch(`http://127.0.0.1:1633/bzz/${hash}/`, { headers, redirect: 'follow' })
+
+      if (!response.ok) {
+        response = await fetch(`http://127.0.0.1:1633/bytes/${hash}`, { headers })
+      }
 
       if (!response.ok) {
         context.status = response.status

@@ -1720,6 +1720,93 @@ function AddFilePanel({ driveId, encrypted, actHistoryRef, onDone, onAdd, onActH
 
 // ─── Main component ────────────────────────────────────────────────────────────
 
+// ─── SharedDriveCard ──────────────────────────────────────────────────────────
+
+function SharedDriveCard({
+  drive,
+  onRemove,
+}: {
+  drive: import('../hooks/useSharedDrives').SharedDrive
+  onRemove: () => void
+}) {
+  const [expanded, setExpanded] = useState(false)
+
+  async function downloadFile(ref: string, historyRef: string, fileName: string) {
+    try {
+      const blob = await beeApi.downloadFileWithACT(ref, drive.actPublisher, historyRef)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = fileName
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch {
+      // eslint-disable-next-line no-alert
+      alert('Access revoked or content unavailable.')
+    }
+  }
+
+  return (
+    <div className="border-b" style={{ borderColor: 'rgb(var(--border))' }}>
+      <div
+        className="flex items-center gap-3 px-4 py-3 hover:bg-[rgb(var(--bg-surface))] transition-colors cursor-pointer"
+        onClick={() => drive.files?.length && setExpanded(v => !v)}
+      >
+        {drive.files?.length ? (
+          <span style={{ color: 'rgb(var(--fg-muted))' }}>
+            {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+          </span>
+        ) : (
+          <span className="w-[13px]" />
+        )}
+        <Users size={14} className="shrink-0" style={{ color: 'rgb(var(--accent))' }} />
+        <span className="text-sm font-medium flex-1 truncate">{drive.name}</span>
+        <span className="text-xs shrink-0" style={{ color: 'rgb(var(--fg-muted))' }}>
+          {drive.files?.length ? `${drive.files.length} file${drive.files.length !== 1 ? 's' : ''}` : ''}
+        </span>
+        <span className="text-xs shrink-0" style={{ color: 'rgb(var(--fg-muted))' }}>
+          from {drive.actPublisher.slice(0, 8)}…
+        </span>
+        <button
+          onClick={e => {
+            e.stopPropagation()
+            onRemove()
+          }}
+          className="shrink-0 w-6 h-6 flex items-center justify-center rounded transition-colors hover:text-red-400"
+          style={{ color: 'rgb(var(--fg-muted))' }}
+          title="Remove from list"
+        >
+          <Trash2 size={12} />
+        </button>
+      </div>
+
+      {expanded && drive.files && (
+        <div className="border-t py-2 px-6" style={{ borderColor: 'rgb(var(--border))' }}>
+          {drive.files.map(file => (
+            <div key={file.reference} className="flex items-center gap-3 px-2 py-2">
+              <Lock size={12} style={{ color: 'rgb(var(--accent))' }} />
+              <span className="text-xs font-medium flex-1 truncate">{file.name}</span>
+              <span className="text-xs shrink-0" style={{ color: 'rgb(var(--fg-muted))' }}>
+                {formatBytes(file.size)}
+              </span>
+              <button
+                onClick={async () => downloadFile(file.reference, file.historyRef, file.name)}
+                className="shrink-0 w-6 h-6 flex items-center justify-center rounded transition-colors"
+                style={{ color: 'rgb(var(--fg-muted))' }}
+                title="Download"
+              >
+                <Download size={12} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function Drive() {
   const { data: stamps } = useStamps()
   const {
@@ -1980,52 +2067,7 @@ export default function Drive() {
           ) : (
             <div className="border-t" style={{ borderColor: 'rgb(var(--border))' }}>
               {sharedDrives.drives.map(drive => (
-                <div
-                  key={drive.id}
-                  className="flex items-center gap-3 px-4 py-3 border-b hover:bg-[rgb(var(--bg-surface))] transition-colors"
-                  style={{ borderColor: 'rgb(var(--border))' }}
-                >
-                  <Users size={14} className="shrink-0" style={{ color: 'rgb(var(--accent))' }} />
-                  <span className="text-sm font-medium flex-1 truncate">{drive.name}</span>
-                  <span className="text-xs shrink-0" style={{ color: 'rgb(var(--fg-muted))' }}>
-                    from {drive.actPublisher.slice(0, 8)}…
-                  </span>
-                  <button
-                    onClick={async () => {
-                      try {
-                        const blob = await beeApi.downloadFileWithACT(
-                          drive.reference,
-                          drive.actPublisher,
-                          drive.actHistoryRef,
-                        )
-                        const url = URL.createObjectURL(blob)
-                        const a = document.createElement('a')
-                        a.href = url
-                        a.download = drive.name
-                        document.body.appendChild(a)
-                        a.click()
-                        document.body.removeChild(a)
-                        URL.revokeObjectURL(url)
-                      } catch {
-                        // eslint-disable-next-line no-alert
-                        alert('Access revoked or content unavailable.')
-                      }
-                    }}
-                    className="shrink-0 w-6 h-6 flex items-center justify-center rounded transition-colors"
-                    style={{ color: 'rgb(var(--fg-muted))' }}
-                    title="Download"
-                  >
-                    <Download size={12} />
-                  </button>
-                  <button
-                    onClick={() => sharedDrives.remove(drive.id)}
-                    className="shrink-0 w-6 h-6 flex items-center justify-center rounded transition-colors hover:text-red-400"
-                    style={{ color: 'rgb(var(--fg-muted))' }}
-                    title="Remove from list"
-                  >
-                    <Trash2 size={12} />
-                  </button>
-                </div>
+                <SharedDriveCard key={drive.id} drive={drive} onRemove={() => sharedDrives.remove(drive.id)} />
               ))}
             </div>
           )}
@@ -2057,11 +2099,13 @@ export default function Drive() {
               <ShareModal
                 driveName={stamp?.label || customDriveLabels[showShareModal] || 'Encrypted drive'}
                 stampId={showShareModal}
-                driveReference={firstRef?.hash}
                 actPublisher={meta?.actPublisher || firstRef?.actPublisher}
                 actHistoryRef={meta?.actHistoryRef || firstRef?.actHistoryRef}
                 granteeRef={meta?.granteeRef}
                 myPublicKey={nodeAddresses?.publicKey}
+                files={driveRecordsForShare
+                  .filter(r => r.actHistoryRef && r.actPublisher)
+                  .map(r => ({ name: r.name, reference: r.hash, historyRef: r.actHistoryRef!, size: r.size }))}
                 onClose={() => setShowShareModal(null)}
                 onUpdate={({ granteeRef, historyRef, granteeCount }) => {
                   driveMetadata.update(showShareModal, { granteeRef, actHistoryRef: historyRef, granteeCount })
