@@ -1,0 +1,127 @@
+/**
+ * AddSharedDriveModal — paste a share link to add a drive shared by someone else.
+ */
+import { Download, RefreshCw, X } from 'lucide-react'
+import { useState } from 'react'
+
+import { beeApi } from '../api/bee'
+import { parseShareLink } from '../hooks/useSharedDrives'
+
+interface AddSharedDriveModalProps {
+  onClose: () => void
+  onAdd: (drive: { name: string; reference: string; actPublisher: string; actHistoryRef: string }) => void
+}
+
+export default function AddSharedDriveModal({ onClose, onAdd }: AddSharedDriveModalProps) {
+  const [link, setLink] = useState('')
+  const [name, setName] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function handleAdd() {
+    const parsed = parseShareLink(link)
+
+    if (!parsed) {
+      setError('Invalid share link. Expected format: swarm://reference?publisher=...&history=...')
+
+      return
+    }
+
+    setLoading(true)
+    setError(null)
+
+    try {
+      // Verify we can actually access the content
+      await beeApi.downloadFileWithACT(parsed.reference, parsed.actPublisher, parsed.actHistoryRef)
+
+      onAdd({
+        name: name.trim() || 'Shared drive',
+        reference: parsed.reference,
+        actPublisher: parsed.actPublisher,
+        actHistoryRef: parsed.actHistoryRef,
+      })
+      onClose()
+    } catch {
+      setError('Could not access this drive. Make sure the owner has granted you access using your sharing key.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 flex items-center justify-center z-50"
+      style={{ backgroundColor: 'rgba(0,0,0,0.6)' }}
+      onClick={onClose}
+    >
+      <div
+        className="rounded-xl border p-6 w-[420px] space-y-5"
+        style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Download size={14} style={{ color: 'rgb(var(--accent))' }} />
+            <p className="text-sm font-semibold">Add shared drive</p>
+          </div>
+          <button onClick={onClose} style={{ color: 'rgb(var(--fg-muted))' }}>
+            <X size={16} />
+          </button>
+        </div>
+
+        <div>
+          <p className="text-xs uppercase tracking-widest mb-2" style={{ color: 'rgb(var(--fg-muted))' }}>
+            Drive name
+          </p>
+          <input
+            type="text"
+            value={name}
+            onChange={e => setName(e.target.value)}
+            placeholder="e.g. Alice's documents"
+            className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-none"
+            style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
+            autoFocus
+          />
+        </div>
+
+        <div>
+          <p className="text-xs uppercase tracking-widest mb-2" style={{ color: 'rgb(var(--fg-muted))' }}>
+            Share link
+          </p>
+          <textarea
+            value={link}
+            onChange={e => setLink(e.target.value)}
+            placeholder="swarm://reference?publisher=...&history=..."
+            className="w-full rounded-lg border px-3 py-2 text-xs font-mono focus:outline-none resize-none h-20"
+            style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
+          />
+        </div>
+
+        {error && (
+          <p className="text-xs" style={{ color: '#ef4444' }}>
+            {error}
+          </p>
+        )}
+
+        <div className="flex gap-3">
+          <button
+            onClick={onClose}
+            className="flex-1 py-2 rounded-lg text-sm"
+            style={{ color: 'rgb(var(--fg-muted))' }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleAdd}
+            disabled={loading || !link.trim()}
+            className="flex-1 py-2 rounded-lg text-sm font-semibold disabled:opacity-40 flex items-center justify-center gap-2"
+            style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+          >
+            {loading && <RefreshCw size={13} className="animate-spin" />}
+            {loading ? 'Verifying…' : 'Add drive'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}

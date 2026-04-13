@@ -20,6 +20,7 @@ import {
   Search,
   Trash2,
   Upload,
+  Users,
 } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import React, { useEffect, useRef, useState } from 'react'
@@ -42,6 +43,7 @@ import { useAddresses, useBuyStamp, useChainState, useStamps, useTopupStamp, use
 import { useAppStore } from '../store/app'
 import { useDerivedKey } from '../hooks/useDerivedKey'
 import { useDriveMetadata } from '../hooks/useDriveMetadata'
+import { useSharedDrives } from '../hooks/useSharedDrives'
 import { useUploadHistory, type DriveFolder, type UploadRecord } from '../hooks/useUploadHistory'
 import {
   detectIndexDocument,
@@ -50,6 +52,7 @@ import {
   totalSize,
   type FileEntry,
 } from '../utils/directory'
+import AddSharedDriveModal from '../components/AddSharedDriveModal'
 import ENSModal from '../components/ENSModal'
 import ShareModal from '../components/ShareModal'
 import WalletGate from '../components/WalletGate'
@@ -1735,6 +1738,7 @@ export default function Drive() {
   const { gatewayUrl } = useAppStore()
   const location = useLocation()
   const driveMetadata = useDriveMetadata()
+  const sharedDrives = useSharedDrives()
 
   const [customDriveLabels, setCustomDriveLabels] = useState<Record<string, string>>(() => {
     try {
@@ -1757,6 +1761,7 @@ export default function Drive() {
   const [showBuyModal, setShowBuyModal] = useState(false)
   const [showExtendModal, setShowExtendModal] = useState<string | null>(null) // batchID
   const [showShareModal, setShowShareModal] = useState<string | null>(null) // batchID
+  const [showAddSharedModal, setShowAddSharedModal] = useState(false)
   const [addingFile, setAddingFile] = useState(false)
   const [search, setSearch] = useState('')
   const [copiedId, setCopiedId] = useState<string | null>(null)
@@ -1951,6 +1956,83 @@ export default function Drive() {
               />
             ))}
           </div>
+        )}
+
+        {/* Shared with me */}
+        <div className="mt-6">
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-xs uppercase tracking-widest font-semibold" style={{ color: 'rgb(var(--fg-muted))' }}>
+              Shared with me
+            </p>
+            <button
+              onClick={() => setShowAddSharedModal(true)}
+              className="flex items-center gap-1 text-xs font-medium transition-colors"
+              style={{ color: 'rgb(var(--accent))' }}
+            >
+              <Plus size={11} />
+              Add shared drive
+            </button>
+          </div>
+          {sharedDrives.drives.length === 0 ? (
+            <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+              No shared drives yet. When someone shares a drive with you, paste the share link here.
+            </p>
+          ) : (
+            <div className="border-t" style={{ borderColor: 'rgb(var(--border))' }}>
+              {sharedDrives.drives.map(drive => (
+                <div
+                  key={drive.id}
+                  className="flex items-center gap-3 px-4 py-3 border-b hover:bg-[rgb(var(--bg-surface))] transition-colors"
+                  style={{ borderColor: 'rgb(var(--border))' }}
+                >
+                  <Users size={14} className="shrink-0" style={{ color: 'rgb(var(--accent))' }} />
+                  <span className="text-sm font-medium flex-1 truncate">{drive.name}</span>
+                  <span className="text-xs shrink-0" style={{ color: 'rgb(var(--fg-muted))' }}>
+                    from {drive.actPublisher.slice(0, 8)}…
+                  </span>
+                  <button
+                    onClick={async () => {
+                      try {
+                        const blob = await beeApi.downloadFileWithACT(
+                          drive.reference,
+                          drive.actPublisher,
+                          drive.actHistoryRef,
+                        )
+                        const url = URL.createObjectURL(blob)
+                        const a = document.createElement('a')
+                        a.href = url
+                        a.download = drive.name
+                        document.body.appendChild(a)
+                        a.click()
+                        document.body.removeChild(a)
+                        URL.revokeObjectURL(url)
+                      } catch {
+                        // eslint-disable-next-line no-alert
+                        alert('Access revoked or content unavailable.')
+                      }
+                    }}
+                    className="shrink-0 w-6 h-6 flex items-center justify-center rounded transition-colors"
+                    style={{ color: 'rgb(var(--fg-muted))' }}
+                    title="Download"
+                  >
+                    <Download size={12} />
+                  </button>
+                  <button
+                    onClick={() => sharedDrives.remove(drive.id)}
+                    className="shrink-0 w-6 h-6 flex items-center justify-center rounded transition-colors hover:text-red-400"
+                    style={{ color: 'rgb(var(--fg-muted))' }}
+                    title="Remove from list"
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {showAddSharedModal && (
+          <AddSharedDriveModal onClose={() => setShowAddSharedModal(false)} onAdd={drive => sharedDrives.add(drive)} />
         )}
 
         {showBuyModal && (

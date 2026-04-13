@@ -61,6 +61,48 @@ export default function ShareModal({
     localStorage.setItem('nook-grantee-labels', JSON.stringify(next))
   }
 
+  /** Strip compression prefix (02/03/04) and 0x from a public key for comparison */
+  function stripKeyPrefix(k: string): string {
+    const clean = k.toLowerCase().replace('0x', '')
+
+    // Compressed keys start with 02 or 03 (66 chars), uncompressed with 04 (130 chars)
+    // Bee returns uncompressed without 04 prefix (128 chars)
+    if (clean.length === 66 && (clean.startsWith('02') || clean.startsWith('03'))) {
+      return clean.slice(2) // Remove 02/03 → 64 char X coordinate
+    }
+
+    if (clean.length === 130 && clean.startsWith('04')) {
+      return clean.slice(2, 66) // Remove 04, take X coordinate only
+    }
+
+    // Uncompressed without prefix (128 chars) — take first 64 (X coordinate)
+    if (clean.length === 128) {
+      return clean.slice(0, 64)
+    }
+
+    return clean
+  }
+
+  /** Find a label for a key, matching compressed vs uncompressed formats */
+  function findLabel(key: string): string | undefined {
+    if (labels[key]) return labels[key]
+
+    const keyX = stripKeyPrefix(key)
+
+    for (const [storedKey, label] of Object.entries(labels)) {
+      if (stripKeyPrefix(storedKey) === keyX) return label
+    }
+
+    return undefined
+  }
+
+  /** Check if a key matches our own publicKey */
+  function isMyKey(key: string): boolean {
+    if (!myPublicKey) return false
+
+    return stripKeyPrefix(key) === stripKeyPrefix(myPublicKey)
+  }
+
   // Load existing grantees on first render
   if (!loadedGrantees && granteeRef) {
     setLoadedGrantees(true)
@@ -175,16 +217,15 @@ export default function ShareModal({
               </p>
             ) : (
               grantees.map(key => {
-                const cleanKey = key.toLowerCase().replace('0x', '')
-                const cleanMyKey = myPublicKey?.toLowerCase().replace('0x', '') ?? ''
-                const isMe = cleanMyKey.length > 0 && (cleanKey.includes(cleanMyKey) || cleanMyKey.includes(cleanKey))
+                const isMe = isMyKey(key)
+                const label = findLabel(key)
 
                 return (
                   <div key={key} className="flex items-center justify-between px-3 py-2">
                     <span className="text-xs truncate flex-1" style={{ color: 'rgb(var(--fg-muted))' }}>
-                      {labels[key] && (
+                      {label && (
                         <span className="font-medium mr-2" style={{ color: 'rgb(var(--fg))' }}>
-                          {labels[key]}
+                          {label}
                         </span>
                       )}
                       <span className="font-mono">
