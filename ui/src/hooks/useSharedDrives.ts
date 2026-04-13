@@ -21,6 +21,7 @@ export interface SharedDrive {
   actHistoryRef: string
   addedAt: number
   files?: SharedFile[]
+  fromLabel?: string
 }
 
 function load(): SharedDrive[] {

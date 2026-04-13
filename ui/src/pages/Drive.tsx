@@ -1730,6 +1730,41 @@ function SharedDriveCard({
   onRemove: () => void
 }) {
   const [expanded, setExpanded] = useState(false)
+  const [editingName, setEditingName] = useState(false)
+  const [nameInput, setNameInput] = useState('')
+  const [editingFrom, setEditingFrom] = useState(false)
+  const [fromInput, setFromInput] = useState('')
+
+  // Look up label for the publisher key from grantee labels
+  const granteeLabels: Record<string, string> = (() => {
+    try {
+      return JSON.parse(localStorage.getItem('nook-grantee-labels') ?? '{}')
+    } catch {
+      return {}
+    }
+  })()
+
+  function findPublisherLabel(): string | undefined {
+    const pubClean = drive.actPublisher.toLowerCase().replace('0x', '')
+
+    for (const [key, label] of Object.entries(granteeLabels)) {
+      const keyClean = key.toLowerCase().replace('0x', '')
+
+      if (pubClean.includes(keyClean) || keyClean.includes(pubClean)) return label
+    }
+
+    return undefined
+  }
+
+  const publisherLabel = drive.fromLabel ?? findPublisherLabel()
+
+  function saveToLocalStorage(partial: Record<string, string>) {
+    const drives: import('../hooks/useSharedDrives').SharedDrive[] = JSON.parse(
+      localStorage.getItem('nook-shared-drives') ?? '[]',
+    )
+    const updated = drives.map(d => (d.id === drive.id ? { ...d, ...partial } : d))
+    localStorage.setItem('nook-shared-drives', JSON.stringify(updated))
+  }
 
   async function downloadFile(ref: string, historyRef: string, fileName: string) {
     try {
@@ -1762,13 +1797,92 @@ function SharedDriveCard({
           <span className="w-[13px]" />
         )}
         <Users size={14} className="shrink-0" style={{ color: 'rgb(var(--accent))' }} />
-        <span className="text-sm font-medium flex-1 truncate">{drive.name}</span>
+
+        {/* Drive name — editable */}
+        {editingName ? (
+          <input
+            autoFocus
+            value={nameInput}
+            onChange={e => setNameInput(e.target.value)}
+            onBlur={() => {
+              if (nameInput.trim()) saveToLocalStorage({ name: nameInput.trim() })
+              setEditingName(false)
+            }}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && nameInput.trim()) {
+                saveToLocalStorage({ name: nameInput.trim() })
+                setEditingName(false)
+              }
+
+              if (e.key === 'Escape') setEditingName(false)
+            }}
+            onClick={e => e.stopPropagation()}
+            className="text-sm font-medium bg-transparent border-b outline-none flex-1 min-w-0"
+            style={{ borderColor: 'rgb(var(--accent))', color: 'rgb(var(--fg))' }}
+          />
+        ) : (
+          <span className="text-sm font-medium truncate flex-1 group/name flex items-center gap-1 min-w-0">
+            <span className="truncate">{drive.name}</span>
+            <button
+              onClick={e => {
+                e.stopPropagation()
+                setNameInput(drive.name)
+                setEditingName(true)
+              }}
+              className="opacity-0 group-hover/name:opacity-100 transition-opacity shrink-0"
+              style={{ color: 'rgb(var(--fg-muted))' }}
+            >
+              <Pencil size={10} />
+            </button>
+          </span>
+        )}
+
         <span className="text-xs shrink-0" style={{ color: 'rgb(var(--fg-muted))' }}>
           {drive.files?.length ? `${drive.files.length} file${drive.files.length !== 1 ? 's' : ''}` : ''}
         </span>
-        <span className="text-xs shrink-0" style={{ color: 'rgb(var(--fg-muted))' }}>
-          from {drive.actPublisher.slice(0, 8)}…
-        </span>
+
+        {/* From label — editable */}
+        {editingFrom ? (
+          <input
+            autoFocus
+            value={fromInput}
+            onChange={e => setFromInput(e.target.value)}
+            onBlur={() => {
+              if (fromInput.trim()) saveToLocalStorage({ fromLabel: fromInput.trim() })
+              setEditingFrom(false)
+            }}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && fromInput.trim()) {
+                saveToLocalStorage({ fromLabel: fromInput.trim() })
+                setEditingFrom(false)
+              }
+
+              if (e.key === 'Escape') setEditingFrom(false)
+            }}
+            onClick={e => e.stopPropagation()}
+            className="text-xs bg-transparent border-b outline-none w-24"
+            style={{ borderColor: 'rgb(var(--accent))', color: 'rgb(var(--fg))' }}
+            placeholder="Name"
+          />
+        ) : (
+          <span
+            className="text-xs shrink-0 group/from flex items-center gap-1"
+            style={{ color: 'rgb(var(--fg-muted))' }}
+          >
+            from {publisherLabel ?? `${drive.actPublisher.slice(0, 8)}…`}
+            <button
+              onClick={e => {
+                e.stopPropagation()
+                setFromInput(publisherLabel ?? '')
+                setEditingFrom(true)
+              }}
+              className="opacity-0 group-hover/from:opacity-100 transition-opacity"
+              style={{ color: 'rgb(var(--fg-muted))' }}
+            >
+              <Pencil size={9} />
+            </button>
+          </span>
+        )}
         <button
           onClick={e => {
             e.stopPropagation()
