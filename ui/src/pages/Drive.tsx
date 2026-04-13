@@ -51,6 +51,7 @@ import {
   type FileEntry,
 } from '../utils/directory'
 import ENSModal from '../components/ENSModal'
+import ShareModal from '../components/ShareModal'
 import WalletGate from '../components/WalletGate'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -1057,6 +1058,7 @@ interface DriveCardProps {
   granteeCount?: number
   onOpen: (folderId?: string) => void
   onExtend: () => void
+  onShare?: () => void
   onRename: (name: string) => void
   onCopy: (id: string, hash: string) => void
   onUpdate: (id: string) => void
@@ -1085,6 +1087,7 @@ function DriveCard({
   onSetENS,
   encrypted,
   granteeCount,
+  onShare,
   onMoveToFolder,
 }: DriveCardProps) {
   const [expanded, setExpanded] = useState(false)
@@ -1318,15 +1321,29 @@ function DriveCard({
           </span>
         )}
 
-        {/* Encrypted badge */}
+        {/* Encrypted badge + Share button */}
         {encrypted && (
-          <span
-            className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0"
-            style={{ backgroundColor: 'rgba(247,104,8,0.1)', color: 'rgb(var(--accent))' }}
-          >
-            <Lock size={9} />
-            {granteeCount && granteeCount > 1 ? `${granteeCount - 1} shared` : 'Encrypted'}
-          </span>
+          <>
+            <span
+              className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0"
+              style={{ backgroundColor: 'rgba(247,104,8,0.1)', color: 'rgb(var(--accent))' }}
+            >
+              <Lock size={9} />
+              {granteeCount && granteeCount > 1 ? `${granteeCount - 1} shared` : 'Encrypted'}
+            </span>
+            {onShare && (
+              <button
+                onClick={e => {
+                  e.stopPropagation()
+                  onShare()
+                }}
+                className="text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0 transition-colors"
+                style={{ color: 'rgb(var(--accent))' }}
+              >
+                Share
+              </button>
+            )}
+          </>
         )}
 
         {/* Website badge */}
@@ -1714,6 +1731,7 @@ export default function Drive() {
     moveToFolder,
     setEnsDomain,
   } = useUploadHistory()
+  const { data: nodeAddresses } = useAddresses()
   const { gatewayUrl } = useAppStore()
   const location = useLocation()
   const driveMetadata = useDriveMetadata()
@@ -1738,6 +1756,7 @@ export default function Drive() {
   const [activeDriveId, setActiveDriveId] = useState<string | null>(null)
   const [showBuyModal, setShowBuyModal] = useState(false)
   const [showExtendModal, setShowExtendModal] = useState<string | null>(null) // batchID
+  const [showShareModal, setShowShareModal] = useState<string | null>(null) // batchID
   const [addingFile, setAddingFile] = useState(false)
   const [search, setSearch] = useState('')
   const [copiedId, setCopiedId] = useState<string | null>(null)
@@ -1920,6 +1939,7 @@ export default function Drive() {
 
                   if (folderId) setOpenFolderId(folderId)
                 }}
+                onShare={() => setShowShareModal(stamp.batchID)}
                 onExtend={() => setShowExtendModal(stamp.batchID)}
                 onRename={name => renameDrive(stamp.batchID, name)}
                 onCopy={copyHash}
@@ -1944,6 +1964,29 @@ export default function Drive() {
           />
         )}
         {extendingStamp && <ExtendModal stamp={extendingStamp} onClose={() => setShowExtendModal(null)} />}
+        {showShareModal &&
+          (() => {
+            const meta = driveMetadata.get(showShareModal)
+            const stamp = allStamps.find(s => s.batchID === showShareModal)
+            const driveRecordsForShare = records.filter(r => r.driveId === showShareModal)
+            const firstRef = driveRecordsForShare.find(r => r.actHistoryRef)
+
+            return (
+              <ShareModal
+                driveName={stamp?.label || customDriveLabels[showShareModal] || 'Encrypted drive'}
+                stampId={showShareModal}
+                driveReference={firstRef?.hash}
+                actPublisher={meta?.actPublisher || firstRef?.actPublisher}
+                actHistoryRef={meta?.actHistoryRef || firstRef?.actHistoryRef}
+                granteeRef={meta?.granteeRef}
+                myPublicKey={nodeAddresses?.publicKey}
+                onClose={() => setShowShareModal(null)}
+                onUpdate={({ granteeRef, historyRef, granteeCount }) => {
+                  driveMetadata.update(showShareModal, { granteeRef, actHistoryRef: historyRef, granteeCount })
+                }}
+              />
+            )
+          })()}
         {updatingRecord && <UpdateFeedModal record={updatingRecord} onClose={() => setUpdatingId(null)} />}
         {retrieveOpen && <RetrieveModal onClose={() => setRetrieveOpen(false)} />}
         {ensRecordId &&
