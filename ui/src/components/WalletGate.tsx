@@ -9,7 +9,7 @@ interface WalletGateProps {
   message?: string
 }
 
-export default function WalletGate({ message = 'Connect your wallet to enable encryption.' }: WalletGateProps) {
+export default function WalletGate({ message = 'Connect your wallet to set up your encrypted drive.' }: WalletGateProps) {
   return (
     <div
       className="rounded-lg border p-4 flex flex-col items-center gap-3"

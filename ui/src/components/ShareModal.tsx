@@ -49,6 +49,7 @@ export default function ShareModal({
 }: ShareModalProps) {
   const [newKey, setNewKey] = useState('')
   const [newLabel, setNewLabel] = useState('')
+  const [showSuggestions, setShowSuggestions] = useState(false)
   const [grantees, setGrantees] = useState<string[]>([])
   const [labels, setLabels] = useState<Record<string, string>>(() => {
     try {
@@ -109,6 +110,25 @@ export default function ShareModal({
 
     return stripKeyPrefix(key) === stripKeyPrefix(myPublicKey)
   }
+
+  // Contact suggestions — filter from grantee labels, exclude already-added grantees
+  const contactSuggestions: [string, string][] = Object.entries(labels)
+    .filter(([key, label]) => {
+      // Exclude own key
+      if (isMyKey(key)) return false
+
+      // Exclude already-added grantees
+      if (grantees.some(g => stripKeyPrefix(g) === stripKeyPrefix(key))) return false
+
+      // Filter by typed name
+      if (newLabel.trim()) {
+        return label.toLowerCase().includes(newLabel.toLowerCase())
+      }
+
+      // Show all contacts when input is empty/focused
+      return true
+    })
+    .slice(0, 6) // Max 6 suggestions
 
   // Load existing grantees on first render
   if (!loadedGrantees && granteeRef) {
@@ -285,14 +305,47 @@ export default function ShareModal({
             Add someone
           </p>
           <div className="space-y-2">
-            <input
-              type="text"
-              value={newLabel}
-              onChange={e => setNewLabel(e.target.value)}
-              placeholder="Name (optional)"
-              className="w-full rounded-lg border px-3 py-2 text-xs focus:outline-none"
-              style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
-            />
+            <div className="relative">
+              <input
+                type="text"
+                value={newLabel}
+                onChange={e => {
+                  setNewLabel(e.target.value)
+                  setShowSuggestions(true)
+                }}
+                onFocus={() => setShowSuggestions(true)}
+                onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+                placeholder="Name or select from contacts"
+                className="w-full rounded-lg border px-3 py-2 text-xs focus:outline-none"
+                style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
+              />
+              {showSuggestions && contactSuggestions.length > 0 && (
+                <div
+                  className="absolute z-10 w-full mt-1 rounded-lg border max-h-36 overflow-auto"
+                  style={{ backgroundColor: 'rgb(var(--bg-surface))', borderColor: 'rgb(var(--border))' }}
+                >
+                  {contactSuggestions.map(([key, label]) => (
+                    <button
+                      key={key}
+                      className="w-full text-left px-3 py-2 text-xs hover:bg-white/[0.04] flex items-center gap-2"
+                      onMouseDown={e => {
+                        e.preventDefault()
+                        setNewLabel(label)
+                        setNewKey(key)
+                        setShowSuggestions(false)
+                      }}
+                    >
+                      <span className="font-medium" style={{ color: 'rgb(var(--fg))' }}>
+                        {label}
+                      </span>
+                      <span className="font-mono truncate" style={{ color: 'rgb(var(--fg-muted))' }}>
+                        {key.slice(0, 12)}…
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             <div className="flex gap-2">
               <input
                 type="text"
@@ -321,32 +374,38 @@ export default function ShareModal({
           </p>
         )}
 
-        {/* Share link */}
-        {actPublisher && actHistoryRef && files && files.length > 0 && grantees.length > 0 && (
-          <div className="border-t pt-4" style={{ borderColor: 'rgb(var(--border))' }}>
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
-                Share link
+        {/* Share drive link + warning */}
+        <div className="border-t pt-4 space-y-3" style={{ borderColor: 'rgb(var(--border))' }}>
+          {actPublisher && actHistoryRef && files && files.length > 0 && grantees.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                After granting access, send them the drive link:
               </p>
               <button
                 onClick={copyShareLink}
-                className="flex items-center gap-1 text-xs font-medium transition-colors"
-                style={{ color: copiedLink ? '#4ade80' : 'rgb(var(--accent))' }}
+                disabled={loading}
+                className="w-full py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 disabled:opacity-40 transition-colors"
+                style={{
+                  backgroundColor: copiedLink ? 'rgba(74,222,128,0.15)' : 'rgb(var(--accent))',
+                  color: copiedLink ? '#4ade80' : '#fff',
+                }}
               >
-                {copiedLink ? <Check size={11} /> : <Copy size={11} />}
-                {copiedLink ? 'Copied' : 'Copy'}
+                {loading ? (
+                  <RefreshCw size={11} className="animate-spin" />
+                ) : copiedLink ? (
+                  <Check size={11} />
+                ) : (
+                  <Copy size={11} />
+                )}
+                {loading ? 'Generating…' : copiedLink ? 'Link copied!' : 'Copy drive link'}
               </button>
             </div>
-            <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-              Send this link to people you've granted access to.
-            </p>
-          </div>
-        )}
+          )}
 
-        {/* Warning */}
-        <p className="text-[10px]" style={{ color: 'rgb(var(--fg-muted))' }}>
-          Revoking access prevents future reads but doesn't remove previously downloaded content.
-        </p>
+          <p className="text-[10px]" style={{ color: 'rgb(var(--fg-muted))' }}>
+            Revoking access prevents future reads but doesn't remove previously downloaded content.
+          </p>
+        </div>
       </div>
     </div>
   )

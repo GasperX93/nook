@@ -2,7 +2,7 @@
  * AddSharedDriveModal — paste a share link to add a drive shared by someone else.
  * Downloads ACT-encrypted metadata to verify access and get the file list.
  */
-import { Download, RefreshCw, X } from 'lucide-react'
+import { Check, Copy, Download, RefreshCw, X } from 'lucide-react'
 import { useState } from 'react'
 
 import { beeApi } from '../api/bee'
@@ -16,6 +16,8 @@ interface SharedFile {
 }
 
 interface AddSharedDriveModalProps {
+  /** Node's publicKey — shown in error state so user can share it with the drive owner */
+  myPublicKey?: string
   onClose: () => void
   onAdd: (drive: {
     name: string
@@ -26,11 +28,12 @@ interface AddSharedDriveModalProps {
   }) => void
 }
 
-export default function AddSharedDriveModal({ onClose, onAdd }: AddSharedDriveModalProps) {
+export default function AddSharedDriveModal({ myPublicKey, onClose, onAdd }: AddSharedDriveModalProps) {
   const [link, setLink] = useState('')
   const [name, setName] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [copiedKey, setCopiedKey] = useState(false)
 
   async function handleAdd() {
     const parsed = parseShareLink(link)
@@ -127,9 +130,38 @@ export default function AddSharedDriveModal({ onClose, onAdd }: AddSharedDriveMo
         </div>
 
         {error && (
-          <p className="text-xs" style={{ color: '#ef4444' }}>
-            {error}
-          </p>
+          <div className="space-y-2">
+            <p className="text-xs" style={{ color: '#ef4444' }}>
+              {error}
+            </p>
+            {myPublicKey && (
+              <div
+                className="rounded-lg border p-3 space-y-2"
+                style={{ backgroundColor: 'rgb(var(--bg))', borderColor: 'rgb(var(--border))' }}
+              >
+                <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  Give your sharing key to the drive owner:
+                </p>
+                <div className="flex items-center gap-2">
+                  <code className="text-xs font-mono truncate flex-1" style={{ color: 'rgb(var(--fg-muted))' }}>
+                    {myPublicKey}
+                  </code>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(myPublicKey)
+                      setCopiedKey(true)
+                      setTimeout(() => setCopiedKey(false), 2000)
+                    }}
+                    className="shrink-0 flex items-center gap-1 text-xs font-medium"
+                    style={{ color: copiedKey ? '#4ade80' : 'rgb(var(--accent))' }}
+                  >
+                    {copiedKey ? <Check size={10} /> : <Copy size={10} />}
+                    {copiedKey ? 'Copied' : 'Copy'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         )}
 
         <div className="flex gap-3">

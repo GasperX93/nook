@@ -315,7 +315,7 @@ function BuyDriveModal({
           <div>
             <p className="text-xs font-medium">Encrypt this drive</p>
             <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-              Only you can read files on this drive. Requires wallet connection.
+              Files on this drive are encrypted. You can share access with others.
             </p>
           </div>
         </label>
@@ -1331,17 +1331,17 @@ function DriveCard({
               onClick={e => {
                 e.stopPropagation()
 
-                if (granteeCount && granteeCount > 1 && onShare) onShare()
+                if (onShare) onShare()
               }}
               className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0"
               style={{
                 backgroundColor: 'rgba(247,104,8,0.1)',
                 color: 'rgb(var(--accent))',
-                cursor: granteeCount && granteeCount > 1 ? 'pointer' : 'default',
+                cursor: onShare ? 'pointer' : 'default',
               }}
             >
               <Lock size={9} />
-              {granteeCount && granteeCount > 1 ? `${granteeCount - 1} shared` : 'Encrypted'}
+              Encrypted{granteeCount && granteeCount > 1 ? ` · ${granteeCount - 1} shared` : ''}
             </button>
             {onShare && (
               <button
@@ -2220,7 +2220,11 @@ export default function Drive() {
         )}
 
         {showAddSharedModal && (
-          <AddSharedDriveModal onClose={() => setShowAddSharedModal(false)} onAdd={drive => sharedDrives.add(drive)} />
+          <AddSharedDriveModal
+            myPublicKey={nodeAddresses?.publicKey}
+            onClose={() => setShowAddSharedModal(false)}
+            onAdd={drive => sharedDrives.add(drive)}
+          />
         )}
 
         {showBuyModal && (
