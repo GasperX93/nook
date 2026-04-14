@@ -1327,13 +1327,22 @@ function DriveCard({
         {/* Encrypted badge + Share button */}
         {encrypted && (
           <>
-            <span
+            <button
+              onClick={e => {
+                e.stopPropagation()
+
+                if (granteeCount && granteeCount > 1 && onShare) onShare()
+              }}
               className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0"
-              style={{ backgroundColor: 'rgba(247,104,8,0.1)', color: 'rgb(var(--accent))' }}
+              style={{
+                backgroundColor: 'rgba(247,104,8,0.1)',
+                color: 'rgb(var(--accent))',
+                cursor: granteeCount && granteeCount > 1 ? 'pointer' : 'default',
+              }}
             >
               <Lock size={9} />
               {granteeCount && granteeCount > 1 ? `${granteeCount - 1} shared` : 'Encrypted'}
-            </span>
+            </button>
             {onShare && (
               <button
                 onClick={e => {
