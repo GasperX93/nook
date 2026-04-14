@@ -1963,6 +1963,7 @@ export default function Drive() {
   const [showExtendModal, setShowExtendModal] = useState<string | null>(null) // batchID
   const [showShareModal, setShowShareModal] = useState<string | null>(null) // batchID
   const [showAddSharedModal, setShowAddSharedModal] = useState(false)
+  const [driveTab, setDriveTab] = useState<'mine' | 'shared'>('mine')
   const [addingFile, setAddingFile] = useState(false)
   const [search, setSearch] = useState('')
   const [copiedId, setCopiedId] = useState<string | null>(null)
@@ -2036,7 +2037,7 @@ export default function Drive() {
     return (
       <div className="p-6">
         {/* Header */}
-        <div className="flex items-center gap-3 mb-6">
+        <div className="flex items-center gap-3 mb-4">
           <div className="relative w-full max-w-[500px]">
             <Search
               size={11}
@@ -2064,17 +2065,54 @@ export default function Drive() {
             Retrieve
           </button>
 
+          {driveTab === 'mine' ? (
+            <button
+              onClick={() => setShowBuyModal(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0"
+              style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+            >
+              <Plus size={12} />
+              New drive
+            </button>
+          ) : (
+            <button
+              onClick={() => setShowAddSharedModal(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0"
+              style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+            >
+              <Plus size={12} />
+              Add shared drive
+            </button>
+          )}
+        </div>
+
+        {/* Tabs */}
+        <div className="flex gap-1 mb-4">
           <button
-            onClick={() => setShowBuyModal(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0"
-            style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+            onClick={() => setDriveTab('mine')}
+            className="px-3 py-1.5 rounded text-xs font-semibold uppercase tracking-widest transition-colors"
+            style={
+              driveTab === 'mine'
+                ? { backgroundColor: 'rgb(var(--accent))', color: '#fff' }
+                : { color: 'rgb(var(--fg-muted))' }
+            }
           >
-            <Plus size={12} />
-            New drive
+            My Drives{allStamps.length > 0 ? ` (${allStamps.length})` : ''}
+          </button>
+          <button
+            onClick={() => setDriveTab('shared')}
+            className="px-3 py-1.5 rounded text-xs font-semibold uppercase tracking-widest transition-colors"
+            style={
+              driveTab === 'shared'
+                ? { backgroundColor: 'rgb(var(--accent))', color: '#fff' }
+                : { color: 'rgb(var(--fg-muted))' }
+            }
+          >
+            Shared with me{sharedDrives.drives.length > 0 ? ` (${sharedDrives.drives.length})` : ''}
           </button>
         </div>
 
-        {/* Search results */}
+        {/* Content */}
         {search ? (
           <div>
             {searchResults.length === 0 ? (
@@ -2101,6 +2139,19 @@ export default function Drive() {
               </div>
             )}
           </div>
+        ) : driveTab === 'shared' ? (
+          /* Shared drives tab */
+          sharedDrives.drives.length === 0 ? (
+            <p className="text-xs text-center py-8" style={{ color: 'rgb(var(--fg-muted))' }}>
+              No shared drives yet. When someone shares a drive with you, paste the share link here.
+            </p>
+          ) : (
+            <div className="border-t" style={{ borderColor: 'rgb(var(--border))' }}>
+              {sharedDrives.drives.map(drive => (
+                <SharedDriveCard key={drive.id} drive={drive} onRemove={() => sharedDrives.remove(drive.id)} />
+              ))}
+            </div>
+          )
         ) : stamps === undefined ? null : allStamps.length === 0 ? (
           /* Empty state */
           <div className="flex flex-col items-center justify-center py-20 gap-4 text-center">
@@ -2158,34 +2209,6 @@ export default function Drive() {
             ))}
           </div>
         )}
-
-        {/* Shared with me */}
-        <div className="mt-6">
-          <div className="flex items-center justify-between mb-3">
-            <p className="text-xs uppercase tracking-widest font-semibold" style={{ color: 'rgb(var(--fg-muted))' }}>
-              Shared with me
-            </p>
-            <button
-              onClick={() => setShowAddSharedModal(true)}
-              className="flex items-center gap-1 text-xs font-medium transition-colors"
-              style={{ color: 'rgb(var(--accent))' }}
-            >
-              <Plus size={11} />
-              Add shared drive
-            </button>
-          </div>
-          {sharedDrives.drives.length === 0 ? (
-            <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-              No shared drives yet. When someone shares a drive with you, paste the share link here.
-            </p>
-          ) : (
-            <div className="border-t" style={{ borderColor: 'rgb(var(--border))' }}>
-              {sharedDrives.drives.map(drive => (
-                <SharedDriveCard key={drive.id} drive={drive} onRemove={() => sharedDrives.remove(drive.id)} />
-              ))}
-            </div>
-          )}
-        </div>
 
         {showAddSharedModal && (
           <AddSharedDriveModal onClose={() => setShowAddSharedModal(false)} onAdd={drive => sharedDrives.add(drive)} />
