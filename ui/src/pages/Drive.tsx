@@ -1774,9 +1774,11 @@ function SharedDriveCard({
     localStorage.setItem('nook-shared-drives', JSON.stringify(updated))
   }
 
-  async function downloadFile(ref: string, historyRef: string, fileName: string) {
+  async function downloadFile(ref: string, _fileHistoryRef: string, fileName: string) {
     try {
-      const blob = await beeApi.downloadFileWithACT(ref, drive.actPublisher, historyRef)
+      // Use the drive's latest ACT history ref (from share link), not the file's individual history.
+      // The drive history includes all grantees added after file upload.
+      const blob = await beeApi.downloadFileWithACT(ref, drive.actPublisher, drive.actHistoryRef)
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
