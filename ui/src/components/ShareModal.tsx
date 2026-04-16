@@ -157,7 +157,8 @@ export default function ShareModal({
       if (granteeRef && actHistoryRef) {
         result = await serverApi.patchGrantees(granteeRef, stampId, actHistoryRef, [key])
       } else {
-        result = await serverApi.createGrantees(stampId, [key])
+        // Pass existing ACT history from file uploads so grantees are added to the SAME chain
+        result = await serverApi.createGrantees(stampId, [key], actHistoryRef || undefined)
       }
 
       setGrantees(prev => [...prev, key])

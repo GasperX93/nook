@@ -98,8 +98,8 @@ export const serverApi = {
 
   // ─── ACT grantee management ────────────────────────────────────────────
 
-  createGrantees: async (stampId: string, grantees: string[]) =>
-    serverPost<{ ref: string; historyRef: string }>('/grantee', { stampId, grantees }),
+  createGrantees: async (stampId: string, grantees: string[], historyRef?: string) =>
+    serverPost<{ ref: string; historyRef: string }>('/grantee', { stampId, grantees, historyRef }),
 
   getGrantees: async (ref: string) => serverGet<{ grantees: string[] }>(`/grantee/${ref}`),
 

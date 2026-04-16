@@ -311,7 +311,11 @@ export function runServer() {
   })
 
   router.post('/grantee', async context => {
-    const { stampId, grantees } = context.request.body as { stampId: string; grantees: string[] }
+    const { stampId, grantees, historyRef } = context.request.body as {
+      stampId: string
+      grantees: string[]
+      historyRef?: string
+    }
 
     if (!stampId || !grantees?.length) {
       context.status = 400
@@ -321,11 +325,36 @@ export function runServer() {
     }
 
     try {
-      const bee = makeBee()
-      const result = await bee.createGrantees(stampId, grantees)
+      const beePassword = readConfigYaml().password as string | undefined
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'swarm-postage-batch-id': stampId,
+      }
+
+      if (historyRef) headers['swarm-act-history-address'] = historyRef
+
+      if (beePassword) headers['Authorization'] = `Bearer ${beePassword}`
+
+      const response = await fetch('http://127.0.0.1:1633/grantee', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ grantees }),
+      })
+
+      if (!response.ok) {
+        const errBody = await response.text().catch(() => '')
+        logger.error(`Create grantees failed: ${response.status} ${errBody}`)
+        context.status = response.status
+        context.body = { message: 'Failed to create grantee list' }
+
+        return
+      }
+
+      const result = (await response.json()) as { ref: string; historyref: string }
+      const actHistory = response.headers.get('swarm-act-history-address')
       context.body = {
-        ref: result.ref.toString(),
-        historyRef: result.historyref.toString(),
+        ref: result.ref,
+        historyRef: actHistory ?? result.historyref ?? '',
       }
     } catch (error) {
       logger.error(error)
