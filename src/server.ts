@@ -168,6 +168,52 @@ export function runServer() {
       }
     }
   })
+  router.get('/feed-read', async context => {
+    const topicHex = context.query['topic'] as string
+    const owner = context.query['owner'] as string
+
+    if (!topicHex || !owner) {
+      context.status = 400
+      context.body = { message: 'topic and owner query params are required' }
+
+      return
+    }
+
+    try {
+      const bee = makeBee()
+      const reader = bee.makeFeedReader(topicHex, owner)
+      const result = await reader.downloadReference()
+      const data = await bee.downloadData(result.reference.toHex())
+      context.type = 'application/octet-stream'
+      context.body = Buffer.from(data.toUint8Array())
+    } catch (error) {
+      logger.error(error)
+      context.status = 404
+      context.body = { message: 'Feed not found' }
+    }
+  })
+
+  router.post('/upload-bytes', async context => {
+    const { stampId, data } = context.request.body as { stampId: string; data: string }
+
+    if (!stampId || !data) {
+      context.status = 400
+      context.body = { message: 'stampId and data are required' }
+
+      return
+    }
+
+    try {
+      const bee = makeBee()
+      const result = await bee.uploadData(stampId, data)
+      context.body = { reference: result.reference.toHex() }
+    } catch (error) {
+      logger.error(error)
+      context.status = 500
+      context.body = { message: 'Upload failed' }
+    }
+  })
+
   router.post('/buy-stamp', async context => {
     const { amount, depth, immutable, label } = context.request.body as {
       amount: string
@@ -201,6 +247,209 @@ export function runServer() {
         message = 'Failed to create drive. Please try again.'
       }
       context.body = { message }
+    }
+  })
+
+  // ─── ACT proxy endpoints ──────────────────────────────────────────────────
+  // Bee ACT endpoints require Bearer auth. We proxy them so the browser UI
+  // doesn't need the Bee password. Downloads are also proxied because the
+  // browser strips custom headers (swarm-act-*) on cross-origin requests.
+
+  router.post('/act/upload-metadata', async context => {
+    const { stampId, data, historyRef } = context.request.body as {
+      stampId: string
+      data: string // JSON string
+      historyRef?: string
+    }
+
+    if (!stampId || !data) {
+      context.status = 400
+      context.body = { message: 'stampId and data are required' }
+
+      return
+    }
+
+    try {
+      const beePassword = readConfigYaml().password as string | undefined
+      const headers: Record<string, string> = {
+        'swarm-postage-batch-id': stampId,
+        'swarm-deferred-upload': 'true',
+        'swarm-act': 'true',
+        'Content-Type': 'application/octet-stream',
+      }
+
+      if (historyRef) headers['swarm-act-history-address'] = historyRef
+
+      if (beePassword) headers['Authorization'] = `Bearer ${beePassword}`
+
+      const response = await fetch('http://127.0.0.1:1633/bytes', {
+        method: 'POST',
+        headers,
+        body: Buffer.from(data, 'utf-8'),
+      })
+
+      if (!response.ok) {
+        context.status = response.status
+        context.body = { message: `ACT upload failed: ${response.statusText}` }
+
+        return
+      }
+
+      const result = (await response.json()) as { reference: string }
+      const actHistory = response.headers.get('swarm-act-history-address')
+      context.body = {
+        reference: result.reference,
+        historyRef: actHistory ?? '',
+      }
+    } catch (error) {
+      logger.error(error)
+      context.status = 500
+      context.body = { message: 'ACT metadata upload failed' }
+    }
+  })
+
+  router.get('/act/download/:hash', async context => {
+    const { hash } = context.params
+    const actPublisher = context.query['publisher'] as string
+    const actHistoryRef = context.query['history'] as string
+
+    if (!actPublisher || !actHistoryRef) {
+      context.status = 400
+      context.body = { message: 'publisher and history query params are required' }
+
+      return
+    }
+
+    try {
+      const beePassword = readConfigYaml().password as string | undefined
+      const headers: Record<string, string> = {
+        'swarm-act': 'true',
+        'swarm-act-publisher': actPublisher,
+        'swarm-act-history-address': actHistoryRef,
+      }
+
+      if (beePassword) headers['Authorization'] = `Bearer ${beePassword}`
+
+      // Try /bzz first (files/collections), then /bytes (raw data like metadata)
+      let response = await fetch(`http://127.0.0.1:1633/bzz/${hash}/`, { headers, redirect: 'follow' })
+
+      if (!response.ok) {
+        response = await fetch(`http://127.0.0.1:1633/bytes/${hash}`, { headers })
+      }
+
+      if (!response.ok) {
+        context.status = response.status
+        context.body = { message: `ACT download failed: ${response.statusText}` }
+
+        return
+      }
+
+      const buffer = await response.arrayBuffer()
+      const contentType = response.headers.get('content-type')
+
+      if (contentType) context.type = contentType
+      context.body = Buffer.from(buffer)
+    } catch (error) {
+      logger.error(error)
+      context.status = 500
+      context.body = { message: 'ACT download failed' }
+    }
+  })
+
+  router.post('/grantee', async context => {
+    const { stampId, grantees, historyRef } = context.request.body as {
+      stampId: string
+      grantees: string[]
+      historyRef?: string
+    }
+
+    if (!stampId || !grantees?.length) {
+      context.status = 400
+      context.body = { message: 'stampId and grantees are required' }
+
+      return
+    }
+
+    try {
+      const beePassword = readConfigYaml().password as string | undefined
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'swarm-postage-batch-id': stampId,
+      }
+
+      if (historyRef) headers['swarm-act-history-address'] = historyRef
+
+      if (beePassword) headers['Authorization'] = `Bearer ${beePassword}`
+
+      const response = await fetch('http://127.0.0.1:1633/grantee', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ grantees }),
+      })
+
+      if (!response.ok) {
+        const errBody = await response.text().catch(() => '')
+        logger.error(`Create grantees failed: ${response.status} ${errBody}`)
+        context.status = response.status
+        context.body = { message: 'Failed to create grantee list' }
+
+        return
+      }
+
+      const result = (await response.json()) as { ref: string; historyref: string }
+      const actHistory = response.headers.get('swarm-act-history-address')
+      context.body = {
+        ref: result.ref,
+        historyRef: actHistory ?? result.historyref ?? '',
+      }
+    } catch (error) {
+      logger.error(error)
+      context.status = 500
+      context.body = { message: 'Failed to create grantee list' }
+    }
+  })
+
+  router.get('/grantee/:ref', async context => {
+    const { ref } = context.params
+
+    try {
+      const bee = makeBee()
+      const result = await bee.getGrantees(ref)
+      context.body = { grantees: result.grantees.map(String) }
+    } catch (error) {
+      logger.error(error)
+      context.status = 500
+      context.body = { message: 'Failed to get grantees' }
+    }
+  })
+
+  router.patch('/grantee/:ref', async context => {
+    const { ref } = context.params
+    const { stampId, historyRef, add, revoke } = context.request.body as {
+      stampId: string
+      historyRef: string
+      add?: string[]
+      revoke?: string[]
+    }
+
+    if (!stampId || !historyRef) {
+      context.status = 400
+      context.body = { message: 'stampId and historyRef are required' }
+
+      return
+    }
+
+    try {
+      const bee = makeBee()
+      const result = await bee.patchGrantees(stampId, ref, historyRef, { add, revoke })
+      context.body = {
+        ref: result.ref.toString(),
+        historyRef: result.historyref.toString(),
+      }
+    } catch (error) {
+      logger.error(error)
+      context.status = 500
+      context.body = { message: 'Failed to update grantees' }
     }
   })
 

@@ -1,0 +1,51 @@
+{
+    "keepSettings": {
+        "type": 2,
+        "amount": 10
+    },
+    "auditFilename": "audit.json",
+    "hashType": "md5",
+    "extension": ".log",
+    "files": [
+        {
+            "date": 1773394745048,
+            "name": "/Users/gzupan/Library/Logs/Nook/bee.0.log",
+            "hash": "ec844e996390df5ad9d9e4e0895021bb"
+        },
+        {
+            "date": 1773396360327,
+            "name": "/Users/gzupan/Library/Logs/Nook/bee.1.log",
+            "hash": "de0afae2e852357b08f4b45fdcb6d5e4"
+        },
+        {
+            "date": 1773423917106,
+            "name": "/Users/gzupan/Library/Logs/Nook/bee.2.log",
+            "hash": "384faeb39f6a09623d489e37b62060f1"
+        },
+        {
+            "date": 1773830925118,
+            "name": "/Users/gzupan/Library/Logs/Nook/bee.3.log",
+            "hash": "39f6c3faf0e427d467d553f72dedf6a6"
+        },
+        {
+            "date": 1775970733064,
+            "name": "/Users/gzupan/Library/Logs/Nook/bee.4.log",
+            "hash": "3c112c515e490a61c9fbeacf44528047"
+        },
+        {
+            "date": 1776095714822,
+            "name": "/Users/gzupan/Library/Logs/Nook/bee.5.log",
+            "hash": "01c402cad5480ebe95cf76b5957a67c0"
+        },
+        {
+            "date": 1776153903112,
+            "name": "/Users/gzupan/Library/Logs/Nook/bee.6.log",
+            "hash": "4894c6af3b5159e521ba4c2249c1f958"
+        },
+        {
+            "date": 1776186749871,
+            "name": "/Users/gzupan/Library/Logs/Nook/bee.7.log",
+            "hash": "566c2afe283acc7db6a630c2ab1fd92a"
+        }
+    ]
+}

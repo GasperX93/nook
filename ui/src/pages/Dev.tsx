@@ -125,7 +125,7 @@ export default function Dev() {
   }
 
   return (
-    <div className="flex flex-col h-full p-6 gap-6">
+    <div className="flex flex-col p-6 gap-6 overflow-auto">
       <div className="flex items-center justify-end shrink-0">
         <button
           onClick={() => {
@@ -140,7 +140,7 @@ export default function Dev() {
       </div>
 
       {/* Logs */}
-      <div className="flex flex-col min-h-0" style={{ flex: 2 }}>
+      <div className="flex flex-col shrink-0">
         <div className="flex items-center justify-between mb-3 shrink-0">
           <p className="text-xs uppercase tracking-widest font-semibold" style={{ color: 'rgb(var(--fg-muted))' }}>
             Logs
@@ -163,7 +163,7 @@ export default function Dev() {
           </div>
         </div>
         <div
-          className="flex-1 rounded-lg border p-4 overflow-auto min-h-0"
+          className="rounded-lg border p-4 overflow-auto max-h-64"
           style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
         >
           <pre className="text-xs whitespace-pre-wrap break-all" style={{ color: 'rgb(var(--fg-muted))' }}>

@@ -28,6 +28,46 @@ async function serverPost<T>(path: string, body: unknown): Promise<T> {
   return response.json() as Promise<T>
 }
 
+async function serverGet<T>(path: string): Promise<T> {
+  const response = await fetch(path, {
+    headers: authHeaders(),
+  })
+
+  if (!response.ok) {
+    let message: string
+    try {
+      const body = await response.json()
+      message = body.message ?? `${response.status} error`
+    } catch {
+      message = await response.text().catch(() => `${response.status} error`)
+    }
+    throw new Error(message)
+  }
+
+  return response.json() as Promise<T>
+}
+
+async function serverPatch<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(path, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(body),
+  })
+
+  if (!response.ok) {
+    let message: string
+    try {
+      const body = await response.json()
+      message = body.message ?? `${response.status} error`
+    } catch {
+      message = await response.text().catch(() => `${response.status} error`)
+    }
+    throw new Error(message)
+  }
+
+  return response.json() as Promise<T>
+}
+
 export const serverApi = {
   /**
    * Create a Swarm feed update (signed SOC) using the Bee node's private key.
@@ -49,4 +89,34 @@ export const serverApi = {
 
   chequebookWithdraw: async (amount: string) =>
     serverPost<{ success: boolean; transactionHash: string }>('/chequebook-withdraw', { amount }),
+
+  // ─── ACT operations ─────────────────────────────────────────────────────
+
+  /** Read a Swarm feed by topic + owner */
+  readFeed: async (topic: string, owner: string) => {
+    const params = new URLSearchParams({ topic, owner })
+    const response = await fetch(`/feed-read?${params}`, { headers: authHeaders() })
+
+    if (!response.ok) throw new Error('Feed not found')
+
+    return response.text()
+  },
+
+  /** Upload raw bytes to Swarm (non-ACT, for feed wrappers) */
+  uploadRawBytes: async (stampId: string, data: string) =>
+    serverPost<{ reference: string }>('/upload-bytes', { stampId, data }),
+
+  /** Upload a small data blob with ACT encryption (for metadata) */
+  uploadACTMetadata: async (stampId: string, data: string, historyRef?: string) =>
+    serverPost<{ reference: string; historyRef: string }>('/act/upload-metadata', { stampId, data, historyRef }),
+
+  // ─── ACT grantee management ────────────────────────────────────────────
+
+  createGrantees: async (stampId: string, grantees: string[], historyRef?: string) =>
+    serverPost<{ ref: string; historyRef: string }>('/grantee', { stampId, grantees, historyRef }),
+
+  getGrantees: async (ref: string) => serverGet<{ grantees: string[] }>(`/grantee/${ref}`),
+
+  patchGrantees: async (ref: string, stampId: string, historyRef: string, add?: string[], revoke?: string[]) =>
+    serverPatch<{ ref: string; historyRef: string }>(`/grantee/${ref}`, { stampId, historyRef, add, revoke }),
 }

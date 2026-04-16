@@ -12,6 +12,7 @@ import {
   FolderPlus,
   Globe,
   HardDrive,
+  Lock,
   Pencil,
   Plus,
   RefreshCw,
@@ -19,10 +20,12 @@ import {
   Search,
   Trash2,
   Upload,
+  Users,
 } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import React, { useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
+import { useAccount } from 'wagmi'
 import {
   beeApi,
   calcStampCost,
@@ -36,8 +39,11 @@ import {
   type Stamp,
 } from '../api/bee'
 import { serverApi } from '../api/server'
-import { useBuyStamp, useChainState, useStamps, useTopupStamp, useWallet } from '../api/queries'
+import { useAddresses, useBuyStamp, useChainState, useStamps, useTopupStamp, useWallet } from '../api/queries'
 import { useAppStore } from '../store/app'
+import { useDerivedKey } from '../hooks/useDerivedKey'
+import { useDriveMetadata } from '../hooks/useDriveMetadata'
+import { useSharedDrives } from '../hooks/useSharedDrives'
 import { useUploadHistory, type DriveFolder, type UploadRecord } from '../hooks/useUploadHistory'
 import {
   detectIndexDocument,
@@ -46,7 +52,9 @@ import {
   totalSize,
   type FileEntry,
 } from '../utils/directory'
+import AddSharedDriveModal from '../components/AddSharedDriveModal'
 import ENSModal from '../components/ENSModal'
+import ShareModal from '../components/ShareModal'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -95,8 +103,15 @@ function isImageFile(name: string): boolean {
   return /\.(jpe?g|png|gif|webp|svg)$/i.test(name)
 }
 
-async function downloadFromSwarm(hash: string, filename: string, onProgress?: (pct: number) => void) {
-  const blob = await beeApi.downloadFile(hash, onProgress)
+async function downloadFromSwarm(
+  hash: string,
+  filename: string,
+  onProgress?: (pct: number) => void,
+  actOptions?: { actPublisher: string; actHistoryRef: string },
+) {
+  const blob = actOptions
+    ? await beeApi.downloadFileWithACT(hash, actOptions.actPublisher, actOptions.actHistoryRef, onProgress)
+    : await beeApi.downloadFile(hash, onProgress)
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
@@ -164,14 +179,23 @@ function ExpiryBar({ expiresAt, uploadedAt }: { expiresAt: number; uploadedAt: n
 
 // ─── BuyDriveModal ─────────────────────────────────────────────────────────────
 
-function BuyDriveModal({ onClose }: { onClose: () => void }) {
+function BuyDriveModal({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void
+  onCreated?: (batchId: string, encrypted: boolean) => void
+}) {
   const { data: chainState } = useChainState()
   const { data: wallet } = useWallet()
   const buyStamp = useBuyStamp()
+  const { isConnected } = useAccount()
+  const { derive } = useDerivedKey()
 
   const [driveName, setDriveName] = useState('')
   const [sizeIdx, setSizeIdx] = useState(1)
   const [durationIdx, setDurationIdx] = useState(1)
+  const [isEncrypted, setIsEncrypted] = useState(false)
   const [buying, setBuying] = useState(false)
   const [buyDone, setBuyDone] = useState(false)
   const [buyError, setBuyError] = useState<string | null>(null)
@@ -184,15 +208,29 @@ function BuyDriveModal({ onClose }: { onClose: () => void }) {
 
   async function doBuy() {
     if (!cost || !driveName.trim()) return
+
+    // TODO: re-enable when metadata feeds are wired up
+    // if (isEncrypted) {
+    //   const derivedSigner = await derive()
+    //   if (!derivedSigner) {
+    //     setBuyError('Wallet signature required for encrypted drives')
+    //     return
+    //   }
+    // }
+
     setBuying(true)
     setBuyError(null)
     try {
-      await buyStamp.mutateAsync({
+      const result = await buyStamp.mutateAsync({
         amount: cost.amount,
         depth: selectedSize.depth,
         immutable: true,
         label: driveName.trim(),
       })
+
+      // Save encrypted flag immediately (ACT grantee setup deferred to first upload
+      // because the stamp isn't usable yet at this point — it needs on-chain confirmation)
+      onCreated?.(result.batchID, isEncrypted)
       setBuyDone(true)
       setTimeout(() => {
         setBuyDone(false)
@@ -262,6 +300,25 @@ function BuyDriveModal({ onClose }: { onClose: () => void }) {
             ))}
           </div>
         </div>
+
+        {/* Encrypt */}
+        <label className="flex items-start gap-2 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={isEncrypted}
+            onChange={e => setIsEncrypted(e.target.checked)}
+            className="mt-0.5 accent-orange-500"
+          />
+          <div>
+            <p className="text-xs font-medium">Encrypt this drive</p>
+            <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+              Files on this drive are encrypted. You can share access with others.
+            </p>
+          </div>
+        </label>
+
+        {/* TODO: re-enable when metadata feeds are wired up */}
+        {/* {isEncrypted && !isConnected && <WalletGate />} */}
 
         {/* Cost */}
         {cost && (
@@ -826,6 +883,13 @@ function RecordRow({
 }: RecordRowProps) {
   const { label: expiry, urgent } = timeUntil(record.expiresAt)
   const linkHash = record.feedManifestAddress ?? record.hash
+  const isEnc = record.isEncrypted && record.actPublisher && record.actHistoryRef
+
+  // For encrypted files, build a proxy URL that includes ACT headers
+  const actProxyUrl = isEnc
+    ? `/act/download/${record.hash}?publisher=${record.actPublisher}&history=${record.actHistoryRef}`
+    : null
+  const openUrl = actProxyUrl ?? `${getBeeUrl()}/bzz/${linkHash}/`
 
   return (
     <div
@@ -839,7 +903,9 @@ function RecordRow({
         className="w-6 h-6 rounded overflow-hidden flex items-center justify-center shrink-0"
         style={{ backgroundColor: 'rgb(var(--bg))' }}
       >
-        {record.type === 'file' && isImageFile(record.name) ? (
+        {record.isEncrypted ? (
+          <Lock size={12} style={{ color: 'rgb(var(--accent))' }} />
+        ) : record.type === 'file' && isImageFile(record.name) ? (
           <img
             src={`${getBeeUrl()}/bzz/${record.hash}`}
             className="w-full h-full object-cover"
@@ -859,7 +925,7 @@ function RecordRow({
 
       {/* Name + feed badge */}
       <div className="flex items-center gap-2 flex-1 min-w-0">
-        {record.type === 'folder' || record.type === 'website' ? (
+        {(record.type === 'folder' || record.type === 'website') && !isEnc ? (
           <a
             href={`${getBeeUrl()}/bzz/${linkHash}/`}
             target="_blank"
@@ -929,24 +995,28 @@ function RecordRow({
             {record.ensDomain ? 'ENS' : 'Set ENS'}
           </button>
         )}
-        <button
-          onClick={() => onCopy(record.id, linkHash)}
-          title="Copy link"
-          className="w-6 h-6 flex items-center justify-center rounded transition-colors"
-          style={{ color: copiedId === record.id ? '#4ade80' : 'rgb(var(--fg-muted))' }}
-        >
-          <Copy size={12} />
-        </button>
-        <a
-          href={`${getBeeUrl()}/bzz/${linkHash}/`}
-          target="_blank"
-          rel="noreferrer"
-          title="Open"
-          className="w-6 h-6 flex items-center justify-center rounded"
-          style={{ color: 'rgb(var(--fg-muted))' }}
-        >
-          <ExternalLink size={12} />
-        </a>
+        {!isEnc && (
+          <button
+            onClick={() => onCopy(record.id, linkHash)}
+            title="Copy link"
+            className="w-6 h-6 flex items-center justify-center rounded transition-colors"
+            style={{ color: copiedId === record.id ? '#4ade80' : 'rgb(var(--fg-muted))' }}
+          >
+            <Copy size={12} />
+          </button>
+        )}
+        {!isEnc && (
+          <a
+            href={`${getBeeUrl()}/bzz/${linkHash}/`}
+            target="_blank"
+            rel="noreferrer"
+            title="Open"
+            className="w-6 h-6 flex items-center justify-center rounded"
+            style={{ color: 'rgb(var(--fg-muted))' }}
+          >
+            <ExternalLink size={12} />
+          </a>
+        )}
         {downloadingId === record.id && downloadPct !== null ? (
           <span className="text-[10px] tabular-nums px-1 shrink-0" style={{ color: 'rgb(var(--accent))' }}>
             {downloadPct}%
@@ -985,8 +1055,11 @@ interface DriveCardProps {
   downloadingId: string | null
   downloadPct: number | null
   customName?: string
+  encrypted?: boolean
+  granteeCount?: number
   onOpen: (folderId?: string) => void
   onExtend: () => void
+  onShare?: () => void
   onRename: (name: string) => void
   onCopy: (id: string, hash: string) => void
   onUpdate: (id: string) => void
@@ -1013,6 +1086,9 @@ function DriveCard({
   onDownload,
   onRemove,
   onSetENS,
+  encrypted,
+  granteeCount,
+  onShare,
   onMoveToFolder,
 }: DriveCardProps) {
   const [expanded, setExpanded] = useState(false)
@@ -1169,7 +1245,11 @@ function DriveCard({
         <span style={{ color: 'rgb(var(--fg-muted))' }}>
           {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
         </span>
-        <HardDrive size={14} className="shrink-0" style={{ color: 'rgb(var(--fg-muted))' }} />
+        {encrypted ? (
+          <Lock size={14} className="shrink-0" style={{ color: 'rgb(var(--accent))' }} />
+        ) : (
+          <HardDrive size={14} className="shrink-0" style={{ color: 'rgb(var(--fg-muted))' }} />
+        )}
 
         {/* Drive name — unnamed drives show a prompt; named drives show pencil on hover */}
         {renaming ? (
@@ -1240,6 +1320,40 @@ function DriveCard({
           >
             Confirming…
           </span>
+        )}
+
+        {/* Encrypted badge + Share button */}
+        {encrypted && (
+          <>
+            <button
+              onClick={e => {
+                e.stopPropagation()
+
+                if (onShare) onShare()
+              }}
+              className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0"
+              style={{
+                backgroundColor: 'rgba(247,104,8,0.1)',
+                color: 'rgb(var(--accent))',
+                cursor: onShare ? 'pointer' : 'default',
+              }}
+            >
+              <Lock size={9} />
+              Encrypted{granteeCount && granteeCount > 1 ? ` · ${granteeCount - 1} shared` : ''}
+            </button>
+            {onShare && (
+              <button
+                onClick={e => {
+                  e.stopPropagation()
+                  onShare()
+                }}
+                className="text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0 transition-colors"
+                style={{ color: 'rgb(var(--accent))' }}
+              >
+                Share
+              </button>
+            )}
+          </>
         )}
 
         {/* Website badge */}
@@ -1342,8 +1456,11 @@ type UploadType = 'file' | 'folder'
 
 interface AddFileProps {
   driveId: string
+  encrypted?: boolean
+  actHistoryRef?: string
   onDone: () => void
   onAdd: (record: UploadRecord) => void
+  onActHistoryUpdate?: (historyRef: string) => void
 }
 
 function generateFolderIndex(name: string, entries: FileEntry[]): FileEntry {
@@ -1360,7 +1477,8 @@ ${rows}
   return { path: '_index.html', file: new FileClass([html], '_index.html', { type: 'text/html' }) }
 }
 
-function AddFilePanel({ driveId, onDone, onAdd }: AddFileProps) {
+function AddFilePanel({ driveId, encrypted, actHistoryRef, onDone, onAdd, onActHistoryUpdate }: AddFileProps) {
+  const { data: addresses } = useAddresses()
   const [phase, setPhase] = useState('')
   const [progress, setProgress] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -1382,31 +1500,52 @@ function AddFilePanel({ driveId, onDone, onAdd }: AddFileProps) {
     try {
       await pollStampUsable(driveId, setPhase)
 
-      async function doUpload(attempt: number): Promise<string> {
+      let currentHistoryRef = actHistoryRef
+
+      async function doUpload(attempt: number): Promise<{ reference: string; historyAddress?: string }> {
         if (attempt > 1) {
           setPhase(`Finalising storage… (retry ${attempt - 1})`)
           await new Promise(r => setTimeout(r, 5000))
         }
-        setPhase('Uploading…')
+        setPhase(encrypted ? 'Encrypting & uploading…' : 'Uploading…')
         setProgress(0)
+
+        if (encrypted) {
+          if (type === 'file') {
+            return beeApi.uploadFileWithACT(entries[0].file, driveId, currentHistoryRef, pct => setProgress(pct))
+          }
+
+          return beeApi.uploadCollectionWithACT(uploadEntries, driveId, currentHistoryRef, { indexDocument }, pct =>
+            setProgress(pct),
+          )
+        }
 
         if (type === 'file') {
           const res = await beeApi.uploadFileWithProgress(entries[0].file, driveId, pct => setProgress(pct))
 
-          return res.reference
+          return { reference: res.reference }
         }
 
         const res = await beeApi.uploadCollectionWithProgress(uploadEntries, driveId, { indexDocument }, pct =>
           setProgress(pct),
         )
 
-        return res.reference
+        return { reference: res.reference }
       }
 
       let reference!: string
+      let uploadHistoryAddress: string | undefined
+
       for (let attempt = 1; attempt <= 4; attempt++) {
         try {
-          reference = await doUpload(attempt)
+          const result = await doUpload(attempt)
+          reference = result.reference
+          uploadHistoryAddress = result.historyAddress
+
+          if (uploadHistoryAddress) {
+            currentHistoryRef = uploadHistoryAddress
+            onActHistoryUpdate?.(uploadHistoryAddress)
+          }
           break
         } catch (err) {
           if (attempt === 4) throw err
@@ -1423,7 +1562,7 @@ function AddFilePanel({ driveId, onDone, onAdd }: AddFileProps) {
         expiresAt = Date.now() + 3 * 30 * 24 * 60 * 60 * 1000
       }
 
-      onAdd({
+      const newRecord: UploadRecord = {
         id: crypto.randomUUID(),
         name,
         hash: reference,
@@ -1433,7 +1572,50 @@ function AddFilePanel({ driveId, onDone, onAdd }: AddFileProps) {
         expiresAt,
         uploadedAt: Date.now(),
         hasFeed: false,
-      })
+        isEncrypted: encrypted || undefined,
+        actPublisher: encrypted ? addresses?.publicKey : undefined,
+        actHistoryRef: uploadHistoryAddress || undefined,
+      }
+
+      onAdd(newRecord)
+
+      // Update metadata feed for encrypted drives (enables live shared drive access)
+      if (encrypted && addresses?.publicKey && uploadHistoryAddress) {
+        try {
+          const topic = await topicFromString(driveId + 'nook-drive-meta')
+          // Build file list from localStorage + explicitly include the just-uploaded file
+          // (localStorage write from onAdd may be batched by React)
+          const existingRecords = JSON.parse(localStorage.getItem('swarm-drive') ?? '[]') as UploadRecord[]
+          const existingFiles = existingRecords
+            .filter((r: UploadRecord) => r.driveId === driveId && r.actHistoryRef && r.id !== newRecord.id)
+            .map((r: UploadRecord) => ({
+              name: r.name,
+              reference: r.hash,
+              historyRef: r.actHistoryRef,
+              size: r.size,
+            }))
+
+          // Always include the just-uploaded file
+          const driveFiles = [
+            ...existingFiles,
+            { name: newRecord.name, reference: newRecord.hash, historyRef: uploadHistoryAddress, size: newRecord.size },
+          ]
+
+          const metadata = JSON.stringify({ files: driveFiles })
+          // Use the drive's latest ACT history (includes grantee additions), not just file upload history
+          const latestHistory = actHistoryRef || uploadHistoryAddress
+          const uploaded = await serverApi.uploadACTMetadata(driveId, metadata, latestHistory)
+
+          // Upload wrapper as raw bytes (not /bzz file) so feed reader can use /bytes
+          const wrapper = JSON.stringify({ ref: uploaded.reference, history: uploaded.historyRef })
+          const wrapperResult = await serverApi.uploadRawBytes(driveId, wrapper)
+
+          await serverApi.createFeedUpdate(topic, wrapperResult.reference, driveId)
+          onActHistoryUpdate?.(uploaded.historyRef)
+        } catch {
+          // Feed update failed — not critical, drive still works without live sharing
+        }
+      }
 
       onDone()
     } catch (err) {
@@ -1585,6 +1767,266 @@ function AddFilePanel({ driveId, onDone, onAdd }: AddFileProps) {
 
 // ─── Main component ────────────────────────────────────────────────────────────
 
+// ─── SharedDriveCard ──────────────────────────────────────────────────────────
+
+function SharedDriveCard({
+  drive,
+  onRemove,
+  onRefresh,
+}: {
+  drive: import('../hooks/useSharedDrives').SharedDrive
+  onRemove: () => void
+  onRefresh?: () => void
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const [editingName, setEditingName] = useState(false)
+  const [nameInput, setNameInput] = useState('')
+  const [editingFrom, setEditingFrom] = useState(false)
+  const [fromInput, setFromInput] = useState('')
+  const [refreshing, setRefreshing] = useState(false)
+
+  // Auto-sync every 5 minutes for feed-based shared drives
+  useEffect(() => {
+    if (!drive.feedTopic || !drive.feedOwner || !onRefresh) return
+
+    const interval = setInterval(
+      () => {
+        handleRefresh()
+      },
+      5 * 60 * 1000,
+    )
+
+    return () => clearInterval(interval)
+  }, [drive.feedTopic, drive.feedOwner])
+
+  async function handleRefresh() {
+    if (!drive.feedTopic || !drive.feedOwner || !onRefresh) return
+    setRefreshing(true)
+    try {
+      const wrapperText = await serverApi.readFeed(drive.feedTopic, drive.feedOwner)
+      const wrapper = JSON.parse(wrapperText) as { ref: string; history: string }
+      const blob = await beeApi.downloadFileWithACT(wrapper.ref, drive.actPublisher, wrapper.history)
+      const metadata = JSON.parse(await blob.text())
+
+      // Update localStorage with new files
+      const drives: import('../hooks/useSharedDrives').SharedDrive[] = JSON.parse(
+        localStorage.getItem('nook-shared-drives') ?? '[]',
+      )
+      const updated = drives.map(d =>
+        d.id === drive.id ? { ...d, files: metadata.files, actHistoryRef: wrapper.history } : d,
+      )
+      localStorage.setItem('nook-shared-drives', JSON.stringify(updated))
+      onRefresh()
+    } catch {
+      // eslint-disable-next-line no-alert
+      alert('Could not refresh. Access may have been revoked.')
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
+  // Look up label for the publisher key from grantee labels
+  const granteeLabels: Record<string, string> = (() => {
+    try {
+      return JSON.parse(localStorage.getItem('nook-grantee-labels') ?? '{}')
+    } catch {
+      return {}
+    }
+  })()
+
+  function findPublisherLabel(): string | undefined {
+    const pubClean = drive.actPublisher.toLowerCase().replace('0x', '')
+
+    for (const [key, label] of Object.entries(granteeLabels)) {
+      const keyClean = key.toLowerCase().replace('0x', '')
+
+      if (pubClean.includes(keyClean) || keyClean.includes(pubClean)) return label
+    }
+
+    return undefined
+  }
+
+  const publisherLabel = drive.fromLabel ?? findPublisherLabel()
+
+  function saveToLocalStorage(partial: Record<string, string>) {
+    const drives: import('../hooks/useSharedDrives').SharedDrive[] = JSON.parse(
+      localStorage.getItem('nook-shared-drives') ?? '[]',
+    )
+    const updated = drives.map(d => (d.id === drive.id ? { ...d, ...partial } : d))
+    localStorage.setItem('nook-shared-drives', JSON.stringify(updated))
+  }
+
+  async function downloadFile(ref: string, _fileHistoryRef: string, fileName: string) {
+    try {
+      // Use the drive's latest ACT history ref (from share link), not the file's individual history.
+      // The drive history includes all grantees added after file upload.
+      const blob = await beeApi.downloadFileWithACT(ref, drive.actPublisher, drive.actHistoryRef)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = fileName
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch {
+      // eslint-disable-next-line no-alert
+      alert('Access revoked or content unavailable.')
+    }
+  }
+
+  return (
+    <div className="border-b" style={{ borderColor: 'rgb(var(--border))' }}>
+      <div
+        className="flex items-center gap-3 px-4 py-3 hover:bg-[rgb(var(--bg-surface))] transition-colors cursor-pointer"
+        onClick={() => drive.files?.length && setExpanded(v => !v)}
+      >
+        {drive.files?.length ? (
+          <span style={{ color: 'rgb(var(--fg-muted))' }}>
+            {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+          </span>
+        ) : (
+          <span className="w-[13px]" />
+        )}
+        <Users size={14} className="shrink-0" style={{ color: 'rgb(var(--accent))' }} />
+
+        {/* Drive name — editable */}
+        {editingName ? (
+          <input
+            autoFocus
+            value={nameInput}
+            onChange={e => setNameInput(e.target.value)}
+            onBlur={() => {
+              if (nameInput.trim()) saveToLocalStorage({ name: nameInput.trim() })
+              setEditingName(false)
+            }}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && nameInput.trim()) {
+                saveToLocalStorage({ name: nameInput.trim() })
+                setEditingName(false)
+              }
+
+              if (e.key === 'Escape') setEditingName(false)
+            }}
+            onClick={e => e.stopPropagation()}
+            className="text-sm font-medium bg-transparent border-b outline-none flex-1 min-w-0"
+            style={{ borderColor: 'rgb(var(--accent))', color: 'rgb(var(--fg))' }}
+          />
+        ) : (
+          <span className="text-sm font-medium truncate flex-1 group/name flex items-center gap-1 min-w-0">
+            <span className="truncate">{drive.name}</span>
+            <button
+              onClick={e => {
+                e.stopPropagation()
+                setNameInput(drive.name)
+                setEditingName(true)
+              }}
+              className="opacity-0 group-hover/name:opacity-100 transition-opacity shrink-0"
+              style={{ color: 'rgb(var(--fg-muted))' }}
+            >
+              <Pencil size={10} />
+            </button>
+          </span>
+        )}
+
+        <span className="text-xs shrink-0" style={{ color: 'rgb(var(--fg-muted))' }}>
+          {drive.files?.length ? `${drive.files.length} file${drive.files.length !== 1 ? 's' : ''}` : ''}
+        </span>
+
+        {/* From label — editable */}
+        {editingFrom ? (
+          <input
+            autoFocus
+            value={fromInput}
+            onChange={e => setFromInput(e.target.value)}
+            onBlur={() => {
+              if (fromInput.trim()) saveToLocalStorage({ fromLabel: fromInput.trim() })
+              setEditingFrom(false)
+            }}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && fromInput.trim()) {
+                saveToLocalStorage({ fromLabel: fromInput.trim() })
+                setEditingFrom(false)
+              }
+
+              if (e.key === 'Escape') setEditingFrom(false)
+            }}
+            onClick={e => e.stopPropagation()}
+            className="text-xs bg-transparent border-b outline-none w-24"
+            style={{ borderColor: 'rgb(var(--accent))', color: 'rgb(var(--fg))' }}
+            placeholder="Name"
+          />
+        ) : (
+          <span
+            className="text-xs shrink-0 group/from flex items-center gap-1"
+            style={{ color: 'rgb(var(--fg-muted))' }}
+          >
+            from {publisherLabel ?? `${drive.actPublisher.slice(0, 8)}…`}
+            <button
+              onClick={e => {
+                e.stopPropagation()
+                setFromInput(publisherLabel ?? '')
+                setEditingFrom(true)
+              }}
+              className="opacity-0 group-hover/from:opacity-100 transition-opacity"
+              style={{ color: 'rgb(var(--fg-muted))' }}
+            >
+              <Pencil size={9} />
+            </button>
+          </span>
+        )}
+        {drive.feedTopic && (
+          <button
+            onClick={async e => {
+              e.stopPropagation()
+              await handleRefresh()
+            }}
+            disabled={refreshing}
+            className="shrink-0 w-6 h-6 flex items-center justify-center rounded transition-colors disabled:opacity-40"
+            style={{ color: 'rgb(var(--accent))' }}
+            title="Sync"
+          >
+            <RefreshCw size={12} className={refreshing ? 'animate-spin' : ''} />
+          </button>
+        )}
+        <button
+          onClick={e => {
+            e.stopPropagation()
+            onRemove()
+          }}
+          className="shrink-0 w-6 h-6 flex items-center justify-center rounded transition-colors hover:text-red-400"
+          style={{ color: 'rgb(var(--fg-muted))' }}
+          title="Remove from list"
+        >
+          <Trash2 size={12} />
+        </button>
+      </div>
+
+      {expanded && drive.files && (
+        <div className="border-t py-2 px-6" style={{ borderColor: 'rgb(var(--border))' }}>
+          {drive.files.map(file => (
+            <div key={file.reference} className="flex items-center gap-3 px-2 py-2">
+              <Lock size={12} style={{ color: 'rgb(var(--accent))' }} />
+              <span className="text-xs font-medium flex-1 truncate">{file.name}</span>
+              <span className="text-xs shrink-0" style={{ color: 'rgb(var(--fg-muted))' }}>
+                {formatBytes(file.size)}
+              </span>
+              <button
+                onClick={async () => downloadFile(file.reference, file.historyRef, file.name)}
+                className="shrink-0 w-6 h-6 flex items-center justify-center rounded transition-colors"
+                style={{ color: 'rgb(var(--fg-muted))' }}
+                title="Download"
+              >
+                <Download size={12} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function Drive() {
   const { data: stamps } = useStamps()
   const {
@@ -1599,8 +2041,11 @@ export default function Drive() {
     moveToFolder,
     setEnsDomain,
   } = useUploadHistory()
+  const { data: nodeAddresses } = useAddresses()
   const { gatewayUrl } = useAppStore()
   const location = useLocation()
+  const driveMetadata = useDriveMetadata()
+  const sharedDrives = useSharedDrives()
 
   const [customDriveLabels, setCustomDriveLabels] = useState<Record<string, string>>(() => {
     try {
@@ -1622,6 +2067,9 @@ export default function Drive() {
   const [activeDriveId, setActiveDriveId] = useState<string | null>(null)
   const [showBuyModal, setShowBuyModal] = useState(false)
   const [showExtendModal, setShowExtendModal] = useState<string | null>(null) // batchID
+  const [showShareModal, setShowShareModal] = useState<string | null>(null) // batchID
+  const [showAddSharedModal, setShowAddSharedModal] = useState(false)
+  const [driveTab, setDriveTab] = useState<'mine' | 'shared'>('mine')
   const [addingFile, setAddingFile] = useState(false)
   const [search, setSearch] = useState('')
   const [copiedId, setCopiedId] = useState<string | null>(null)
@@ -1663,7 +2111,14 @@ export default function Drive() {
     setDownloadingId(id)
     setDownloadPct(0)
     try {
-      await downloadFromSwarm(hash, name, pct => setDownloadPct(pct))
+      // Check if file is encrypted — find the record and its drive metadata
+      const record = records.find(r => r.id === id)
+      const actOptions =
+        record?.isEncrypted && record?.actPublisher && record?.actHistoryRef
+          ? { actPublisher: record.actPublisher, actHistoryRef: record.actHistoryRef }
+          : undefined
+
+      await downloadFromSwarm(hash, name, pct => setDownloadPct(pct), actOptions)
     } finally {
       setDownloadingId(null)
       setDownloadPct(null)
@@ -1688,7 +2143,7 @@ export default function Drive() {
     return (
       <div className="p-6">
         {/* Header */}
-        <div className="flex items-center gap-3 mb-6">
+        <div className="flex items-center gap-3 mb-4">
           <div className="relative w-full max-w-[500px]">
             <Search
               size={11}
@@ -1716,17 +2171,54 @@ export default function Drive() {
             Retrieve
           </button>
 
+          {driveTab === 'mine' ? (
+            <button
+              onClick={() => setShowBuyModal(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0"
+              style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+            >
+              <Plus size={12} />
+              New drive
+            </button>
+          ) : (
+            <button
+              onClick={() => setShowAddSharedModal(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0"
+              style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+            >
+              <Plus size={12} />
+              Add shared drive
+            </button>
+          )}
+        </div>
+
+        {/* Tabs */}
+        <div className="flex gap-1 mb-4">
           <button
-            onClick={() => setShowBuyModal(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0"
-            style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+            onClick={() => setDriveTab('mine')}
+            className="px-3 py-1.5 rounded text-xs font-semibold uppercase tracking-widest transition-colors"
+            style={
+              driveTab === 'mine'
+                ? { backgroundColor: 'rgb(var(--accent))', color: '#fff' }
+                : { color: 'rgb(var(--fg-muted))' }
+            }
           >
-            <Plus size={12} />
-            New drive
+            My Drives{allStamps.length > 0 ? ` (${allStamps.length})` : ''}
+          </button>
+          <button
+            onClick={() => setDriveTab('shared')}
+            className="px-3 py-1.5 rounded text-xs font-semibold uppercase tracking-widest transition-colors"
+            style={
+              driveTab === 'shared'
+                ? { backgroundColor: 'rgb(var(--accent))', color: '#fff' }
+                : { color: 'rgb(var(--fg-muted))' }
+            }
+          >
+            Shared with me{sharedDrives.drives.length > 0 ? ` (${sharedDrives.drives.length})` : ''}
           </button>
         </div>
 
-        {/* Search results */}
+        {/* Content */}
         {search ? (
           <div>
             {searchResults.length === 0 ? (
@@ -1753,6 +2245,24 @@ export default function Drive() {
               </div>
             )}
           </div>
+        ) : driveTab === 'shared' ? (
+          /* Shared drives tab */
+          sharedDrives.drives.length === 0 ? (
+            <p className="text-xs text-center py-8" style={{ color: 'rgb(var(--fg-muted))' }}>
+              No shared drives yet. When someone shares a drive with you, paste the share link here.
+            </p>
+          ) : (
+            <div className="border-t" style={{ borderColor: 'rgb(var(--border))' }}>
+              {sharedDrives.drives.map(drive => (
+                <SharedDriveCard
+                  key={drive.id}
+                  drive={drive}
+                  onRemove={() => sharedDrives.remove(drive.id)}
+                  onRefresh={() => sharedDrives.reload()}
+                />
+              ))}
+            </div>
+          )
         ) : stamps === undefined ? null : allStamps.length === 0 ? (
           /* Empty state */
           <div className="flex flex-col items-center justify-center py-20 gap-4 text-center">
@@ -1790,11 +2300,14 @@ export default function Drive() {
                 downloadingId={downloadingId}
                 downloadPct={downloadPct}
                 customName={customDriveLabels[stamp.batchID]}
+                encrypted={driveMetadata.isEncrypted(stamp.batchID)}
+                granteeCount={driveMetadata.get(stamp.batchID)?.granteeCount}
                 onOpen={folderId => {
                   setActiveDriveId(stamp.batchID)
 
                   if (folderId) setOpenFolderId(folderId)
                 }}
+                onShare={() => setShowShareModal(stamp.batchID)}
                 onExtend={() => setShowExtendModal(stamp.batchID)}
                 onRename={name => renameDrive(stamp.batchID, name)}
                 onCopy={copyHash}
@@ -1808,8 +2321,51 @@ export default function Drive() {
           </div>
         )}
 
-        {showBuyModal && <BuyDriveModal onClose={() => setShowBuyModal(false)} />}
+        {showAddSharedModal && (
+          <AddSharedDriveModal
+            myPublicKey={nodeAddresses?.publicKey}
+            onClose={() => setShowAddSharedModal(false)}
+            onAdd={drive => sharedDrives.add(drive)}
+          />
+        )}
+
+        {showBuyModal && (
+          <BuyDriveModal
+            onClose={() => setShowBuyModal(false)}
+            onCreated={(batchId, encrypted) => {
+              if (encrypted) {
+                driveMetadata.set(batchId, { encrypted: true })
+              }
+            }}
+          />
+        )}
         {extendingStamp && <ExtendModal stamp={extendingStamp} onClose={() => setShowExtendModal(null)} />}
+        {showShareModal &&
+          (() => {
+            const meta = driveMetadata.get(showShareModal)
+            const stamp = allStamps.find(s => s.batchID === showShareModal)
+            const driveRecordsForShare = records.filter(r => r.driveId === showShareModal)
+            const firstRef = driveRecordsForShare.find(r => r.actHistoryRef)
+
+            return (
+              <ShareModal
+                driveName={stamp?.label || customDriveLabels[showShareModal] || 'Encrypted drive'}
+                stampId={showShareModal}
+                actPublisher={meta?.actPublisher || firstRef?.actPublisher}
+                actHistoryRef={meta?.actHistoryRef || firstRef?.actHistoryRef}
+                granteeRef={meta?.granteeRef}
+                myPublicKey={nodeAddresses?.publicKey}
+                beeAddress={nodeAddresses?.ethereum}
+                files={driveRecordsForShare
+                  .filter(r => r.actHistoryRef && r.actPublisher)
+                  .map(r => ({ name: r.name, reference: r.hash, historyRef: r.actHistoryRef!, size: r.size }))}
+                onClose={() => setShowShareModal(null)}
+                onUpdate={({ granteeRef, historyRef, granteeCount }) => {
+                  driveMetadata.update(showShareModal, { granteeRef, actHistoryRef: historyRef, granteeCount })
+                }}
+              />
+            )
+          })()}
         {updatingRecord && <UpdateFeedModal record={updatingRecord} onClose={() => setUpdatingId(null)} />}
         {retrieveOpen && <RetrieveModal onClose={() => setRetrieveOpen(false)} />}
         {ensRecordId &&
@@ -2100,6 +2656,16 @@ export default function Drive() {
             <FolderPlus size={12} />
             Folder
           </button>
+          {driveMetadata.isEncrypted(activeDriveId) && (
+            <button
+              onClick={() => setShowShareModal(activeDriveId)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium shrink-0"
+              style={{ color: 'rgb(var(--accent))' }}
+            >
+              <Lock size={12} />
+              Share
+            </button>
+          )}
         </div>
       )}
 
@@ -2107,9 +2673,14 @@ export default function Drive() {
       {addingFile && (
         <AddFilePanel
           driveId={activeDriveId}
+          encrypted={driveMetadata.isEncrypted(activeDriveId)}
+          actHistoryRef={driveMetadata.get(activeDriveId)?.actHistoryRef}
           onDone={() => setAddingFile(false)}
           onAdd={record => {
             addRecord({ ...record, folderId: openFolderId ?? undefined })
+          }}
+          onActHistoryUpdate={historyRef => {
+            driveMetadata.update(activeDriveId, { actHistoryRef: historyRef })
           }}
         />
       )}
@@ -2149,6 +2720,51 @@ export default function Drive() {
       {visibleFolders.length > 0 && (
         <div className="space-y-1 mb-3">{visibleFolders.map(async folder => renderFolder(folder, 0))}</div>
       )}
+
+      {/* Move to root drop zone — always rendered to avoid DOM insertion during drag */}
+      <div
+        onDragOver={
+          draggingId
+            ? e => {
+                e.preventDefault()
+                setDragOverId('root')
+              }
+            : undefined
+        }
+        onDragLeave={
+          draggingId
+            ? e => {
+                if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverId(null)
+              }
+            : undefined
+        }
+        onDrop={
+          draggingId
+            ? e => {
+                e.preventDefault()
+                const recordId = e.dataTransfer.getData('recordId')
+
+                if (recordId) moveToFolder(recordId, null)
+                setDraggingId(null)
+                setDragOverId(null)
+              }
+            : undefined
+        }
+        className={`rounded-lg border-2 border-dashed text-center text-xs transition-all ${
+          draggingId ? 'px-4 py-3 mb-3 opacity-100' : 'h-0 overflow-hidden opacity-0 border-transparent'
+        }`}
+        style={
+          draggingId
+            ? {
+                borderColor: dragOverId === 'root' ? 'rgb(var(--accent))' : 'rgb(var(--border))',
+                color: dragOverId === 'root' ? 'rgb(var(--accent))' : 'rgb(var(--fg-muted))',
+                backgroundColor: dragOverId === 'root' ? 'rgba(247,104,8,0.05)' : 'transparent',
+              }
+            : undefined
+        }
+      >
+        Drop here to move out of folder
+      </div>
 
       {/* Files / folder separator */}
       {visibleFolders.length > 0 && visibleRecords.length > 0 && (
@@ -2233,6 +2849,32 @@ export default function Drive() {
               onLinked={domain => {
                 setEnsDomain(ensRecordId, domain)
                 setEnsRecordId(null)
+              }}
+            />
+          )
+        })()}
+      {showShareModal &&
+        (() => {
+          const meta = driveMetadata.get(showShareModal)
+          const stamp = allStamps.find(s => s.batchID === showShareModal)
+          const driveRecordsForShare = records.filter(r => r.driveId === showShareModal)
+          const firstRef = driveRecordsForShare.find(r => r.actHistoryRef)
+
+          return (
+            <ShareModal
+              driveName={stamp?.label || customDriveLabels[showShareModal] || 'Encrypted drive'}
+              stampId={showShareModal}
+              actPublisher={meta?.actPublisher || firstRef?.actPublisher}
+              actHistoryRef={meta?.actHistoryRef || firstRef?.actHistoryRef}
+              granteeRef={meta?.granteeRef}
+              myPublicKey={nodeAddresses?.publicKey}
+              beeAddress={nodeAddresses?.ethereum}
+              files={driveRecordsForShare
+                .filter(r => r.actHistoryRef && r.actPublisher)
+                .map(r => ({ name: r.name, reference: r.hash, historyRef: r.actHistoryRef!, size: r.size }))}
+              onClose={() => setShowShareModal(null)}
+              onUpdate={({ granteeRef, historyRef, granteeCount }) => {
+                driveMetadata.update(showShareModal, { granteeRef, actHistoryRef: historyRef, granteeCount })
               }}
             />
           )

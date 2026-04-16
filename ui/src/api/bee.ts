@@ -3,6 +3,11 @@
 
 import { createTar } from '../utils/tar'
 import type { FileEntry } from '../utils/directory'
+import { useAppStore } from '../store/app'
+
+function useAppStoreApiKey(): string {
+  return useAppStore.getState().apiKey ?? ''
+}
 
 export function getBeeUrl(): string {
   return import.meta.env.VITE_BEE_API_URL ?? 'http://localhost:1633'
@@ -26,8 +31,15 @@ async function xhrUpload(
       }
     }
     xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) resolve(xhr.response as UploadResult)
-      else reject(new Error(`Upload failed: ${xhr.status}`))
+      if (xhr.status >= 200 && xhr.status < 300) {
+        const result = xhr.response as UploadResult
+
+        // ACT uploads return historyAddress as a response header, not in the body
+        const actHistory = xhr.getResponseHeader('Swarm-Act-History-Address')
+
+        if (actHistory) (result as ACTUploadResult).historyAddress = actHistory
+        resolve(result)
+      } else reject(new Error(`Upload failed: ${xhr.status}`))
     }
     xhr.onerror = () => reject(new Error('Upload failed'))
     xhr.send(body)
@@ -63,6 +75,7 @@ export interface NodeAddresses {
   overlay: string
   underlay: string[]
   ethereum: string // wallet address
+  publicKey: string // secp256k1 public key (sharing key for ACT)
 }
 
 export interface Stamp {
@@ -87,6 +100,10 @@ export interface ChainState {
 
 export interface UploadResult {
   reference: string // Swarm hash
+}
+
+export interface ACTUploadResult extends UploadResult {
+  historyAddress: string // ACT history reference (returned when swarm-act: true)
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -342,5 +359,74 @@ export const beeApi = {
     if (!r.ok) throw new Error(`Upload failed: ${r.status}`)
 
     return r.json() as Promise<UploadResult>
+  },
+
+  // ─── ACT (encrypted drives) ──────────────────────────────────────────────
+
+  /** Upload a single file with ACT encryption */
+  uploadFileWithACT: async (
+    file: File,
+    stampId: string,
+    historyRef?: string,
+    onProgress?: (pct: number) => void,
+  ): Promise<ACTUploadResult> => {
+    const headers: Record<string, string> = {
+      'swarm-postage-batch-id': stampId,
+      'swarm-deferred-upload': 'true',
+      'swarm-act': 'true',
+      'Content-Type': file.type || 'application/octet-stream',
+      'Content-Disposition': `inline; filename="${encodeURIComponent(file.name)}"`,
+    }
+
+    if (historyRef) headers['swarm-act-history-address'] = historyRef
+
+    const result = await xhrUpload(`${getBeeUrl()}/bzz`, file, headers, onProgress)
+
+    return result as ACTUploadResult
+  },
+
+  /** Upload a collection (folder/website) with ACT encryption */
+  uploadCollectionWithACT: async (
+    entries: FileEntry[],
+    stampId: string,
+    historyRef?: string,
+    options?: { indexDocument?: string; errorDocument?: string },
+    onProgress?: (pct: number) => void,
+  ): Promise<ACTUploadResult> => {
+    const tar = await createTar(entries)
+    const headers: Record<string, string> = {
+      'swarm-postage-batch-id': stampId,
+      'swarm-deferred-upload': 'true',
+      'swarm-collection': 'true',
+      'swarm-act': 'true',
+      'Content-Type': 'application/x-tar',
+    }
+
+    if (historyRef) headers['swarm-act-history-address'] = historyRef
+
+    if (options?.indexDocument) headers['swarm-index-document'] = options.indexDocument
+
+    if (options?.errorDocument) headers['swarm-error-document'] = options.errorDocument
+
+    const result = await xhrUpload(`${getBeeUrl()}/bzz`, tar as XMLHttpRequestBodyInit, headers, onProgress)
+
+    return result as ACTUploadResult
+  },
+
+  /** Download a file from an ACT-encrypted drive (proxied through Koa to avoid CORS) */
+  downloadFileWithACT: async (
+    hash: string,
+    actPublisher: string,
+    historyRef: string,
+    _onProgress?: (pct: number) => void,
+  ): Promise<Blob> => {
+    const params = new URLSearchParams({ publisher: actPublisher, history: historyRef })
+    const r = await fetch(`/act/download/${hash}?${params}`, {
+      headers: { Authorization: useAppStoreApiKey() },
+    })
+
+    if (!r.ok) throw new Error(`ACT download failed: ${r.status}`)
+
+    return r.blob()
   },
 }

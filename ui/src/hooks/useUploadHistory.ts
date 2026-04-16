@@ -30,6 +30,12 @@ export interface UploadRecord {
   folderId?: string
   /** Linked ENS domain name (e.g. "yourname.eth") */
   ensDomain?: string
+  /** Whether this file was uploaded with ACT encryption */
+  isEncrypted?: boolean
+  /** Bee node publicKey that encrypted this file (needed for ACT download) */
+  actPublisher?: string
+  /** ACT history reference (needed for ACT download) */
+  actHistoryRef?: string
 }
 
 const STORAGE_KEY = 'swarm-drive'

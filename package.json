@@ -11,7 +11,7 @@
       "url": "https://github.com/ethersphere/swarm-desktop"
     }
   ],
-  "version": "0.3.7",
+  "version": "0.4.0",
   "description": "Permanent decentralized storage for files, folders and websites",
   "repository": "https://github.com/GasperX93/nook",
   "main": "dist/desktop/src/index.js",
@@ -78,7 +78,7 @@
     "cpy": "^9.0.1",
     "cross-env": "^7.0.3",
     "depcheck": "^1.4.3",
-    "electron": "^41.0.2",
+    "electron": "^41.2.1",
     "eslint": "^8.12.0",
     "eslint-config-prettier": "^8.3.0",
     "eslint-plugin-jest": "^25.7.0",
