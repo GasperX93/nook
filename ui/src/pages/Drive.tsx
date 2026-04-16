@@ -210,16 +210,14 @@ function BuyDriveModal({
   async function doBuy() {
     if (!cost || !driveName.trim()) return
 
-    // If encrypting, derive wallet key now (confirms wallet works + caches for later use)
-    if (isEncrypted) {
-      const derivedSigner = await derive()
-
-      if (!derivedSigner) {
-        setBuyError('Wallet signature required for encrypted drives')
-
-        return
-      }
-    }
+    // TODO: re-enable when metadata feeds are wired up
+    // if (isEncrypted) {
+    //   const derivedSigner = await derive()
+    //   if (!derivedSigner) {
+    //     setBuyError('Wallet signature required for encrypted drives')
+    //     return
+    //   }
+    // }
 
     setBuying(true)
     setBuyError(null)
@@ -320,7 +318,8 @@ function BuyDriveModal({
           </div>
         </label>
 
-        {isEncrypted && !isConnected && <WalletGate />}
+        {/* TODO: re-enable when metadata feeds are wired up */}
+        {/* {isEncrypted && !isConnected && <WalletGate />} */}
 
         {/* Cost */}
         {cost && (
@@ -355,7 +354,7 @@ function BuyDriveModal({
           </button>
           <button
             onClick={doBuy}
-            disabled={buying || !cost || !canAfford || buyDone || !driveName.trim() || (isEncrypted && !isConnected)}
+            disabled={buying || !cost || !canAfford || buyDone || !driveName.trim()}
             className="flex-1 py-2 rounded-lg text-sm font-semibold disabled:opacity-40 flex items-center justify-center gap-2"
             style={{
               backgroundColor: buyDone ? 'rgba(74,222,128,0.15)' : 'rgb(var(--accent))',
