@@ -31,6 +31,21 @@
             "date": 1775970733064,
             "name": "/Users/gzupan/Library/Logs/Nook/bee.4.log",
             "hash": "3c112c515e490a61c9fbeacf44528047"
+        },
+        {
+            "date": 1776095714822,
+            "name": "/Users/gzupan/Library/Logs/Nook/bee.5.log",
+            "hash": "01c402cad5480ebe95cf76b5957a67c0"
+        },
+        {
+            "date": 1776153903112,
+            "name": "/Users/gzupan/Library/Logs/Nook/bee.6.log",
+            "hash": "4894c6af3b5159e521ba4c2249c1f958"
+        },
+        {
+            "date": 1776186749871,
+            "name": "/Users/gzupan/Library/Logs/Nook/bee.7.log",
+            "hash": "566c2afe283acc7db6a630c2ab1fd92a"
         }
     ]
 }

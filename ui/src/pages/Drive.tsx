@@ -55,7 +55,6 @@ import {
 import AddSharedDriveModal from '../components/AddSharedDriveModal'
 import ENSModal from '../components/ENSModal'
 import ShareModal from '../components/ShareModal'
-import WalletGate from '../components/WalletGate'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -1563,7 +1562,7 @@ function AddFilePanel({ driveId, encrypted, actHistoryRef, onDone, onAdd, onActH
         expiresAt = Date.now() + 3 * 30 * 24 * 60 * 60 * 1000
       }
 
-      onAdd({
+      const newRecord: UploadRecord = {
         id: crypto.randomUUID(),
         name,
         hash: reference,
@@ -1576,7 +1575,47 @@ function AddFilePanel({ driveId, encrypted, actHistoryRef, onDone, onAdd, onActH
         isEncrypted: encrypted || undefined,
         actPublisher: encrypted ? addresses?.publicKey : undefined,
         actHistoryRef: uploadHistoryAddress || undefined,
-      })
+      }
+
+      onAdd(newRecord)
+
+      // Update metadata feed for encrypted drives (enables live shared drive access)
+      if (encrypted && addresses?.publicKey && uploadHistoryAddress) {
+        try {
+          const topic = await topicFromString(driveId + 'nook-drive-meta')
+          // Build file list from localStorage + explicitly include the just-uploaded file
+          // (localStorage write from onAdd may be batched by React)
+          const existingRecords = JSON.parse(localStorage.getItem('swarm-drive') ?? '[]') as UploadRecord[]
+          const existingFiles = existingRecords
+            .filter((r: UploadRecord) => r.driveId === driveId && r.actHistoryRef && r.id !== newRecord.id)
+            .map((r: UploadRecord) => ({
+              name: r.name,
+              reference: r.hash,
+              historyRef: r.actHistoryRef,
+              size: r.size,
+            }))
+
+          // Always include the just-uploaded file
+          const driveFiles = [
+            ...existingFiles,
+            { name: newRecord.name, reference: newRecord.hash, historyRef: uploadHistoryAddress, size: newRecord.size },
+          ]
+
+          const metadata = JSON.stringify({ files: driveFiles })
+          // Use the drive's latest ACT history (includes grantee additions), not just file upload history
+          const latestHistory = actHistoryRef || uploadHistoryAddress
+          const uploaded = await serverApi.uploadACTMetadata(driveId, metadata, latestHistory)
+
+          // Upload wrapper as raw bytes (not /bzz file) so feed reader can use /bytes
+          const wrapper = JSON.stringify({ ref: uploaded.reference, history: uploaded.historyRef })
+          const wrapperResult = await serverApi.uploadRawBytes(driveId, wrapper)
+
+          await serverApi.createFeedUpdate(topic, wrapperResult.reference, driveId)
+          onActHistoryUpdate?.(uploaded.historyRef)
+        } catch {
+          // Feed update failed — not critical, drive still works without live sharing
+        }
+      }
 
       onDone()
     } catch (err) {
@@ -1733,15 +1772,56 @@ function AddFilePanel({ driveId, encrypted, actHistoryRef, onDone, onAdd, onActH
 function SharedDriveCard({
   drive,
   onRemove,
+  onRefresh,
 }: {
   drive: import('../hooks/useSharedDrives').SharedDrive
   onRemove: () => void
+  onRefresh?: () => void
 }) {
   const [expanded, setExpanded] = useState(false)
   const [editingName, setEditingName] = useState(false)
   const [nameInput, setNameInput] = useState('')
   const [editingFrom, setEditingFrom] = useState(false)
   const [fromInput, setFromInput] = useState('')
+  const [refreshing, setRefreshing] = useState(false)
+
+  // Auto-sync every 5 minutes for feed-based shared drives
+  useEffect(() => {
+    if (!drive.feedTopic || !drive.feedOwner || !onRefresh) return
+
+    const interval = setInterval(() => {
+      handleRefresh()
+    }, 5 * 60 * 1000)
+
+    return () => clearInterval(interval)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drive.feedTopic, drive.feedOwner])
+
+  async function handleRefresh() {
+    if (!drive.feedTopic || !drive.feedOwner || !onRefresh) return
+    setRefreshing(true)
+    try {
+      const wrapperText = await serverApi.readFeed(drive.feedTopic, drive.feedOwner)
+      const wrapper = JSON.parse(wrapperText) as { ref: string; history: string }
+      const blob = await beeApi.downloadFileWithACT(wrapper.ref, drive.actPublisher, wrapper.history)
+      const metadata = JSON.parse(await blob.text())
+
+      // Update localStorage with new files
+      const drives: import('../hooks/useSharedDrives').SharedDrive[] = JSON.parse(
+        localStorage.getItem('nook-shared-drives') ?? '[]',
+      )
+      const updated = drives.map(d =>
+        d.id === drive.id ? { ...d, files: metadata.files, actHistoryRef: wrapper.history } : d,
+      )
+      localStorage.setItem('nook-shared-drives', JSON.stringify(updated))
+      onRefresh()
+    } catch {
+      // eslint-disable-next-line no-alert
+      alert('Could not refresh. Access may have been revoked.')
+    } finally {
+      setRefreshing(false)
+    }
+  }
 
   // Look up label for the publisher key from grantee labels
   const granteeLabels: Record<string, string> = (() => {
@@ -1892,6 +1972,20 @@ function SharedDriveCard({
               <Pencil size={9} />
             </button>
           </span>
+        )}
+        {drive.feedTopic && (
+          <button
+            onClick={async e => {
+              e.stopPropagation()
+              await handleRefresh()
+            }}
+            disabled={refreshing}
+            className="shrink-0 w-6 h-6 flex items-center justify-center rounded transition-colors disabled:opacity-40"
+            style={{ color: 'rgb(var(--accent))' }}
+            title="Sync"
+          >
+            <RefreshCw size={12} className={refreshing ? 'animate-spin' : ''} />
+          </button>
         )}
         <button
           onClick={e => {
@@ -2158,7 +2252,12 @@ export default function Drive() {
           ) : (
             <div className="border-t" style={{ borderColor: 'rgb(var(--border))' }}>
               {sharedDrives.drives.map(drive => (
-                <SharedDriveCard key={drive.id} drive={drive} onRemove={() => sharedDrives.remove(drive.id)} />
+                <SharedDriveCard
+                  key={drive.id}
+                  drive={drive}
+                  onRemove={() => sharedDrives.remove(drive.id)}
+                  onRefresh={() => sharedDrives.reload()}
+                />
               ))}
             </div>
           )
@@ -2254,6 +2353,7 @@ export default function Drive() {
                 actHistoryRef={meta?.actHistoryRef || firstRef?.actHistoryRef}
                 granteeRef={meta?.granteeRef}
                 myPublicKey={nodeAddresses?.publicKey}
+                beeAddress={nodeAddresses?.ethereum}
                 files={driveRecordsForShare
                   .filter(r => r.actHistoryRef && r.actPublisher)
                   .map(r => ({ name: r.name, reference: r.hash, historyRef: r.actHistoryRef!, size: r.size }))}
@@ -2554,6 +2654,16 @@ export default function Drive() {
             <FolderPlus size={12} />
             Folder
           </button>
+          {driveMetadata.isEncrypted(activeDriveId) && (
+            <button
+              onClick={() => setShowShareModal(activeDriveId)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium shrink-0"
+              style={{ color: 'rgb(var(--accent))' }}
+            >
+              <Lock size={12} />
+              Share
+            </button>
+          )}
         </div>
       )}
 
@@ -2692,6 +2802,32 @@ export default function Drive() {
               onLinked={domain => {
                 setEnsDomain(ensRecordId, domain)
                 setEnsRecordId(null)
+              }}
+            />
+          )
+        })()}
+      {showShareModal &&
+        (() => {
+          const meta = driveMetadata.get(showShareModal)
+          const stamp = allStamps.find(s => s.batchID === showShareModal)
+          const driveRecordsForShare = records.filter(r => r.driveId === showShareModal)
+          const firstRef = driveRecordsForShare.find(r => r.actHistoryRef)
+
+          return (
+            <ShareModal
+              driveName={stamp?.label || customDriveLabels[showShareModal] || 'Encrypted drive'}
+              stampId={showShareModal}
+              actPublisher={meta?.actPublisher || firstRef?.actPublisher}
+              actHistoryRef={meta?.actHistoryRef || firstRef?.actHistoryRef}
+              granteeRef={meta?.granteeRef}
+              myPublicKey={nodeAddresses?.publicKey}
+              beeAddress={nodeAddresses?.ethereum}
+              files={driveRecordsForShare
+                .filter(r => r.actHistoryRef && r.actPublisher)
+                .map(r => ({ name: r.name, reference: r.hash, historyRef: r.actHistoryRef!, size: r.size }))}
+              onClose={() => setShowShareModal(null)}
+              onUpdate={({ granteeRef, historyRef, granteeCount }) => {
+                driveMetadata.update(showShareModal, { granteeRef, actHistoryRef: historyRef, granteeCount })
               }}
             />
           )

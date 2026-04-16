@@ -1,22 +1,16 @@
 /**
  * AddSharedDriveModal — paste a share link to add a drive shared by someone else.
- * Downloads ACT-encrypted metadata to verify access and get the file list.
+ * Supports both feed-based (live) and snapshot (legacy) share links.
  */
 import { Check, Copy, Download, RefreshCw, X } from 'lucide-react'
 import { useState } from 'react'
 
 import { beeApi } from '../api/bee'
+import { serverApi } from '../api/server'
 import { parseShareLink } from '../hooks/useSharedDrives'
-
-interface SharedFile {
-  name: string
-  reference: string
-  historyRef: string
-  size: number
-}
+import type { SharedFile } from '../hooks/useSharedDrives'
 
 interface AddSharedDriveModalProps {
-  /** Node's publicKey — shown in error state so user can share it with the drive owner */
   myPublicKey?: string
   onClose: () => void
   onAdd: (drive: {
@@ -25,6 +19,8 @@ interface AddSharedDriveModalProps {
     actPublisher: string
     actHistoryRef: string
     files?: SharedFile[]
+    feedTopic?: string
+    feedOwner?: string
   }) => void
 }
 
@@ -39,7 +35,7 @@ export default function AddSharedDriveModal({ myPublicKey, onClose, onAdd }: Add
     const parsed = parseShareLink(link)
 
     if (!parsed) {
-      setError('Invalid share link. Expected format: swarm://reference?publisher=...&history=...')
+      setError('Invalid share link.')
 
       return
     }
@@ -48,29 +44,52 @@ export default function AddSharedDriveModal({ myPublicKey, onClose, onAdd }: Add
     setError(null)
 
     try {
-      // Download the ACT-encrypted metadata
-      const blob = await beeApi.downloadFileWithACT(parsed.reference, parsed.actPublisher, parsed.actHistoryRef)
-      const text = await blob.text()
-
       let driveName = name.trim() || 'Shared drive'
       let files: SharedFile[] | undefined
+      let reference = ''
+      let actHistoryRef = ''
 
-      try {
-        const metadata = JSON.parse(text)
+      if (parsed.type === 'feed' && parsed.feedTopic && parsed.feedOwner) {
+        // Feed-based: read feed → get wrapper → ACT download metadata
+        const wrapperText = await serverApi.readFeed(parsed.feedTopic, parsed.feedOwner)
+        const wrapper = JSON.parse(wrapperText) as { ref: string; history: string }
 
-        if (metadata.name) driveName = name.trim() || metadata.name
+        const blob = await beeApi.downloadFileWithACT(wrapper.ref, parsed.actPublisher, wrapper.history)
+        const metadataText = await blob.text()
+        const metadata = JSON.parse(metadataText)
 
         if (metadata.files?.length) files = metadata.files
-      } catch {
-        // Not JSON metadata — single file share (legacy format)
+
+        driveName = name.trim() || metadata.name || 'Shared drive'
+        reference = wrapper.ref
+        actHistoryRef = wrapper.history
+      } else if (parsed.type === 'snapshot' && parsed.reference && parsed.actHistoryRef) {
+        // Legacy snapshot: direct ACT download
+        const blob = await beeApi.downloadFileWithACT(parsed.reference, parsed.actPublisher, parsed.actHistoryRef)
+        const text = await blob.text()
+
+        try {
+          const metadata = JSON.parse(text)
+
+          if (metadata.name) driveName = name.trim() || metadata.name
+
+          if (metadata.files?.length) files = metadata.files
+        } catch {
+          // Not JSON — single file
+        }
+
+        reference = parsed.reference
+        actHistoryRef = parsed.actHistoryRef
       }
 
       onAdd({
         name: driveName,
-        reference: parsed.reference,
+        reference,
         actPublisher: parsed.actPublisher,
-        actHistoryRef: parsed.actHistoryRef,
+        actHistoryRef,
         files,
+        feedTopic: parsed.type === 'feed' ? parsed.feedTopic : undefined,
+        feedOwner: parsed.type === 'feed' ? parsed.feedOwner : undefined,
       })
       onClose()
     } catch {
@@ -123,7 +142,7 @@ export default function AddSharedDriveModal({ myPublicKey, onClose, onAdd }: Add
           <textarea
             value={link}
             onChange={e => setLink(e.target.value)}
-            placeholder="swarm://reference?publisher=...&history=..."
+            placeholder="swarm://feed?topic=...&owner=...&publisher=..."
             className="w-full rounded-lg border px-3 py-2 text-xs font-mono focus:outline-none resize-none h-20"
             style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
           />

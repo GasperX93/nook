@@ -6,6 +6,7 @@
 import { Copy, Check, Lock, RefreshCw, Trash2, Users, X } from 'lucide-react'
 import { useState } from 'react'
 
+import { beeApi, topicFromString } from '../api/bee'
 import { serverApi } from '../api/server'
 
 interface ShareFileEntry {
@@ -23,6 +24,8 @@ interface ShareModalProps {
   granteeRef?: string
   /** Node's own publicKey — to show "you" label in grantee list */
   myPublicKey?: string
+  /** Bee node's ethereum address — for feed-based share link */
+  beeAddress?: string
   /** Files in the drive — used to build the encrypted metadata for sharing */
   files?: ShareFileEntry[]
   onClose: () => void
@@ -43,6 +46,7 @@ export default function ShareModal({
   actHistoryRef,
   granteeRef,
   myPublicKey,
+  beeAddress,
   files,
   onClose,
   onUpdate,
@@ -200,17 +204,25 @@ export default function ShareModal({
   }
 
   async function copyShareLink() {
-    if (!actPublisher || !actHistoryRef || !files?.length) return
+    if (!actPublisher || !actHistoryRef || !beeAddress || !files?.length) return
     setLoading(true)
 
     try {
-      // Upload file list as ACT-encrypted metadata
+      const topic = await topicFromString(stampId + 'nook-drive-meta')
+
+      // Re-upload metadata with LATEST history (includes all grantees) and update feed
       const metadata = JSON.stringify({
-        name: driveName,
         files: files.map(f => ({ name: f.name, reference: f.reference, historyRef: f.historyRef, size: f.size })),
       })
       const uploaded = await serverApi.uploadACTMetadata(stampId, metadata, actHistoryRef)
-      const link = `swarm://${uploaded.reference}?publisher=${actPublisher}&history=${uploaded.historyRef}`
+
+      // Upload wrapper as raw bytes (not /bzz file) so feed reader can use /bytes to read it
+      const wrapper = JSON.stringify({ ref: uploaded.reference, history: uploaded.historyRef })
+      const wrapperResult = await serverApi.uploadRawBytes(stampId, wrapper)
+
+      await serverApi.createFeedUpdate(topic, wrapperResult.reference, stampId)
+
+      const link = `swarm://feed?topic=${topic}&owner=${beeAddress}&publisher=${actPublisher}`
       navigator.clipboard.writeText(link)
       setCopiedLink(true)
       setTimeout(() => setCopiedLink(false), 2000)
@@ -377,7 +389,7 @@ export default function ShareModal({
 
         {/* Share drive link + warning */}
         <div className="border-t pt-4 space-y-3" style={{ borderColor: 'rgb(var(--border))' }}>
-          {actPublisher && actHistoryRef && files && files.length > 0 && grantees.length > 0 && (
+          {actPublisher && beeAddress && grantees.length > 0 && (
             <div className="space-y-2">
               <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
                 After granting access, send them the drive link:

@@ -168,6 +168,52 @@ export function runServer() {
       }
     }
   })
+  router.get('/feed-read', async context => {
+    const topicHex = context.query['topic'] as string
+    const owner = context.query['owner'] as string
+
+    if (!topicHex || !owner) {
+      context.status = 400
+      context.body = { message: 'topic and owner query params are required' }
+
+      return
+    }
+
+    try {
+      const bee = makeBee()
+      const reader = bee.makeFeedReader(topicHex, owner)
+      const result = await reader.downloadReference()
+      const data = await bee.downloadData(result.reference.toHex())
+      context.type = 'application/octet-stream'
+      context.body = Buffer.from(data.toUint8Array())
+    } catch (error) {
+      logger.error(error)
+      context.status = 404
+      context.body = { message: 'Feed not found' }
+    }
+  })
+
+  router.post('/upload-bytes', async context => {
+    const { stampId, data } = context.request.body as { stampId: string; data: string }
+
+    if (!stampId || !data) {
+      context.status = 400
+      context.body = { message: 'stampId and data are required' }
+
+      return
+    }
+
+    try {
+      const bee = makeBee()
+      const result = await bee.uploadData(stampId, data)
+      context.body = { reference: result.reference.toHex() }
+    } catch (error) {
+      logger.error(error)
+      context.status = 500
+      context.body = { message: 'Upload failed' }
+    }
+  })
+
   router.post('/buy-stamp', async context => {
     const { amount, depth, immutable, label } = context.request.body as {
       amount: string

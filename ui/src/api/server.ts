@@ -92,6 +92,20 @@ export const serverApi = {
 
   // ─── ACT operations ─────────────────────────────────────────────────────
 
+  /** Read a Swarm feed by topic + owner */
+  readFeed: async (topic: string, owner: string) => {
+    const params = new URLSearchParams({ topic, owner })
+    const response = await fetch(`/feed-read?${params}`, { headers: authHeaders() })
+
+    if (!response.ok) throw new Error('Feed not found')
+
+    return response.text()
+  },
+
+  /** Upload raw bytes to Swarm (non-ACT, for feed wrappers) */
+  uploadRawBytes: async (stampId: string, data: string) =>
+    serverPost<{ reference: string }>('/upload-bytes', { stampId, data }),
+
   /** Upload a small data blob with ACT encryption (for metadata) */
   uploadACTMetadata: async (stampId: string, data: string, historyRef?: string) =>
     serverPost<{ reference: string; historyRef: string }>('/act/upload-metadata', { stampId, data, historyRef }),

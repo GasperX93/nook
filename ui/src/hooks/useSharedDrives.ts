@@ -22,6 +22,9 @@ export interface SharedDrive {
   addedAt: number
   files?: SharedFile[]
   fromLabel?: string
+  /** Feed-based sharing (live file list) */
+  feedTopic?: string
+  feedOwner?: string
 }
 
 function load(): SharedDrive[] {
@@ -36,26 +39,46 @@ function persist(drives: SharedDrive[]) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(drives))
 }
 
-/** Parse a share link into its components. Returns null if invalid. */
-export function parseShareLink(
-  link: string,
-): { reference: string; actPublisher: string; actHistoryRef: string } | null {
-  try {
-    // Format: swarm://reference?publisher=...&history=...
-    const clean = link.trim().replace('swarm://', '')
-    const [reference, query] = clean.split('?')
+export interface ParsedShareLink {
+  type: 'feed' | 'snapshot'
+  // Feed-based (live)
+  feedTopic?: string
+  feedOwner?: string
+  actPublisher: string
+  // Snapshot-based (legacy)
+  reference?: string
+  actHistoryRef?: string
+}
 
-    if (!reference || !query) return null
+/** Parse a share link into its components. Supports both feed-based and legacy snapshot links. */
+export function parseShareLink(link: string): ParsedShareLink | null {
+  try {
+    const clean = link.trim().replace('swarm://', '')
+    const [path, query] = clean.split('?')
+
+    if (!query) return null
 
     const params = new URLSearchParams(query)
     const actPublisher = params.get('publisher')
+
+    if (!actPublisher) return null
+
+    // Feed-based: swarm://feed?topic=...&owner=...&publisher=...
+    if (path === 'feed') {
+      const feedTopic = params.get('topic')
+      const feedOwner = params.get('owner')
+
+      if (!feedTopic || !feedOwner) return null
+
+      return { type: 'feed', feedTopic, feedOwner, actPublisher }
+    }
+
+    // Legacy snapshot: swarm://reference?publisher=...&history=...
     const actHistoryRef = params.get('history')
 
-    if (!actPublisher || !actHistoryRef) return null
+    if (!actHistoryRef || path.length < 64) return null
 
-    if (reference.length < 64) return null
-
-    return { reference, actPublisher, actHistoryRef }
+    return { type: 'snapshot', reference: path, actPublisher, actHistoryRef }
   } catch {
     return null
   }
@@ -92,5 +115,9 @@ export function useSharedDrives() {
     })
   }
 
-  return { drives, add, remove }
+  function reload() {
+    setDrives(load())
+  }
+
+  return { drives, add, remove, reload }
 }

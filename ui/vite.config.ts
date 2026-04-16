@@ -19,6 +19,8 @@ export default defineConfig(({ command }) => ({
       '/redeem': 'http://localhost:3000',
       '/withdraw': 'http://localhost:3000',
       '/feed-update': 'http://localhost:3000',
+      '/feed-read': 'http://localhost:3000',
+      '/upload-bytes': 'http://localhost:3000',
       '/buy-stamp': 'http://localhost:3000',
       '/act': 'http://localhost:3000',
       '/grantee': 'http://localhost:3000',
