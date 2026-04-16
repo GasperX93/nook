@@ -6,7 +6,7 @@
 import { Copy, Check, Lock, RefreshCw, Trash2, Users, X } from 'lucide-react'
 import { useState } from 'react'
 
-import { beeApi, topicFromString } from '../api/bee'
+import { topicFromString } from '../api/bee'
 import { serverApi } from '../api/server'
 
 interface ShareFileEntry {

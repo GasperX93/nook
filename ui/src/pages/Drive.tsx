@@ -1200,7 +1200,7 @@ function DriveCard({
         </div>
         {isExpanded && (
           <div className="ml-3 pl-2 border-l" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>
-            {childFolders.map(child => renderInlineFolder(child, depth + 1))}
+            {childFolders.map(async child => renderInlineFolder(child, depth + 1))}
             {folderFiles.length > 0 && (
               <div className="divide-y" style={{ borderColor: 'rgb(var(--border))' }}>
                 {folderFiles.map(r => (
@@ -1414,7 +1414,7 @@ function DriveCard({
         <div className="border-t" style={{ borderColor: 'rgb(var(--border))' }}>
           <div className="py-2 px-6">
             {rootFolders.length > 0 && (
-              <div className="space-y-0.5 mb-0.5">{rootFolders.map(folder => renderInlineFolder(folder, 0))}</div>
+              <div className="space-y-0.5 mb-0.5">{rootFolders.map(async folder => renderInlineFolder(folder, 0))}</div>
             )}
             {rootFiles.length > 0 && (
               <div className="divide-y" style={{ borderColor: 'rgb(var(--border))' }}>
@@ -1789,12 +1789,14 @@ function SharedDriveCard({
   useEffect(() => {
     if (!drive.feedTopic || !drive.feedOwner || !onRefresh) return
 
-    const interval = setInterval(() => {
-      handleRefresh()
-    }, 5 * 60 * 1000)
+    const interval = setInterval(
+      () => {
+        handleRefresh()
+      },
+      5 * 60 * 1000,
+    )
 
     return () => clearInterval(interval)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [drive.feedTopic, drive.feedOwner])
 
   async function handleRefresh() {
@@ -2554,7 +2556,7 @@ export default function Drive() {
 
         {isExpanded && (
           <div className="mt-1 pl-4 space-y-1">
-            {childFolders.map(child => renderFolder(child, depth + 1))}
+            {childFolders.map(async child => renderFolder(child, depth + 1))}
             {folderRecords.length > 0 && (
               <div className="divide-y" style={{ borderColor: 'rgb(var(--border))' }}>
                 {folderRecords.map(record => (
@@ -2716,34 +2718,50 @@ export default function Drive() {
 
       {/* Folder tree */}
       {visibleFolders.length > 0 && (
-        <div className="space-y-1 mb-3">{visibleFolders.map(folder => renderFolder(folder, 0))}</div>
+        <div className="space-y-1 mb-3">{visibleFolders.map(async folder => renderFolder(folder, 0))}</div>
       )}
 
       {/* Move to root drop zone — always rendered to avoid DOM insertion during drag */}
       <div
-        onDragOver={draggingId ? e => {
-          e.preventDefault()
-          setDragOverId('root')
-        } : undefined}
-        onDragLeave={draggingId ? e => {
-          if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverId(null)
-        } : undefined}
-        onDrop={draggingId ? e => {
-          e.preventDefault()
-          const recordId = e.dataTransfer.getData('recordId')
+        onDragOver={
+          draggingId
+            ? e => {
+                e.preventDefault()
+                setDragOverId('root')
+              }
+            : undefined
+        }
+        onDragLeave={
+          draggingId
+            ? e => {
+                if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverId(null)
+              }
+            : undefined
+        }
+        onDrop={
+          draggingId
+            ? e => {
+                e.preventDefault()
+                const recordId = e.dataTransfer.getData('recordId')
 
-          if (recordId) moveToFolder(recordId, null)
-          setDraggingId(null)
-          setDragOverId(null)
-        } : undefined}
+                if (recordId) moveToFolder(recordId, null)
+                setDraggingId(null)
+                setDragOverId(null)
+              }
+            : undefined
+        }
         className={`rounded-lg border-2 border-dashed text-center text-xs transition-all ${
           draggingId ? 'px-4 py-3 mb-3 opacity-100' : 'h-0 overflow-hidden opacity-0 border-transparent'
         }`}
-        style={draggingId ? {
-          borderColor: dragOverId === 'root' ? 'rgb(var(--accent))' : 'rgb(var(--border))',
-          color: dragOverId === 'root' ? 'rgb(var(--accent))' : 'rgb(var(--fg-muted))',
-          backgroundColor: dragOverId === 'root' ? 'rgba(247,104,8,0.05)' : 'transparent',
-        } : undefined}
+        style={
+          draggingId
+            ? {
+                borderColor: dragOverId === 'root' ? 'rgb(var(--accent))' : 'rgb(var(--border))',
+                color: dragOverId === 'root' ? 'rgb(var(--accent))' : 'rgb(var(--fg-muted))',
+                backgroundColor: dragOverId === 'root' ? 'rgba(247,104,8,0.05)' : 'transparent',
+              }
+            : undefined
+        }
       >
         Drop here to move out of folder
       </div>
