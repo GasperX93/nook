@@ -2,27 +2,29 @@
 
 > A desktop drive on top of Swarm decentralised storage.
 
-Nook bundles a [Bee](https://github.com/ethersphere/bee) node and a clean UI into a single desktop app. Upload files, folders, and websites — get a permanent Swarm link back. No accounts, no servers.
+Nook bundles a [Bee](https://github.com/ethersphere/bee) node and a clean UI into a single desktop app. Store files, encrypt and share them, publish websites — all on decentralized storage. No accounts, no servers.
 
 ![macOS | Linux | Windows](https://img.shields.io/badge/runs%20on-macOS%20%7C%20Linux%20%7C%20Windows-orange)
 [![License: BSD-3-Clause](https://img.shields.io/badge/license-BSD--3--Clause-blue.svg)](./LICENSE)
 
 ## What you can do
 
-- **Publish** — upload a file, folder, or static website and get a permanent Swarm hash
-- **Drive** — browse your upload history in folders and subfolders, extend storage, update feeds
-- **Feeds** — create a permanent address you can push new versions to (mutable link)
-- **Wallet** — check xDAI and BZZ balance, swap tokens, top up from any chain via MetaMask
-- **My Storage** — manage your drives, see TTL and usage, extend before they expire
-- **Settings** — configure RPC endpoint, view network stats, toggle developer mode
+- **Store files** — upload any file or folder to Swarm, organized into drives with folders
+- **Encrypt files** — create encrypted drives using Swarm's ACT (chunk-level encryption). Only people you grant access to can decrypt and download
+- **Share encrypted drives** — grant access to specific users via their sharing key, generate a share link, and recipients get a live-syncing view of your files
+- **Publish websites** — upload a website (HTML/CSS/JS) to Swarm and get a permanent link. Optionally attach a feed for updates so the URL stays the same when you publish new versions
+- **Connect to ENS** — link your Swarm-hosted website to an ENS domain (e.g. `yourname.eth`) so anyone can access it via a gateway or ENS-aware browser
+- **Manage your wallet** — view xDAI/xBZZ balances, swap between tokens, redeem gift codes, top up from any chain via the multichain widget
+- **Extend storage** — drives have a TTL (time to live). Extend them to keep your data alive longer
 
 ## How it works
 
 Nook manages a Bee node automatically. When you start Nook:
 
 1. The app downloads and starts a Bee binary on `localhost:1633`
-2. The UI connects to Bee for all storage operations
-3. Files are stored on Swarm — retrievable via any public gateway or your local node
+2. New installs start in ultra-light mode — no funds needed, the UI works immediately
+3. When you fund your wallet with xDAI, Nook auto-switches to light mode and you can start uploading
+4. Files are stored on Swarm — retrievable via any public gateway or your local node
 
 > **Note:** Nook always starts its own Bee node. If you already run a Bee node on port 1633, stop it before launching Nook.
 
@@ -32,11 +34,12 @@ Download the latest build from the [releases page](https://github.com/GasperX93/
 
 | Platform | File |
 |---|---|
-| macOS (Apple Silicon) | `Nook-darwin-arm64-*.dmg` |
+| macOS (Apple Silicon) | `Nook-*-arm64.dmg` |
+| macOS (Intel) | `Nook-*-x64.dmg` |
+| Linux | `nook_*_amd64.deb` / `nook-*.x86_64.rpm` |
+| Windows | `Nook-*-Setup.exe` |
 
 **macOS note:** Right-click the `.app` → Open to bypass the Gatekeeper warning on first launch (app is not yet notarized).
-
-Linux and Windows builds are planned for a future release.
 
 ## Development
 
