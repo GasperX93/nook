@@ -65,25 +65,47 @@ The app has two main layers:
 
 **Ultra-light / light mode**: New installs start in ultra-light mode (`swap-enable: false`, no `blockchain-rpc-endpoint`). Bee API is available immediately without funds. The funding monitor polls wallet balance every 15s. When xDAI is detected: stop Bee → write `blockchain-rpc-endpoint` and `swap-enable: true` → restart in light mode. Postage sync takes ~2–3 minutes thanks to clean snapshot loading.
 
-**Server** (`server.ts`): Koa REST API. Public routes: `/info`, `/price`. Auth-required routes (API key header): `/status`, `/config`, `/logs/*`, `/restart`, `/swap`, `/redeem`, `/buy-stamp`, `/feed-update`, `/withdraw`, `/peers`.
+**Server** (`server.ts`): Koa REST API. Public routes: `/info`, `/price`. Auth-required routes (API key header): `/status`, `/config`, `/logs/*`, `/restart`, `/swap`, `/redeem`, `/buy-stamp`, `/feed-update`, `/feed-read`, `/withdraw`, `/peers`, `/act/*`, `/grantee`, `/upload-bytes`.
 
 ### Frontend (`ui/`) — Custom React app
 
 Built with Vite + React 19 + Tailwind + TanStack Query + Zustand. Pages: Publish, Drive, Account, Settings, Logs, Dev. It's built separately, copied into `dist/ui/`, and served by the Koa server. The API key is injected via URL parameter.
 
 Key files:
-- `ui/src/api/bee.ts` — direct Bee node API calls (port 1633). **Note:** the `immutable` flag for stamp creation is sent as an HTTP **header**, not a query param (e.g. `headers: { immutable: 'false' }`). Default stamp type is **immutable** throughout the UI.
-- `ui/src/api/server.ts` — calls to the Nook Koa backend
+- `ui/src/api/bee.ts` — direct Bee node API calls (port 1633). Includes ACT upload/download functions. **Note:** the `immutable` flag for stamp creation is sent as an HTTP **header**, not a query param (e.g. `headers: { immutable: 'false' }`). Default stamp type is **immutable** throughout the UI.
+- `ui/src/api/server.ts` — calls to the Nook Koa backend (ACT metadata, grantees, feeds, stamps)
+- `ui/src/api/feeds.ts` — metadata feed operations for encrypted drives (DriveMetadata type, topic calculation, read/write)
+- `ui/src/crypto/signer.ts` — wallet key derivation: NookSigner interface, HMAC-SHA256 sub-keys from wallet signature
+- `ui/src/store/identity.ts` — Zustand store for wallet-derived signer (in-memory only, never persisted)
+- `ui/src/hooks/useDriveMetadata.ts` — per-drive ACT metadata in localStorage (encrypted flag, history refs, grantee refs)
+- `ui/src/hooks/useSharedDrives.ts` — shared drives localStorage store, share link parsing (feed-based and legacy snapshot)
+- `ui/src/hooks/useDerivedKey.ts` — wallet → signer derivation hook with deterministic check
+- `ui/src/components/ShareModal.tsx` — grantee management (grant/revoke), share link generation, contact autocomplete
+- `ui/src/components/AddSharedDriveModal.tsx` — import shared drives from share links, feed-based and snapshot
 - `ui/src/pages/Publish.tsx` — multi-step publish wizard (select → storage → feed → done); sidebar click resets wizard via `location.key`
-- `ui/src/pages/Drive.tsx` — upload history with recursive folder tree (any depth), feed updates, extend drive modal
-- `ui/src/pages/Wallet.tsx` — balances (xDAI/BZZ), collapsible multichain top-up widget, redeem gift code, swap
+- `ui/src/pages/Drive.tsx` — upload history with recursive folder tree (any depth), encrypted drives, ACT uploads, "My Drives" / "Shared with me" tabs, feed-based sync
+- `ui/src/pages/Wallet.tsx` — balances (xDAI/xBZZ), collapsible multichain top-up widget, redeem gift code, swap, sharing key display
 - `ui/src/pages/Account.tsx` — two-tab page: Wallet (navigates to Wallet page) + My Storage (drive list with TTL bars, extend drive, buy new drive)
 - `ui/src/pages/Settings.tsx` — two-tab page: General (RPC URL, about) + Network (peer stats, developer mode toggle). Supports `?tab=network` query param.
-- `ui/src/pages/Dev.tsx` — node config editor + live Bee logs + "Exit Developer Mode" button (shown in dev mode only)
+- `ui/src/pages/Dev.tsx` — node config editor + live Bee logs + wallet key derivation test + "Exit Developer Mode" button (shown in dev mode only)
 - `ui/src/components/Layout.tsx` — sidebar nav + Bee status banner; dot states: checking (gray), syncing/0 peers (orange), live (green), off (red); funding warning banner when mode is ultra-light
-- `ui/src/hooks/useUploadHistory.ts` — localStorage records + folders with `parentFolderId` for subfolder support
+- `ui/src/hooks/useUploadHistory.ts` — localStorage records + folders with `parentFolderId` for subfolder support; includes `isEncrypted`, `actPublisher`, `actHistoryRef` fields
 - `ui/src/index.css` — global styles + CSS overrides for `@upcoming/multichain-widget` internals (hiding the info banner, asterisks, adjusting min-height)
 - `assets/splash.html` — startup splash screen (dark theme, iA Writer font, no external dependencies)
+
+### ACT encryption architecture
+
+Encrypted drives use Bee's ACT (Access Control Trie) for chunk-level encryption. Three layers share one ACT history chain:
+
+1. **Files** — uploaded with `swarm-act: true` header, each returns a new `Swarm-Act-History-Address`
+2. **Grantees** — managed via `/grantee` endpoints, added to the SAME ACT chain (pass `historyRef`)
+3. **Metadata feed** — Nook application layer. Feed topic: `keccak256(batchId + 'nook-drive-meta')`. Points to ACT-encrypted JSON metadata listing files. Wrapper (public) → metadata (ACT-encrypted).
+
+ACT history chaining is critical: every operation returns a new history address that must be passed to the next operation. Breaking the chain means grantees lose access.
+
+Share links: `swarm://feed?topic=<hex>&owner=<hex>&publisher=<hex>`. Non-grantees can read the feed but cannot decrypt the metadata (403).
+
+ACT uses the **Bee node's public key** (from `/addresses`) as the sharing key, NOT wallet-derived keys. Wallet-derived keys are reserved for future features (cross-device ACT, Swarm Mail, identity feeds).
 
 ## UI terminology
 
