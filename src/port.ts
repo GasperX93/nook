@@ -5,9 +5,23 @@ export const port = {
   value: -1,
 }
 
-const DEFAULT_PORT = 3054
+const DEFAULT_PORT = 3000
 
 export async function findFreePort() {
+  const isDev = process.env.NODE_ENV === 'development'
+
+  if (isDev) {
+    const free = await testPort(DEFAULT_PORT)
+    if (!free) {
+      throw new Error(
+        `Port ${DEFAULT_PORT} is already in use. Stop the other process and try again.`,
+      )
+    }
+    port.value = DEFAULT_PORT
+    logger.info(`Dev mode: using port ${DEFAULT_PORT}`)
+    return
+  }
+
   logger.info('Finding free port...')
   for (let i = DEFAULT_PORT; i < 5000; i++) {
     const free = await testPort(i)
