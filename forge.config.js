@@ -20,6 +20,12 @@ const config = {
     executableName: 'nook',
     name: 'Nook',
     appBundleId: 'org.ethswarm.nook',
+    protocols: [
+      {
+        name: 'Swarm Protocol',
+        schemes: ['swarm'],
+      },
+    ],
     asar: true,
     ignore: [
       // Frontend build tools — never needed at runtime (saves ~180 MB)
@@ -136,6 +142,7 @@ const config = {
       config: {
         options: {
           icon: `${iconPath}.png`,
+          mimeType: ['x-scheme-handler/swarm'],
         },
       },
     },
@@ -144,6 +151,7 @@ const config = {
       config: {
         options: {
           icon: `${iconPath}.png`,
+          mimeType: ['x-scheme-handler/swarm'],
         },
       },
     },

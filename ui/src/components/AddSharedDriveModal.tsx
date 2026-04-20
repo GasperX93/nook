@@ -3,7 +3,7 @@
  * Supports both feed-based (live) and snapshot (legacy) share links.
  */
 import { Check, Copy, Download, RefreshCw, X } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { beeApi } from '../api/bee'
 import { serverApi } from '../api/server'
@@ -12,6 +12,7 @@ import type { SharedFile } from '../hooks/useSharedDrives'
 
 interface AddSharedDriveModalProps {
   myPublicKey?: string
+  initialLink?: string
   onClose: () => void
   onAdd: (drive: {
     name: string
@@ -24,12 +25,20 @@ interface AddSharedDriveModalProps {
   }) => void
 }
 
-export default function AddSharedDriveModal({ myPublicKey, onClose, onAdd }: AddSharedDriveModalProps) {
-  const [link, setLink] = useState('')
+export default function AddSharedDriveModal({ myPublicKey, initialLink, onClose, onAdd }: AddSharedDriveModalProps) {
+  const [link, setLink] = useState(initialLink ?? '')
   const [name, setName] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [copiedKey, setCopiedKey] = useState(false)
+  const autoTriggered = useRef(false)
+
+  useEffect(() => {
+    if (initialLink && !autoTriggered.current) {
+      autoTriggered.current = true
+      handleAdd()
+    }
+  }, []) // eslint-disable-line
 
   async function handleAdd() {
     const parsed = parseShareLink(link)

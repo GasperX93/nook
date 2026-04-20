@@ -2069,6 +2069,7 @@ export default function Drive() {
   const [showExtendModal, setShowExtendModal] = useState<string | null>(null) // batchID
   const [showShareModal, setShowShareModal] = useState<string | null>(null) // batchID
   const [showAddSharedModal, setShowAddSharedModal] = useState(false)
+  const [prefillShareLink, setPrefillShareLink] = useState<string | null>(null)
   const [driveTab, setDriveTab] = useState<'mine' | 'shared'>('mine')
   const [addingFile, setAddingFile] = useState(false)
   const [search, setSearch] = useState('')
@@ -2088,6 +2089,19 @@ export default function Drive() {
   const [renameValue, setRenameValue] = useState('')
   const [creatingFolder, setCreatingFolder] = useState(false)
   const [newFolderName, setNewFolderName] = useState('')
+
+  // Auto-import from deep link (swarm:// protocol handler).
+  // Don't clean the URL here — Layout reads hasShareParam to bypass the startup
+  // overlay. Cleaning happens in the modal onClose handler.
+  useEffect(() => {
+    const shareLink = new URLSearchParams(window.location.search).get('share')
+
+    if (shareLink) {
+      setDriveTab('shared')
+      setPrefillShareLink(shareLink)
+      setShowAddSharedModal(true)
+    }
+  }, [])
 
   // Reset on sidebar click
   useEffect(() => {
@@ -2324,7 +2338,19 @@ export default function Drive() {
         {showAddSharedModal && (
           <AddSharedDriveModal
             myPublicKey={nodeAddresses?.publicKey}
-            onClose={() => setShowAddSharedModal(false)}
+            initialLink={prefillShareLink ?? undefined}
+            onClose={() => {
+              setShowAddSharedModal(false)
+              setPrefillShareLink(null)
+
+              // Clean deep link param from URL now that the modal is done
+              const url = new URL(window.location.href)
+
+              if (url.searchParams.has('share')) {
+                url.searchParams.delete('share')
+                window.history.replaceState({}, '', url.toString())
+              }
+            }}
             onAdd={drive => sharedDrives.add(drive)}
           />
         )}

@@ -150,7 +150,8 @@ export default function Layout() {
     return () => clearTimeout(timer)
   }, [beeOnline, stampsLoaded, peerCount, startupDone, onboardingCompleted])
 
-  const showOnboarding = !onboardingCompleted || (onboardingCompleted && !startupDone)
+  const hasShareParam = new URLSearchParams(window.location.search).has('share')
+  const showOnboarding = !onboardingCompleted || (onboardingCompleted && !startupDone && !hasShareParam)
 
   const dotColor = beeChecking ? 'rgb(var(--border))' : isSyncing ? '#f97316' : beeOnline ? '#4ade80' : '#ef4444'
   const dotLabel = beeChecking ? '···' : isSyncing ? 'sync' : beeOnline ? 'live' : 'off'
