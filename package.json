@@ -17,9 +17,9 @@
   "main": "dist/desktop/src/index.js",
   "scripts": {
     "start": "concurrently -n \"desktop,ui\" \"cross-env-shell NODE_ENV=development 'npm run clean && npm run build && electron-forge start'\" \"cd ui && npm start\"",
-    "package": "electron-forge package",
-    "make": "electron-forge make",
-    "publish": "electron-forge publish",
+    "package": "npm run build && electron-forge package",
+    "make": "npm run build && electron-forge make",
+    "publish": "npm run build && electron-forge publish",
     "publish:mac:arm64": "electron-forge publish --platform=darwin --arch=arm64",
     "publish:mac:x64": "electron-forge publish --platform=darwin --arch=x64",
     "publish:linux:arm64": "electron-forge publish --platform=linux --arch=arm64",
