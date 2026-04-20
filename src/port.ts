@@ -12,13 +12,13 @@ export async function findFreePort() {
 
   if (isDev) {
     const free = await testPort(DEFAULT_PORT)
+
     if (!free) {
-      throw new Error(
-        `Port ${DEFAULT_PORT} is already in use. Stop the other process and try again.`,
-      )
+      throw new Error(`Port ${DEFAULT_PORT} is already in use. Stop the other process and try again.`)
     }
     port.value = DEFAULT_PORT
     logger.info(`Dev mode: using port ${DEFAULT_PORT}`)
+
     return
   }
 
