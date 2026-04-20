@@ -27,7 +27,7 @@ npm run check:types    # TypeScript type check
 npm run test:unit      # Run Jest unit tests (verbose)
 cd ui && npm test      # Run Vitest tests for UI utility functions
 
-# Packaging
+# Packaging (all three run `npm run build` first automatically)
 npm run package        # Package Electron app (no installer)
 npm run make           # Create platform installers (DMG, EXE, DEB, RPM, ZIP)
 npm run publish        # Publish to GitHub releases
@@ -37,6 +37,8 @@ npm run clean          # Remove dist/ and out/
 npm run purge:data     # Clear app data folder
 npm run purge:logs     # Clear app logs folder
 ```
+
+**Packaging note:** When installing a packaged build to `/Applications/`, always `rm -rf /Applications/Nook.app` before copying — `cp -R` over an existing `.app` may not fully replace the asar resource file, resulting in stale UI code.
 
 ## Architecture
 
