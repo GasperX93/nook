@@ -124,7 +124,7 @@ export default function Layout() {
   const showStarting = !beeOnline && !hasEverBeenOnline.current
   const showDown = beeOffline && !beeChecking && hasEverBeenOnline.current
   const noFunds = walletLoaded && wallet && Number(weiToDai(wallet.nativeTokenBalance)) === 0
-  const showFundingWarning = status?.mode === 'ultra-light' || (beeOnline && noFunds)
+  const showFundingWarning = status?.mode === 'ultra-light' || status?.needsFunding || (beeOnline && noFunds)
 
   // Auto-complete onboarding for existing users upgrading from v0.2.0 (they never had the flag).
   // Once stamps or wallet data loads and shows existing activity, mark onboarding done.
@@ -150,7 +150,7 @@ export default function Layout() {
     return () => clearTimeout(timer)
   }, [beeOnline, stampsLoaded, peerCount, startupDone, onboardingCompleted])
 
-  const showOnboarding = !onboardingCompleted || (onboardingCompleted && !startupDone)
+  const showOnboarding = !onboardingCompleted || (onboardingCompleted && !startupDone && !status?.needsFunding)
 
   const dotColor = beeChecking ? 'rgb(var(--border))' : isSyncing ? '#f97316' : beeOnline ? '#4ade80' : '#ef4444'
   const dotLabel = beeChecking ? '···' : isSyncing ? 'sync' : beeOnline ? 'live' : 'off'
