@@ -28,6 +28,11 @@ function short(s: string, n = 10): string {
   return s.length <= n * 2 + 3 ? s : `${s.slice(0, n)}…${s.slice(-n)}`
 }
 
+/** Full-length for debugging, short for display labels */
+function full(s: string): string {
+  return s
+}
+
 export function SwarmNotifyTest() {
   const { signer, derive, walletConnected } = useDerivedKey()
   const { data: walletClient } = useWalletClient()
@@ -64,62 +69,98 @@ export function SwarmNotifyTest() {
   }, [usableStamps, stampId])
 
   async function handlePublishIdentity() {
-    if (!signer) return addLog('No signer — derive wallet key first')
+    if (!signer) return addLog('ERROR: No signer — derive wallet key first')
 
-    if (!addresses) return addLog('Bee addresses not loaded')
+    if (!addresses) return addLog('ERROR: Bee addresses not loaded')
 
-    if (!stampId) return addLog('No usable stamp')
+    if (!stampId) return addLog('ERROR: No usable stamp')
+
+    const ethAddr = signer.getAddress()
+    const walletPubKey = bytesToHex(signer.getPublicKey())
+    const topic = identity.feedTopic(ethAddr)
 
     try {
       addLog('Publishing identity…')
+      addLog(`  signer address: ${full(ethAddr)}`)
+      addLog(`  wallet pubkey: ${full(walletPubKey)}`)
+      addLog(`  bee pubkey: ${full(addresses.publicKey)}`)
+      addLog(`  bee overlay: ${full(addresses.overlay)}`)
+      addLog(`  stamp: ${full(stampId)}`)
+      addLog(`  feed topic: ${full(topic)}`)
       await identity.publish(bee, signer.getSigningKey(), stampId, {
-        walletPublicKey: bytesToHex(signer.getPublicKey()),
+        walletPublicKey: walletPubKey,
         beePublicKey: addresses.publicKey,
         overlay: addresses.overlay,
-        ethAddress: signer.getAddress(),
+        ethAddress: ethAddr,
       })
-      addLog(`Identity published for ${signer.getAddress()}`)
+      addLog(`  feed write: OK`)
+
+      // Verify: read it back
+      addLog(`  verify: re-resolving own identity…`)
+      const readback = await identity.resolve(bee, ethAddr)
+
+      if (readback) {
+        addLog(`  verify: OK — overlay=${full(readback.overlay)}, walletPubKey=${full(readback.walletPublicKey)}`)
+      } else {
+        addLog(`  verify: FAILED — identity not readable after publish`)
+      }
+      addLog(`Identity published for ${full(ethAddr)}`)
     } catch (e) {
-      addLog(`Publish failed: ${(e as Error).message}`)
+      addLog(`Publish FAILED: ${(e as Error).message}`)
+      addLog(`  stack: ${(e as Error).stack?.split('\n').slice(0, 3).join(' | ')}`)
     }
   }
 
   async function handleResolve() {
-    if (!resolveAddr) return addLog('Enter an ETH address')
+    if (!resolveAddr) return addLog('ERROR: Enter an ETH address')
+
+    const topic = identity.feedTopic(resolveAddr)
 
     try {
-      addLog(`Resolving ${resolveAddr}…`)
+      addLog(`Resolving ${full(resolveAddr)}…`)
+      addLog(`  feed topic: ${full(topic)}`)
+      addLog(`  feed owner (derived from address): ${full(resolveAddr)}`)
       const result = await identity.resolve(bee, resolveAddr)
 
       if (!result) {
-        addLog(`No identity found for ${resolveAddr}`)
+        addLog(`  result: feed not found or empty`)
+        addLog(`  → this user may not have published their identity yet`)
+        addLog(`No identity found for ${full(resolveAddr)}`)
       } else {
-        addLog(`Resolved: overlay=${short(result.overlay)} walletPubKey=${short(result.walletPublicKey)}`)
+        addLog(`  overlay: ${full(result.overlay)}`)
+        addLog(`  walletPubKey: ${full(result.walletPublicKey)}`)
+        addLog(`  beePubKey: ${full(result.beePublicKey)}`)
+        addLog(`  ethAddress: ${full(result.ethAddress ?? 'not set')}`)
+        addLog(`Resolved ${full(resolveAddr)}`)
       }
     } catch (e) {
-      addLog(`Resolve failed: ${(e as Error).message}`)
+      addLog(`Resolve FAILED: ${(e as Error).message}`)
+      addLog(`  stack: ${(e as Error).stack?.split('\n').slice(0, 3).join(' | ')}`)
     }
   }
 
   async function handleAddContact() {
-    if (!contactAddr || !contactNickname) return addLog('Need ETH address and nickname')
+    if (!contactAddr || !contactNickname) return addLog('ERROR: Need ETH address and nickname')
 
     try {
-      addLog(`Resolving ${contactAddr}…`)
+      addLog(`Adding contact: resolving ${full(contactAddr)}…`)
       const result = await identity.resolve(bee, contactAddr)
 
       if (!result) {
-        addLog(`No identity for ${contactAddr} — they must publish first`)
+        addLog(`  identity not found — they must publish first`)
+        addLog(`  feed topic checked: ${full(identity.feedTopic(contactAddr))}`)
 
         return
       }
+      addLog(`  resolved: overlay=${full(result.overlay)}`)
+      addLog(`  walletPubKey: ${full(result.walletPublicKey)}`)
       const contact = contactStore.add(contactAddr, contactNickname, result)
       refreshContacts()
-      addLog(`Added contact ${contact.nickname} (${short(contact.ethAddress)})`)
+      addLog(`Added contact ${contact.nickname} (${full(contact.ethAddress)})`)
       setContactAddr('')
       setContactNickname('')
     } catch (e) {
-      addLog(`Add contact failed: ${(e as Error).message}`)
+      addLog(`Add contact FAILED: ${(e as Error).message}`)
     }
   }
 
@@ -130,71 +171,104 @@ export function SwarmNotifyTest() {
   }
 
   async function handleSend() {
-    if (!signer) return addLog('No signer')
+    if (!signer) return addLog('ERROR: No signer')
 
-    if (!addresses) return addLog('Bee addresses not loaded')
+    if (!addresses) return addLog('ERROR: Bee addresses not loaded')
 
-    if (!stampId) return addLog('No usable stamp')
+    if (!stampId) return addLog('ERROR: No usable stamp')
 
     const recipient = contacts.find(c => c.ethAddress.toLowerCase() === sendTo.toLowerCase())
 
-    if (!recipient) return addLog(`Recipient not in contacts: ${sendTo}`)
+    if (!recipient) return addLog(`ERROR: Recipient not in contacts: ${full(sendTo)}`)
+
+    const topic = mailbox.feedTopic(addresses.overlay, recipient.overlay)
 
     try {
       addLog(`Sending to ${recipient.nickname}…`)
+      addLog(`  my overlay: ${full(addresses.overlay)}`)
+      addLog(`  recipient overlay: ${full(recipient.overlay)}`)
+      addLog(`  feed topic: ${full(topic)}`)
+      addLog(`  stamp: ${full(stampId)}`)
+      addLog(`  subject: ${sendSubject}`)
+      addLog(`  body length: ${sendBody.length} chars`)
+      const t0 = Date.now()
       await mailbox.send(bee, signer.getSigningKey(), stampId, signer.getSigningKey(), addresses.overlay, recipient, {
         subject: sendSubject,
         body: sendBody,
       })
+      addLog(`  duration: ${Date.now() - t0}ms`)
       addLog(`Sent to ${recipient.nickname}`)
     } catch (e) {
-      addLog(`Send failed: ${(e as Error).message}`)
+      addLog(`Send FAILED: ${(e as Error).message}`)
+      addLog(`  stack: ${(e as Error).stack?.split('\n').slice(0, 3).join(' | ')}`)
     }
   }
 
   async function handleCheckInbox() {
-    if (!signer) return addLog('No signer')
+    if (!signer) return addLog('ERROR: No signer')
 
-    if (!addresses) return addLog('Bee addresses not loaded')
+    if (!addresses) return addLog('ERROR: Bee addresses not loaded')
 
     try {
       addLog(`Checking inbox across ${contacts.length} contact(s)…`)
+      addLog(`  my overlay: ${full(addresses.overlay)}`)
+
+      for (const c of contacts) {
+        const topic = mailbox.feedTopic(c.overlay, addresses.overlay)
+        addLog(`  ${c.nickname}: feed topic=${full(topic)}, feed owner=${full(c.ethAddress)}`)
+      }
+
+      const t0 = Date.now()
       const inbox = await mailbox.checkInbox(bee, signer.getSigningKey(), addresses.overlay, contacts)
+      addLog(`  duration: ${Date.now() - t0}ms`)
 
       if (inbox.length === 0) {
         addLog('No messages')
+        if (contacts.length > 0) {
+          addLog(`  → checked ${contacts.length} contact feed(s), all empty or not found`)
+          addLog(`  → make sure the sender used YOUR overlay in their feed topic`)
+        }
       } else {
         inbox.forEach(({ contact, messages }) => {
           addLog(`${contact.nickname}: ${messages.length} message(s)`)
-          messages.forEach(m => addLog(`  ${m.subject} — ${m.body}`))
+          messages.forEach(m => addLog(`  [${new Date(m.ts).toLocaleString()}] ${m.subject} — ${m.body}`))
         })
       }
     } catch (e) {
-      addLog(`Inbox check failed: ${(e as Error).message}`)
+      addLog(`Inbox check FAILED: ${(e as Error).message}`)
+      addLog(`  stack: ${(e as Error).stack?.split('\n').slice(0, 3).join(' | ')}`)
     }
   }
 
   async function handleSendNotification() {
-    if (!signer) return addLog('No signer')
+    if (!signer) return addLog('ERROR: No signer')
 
-    if (!walletClient) return addLog('Connect wallet to send Gnosis tx')
+    if (!walletClient) return addLog('ERROR: Connect wallet to send Gnosis tx')
 
     if (walletClient.chain?.id !== GNOSIS_CHAIN_ID) {
-      return addLog(`Wallet on chain ${walletClient.chain?.id}, switch to Gnosis (${GNOSIS_CHAIN_ID})`)
+      return addLog(`ERROR: Wallet on chain ${walletClient.chain?.id} (${walletClient.chain?.name}), need Gnosis (${GNOSIS_CHAIN_ID})`)
     }
 
-    if (!addresses) return addLog('Bee addresses not loaded')
+    if (!addresses) return addLog('ERROR: Bee addresses not loaded')
 
     const recipient = contacts.find(c => c.ethAddress.toLowerCase() === sendTo.toLowerCase())
 
-    if (!recipient) return addLog(`Recipient not in contacts: ${sendTo}`)
+    if (!recipient) return addLog(`ERROR: Recipient not in contacts: ${full(sendTo)}`)
 
     try {
       const provider = createNotifyProvider(walletClient)
-      const feedTopic = mailbox.feedTopic(addresses.overlay, recipient.overlay)
+      const topic = mailbox.feedTopic(addresses.overlay, recipient.overlay)
       const recipientPubKey = hexToBytes(recipient.walletPublicKey)
 
       addLog(`Sending notification to ${recipient.nickname}…`)
+      addLog(`  contract: ${full(REGISTRY_ADDRESS)}`)
+      addLog(`  chain: ${walletClient.chain?.name} (${walletClient.chain?.id})`)
+      addLog(`  recipient ETH: ${full(recipient.ethAddress)}`)
+      addLog(`  recipient pubKey: ${full(recipient.walletPublicKey)}`)
+      addLog(`  payload.sender: ${full(signer.getAddress())}`)
+      addLog(`  payload.overlay: ${full(addresses.overlay)}`)
+      addLog(`  payload.feedTopic: ${full(topic)}`)
+      const t0 = Date.now()
       const txHash = await registry.sendNotification(
         provider,
         REGISTRY_ADDRESS,
@@ -203,23 +277,29 @@ export function SwarmNotifyTest() {
         {
           sender: signer.getAddress(),
           overlay: addresses.overlay,
-          feedTopic,
+          feedTopic: topic,
         },
       )
-      addLog(`Notification tx: ${short(txHash, 16)}`)
+      addLog(`  duration: ${Date.now() - t0}ms`)
+      addLog(`Notification tx: ${full(txHash)}`)
     } catch (e) {
-      addLog(`Notification failed: ${(e as Error).message}`)
+      addLog(`Notification FAILED: ${(e as Error).message}`)
+      addLog(`  stack: ${(e as Error).stack?.split('\n').slice(0, 3).join(' | ')}`)
     }
   }
 
   async function handlePoll() {
-    if (!signer) return addLog('No signer')
+    if (!signer) return addLog('ERROR: No signer')
 
     try {
       const provider = createNotifyProvider()
       const fromBlock = pollFromBlock ? parseInt(pollFromBlock, 10) : 0
 
       addLog(`Polling notifications from block ${fromBlock}…`)
+      addLog(`  contract: ${full(REGISTRY_ADDRESS)}`)
+      addLog(`  my address: ${full(signer.getAddress())}`)
+      addLog(`  from block: ${fromBlock}`)
+      const t0 = Date.now()
       const notifications = await registry.pollNotifications(
         provider,
         REGISTRY_ADDRESS,
@@ -227,16 +307,24 @@ export function SwarmNotifyTest() {
         signer.getSigningKey(),
         fromBlock,
       )
+      addLog(`  duration: ${Date.now() - t0}ms`)
 
       if (notifications.length === 0) {
         addLog('No notifications')
+        addLog(`  → no events found for ${full(signer.getAddress())} from block ${fromBlock} to latest`)
+        addLog(`  → make sure the sender used YOUR wallet pubkey for ECIES encryption`)
       } else {
+        addLog(`Found ${notifications.length} notification(s):`)
         notifications.forEach(n => {
-          addLog(`  block ${n.blockNumber}: from ${short(n.payload.sender)} feed ${short(n.payload.feedTopic)}`)
+          addLog(`  block ${n.blockNumber}:`)
+          addLog(`    from: ${full(n.payload.sender)}`)
+          addLog(`    overlay: ${full(n.payload.overlay)}`)
+          addLog(`    feedTopic: ${full(n.payload.feedTopic)}`)
         })
       }
     } catch (e) {
-      addLog(`Poll failed: ${(e as Error).message}`)
+      addLog(`Poll FAILED: ${(e as Error).message}`)
+      addLog(`  stack: ${(e as Error).stack?.split('\n').slice(0, 3).join(' | ')}`)
     }
   }
 
@@ -267,7 +355,7 @@ export function SwarmNotifyTest() {
           Wallet:{' '}
           {signer ? (
             <span style={{ color: 'rgb(var(--fg))' }}>
-              {signer.getAddress()} · pubKey {short(bytesToHex(signer.getPublicKey()))}
+              {signer.getAddress()} · pubKey {bytesToHex(signer.getPublicKey())}
             </span>
           ) : walletConnected ? (
             <button onClick={derive} className="underline">
@@ -278,7 +366,7 @@ export function SwarmNotifyTest() {
           )}
         </div>
         <div>
-          Bee: {addresses ? <span style={{ color: 'rgb(var(--fg))' }}>overlay {short(addresses.overlay)}</span> : '—'}
+          Bee: {addresses ? <span style={{ color: 'rgb(var(--fg))' }}>overlay {addresses.overlay}</span> : '—'}
         </div>
         <div>
           Stamp:{' '}
@@ -356,7 +444,7 @@ export function SwarmNotifyTest() {
             {contacts.map(c => (
               <div key={c.ethAddress} className="flex items-center justify-between">
                 <span style={{ color: 'rgb(var(--fg))' }}>
-                  {c.nickname} <span style={{ color: 'rgb(var(--fg-muted))' }}>{short(c.ethAddress)}</span>
+                  {c.nickname} <span style={{ color: 'rgb(var(--fg-muted))' }}>{c.ethAddress}</span>
                 </span>
                 <button onClick={() => handleRemoveContact(c.ethAddress)} className="text-xs underline">
                   remove
@@ -418,13 +506,50 @@ export function SwarmNotifyTest() {
       </div>
 
       {log.length > 0 && (
-        <div
-          className="border-t pt-3 text-xs font-mono space-y-0.5 max-h-64 overflow-auto"
-          style={{ borderColor: 'rgb(var(--border))', color: 'rgb(var(--fg-muted))' }}
-        >
-          {log.map((line, i) => (
-            <div key={i}>{line}</div>
-          ))}
+        <div className="border-t pt-3" style={{ borderColor: 'rgb(var(--border))' }}>
+          <div className="flex justify-between items-center mb-2">
+            <span className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
+              Activity Log
+            </span>
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(log.join('\n'))
+                  addLog('— log copied to clipboard —')
+                }}
+                className="text-xs underline"
+                style={{ color: 'rgb(var(--fg-muted))' }}
+              >
+                Copy log
+              </button>
+              <button
+                onClick={() => setLog([])}
+                className="text-xs underline"
+                style={{ color: 'rgb(var(--fg-muted))' }}
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+          <div
+            className="text-xs font-mono space-y-0.5 max-h-96 overflow-auto"
+            style={{ color: 'rgb(var(--fg-muted))' }}
+          >
+            {log.map((line, i) => (
+              <div
+                key={i}
+                style={{
+                  color: line.includes('FAILED') || line.includes('ERROR')
+                    ? '#ef4444'
+                    : line.startsWith('[') && !line.includes('  ')
+                      ? 'rgb(var(--fg))'
+                      : undefined,
+                }}
+              >
+                {line}
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>
