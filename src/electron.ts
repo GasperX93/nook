@@ -3,7 +3,6 @@ import opener from 'opener'
 import { openDashboardInBrowser } from './browser'
 import { runLauncher } from './launcher'
 import { BeeManager } from './lifecycle'
-import { createNotification } from './notify'
 import { getAssetPath, paths } from './path'
 
 let tray: Tray
@@ -52,16 +51,6 @@ function getTrayIcon() {
 }
 
 export function runElectronTray() {
-  const gotTheLock = app.requestSingleInstanceLock()
-
-  if (!gotTheLock) {
-    app.quit()
-  } else {
-    app.on('second-instance', () => {
-      createNotification('Nook is already running. Please close the previous instance first.')
-    })
-  }
-
   app.whenReady().then(() => {
     if (app.dock) {
       app.dock.setIcon(getAssetPath('nook_N_transparent_master.png'))

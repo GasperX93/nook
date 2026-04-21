@@ -4,6 +4,7 @@ import { updateElectronApp } from 'update-electron-app'
 import PACKAGE_JSON from '../package.json'
 import { ensureApiKey } from './api-key'
 import { openDashboardInBrowser } from './browser'
+import { registerProtocolHandlers, markDeepLinkReady, handleSwarmUrl, extractSwarmUrl } from './deep-link'
 import { getNookVersionFromFile, writeNookVersionFile } from './config'
 import { runDownloader } from './downloader'
 import { runElectronTray } from './electron'
@@ -23,6 +24,26 @@ import { runMigrations } from './migration'
 import { initSplash, Splash } from './splash'
 
 runMigrations()
+registerProtocolHandlers()
+
+// Single-instance lock must be acquired early, before app.ready.
+// On macOS, clicking a swarm:// link while the app is running triggers open-url
+// (handled in registerProtocolHandlers). On Windows/Linux, it triggers second-instance.
+const gotTheLock = app.requestSingleInstanceLock()
+
+if (!gotTheLock) {
+  app.quit()
+  // app.quit() is async — prevent main() from running in the second instance
+  process.exit(0)
+}
+
+app.on('second-instance', (_event, argv) => {
+  const url = extractSwarmUrl(argv)
+
+  if (url) {
+    handleSwarmUrl(url)
+  }
+})
 
 if (squirrelInstallingExecution) {
   app.quit()
@@ -82,12 +103,19 @@ async function main() {
     await initializeBee()
   }
 
+  // Check if app was launched from a swarm:// URL (Windows/Linux cold start)
+  const initialUrl = extractSwarmUrl(process.argv)
+
+  if (initialUrl) handleSwarmUrl(initialUrl)
+
   runLauncher().catch(errorHandler)
   startMonitorIfNeeded()
   startChequebookMonitor()
   runElectronTray()
 
-  if (process.env.NODE_ENV !== 'development') openDashboardInBrowser()
+  const deepLinkHandled = markDeepLinkReady()
+
+  if (!deepLinkHandled && process.env.NODE_ENV !== 'development') openDashboardInBrowser()
   splash.hide()
   splash = undefined
 

@@ -60,12 +60,15 @@ The app has two main layers:
 | `migration.ts` | Versioned data migrations on startup |
 | `path.ts` | Platform-specific data/log paths |
 | `port.ts` | Finds a free local port |
+| `deep-link.ts` | Handles `swarm://` protocol URLs; queues pre-ready URLs, opens dashboard with share param |
 
-**Startup sequence** (`index.ts`): migrations → splash → download Bee if needed → API key → free port → start Koa server → init Bee config → launch Bee → start funding monitor → setup tray → keep-alive loop.
+**Startup sequence** (`index.ts`): register protocol handlers → migrations → splash → download Bee if needed → API key → free port → start Koa server → check argv for deep link → init Bee config → launch Bee → start funding monitor → setup tray → flush pending deep link → keep-alive loop.
 
 **Ultra-light / light mode**: New installs start in ultra-light mode (`swap-enable: false`, no `blockchain-rpc-endpoint`). Bee API is available immediately without funds. The funding monitor polls wallet balance every 15s. When xDAI is detected: stop Bee → write `blockchain-rpc-endpoint` and `swap-enable: true` → restart in light mode. Postage sync takes ~2–3 minutes thanks to clean snapshot loading.
 
 **Server** (`server.ts`): Koa REST API. Public routes: `/info`, `/price`. Auth-required routes (API key header): `/status`, `/config`, `/logs/*`, `/restart`, `/swap`, `/redeem`, `/buy-stamp`, `/feed-update`, `/feed-read`, `/withdraw`, `/peers`, `/act/*`, `/grantee`, `/upload-bytes`.
+
+**Deep linking** (`swarm://` protocol): Clicking a `swarm://` URL anywhere on the system opens the Nook dashboard with the shared drive import flow pre-triggered. Flow: OS delivers URL to Electron main process → `deep-link.ts` queues or handles → opens `http://localhost:PORT/dashboard/?v=API_KEY&share=<encoded-url>` → React reads `share` param → navigates to Drive page → auto-opens AddSharedDriveModal with link pre-filled. Platform specifics: macOS uses `open-url` event + `protocols` in forge packagerConfig; Windows uses `second-instance` argv + runtime registry via `setAsDefaultProtocolClient`; Linux uses `second-instance` argv + `mimeType` in DEB/RPM makers. Note: deep linking only works when the app is packaged (macOS/Linux). Windows works in dev mode.
 
 ### Frontend (`ui/`) — Custom React app
 
