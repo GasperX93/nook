@@ -61,7 +61,7 @@ Verify your environment before coordinating with the other tester.
 3. **Confirm a usable stamp** exists. The Swarm Notify panel's status row will show one in a dropdown if so. If not: Account → My Storage → buy a small one and wait for "usable" to flip to true (~30-60s after purchase).
 4. In the **Swarm Notify** panel:
    - Click **Publish my identity** → activity log: `Identity published for 0x…`
-   - Copy your derived ETH address from the status row (it's the address starting `0x…`, **not** your MetaMask address — they're different).
+   - Copy your **Nook address** from the status row (starts with `0x…`, **not** your MetaMask address — they're different keys).
    - Paste it into the Resolve input field → click **Resolve identity** → activity log: `Resolved: overlay=… walletPubKey=…`
 
 If both succeed, your setup is good. If either fails, screenshot the activity log + browser console errors and report back before continuing.
@@ -70,9 +70,9 @@ If both succeed, your setup is good. If either fails, screenshot the activity lo
 
 Once both testers have step 4 green:
 
-1. **Exchange derived ETH addresses.** Use the address shown in the Swarm Notify status row — **not** your MetaMask address. They differ because Nook derives a separate signing key from a wallet signature (see `ui/src/crypto/signer.ts`).
+1. **Exchange Nook addresses.** Use the address labelled `Nook address` in the status row — **not** your MetaMask address. They differ because Nook derives a separate signing key from a wallet signature (see `ui/src/crypto/signer.ts`).
 2. Each side: paste the other's address + a nickname into the Add contact form → **Add contact**. The activity log should report `Added contact <nickname>`.
-3. **Sender**: paste recipient's ETH address into the message form, type a subject + body → **Send message**. Activity log: `Sent to <nickname>`.
+3. **Sender**: paste recipient's Nook address into the message form, type a subject + body → **Send message**. Activity log: `Sent to <nickname>`.
 4. **Recipient**: click **Check inbox**. Activity log should list the message subject + body.
 5. *(Optional — needs ~0.001 xDAI on Gnosis Chain.)* Test first-contact discovery:
    - Switch your wallet to **Gnosis Chain**. The status row warns if you're on the wrong chain.

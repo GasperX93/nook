@@ -264,7 +264,7 @@ export function SwarmNotifyTest() {
 
       <div className="text-xs space-y-1" style={{ color: 'rgb(var(--fg-muted))' }}>
         <div>
-          Wallet:{' '}
+          Nook address:{' '}
           {signer ? (
             <span style={{ color: 'rgb(var(--fg))' }}>
               {signer.getAddress()} · pubKey {short(bytesToHex(signer.getPublicKey()))}
@@ -274,7 +274,7 @@ export function SwarmNotifyTest() {
               derive key
             </button>
           ) : (
-            'connect wallet to derive key'
+            'connect wallet to derive Nook address'
           )}
         </div>
         <div>
@@ -322,7 +322,7 @@ export function SwarmNotifyTest() {
         <input
           className={inputClass}
           style={inputStyle}
-          placeholder="ETH address to resolve"
+          placeholder="Nook address to resolve"
           value={resolveAddr}
           onChange={e => setResolveAddr(e.target.value)}
         />
@@ -336,7 +336,7 @@ export function SwarmNotifyTest() {
           <input
             className={inputClass}
             style={inputStyle}
-            placeholder="ETH address"
+            placeholder="Nook address"
             value={contactAddr}
             onChange={e => setContactAddr(e.target.value)}
           />
@@ -371,7 +371,7 @@ export function SwarmNotifyTest() {
         <input
           className={inputClass}
           style={inputStyle}
-          placeholder="Recipient ETH address (must be in contacts)"
+          placeholder="Recipient Nook address (must be in contacts)"
           value={sendTo}
           onChange={e => setSendTo(e.target.value)}
         />
