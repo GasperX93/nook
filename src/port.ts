@@ -8,17 +8,13 @@ export const port = {
 const DEFAULT_PORT = 3054
 
 export async function findFreePort() {
-  logger.info('Finding free port...')
-  for (let i = DEFAULT_PORT; i < 5000; i++) {
-    const free = await testPort(i)
+  const free = await testPort(DEFAULT_PORT)
 
-    if (free) {
-      port.value = i
-      logger.info(`Found free port: ${i}`)
-
-      return
-    }
+  if (!free) {
+    throw new Error(`Port ${DEFAULT_PORT} is already in use. Stop the other process and try again.`)
   }
+  port.value = DEFAULT_PORT
+  logger.info(`Using port ${DEFAULT_PORT}`)
 }
 
 async function testPort(port: number) {
