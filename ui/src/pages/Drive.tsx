@@ -1158,7 +1158,7 @@ function DriveCard({
     folderClickTimers.current.set(id, timer)
   }
 
-  function renderInlineFolder(folder: DriveFolder, depth: number): React.ReactNode {
+  function renderInlineFolder(folder: DriveFolder, depth: number): React.ReactElement {
     const isExpanded = expandedInlineFolders.has(folder.id)
     const childFolders = folders.filter(f => f.parentFolderId === folder.id)
     const folderFiles = records.filter(r => r.folderId === folder.id)
@@ -2466,7 +2466,7 @@ export default function Drive() {
     },
   }
 
-  function renderFolder(folder: DriveFolder, depth: number): React.ReactNode {
+  function renderFolder(folder: DriveFolder, depth: number): React.ReactElement {
     const isOver = dragOverId === folder.id
     const isExpanded = expandedFolders.has(folder.id)
     const childFolders = folders.filter(f => f.parentFolderId === folder.id)
