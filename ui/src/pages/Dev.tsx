@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useBeeLogs, useConfig, useNookLogs, useUpdateConfig } from '../api/queries'
+import { SwarmNotifyTest } from '../components/SwarmNotifyTest'
 import { useAppStore } from '../store/app'
 import { useDerivedKey } from '../hooks/useDerivedKey'
 
@@ -242,6 +243,9 @@ export default function Dev() {
 
       {/* Key Derivation Test */}
       <KeyDerivationTest />
+
+      {/* Swarm Notify smoke test */}
+      <SwarmNotifyTest />
     </div>
   )
 }
