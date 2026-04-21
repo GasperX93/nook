@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@rainbow-me/rainbowkit": "^2.2.10",
-    "@swarm-notify/sdk": "github:GasperX93/swarm-notify#59621ff3a4386863d69a3bc264a0854d31453e08",
+    "@swarm-notify/sdk": "github:GasperX93/swarm-notify#a67269ba57599d4807c2f32e9c0261459ec5449f",
     "@tanstack/react-query": "^5.90.21",
     "@upcoming/multichain-widget": "^0.10.8",
     "clsx": "^2.1.1",
