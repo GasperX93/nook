@@ -1158,7 +1158,7 @@ function DriveCard({
     folderClickTimers.current.set(id, timer)
   }
 
-  function renderInlineFolder(folder: DriveFolder, depth: number): React.ReactNode {
+  function renderInlineFolder(folder: DriveFolder, depth: number): React.ReactElement {
     const isExpanded = expandedInlineFolders.has(folder.id)
     const childFolders = folders.filter(f => f.parentFolderId === folder.id)
     const folderFiles = records.filter(r => r.folderId === folder.id)
@@ -1200,7 +1200,7 @@ function DriveCard({
         </div>
         {isExpanded && (
           <div className="ml-3 pl-2 border-l" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>
-            {childFolders.map(async child => renderInlineFolder(child, depth + 1))}
+            {childFolders.map(child => renderInlineFolder(child, depth + 1))}
             {folderFiles.length > 0 && (
               <div className="divide-y" style={{ borderColor: 'rgb(var(--border))' }}>
                 {folderFiles.map(r => (
@@ -1414,7 +1414,7 @@ function DriveCard({
         <div className="border-t" style={{ borderColor: 'rgb(var(--border))' }}>
           <div className="py-2 px-6">
             {rootFolders.length > 0 && (
-              <div className="space-y-0.5 mb-0.5">{rootFolders.map(async folder => renderInlineFolder(folder, 0))}</div>
+              <div className="space-y-0.5 mb-0.5">{rootFolders.map(folder => renderInlineFolder(folder, 0))}</div>
             )}
             {rootFiles.length > 0 && (
               <div className="divide-y" style={{ borderColor: 'rgb(var(--border))' }}>
@@ -2466,7 +2466,7 @@ export default function Drive() {
     },
   }
 
-  function renderFolder(folder: DriveFolder, depth: number): React.ReactNode {
+  function renderFolder(folder: DriveFolder, depth: number): React.ReactElement {
     const isOver = dragOverId === folder.id
     const isExpanded = expandedFolders.has(folder.id)
     const childFolders = folders.filter(f => f.parentFolderId === folder.id)
@@ -2556,7 +2556,7 @@ export default function Drive() {
 
         {isExpanded && (
           <div className="mt-1 pl-4 space-y-1">
-            {childFolders.map(async child => renderFolder(child, depth + 1))}
+            {childFolders.map(child => renderFolder(child, depth + 1))}
             {folderRecords.length > 0 && (
               <div className="divide-y" style={{ borderColor: 'rgb(var(--border))' }}>
                 {folderRecords.map(record => (
@@ -2718,7 +2718,7 @@ export default function Drive() {
 
       {/* Folder tree */}
       {visibleFolders.length > 0 && (
-        <div className="space-y-1 mb-3">{visibleFolders.map(async folder => renderFolder(folder, 0))}</div>
+        <div className="space-y-1 mb-3">{visibleFolders.map(folder => renderFolder(folder, 0))}</div>
       )}
 
       {/* Move to root drop zone — always rendered to avoid DOM insertion during drag */}

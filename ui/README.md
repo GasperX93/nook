@@ -20,7 +20,7 @@ npm run lint                     # lint + fix
 npm run lint:check               # lint check only
 ```
 
-In development the Vite dev server proxies all API routes (`/info`, `/status`, `/config`, etc.) to `http://localhost:3000` (the Electron backend).
+In development the Vite dev server proxies all API routes (`/info`, `/status`, `/config`, etc.) to `http://localhost:3054` (the Electron backend).
 
 ## Environment variables
 
