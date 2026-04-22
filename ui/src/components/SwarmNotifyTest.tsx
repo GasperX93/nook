@@ -84,13 +84,11 @@ export function SwarmNotifyTest() {
       addLog(`  signer address: ${full(ethAddr)}`)
       addLog(`  wallet pubkey: ${full(walletPubKey)}`)
       addLog(`  bee pubkey: ${full(addresses.publicKey)}`)
-      addLog(`  bee overlay: ${full(addresses.overlay)}`)
       addLog(`  stamp: ${full(stampId)}`)
       addLog(`  feed topic: ${full(topic)}`)
       await identity.publish(bee, signer.getSigningKey(), stampId, {
         walletPublicKey: walletPubKey,
         beePublicKey: addresses.publicKey,
-        overlay: addresses.overlay,
         ethAddress: ethAddr,
       })
       addLog(`  feed write: OK`)
@@ -100,7 +98,7 @@ export function SwarmNotifyTest() {
       const readback = await identity.resolve(bee, ethAddr)
 
       if (readback) {
-        addLog(`  verify: OK — overlay=${full(readback.overlay)}, walletPubKey=${full(readback.walletPublicKey)}`)
+        addLog(`  verify: OK — walletPubKey=${full(readback.walletPublicKey)}, beePubKey=${full(readback.beePublicKey)}`)
       } else {
         addLog(`  verify: FAILED — identity not readable after publish`)
       }
@@ -127,7 +125,6 @@ export function SwarmNotifyTest() {
         addLog(`  → this user may not have published their identity yet`)
         addLog(`No identity found for ${full(resolveAddr)}`)
       } else {
-        addLog(`  overlay: ${full(result.overlay)}`)
         addLog(`  walletPubKey: ${full(result.walletPublicKey)}`)
         addLog(`  beePubKey: ${full(result.beePublicKey)}`)
         addLog(`  ethAddress: ${full(result.ethAddress ?? 'not set')}`)
@@ -152,8 +149,8 @@ export function SwarmNotifyTest() {
 
         return
       }
-      addLog(`  resolved: overlay=${full(result.overlay)}`)
-      addLog(`  walletPubKey: ${full(result.walletPublicKey)}`)
+      addLog(`  resolved: walletPubKey=${full(result.walletPublicKey)}`)
+      addLog(`  beePubKey: ${full(result.beePublicKey)}`)
       const contact = contactStore.add(contactAddr, contactNickname, result)
       refreshContacts()
       addLog(`Added contact ${contact.nickname} (${full(contact.ethAddress)})`)
@@ -181,18 +178,19 @@ export function SwarmNotifyTest() {
 
     if (!recipient) return addLog(`ERROR: Recipient not in contacts: ${full(sendTo)}`)
 
-    const topic = mailbox.feedTopic(addresses.overlay, recipient.overlay)
+    const myAddr = signer.getAddress()
+    const topic = mailbox.feedTopic(myAddr, recipient.ethAddress)
 
     try {
       addLog(`Sending to ${recipient.nickname}…`)
-      addLog(`  my overlay: ${full(addresses.overlay)}`)
-      addLog(`  recipient overlay: ${full(recipient.overlay)}`)
+      addLog(`  my address: ${full(myAddr)}`)
+      addLog(`  recipient address: ${full(recipient.ethAddress)}`)
       addLog(`  feed topic: ${full(topic)}`)
       addLog(`  stamp: ${full(stampId)}`)
       addLog(`  subject: ${sendSubject}`)
       addLog(`  body length: ${sendBody.length} chars`)
       const t0 = Date.now()
-      await mailbox.send(bee, signer.getSigningKey(), stampId, signer.getSigningKey(), addresses.overlay, recipient, {
+      await mailbox.send(bee, signer.getSigningKey(), stampId, signer.getSigningKey(), myAddr, recipient, {
         subject: sendSubject,
         body: sendBody,
       })
@@ -210,23 +208,27 @@ export function SwarmNotifyTest() {
     if (!addresses) return addLog('ERROR: Bee addresses not loaded')
 
     try {
+      const myAddr = signer.getAddress()
+
       addLog(`Checking inbox across ${contacts.length} contact(s)…`)
-      addLog(`  my overlay: ${full(addresses.overlay)}`)
+      addLog(`  my address: ${full(myAddr)}`)
 
       for (const c of contacts) {
-        const topic = mailbox.feedTopic(c.overlay, addresses.overlay)
+        const topic = mailbox.feedTopic(c.ethAddress, myAddr)
+
         addLog(`  ${c.nickname}: feed topic=${full(topic)}, feed owner=${full(c.ethAddress)}`)
       }
 
       const t0 = Date.now()
-      const inbox = await mailbox.checkInbox(bee, signer.getSigningKey(), addresses.overlay, contacts)
+      const inbox = await mailbox.checkInbox(bee, signer.getSigningKey(), myAddr, contacts)
+
       addLog(`  duration: ${Date.now() - t0}ms`)
 
       if (inbox.length === 0) {
         addLog('No messages')
         if (contacts.length > 0) {
           addLog(`  → checked ${contacts.length} contact feed(s), all empty or not found`)
-          addLog(`  → make sure the sender used YOUR overlay in their feed topic`)
+          addLog(`  → make sure the sender used YOUR Nook address in their feed topic`)
         }
       } else {
         inbox.forEach(({ contact, messages }) => {
@@ -257,29 +259,19 @@ export function SwarmNotifyTest() {
 
     try {
       const provider = createNotifyProvider(walletClient)
-      const topic = mailbox.feedTopic(addresses.overlay, recipient.overlay)
       const recipientPubKey = hexToBytes(recipient.walletPublicKey)
+      const myAddr = signer.getAddress()
 
       addLog(`Sending notification to ${recipient.nickname}…`)
       addLog(`  contract: ${full(REGISTRY_ADDRESS)}`)
       addLog(`  chain: ${walletClient.chain?.name} (${walletClient.chain?.id})`)
       addLog(`  recipient ETH: ${full(recipient.ethAddress)}`)
       addLog(`  recipient pubKey: ${full(recipient.walletPublicKey)}`)
-      addLog(`  payload.sender: ${full(signer.getAddress())}`)
-      addLog(`  payload.overlay: ${full(addresses.overlay)}`)
-      addLog(`  payload.feedTopic: ${full(topic)}`)
+      addLog(`  payload.sender: ${full(myAddr)}`)
       const t0 = Date.now()
-      const txHash = await registry.sendNotification(
-        provider,
-        REGISTRY_ADDRESS,
-        recipientPubKey,
-        recipient.ethAddress,
-        {
-          sender: signer.getAddress(),
-          overlay: addresses.overlay,
-          feedTopic: topic,
-        },
-      )
+      const txHash = await registry.sendNotification(provider, REGISTRY_ADDRESS, recipientPubKey, recipient.ethAddress, {
+        sender: myAddr,
+      })
       addLog(`  duration: ${Date.now() - t0}ms`)
       addLog(`Notification tx: ${full(txHash)}`)
     } catch (e) {
@@ -318,8 +310,6 @@ export function SwarmNotifyTest() {
         notifications.forEach(n => {
           addLog(`  block ${n.blockNumber}:`)
           addLog(`    from: ${full(n.payload.sender)}`)
-          addLog(`    overlay: ${full(n.payload.overlay)}`)
-          addLog(`    feedTopic: ${full(n.payload.feedTopic)}`)
         })
       }
     } catch (e) {
