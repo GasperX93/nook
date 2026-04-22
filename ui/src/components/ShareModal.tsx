@@ -4,7 +4,7 @@
  * Generate a share link for the grantee to add the drive.
  */
 import { Bee } from '@ethersphere/bee-js'
-import { mailbox, registry } from '@swarm-notify/sdk'
+import { identity, mailbox, registry } from '@swarm-notify/sdk'
 import { Bell, Copy, Check, Lock, RefreshCw, Trash2, Users, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useWalletClient } from 'wagmi'
@@ -15,7 +15,7 @@ import { useDerivedKey } from '../hooks/useDerivedKey'
 import { GNOSIS_CHAIN_ID, REGISTRY_ADDRESS } from '../notify/constants'
 import { appendSentDriveShare, loadThreads } from '../notify/messages'
 import { createNotifyProvider } from '../notify/provider'
-import { loadContacts } from '../notify/storage'
+import { addContact, loadContacts } from '../notify/storage'
 import { toLibraryContact } from '../notify/types'
 import { buildShareLink } from '../hooks/useSharedDrives'
 
@@ -61,6 +61,10 @@ function isValidPublicKey(key: string): boolean {
 
   // Compressed (66 hex = 33 bytes) or uncompressed (130 hex = 65 bytes)
   return /^[0-9a-fA-F]+$/.test(clean) && (clean.length === 66 || clean.length === 130)
+}
+
+function isEthAddress(s: string): boolean {
+  return /^0x[0-9a-fA-F]{40}$/.test(s.trim())
 }
 
 export default function ShareModal({
@@ -185,18 +189,54 @@ export default function ShareModal({
   }
 
   async function handleGrant() {
-    const key = newKey.trim()
-
-    if (!isValidPublicKey(key)) {
-      setError('Invalid sharing key. Must be a 66 or 130 character hex public key.')
-
-      return
-    }
+    const input = newKey.trim()
+    let key = input
 
     setLoading(true)
     setError(null)
 
     try {
+      // Accept Nook address as input — resolve via identity feed to bpub.
+      // Saves the user from hunting for the raw sharing key when they only
+      // have the recipient's address (eg first-contact scenario).
+      if (isEthAddress(input)) {
+        const resolved = await identity.resolve(bee, input)
+
+        if (!resolved) {
+          setError(
+            `Could not find identity for ${input}. They must publish first, or paste their sharing key directly.`,
+          )
+
+          return
+        }
+        key = resolved.beePublicKey
+        // If we resolved an address and have a label, save the contact so
+        // the user doesn't repeat this lookup next time.
+        const alreadyContact = contacts.some(c => c.id.toLowerCase() === input.toLowerCase())
+
+        if (!alreadyContact && newLabel.trim()) {
+          try {
+            // Persists to localStorage; in-memory `contacts` here stays stale
+            // until next render, which is fine — only matters for repeat
+            // grants in the same modal session.
+            addContact(contacts, {
+              id: input.toLowerCase(),
+              nickname: newLabel.trim(),
+              walletPublicKey: resolved.walletPublicKey,
+              beePublicKey: resolved.beePublicKey,
+              source: 'identity-feed',
+              addedAt: Date.now(),
+            })
+          } catch {
+            // Race: contact added in another tab — non-fatal
+          }
+        }
+      } else if (!isValidPublicKey(input)) {
+        setError('Paste a Nook address (0x… 42 chars) or a 66/130-char hex sharing key.')
+
+        return
+      }
+
       let result
 
       if (granteeRef && actHistoryRef) {
@@ -208,8 +248,9 @@ export default function ShareModal({
 
       setGrantees(prev => [...prev, key])
 
-      // If user typed a manual label for someone NOT in their contact list,
-      // remember it (legacy behavior) so the grantee row shows a name.
+      // If user typed a manual label for someone NOT in their contact list
+      // (and we didn't already save them via address resolve), remember it
+      // so the grantee row shows a name.
       const matchedContact = contacts.find(c => stripKeyPrefix(c.beePublicKey) === stripKeyPrefix(key))
 
       if (newLabel.trim() && !matchedContact) saveLabel(key, newLabel.trim())
@@ -621,7 +662,7 @@ export default function ShareModal({
                 type="text"
                 value={newKey}
                 onChange={e => setNewKey(e.target.value)}
-                placeholder="Paste their sharing key"
+                placeholder="Nook address (0x…) or sharing key"
                 className="flex-1 rounded-lg border px-3 py-2 text-xs font-mono focus:outline-none"
                 style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
               />
