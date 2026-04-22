@@ -4,19 +4,28 @@
  * Generate a share link for the grantee to add the drive.
  */
 import { Bee } from '@ethersphere/bee-js'
-import { mailbox } from '@swarm-notify/sdk'
+import { mailbox, registry } from '@swarm-notify/sdk'
 import { Bell, Copy, Check, Lock, RefreshCw, Trash2, Users, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
+import { useWalletClient } from 'wagmi'
 
 import { topicFromString } from '../api/bee'
 import { serverApi } from '../api/server'
 import { useDerivedKey } from '../hooks/useDerivedKey'
+import { GNOSIS_CHAIN_ID, REGISTRY_ADDRESS } from '../notify/constants'
 import { appendSentDriveShare, loadThreads } from '../notify/messages'
+import { createNotifyProvider } from '../notify/provider'
 import { loadContacts } from '../notify/storage'
 import { toLibraryContact } from '../notify/types'
 import { buildShareLink } from '../hooks/useSharedDrives'
 
 const BEE_URL = `${window.location.origin}/bee-api`
+
+function hexToBytes(hex: string): Uint8Array {
+  const clean = hex.startsWith('0x') ? hex.slice(2) : hex
+
+  return new Uint8Array(clean.match(/.{2}/g)!.map(b => parseInt(b, 16)))
+}
 
 function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes)
@@ -67,6 +76,7 @@ export default function ShareModal({
   onUpdate,
 }: ShareModalProps) {
   const { signer } = useDerivedKey()
+  const { data: walletClient } = useWalletClient()
   const contacts = useMemo(() => loadContacts(), [])
   const bee = useMemo(() => new Bee(BEE_URL), [])
 
@@ -79,6 +89,10 @@ export default function ShareModal({
   type NotifyStatus = 'idle' | 'sending' | 'sent' | 'failed'
   const [notifyStatus, setNotifyStatus] = useState<Record<string, NotifyStatus>>({})
   const [notifying, setNotifying] = useState(false)
+  // Optional on-chain wake-up — fires a Gnosis registry event so recipients
+  // who haven't added you yet still get a "someone wants to reach you" signal.
+  const [sendOnChain, setSendOnChain] = useState(false)
+  const [onChainStatus, setOnChainStatus] = useState<Record<string, NotifyStatus>>({})
   // Legacy: older grantees were saved with manual labels before contacts existed.
   // Read-only fallback for displaying their names; new grants pull from contacts.
   const [labels, setLabels] = useState<Record<string, string>>(() => {
@@ -313,9 +327,33 @@ export default function ShareModal({
   const pendingNotify = notifiableGrantees.filter(g => notifyStatus[g.contact.id] !== 'sent')
 
   async function handleNotifyAll() {
-    if (!signer || !files?.length) return
+    if (!signer) {
+      setError('No Nook key — derive your key on the Contacts page (it resets on every reload).')
+
+      return
+    }
+
+    if (!files?.length) {
+      setError('Drive has no files to share yet.')
+
+      return
+    }
 
     if (pendingNotify.length === 0) return
+
+    if (sendOnChain) {
+      if (!walletClient) {
+        setError('Connect a wallet to send on-chain wake-up notifications.')
+
+        return
+      }
+
+      if (walletClient.chain?.id !== GNOSIS_CHAIN_ID) {
+        setError(`Switch wallet to Gnosis Chain (id ${GNOSIS_CHAIN_ID}) for on-chain wake-up.`)
+
+        return
+      }
+    }
     setNotifying(true)
     setError(null)
 
@@ -336,6 +374,9 @@ export default function ShareModal({
     const fileCount = files.length
     const subject = `"${driveName}" shared with you`
     const body = `Drive shared. Open in Nook to add it.`
+    const provider = sendOnChain && walletClient ? createNotifyProvider(walletClient) : null
+
+    let lastFailMsg: string | null = null
 
     for (const { contact } of pendingNotify) {
       setNotifyStatus(prev => ({ ...prev, [contact.id]: 'sending' }))
@@ -361,10 +402,36 @@ export default function ShareModal({
 
         appendSentDriveShare(threads, contact.id, { driveShareLink: link, driveName, fileCount })
         setNotifyStatus(prev => ({ ...prev, [contact.id]: 'sent' }))
-      } catch {
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error(`Notify ${contact.nickname} failed:`, e)
+        lastFailMsg = (e as Error).message ?? 'send failed'
         setNotifyStatus(prev => ({ ...prev, [contact.id]: 'failed' }))
       }
+
+      // On-chain wake-up — fired AFTER mailbox so the message is already in
+      // the feed by the time recipient discovers the event and resolves us.
+      if (provider) {
+        setOnChainStatus(prev => ({ ...prev, [contact.id]: 'sending' }))
+        try {
+          const recipientPubKey = hexToBytes(contact.walletPublicKey)
+          const txHash = await registry.sendNotification(provider, REGISTRY_ADDRESS, recipientPubKey, contact.id, {
+            sender: myAddr,
+          })
+
+          // eslint-disable-next-line no-console
+          console.log(`On-chain wake-up to ${contact.nickname}: tx ${txHash}`)
+          setOnChainStatus(prev => ({ ...prev, [contact.id]: 'sent' }))
+        } catch (e) {
+          // eslint-disable-next-line no-console
+          console.error(`On-chain notify ${contact.nickname} failed:`, e)
+          lastFailMsg = (e as Error).message ?? 'on-chain send failed'
+          setOnChainStatus(prev => ({ ...prev, [contact.id]: 'failed' }))
+        }
+      }
     }
+
+    if (lastFailMsg) setError(`Notification send failed: ${lastFailMsg}`)
     setNotifying(false)
   }
 
@@ -436,6 +503,22 @@ export default function ShareModal({
                           style={{ backgroundColor: 'rgba(74,222,128,0.12)', color: '#4ade80' }}
                         >
                           notified
+                        </span>
+                      )}
+                      {!isMe && contact && onChainStatus[contact.id] === 'sent' && (
+                        <span
+                          className="ml-1 text-[10px] font-sans font-medium px-1.5 py-0.5 rounded"
+                          style={{ backgroundColor: 'rgba(96,165,250,0.12)', color: '#60a5fa' }}
+                        >
+                          + on-chain
+                        </span>
+                      )}
+                      {!isMe && contact && onChainStatus[contact.id] === 'failed' && (
+                        <span
+                          className="ml-1 text-[10px] font-sans font-medium px-1.5 py-0.5 rounded"
+                          style={{ backgroundColor: 'rgba(239,68,68,0.12)', color: '#ef4444' }}
+                        >
+                          on-chain failed
                         </span>
                       )}
                       {!isMe && status === 'sending' && (
@@ -594,30 +677,60 @@ export default function ShareModal({
 
               {/* Notify in Messages — sends a typed drive-share message to each
                   contact-grantee. Skips grantees not in the contact list. */}
-              {notifiableGrantees.length > 0 && (
-                <button
-                  onClick={handleNotifyAll}
-                  disabled={notifying || pendingNotify.length === 0}
-                  className="w-full py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 disabled:opacity-40 transition-colors border"
-                  style={{
-                    backgroundColor: 'rgb(var(--bg))',
-                    color: 'rgb(var(--fg))',
-                    borderColor: 'rgb(var(--border))',
-                  }}
-                  title={
-                    pendingNotify.length === 0
-                      ? 'All eligible grantees already notified in this session'
-                      : `Send a Messages notification to ${pendingNotify.length} contact${pendingNotify.length === 1 ? '' : 's'}`
-                  }
-                >
-                  {notifying ? <RefreshCw size={11} className="animate-spin" /> : <Bell size={11} />}
-                  {notifying
-                    ? 'Sending…'
-                    : pendingNotify.length === 0
-                      ? 'All notified'
-                      : `Send notification to ${pendingNotify.length} contact${pendingNotify.length === 1 ? '' : 's'}`}
-                </button>
-              )}
+              {notifiableGrantees.length > 0 &&
+                (() => {
+                  const names = pendingNotify.map(p => p.contact.nickname)
+                  let recipients: string
+
+                  if (names.length === 0) recipients = ''
+                  else if (names.length <= 2) recipients = names.join(', ')
+                  else recipients = `${names.length} contacts`
+
+                  return (
+                    <>
+                      <button
+                        onClick={handleNotifyAll}
+                        disabled={notifying || pendingNotify.length === 0}
+                        className="w-full py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 disabled:opacity-40 transition-colors border"
+                        style={{
+                          backgroundColor: 'rgb(var(--bg))',
+                          color: 'rgb(var(--fg))',
+                          borderColor: 'rgb(var(--border))',
+                        }}
+                        title={
+                          pendingNotify.length === 0
+                            ? 'All eligible grantees already notified in this session'
+                            : `Send a Messages notification to ${recipients}`
+                        }
+                      >
+                        {notifying ? <RefreshCw size={11} className="animate-spin" /> : <Bell size={11} />}
+                        {notifying
+                          ? 'Sending…'
+                          : pendingNotify.length === 0
+                            ? 'All notified'
+                            : `Send notification to ${recipients}`}
+                      </button>
+
+                      {/* On-chain wake-up toggle — useful when recipient hasn't
+                          added you back yet, so mailbox poll wouldn't pick it up. */}
+                      <label
+                        className="flex items-start gap-2 text-[11px] cursor-pointer pt-1"
+                        style={{ color: 'rgb(var(--fg-muted))' }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={sendOnChain}
+                          onChange={e => setSendOnChain(e.target.checked)}
+                          className="mt-0.5"
+                        />
+                        <span>
+                          Also send on-chain wake-up (~0.001 xDAI) — for recipients who haven&apos;t added you back yet.
+                          Requires wallet on Gnosis Chain.
+                        </span>
+                      </label>
+                    </>
+                  )
+                })()}
             </div>
           )}
 

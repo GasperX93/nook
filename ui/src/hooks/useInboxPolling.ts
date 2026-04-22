@@ -30,13 +30,15 @@ export function useInboxPolling(): void {
     let cancelled = false
 
     const poll = async () => {
+      const myAddr = signer.getAddress()
       // Re-read contacts each tick — the user may add a contact between polls.
-      const contacts = loadContacts()
+      // Filter out self: if a user adds their own share link as a contact (eg
+      // for solo testing), every poll otherwise hits myAddr→myAddr (404).
+      const contacts = loadContacts().filter(c => c.id.toLowerCase() !== myAddr.toLowerCase())
 
       if (contacts.length === 0) return
 
       try {
-        const myAddr = signer.getAddress()
         const inbox = await mailbox.checkInbox(bee, signer.getSigningKey(), myAddr, contacts.map(toLibraryContact))
 
         if (cancelled) return
