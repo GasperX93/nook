@@ -9,6 +9,7 @@ import {
   Settings,
   Terminal,
   User,
+  Users,
   Wallet,
 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -23,6 +24,7 @@ import Onboarding from './Onboarding'
 const mainNavItems = [
   { to: '/drive', icon: HardDrive, label: 'Drive' },
   { to: '/account', icon: User, label: 'Account' },
+  { to: '/contacts', icon: Users, label: 'Contacts' },
 ]
 
 const settingsNavItem = { to: '/settings', icon: Settings, label: 'Settings' }
@@ -117,6 +119,7 @@ export default function Layout() {
   const pageTitles: Record<string, string> = {
     '/drive': 'Drive',
     '/account': 'Account',
+    '/contacts': 'Contacts',
     '/settings': 'Settings',
     '/dev': 'Dev mode',
     '/apps/website-publisher': 'Publish website',
