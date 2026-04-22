@@ -3,14 +3,20 @@
  * Paste a sharing key (Bee publicKey) to grant access.
  * Generate a share link for the grantee to add the drive.
  */
-import { Copy, Check, Lock, RefreshCw, Trash2, Users, X } from 'lucide-react'
+import { Bee } from '@ethersphere/bee-js'
+import { mailbox } from '@swarm-notify/sdk'
+import { Bell, Copy, Check, Lock, RefreshCw, Trash2, Users, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
 import { topicFromString } from '../api/bee'
 import { serverApi } from '../api/server'
 import { useDerivedKey } from '../hooks/useDerivedKey'
+import { appendSentDriveShare, loadThreads } from '../notify/messages'
 import { loadContacts } from '../notify/storage'
+import { toLibraryContact } from '../notify/types'
 import { buildShareLink } from '../hooks/useSharedDrives'
+
+const BEE_URL = `${window.location.origin}/bee-api`
 
 function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes)
@@ -62,12 +68,17 @@ export default function ShareModal({
 }: ShareModalProps) {
   const { signer } = useDerivedKey()
   const contacts = useMemo(() => loadContacts(), [])
+  const bee = useMemo(() => new Bee(BEE_URL), [])
 
   const [newKey, setNewKey] = useState('')
   const [newLabel, setNewLabel] = useState('')
   const [showSuggestions, setShowSuggestions] = useState(false)
   const [grantees, setGrantees] = useState<string[]>([])
   const [senderName, setSenderName] = useState('')
+  // Per-grantee notification status keyed by lowercased contact id (Nook addr)
+  type NotifyStatus = 'idle' | 'sending' | 'sent' | 'failed'
+  const [notifyStatus, setNotifyStatus] = useState<Record<string, NotifyStatus>>({})
+  const [notifying, setNotifying] = useState(false)
   // Legacy: older grantees were saved with manual labels before contacts existed.
   // Read-only fallback for displaying their names; new grants pull from contacts.
   const [labels, setLabels] = useState<Record<string, string>>(() => {
@@ -276,6 +287,87 @@ export default function ShareModal({
     }
   }
 
+  /** Find the contact whose beePublicKey matches this grantee key, if any. */
+  function contactForGrantee(granteeKey: string) {
+    const keyX = stripKeyPrefix(granteeKey)
+
+    return contacts.find(c => stripKeyPrefix(c.beePublicKey) === keyX)
+  }
+
+  /**
+   * Grantees that can be notified — they're in the contact list (so we have
+   * their wpub for ECDH) and not us. Excludes already-sent recipients in the
+   * current session so re-clicks don't re-fire.
+   */
+  const notifiableGrantees = useMemo(
+    () =>
+      grantees
+        .filter(key => !isMyKey(key))
+        .map(key => ({ granteeKey: key, contact: contactForGrantee(key) }))
+        .filter((g): g is { granteeKey: string; contact: NonNullable<ReturnType<typeof contactForGrantee>> } =>
+          Boolean(g.contact),
+        ),
+    [grantees, contacts],
+  )
+
+  const pendingNotify = notifiableGrantees.filter(g => notifyStatus[g.contact.id] !== 'sent')
+
+  async function handleNotifyAll() {
+    if (!signer || !files?.length) return
+
+    if (pendingNotify.length === 0) return
+    setNotifying(true)
+    setError(null)
+
+    let link: string
+
+    try {
+      // Refresh the feed once before notifying — recipients all read the same
+      // metadata, so we don't pay this per-recipient.
+      link = await refreshAndBuildLink()
+    } catch (e) {
+      setError((e as Error).message || 'Failed to prepare drive link')
+      setNotifying(false)
+
+      return
+    }
+
+    const myAddr = signer.getAddress()
+    const fileCount = files.length
+    const subject = `"${driveName}" shared with you`
+    const body = `Drive shared. Open in Nook to add it.`
+
+    for (const { contact } of pendingNotify) {
+      setNotifyStatus(prev => ({ ...prev, [contact.id]: 'sending' }))
+      try {
+        await mailbox.send(
+          bee,
+          signer.getSigningKey(),
+          stampId,
+          signer.getSigningKey(),
+          myAddr,
+          toLibraryContact(contact),
+          {
+            subject,
+            body,
+            type: 'drive-share',
+            driveShareLink: link,
+            driveName,
+            fileCount,
+          },
+        )
+        // Save locally so the sender sees the message in their own thread
+        const threads = loadThreads()
+
+        appendSentDriveShare(threads, contact.id, { driveShareLink: link, driveName, fileCount })
+        setNotifyStatus(prev => ({ ...prev, [contact.id]: 'sent' }))
+      } catch {
+        setNotifyStatus(prev => ({ ...prev, [contact.id]: 'failed' }))
+      }
+    }
+    setNotifying(false)
+  }
+
   return (
     <div
       className="fixed inset-0 flex items-center justify-center z-50"
@@ -316,6 +408,8 @@ export default function ShareModal({
               grantees.map(key => {
                 const isMe = isMyKey(key)
                 const label = findLabel(key)
+                const contact = contactForGrantee(key)
+                const status = contact ? notifyStatus[contact.id] : undefined
 
                 return (
                   <div key={key} className="flex items-center justify-between px-3 py-2">
@@ -334,6 +428,39 @@ export default function ShareModal({
                           style={{ backgroundColor: 'rgba(74,222,128,0.12)', color: '#4ade80' }}
                         >
                           you
+                        </span>
+                      )}
+                      {!isMe && status === 'sent' && (
+                        <span
+                          className="ml-2 text-[10px] font-sans font-medium px-1.5 py-0.5 rounded"
+                          style={{ backgroundColor: 'rgba(74,222,128,0.12)', color: '#4ade80' }}
+                        >
+                          notified
+                        </span>
+                      )}
+                      {!isMe && status === 'sending' && (
+                        <span
+                          className="ml-2 text-[10px] font-sans font-medium px-1.5 py-0.5 rounded"
+                          style={{ color: 'rgb(var(--fg-muted))' }}
+                        >
+                          sending…
+                        </span>
+                      )}
+                      {!isMe && status === 'failed' && (
+                        <span
+                          className="ml-2 text-[10px] font-sans font-medium px-1.5 py-0.5 rounded"
+                          style={{ backgroundColor: 'rgba(239,68,68,0.12)', color: '#ef4444' }}
+                        >
+                          failed
+                        </span>
+                      )}
+                      {!isMe && !contact && (
+                        <span
+                          className="ml-2 text-[10px] font-sans px-1.5 py-0.5 rounded"
+                          style={{ color: 'rgb(var(--fg-muted))' }}
+                          title="Add this person to Contacts to enable in-app notifications"
+                        >
+                          not in contacts
                         </span>
                       )}
                     </span>
@@ -464,6 +591,33 @@ export default function ShareModal({
                 )}
                 {loading ? 'Generating…' : copiedLink ? 'Link copied!' : 'Copy drive link'}
               </button>
+
+              {/* Notify in Messages — sends a typed drive-share message to each
+                  contact-grantee. Skips grantees not in the contact list. */}
+              {notifiableGrantees.length > 0 && (
+                <button
+                  onClick={handleNotifyAll}
+                  disabled={notifying || pendingNotify.length === 0}
+                  className="w-full py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 disabled:opacity-40 transition-colors border"
+                  style={{
+                    backgroundColor: 'rgb(var(--bg))',
+                    color: 'rgb(var(--fg))',
+                    borderColor: 'rgb(var(--border))',
+                  }}
+                  title={
+                    pendingNotify.length === 0
+                      ? 'All eligible grantees already notified in this session'
+                      : `Send a Messages notification to ${pendingNotify.length} contact${pendingNotify.length === 1 ? '' : 's'}`
+                  }
+                >
+                  {notifying ? <RefreshCw size={11} className="animate-spin" /> : <Bell size={11} />}
+                  {notifying
+                    ? 'Sending…'
+                    : pendingNotify.length === 0
+                      ? 'All notified'
+                      : `Send notification to ${pendingNotify.length} contact${pendingNotify.length === 1 ? '' : 's'}`}
+                </button>
+              )}
             </div>
           )}
 
