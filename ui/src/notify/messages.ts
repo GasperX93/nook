@@ -22,6 +22,18 @@ export interface StoredMessage {
   /** Plain text */
   body: string
   direction: 'sent' | 'received'
+  /** Optional message kind. Default 'message'. 'drive-share' renders as a card. */
+  kind?: 'message' | 'drive-share'
+  /** Drive-share fields — only present when kind === 'drive-share' */
+  driveShareLink?: string
+  driveName?: string
+  fileCount?: number
+}
+
+export interface DriveShareExtras {
+  driveShareLink: string
+  driveName: string
+  fileCount: number
 }
 
 const MESSAGES_KEY = 'nook-messages-v1'
@@ -60,10 +72,46 @@ function makeId(ts: number, direction: StoredMessage['direction'], body: string)
   return `${ts}-${direction}-${body.slice(0, 32)}`
 }
 
-/** Append a sent message to a thread. */
+/** Append a sent text message to a thread. */
 export function appendSent(threads: ThreadMap, counterparty: string, body: string, ts = Date.now()): ThreadMap {
   const key = counterparty.toLowerCase()
-  const msg: StoredMessage = { id: makeId(ts, 'sent', body), counterparty: key, ts, body, direction: 'sent' }
+  const msg: StoredMessage = {
+    id: makeId(ts, 'sent', body),
+    counterparty: key,
+    ts,
+    body,
+    direction: 'sent',
+    kind: 'message',
+  }
+  const updated: ThreadMap = { ...threads, [key]: [...(threads[key] ?? []), msg] }
+
+  saveThreads(updated)
+
+  return updated
+}
+
+/** Append a sent drive-share message to a thread. */
+export function appendSentDriveShare(
+  threads: ThreadMap,
+  counterparty: string,
+  extras: DriveShareExtras,
+  ts = Date.now(),
+): ThreadMap {
+  const key = counterparty.toLowerCase()
+  // Keep `body` as plain text so older renderers (and the conversation preview)
+  // still show something readable if the kind tag gets lost.
+  const body = `Shared "${extras.driveName}" (${extras.fileCount} file${extras.fileCount === 1 ? '' : 's'})`
+  const msg: StoredMessage = {
+    id: makeId(ts, 'sent', body),
+    counterparty: key,
+    ts,
+    body,
+    direction: 'sent',
+    kind: 'drive-share',
+    driveShareLink: extras.driveShareLink,
+    driveName: extras.driveName,
+    fileCount: extras.fileCount,
+  }
   const updated: ThreadMap = { ...threads, [key]: [...(threads[key] ?? []), msg] }
 
   saveThreads(updated)
@@ -84,6 +132,10 @@ export function mergeReceived(threads: ThreadMap, counterparty: string, received
     ts: m.ts,
     body: m.body,
     direction: 'received',
+    kind: m.type === 'drive-share' ? 'drive-share' : 'message',
+    driveShareLink: m.driveShareLink,
+    driveName: m.driveName,
+    fileCount: m.fileCount,
   }))
   const merged = [...existingSent, ...incoming].sort((a, b) => a.ts - b.ts)
   const updated: ThreadMap = { ...threads, [key]: merged }
