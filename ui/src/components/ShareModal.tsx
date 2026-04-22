@@ -256,7 +256,6 @@ export default function ShareModal({
         sender: {
           addr: signer.getAddress(),
           walletPublicKey: bytesToHex(signer.getPublicKey()),
-          beePublicKey: myPublicKey,
           name: senderName.trim() || undefined,
         },
       })

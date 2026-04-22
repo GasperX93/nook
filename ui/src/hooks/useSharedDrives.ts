@@ -39,7 +39,11 @@ function persist(drives: SharedDrive[]) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(drives))
 }
 
-/** Sender's contact info embedded in a drive-share link. */
+/**
+ * Sender's contact info derived from a drive-share link.
+ * `beePublicKey` is reconstructed from the link's `publisher` field — no
+ * separate `bpub` is carried in the URL (it'd duplicate `publisher`).
+ */
 export interface SenderContactInfo {
   addr: string
   walletPublicKey: string
@@ -58,7 +62,8 @@ export interface ParsedShareLink {
 /**
  * Parse a `nook://drive-share?...` link.
  * Required params: topic, owner, publisher.
- * Optional contact bundle: addr + wpub + bpub (+ optional name).
+ * Optional contact bundle: addr + wpub (+ optional name).
+ * `publisher` doubles as the sender's Bee pubkey when contact info is present.
  *
  * Legacy `swarm://feed?...` links are NOT accepted — pre-release schema break.
  */
@@ -77,9 +82,8 @@ export function parseShareLink(link: string): ParsedShareLink | null {
 
     const addr = params.get('addr')
     const wpub = params.get('wpub')
-    const bpub = params.get('bpub')
     const name = params.get('name') ?? undefined
-    const sender = addr && wpub && bpub ? { addr, walletPublicKey: wpub, beePublicKey: bpub, name } : undefined
+    const sender = addr && wpub ? { addr, walletPublicKey: wpub, beePublicKey: actPublisher, name } : undefined
 
     return { feedTopic, feedOwner, actPublisher, sender }
   } catch {
@@ -87,12 +91,15 @@ export function parseShareLink(link: string): ParsedShareLink | null {
   }
 }
 
-/** Build a share link. Throws if any required field is missing. */
+/**
+ * Build a share link. The sender's `beePublicKey` MUST equal `actPublisher` —
+ * the link only encodes it once via `publisher`.
+ */
 export function buildShareLink(args: {
   feedTopic: string
   feedOwner: string
   actPublisher: string
-  sender: SenderContactInfo
+  sender: Omit<SenderContactInfo, 'beePublicKey'>
 }): string {
   const params = new URLSearchParams({
     topic: args.feedTopic,
@@ -100,7 +107,6 @@ export function buildShareLink(args: {
     publisher: args.actPublisher,
     addr: args.sender.addr,
     wpub: args.sender.walletPublicKey,
-    bpub: args.sender.beePublicKey,
   })
 
   if (args.sender.name) params.set('name', args.sender.name)
