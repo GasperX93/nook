@@ -24,6 +24,20 @@ cd ui && npm install && cd ..
 
 `ui/package.json` adds `@swarm-notify/sdk` as a git dependency. Install pulls + builds it via the `prepare` script — this can take ~30s the first time.
 
+### Bee API proxy for Vite dev server
+
+If `ui/.env.development` does not exist, create it so the Vite dev server (port 3002) can reach the Bee API without CORS errors:
+
+```bash
+cat > ui/.env.development <<'EOF'
+# In dev mode, Bee API calls go through the Vite proxy to avoid CORS issues.
+# The proxy rule in vite.config.ts rewrites /bee-api/* -> localhost:1633/*
+VITE_BEE_API_URL=/bee-api
+EOF
+```
+
+Without this file, port 3002 shows the Bee node as "off" even when it's running — the browser blocks direct cross-origin requests to `localhost:1633`.
+
 ## 2. Start Nook
 
 ```bash
