@@ -7,12 +7,11 @@ import { useStamps } from '../api/queries'
 import AddSharedDriveModal from '../components/AddSharedDriveModal'
 import { useSharedDrives } from '../hooks/useSharedDrives'
 import { useDerivedKey } from '../hooks/useDerivedKey'
-import { appendSent, loadReadCursors, loadThreads, markRead, mergeReceived, unreadCount } from '../notify/messages'
+import { appendSent, loadReadCursors, loadThreads, markRead, unreadCount } from '../notify/messages'
 import { loadContacts } from '../notify/storage'
 import { toLibraryContact, type NookContact } from '../notify/types'
 
 const BEE_URL = `${window.location.origin}/bee-api`
-const POLL_INTERVAL_MS = 30_000
 
 function short(s: string, n = 6): string {
   return s.length <= n * 2 + 3 ? s : `${s.slice(0, n)}…${s.slice(-n)}`
@@ -38,7 +37,6 @@ export default function Messages() {
   const [selectedId, setSelectedId] = useState<string | null>(contacts[0]?.id ?? null)
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
-  const [polling, setPolling] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // Pre-filled share link when the user clicks "Add drive" on a drive-share card
   const [importingLink, setImportingLink] = useState<string | null>(null)
@@ -49,41 +47,14 @@ export default function Messages() {
   const selected = contacts.find(c => c.id === selectedId) ?? null
   const selectedThread = selected ? (threads[selected.id.toLowerCase()] ?? []) : []
 
-  const checkInbox = useMemo(
-    () => async () => {
-      if (!signer || contacts.length === 0) return
-      setPolling(true)
-      setError(null)
-      try {
-        const myAddr = signer.getAddress()
-        const inbox = await mailbox.checkInbox(bee, signer.getSigningKey(), myAddr, contacts.map(toLibraryContact))
-
-        setThreads(prev => {
-          let next = prev
-
-          for (const { contact, messages } of inbox) {
-            next = mergeReceived(next, contact.ethAddress, messages)
-          }
-
-          return next
-        })
-      } catch (e) {
-        setError((e as Error).message)
-      } finally {
-        setPolling(false)
-      }
-    },
-    [bee, contacts, signer],
-  )
-
-  // Initial fetch + polling loop
+  // Inbox polling now lives at the Layout level (useInboxPolling) so messages
+  // arrive even when this page isn't mounted. We just re-read localStorage on
+  // a short interval to pick up Layout's writes and reflect new messages here.
   useEffect(() => {
-    if (!signer) return
-    void checkInbox()
-    const id = setInterval(() => void checkInbox(), POLL_INTERVAL_MS)
+    const id = setInterval(() => setThreads(loadThreads()), 3_000)
 
     return () => clearInterval(id)
-  }, [signer, checkInbox])
+  }, [])
 
   // Auto-scroll to bottom on new messages or thread change
   useEffect(() => {
@@ -193,11 +164,6 @@ export default function Messages() {
           <h2 className="text-sm font-semibold uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
             Conversations
           </h2>
-          {polling && (
-            <span className="text-[10px]" style={{ color: 'rgb(var(--fg-muted))' }}>
-              syncing…
-            </span>
-          )}
         </div>
         <div className="flex-1 overflow-auto">
           {contacts.map(c => {

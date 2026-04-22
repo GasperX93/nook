@@ -19,6 +19,8 @@ import { useAccount, useDisconnect, useSwitchChain } from 'wagmi'
 import { gnosis } from 'wagmi/chains'
 import { weiToDai } from '../api/bee'
 import { useBeeHealth, usePeers, useStamps, useStatus, useWallet } from '../api/queries'
+import { useInboxPolling } from '../hooks/useInboxPolling'
+import { loadReadCursors, loadThreads, totalUnread } from '../notify/messages'
 import { useAppStore } from '../store/app'
 import Onboarding from './Onboarding'
 
@@ -133,6 +135,24 @@ export default function Layout() {
 
   const navItems = devMode ? [...mainNavItems, { to: '/dev', icon: Terminal, label: 'Dev mode' }] : mainNavItems
 
+  // Background inbox polling — keeps unread badge fresh whether or not the
+  // Messages page is mounted. Side-effect hook; writes to localStorage threads.
+  useInboxPolling()
+
+  // Total unread messages across all conversations — drives a badge on the
+  // Messages sidebar entry. Re-reads localStorage on a short interval; cheap,
+  // and avoids needing a global store just for one indicator.
+  const [messagesUnread, setMessagesUnread] = useState(0)
+
+  useEffect(() => {
+    const tick = () => setMessagesUnread(totalUnread(loadThreads(), loadReadCursors()))
+
+    tick()
+    const id = setInterval(tick, 3_000)
+
+    return () => clearInterval(id)
+  }, [])
+
   // Track whether Bee has connected at least once this session.
   // Before that we show a friendly "starting" indicator instead of an error.
   const hasEverBeenOnline = useRef(false)
@@ -231,31 +251,45 @@ export default function Layout() {
           Apps
         </span>
         <nav className="flex flex-col gap-0.5 w-full px-2">
-          {appNavItems.map(({ to, icon: Icon, label, sublabel }) => (
-            <NavLink
-              key={to}
-              to={to}
-              onClick={() => navigate(to, { state: { ts: Date.now() } })}
-              className={({ isActive }) =>
-                [
-                  'flex flex-col items-center gap-0.5 py-2 rounded-lg transition-colors w-full',
-                  isActive ? 'text-white' : 'text-[rgb(var(--fg-muted))] hover:text-[rgb(var(--fg))]',
-                ].join(' ')
-              }
-              style={({ isActive }) => (isActive ? { backgroundColor: 'rgba(247,104,8,0.65)' } : {})}
-            >
-              <Icon size={15} />
-              <span className="text-[9px] font-medium leading-tight text-center">
-                {label}
-                {sublabel && (
-                  <>
-                    <br />
-                    {sublabel}
-                  </>
-                )}
-              </span>
-            </NavLink>
-          ))}
+          {appNavItems.map(({ to, icon: Icon, label, sublabel }) => {
+            const badge = to === '/apps/messages' ? messagesUnread : 0
+
+            return (
+              <NavLink
+                key={to}
+                to={to}
+                onClick={() => navigate(to, { state: { ts: Date.now() } })}
+                className={({ isActive }) =>
+                  [
+                    'flex flex-col items-center gap-0.5 py-2 rounded-lg transition-colors w-full relative',
+                    isActive ? 'text-white' : 'text-[rgb(var(--fg-muted))] hover:text-[rgb(var(--fg))]',
+                  ].join(' ')
+                }
+                style={({ isActive }) => (isActive ? { backgroundColor: 'rgba(247,104,8,0.65)' } : {})}
+              >
+                <div className="relative">
+                  <Icon size={15} />
+                  {badge > 0 && (
+                    <span
+                      className="absolute -top-1.5 -right-2 text-[8px] font-bold leading-none px-1 py-0.5 rounded-full min-w-[14px] text-center"
+                      style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+                    >
+                      {badge > 99 ? '99+' : badge}
+                    </span>
+                  )}
+                </div>
+                <span className="text-[9px] font-medium leading-tight text-center">
+                  {label}
+                  {sublabel && (
+                    <>
+                      <br />
+                      {sublabel}
+                    </>
+                  )}
+                </span>
+              </NavLink>
+            )
+          })}
         </nav>
 
         {/* Settings pinned to bottom */}

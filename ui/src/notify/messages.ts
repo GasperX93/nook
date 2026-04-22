@@ -153,6 +153,17 @@ export function unreadCount(thread: StoredMessage[] | undefined, cursor: number 
   return thread.filter(m => m.direction === 'received' && m.ts > c).length
 }
 
+/** Total unread across all conversations. */
+export function totalUnread(threads: ThreadMap, cursors: ReadCursorMap): number {
+  let total = 0
+
+  for (const [counterparty, msgs] of Object.entries(threads)) {
+    total += unreadCount(msgs, cursors[counterparty])
+  }
+
+  return total
+}
+
 /** Mark a conversation read up to `ts` (defaults to now). */
 export function markRead(cursors: ReadCursorMap, counterparty: string, ts = Date.now()): ReadCursorMap {
   const updated = { ...cursors, [counterparty.toLowerCase()]: ts }
