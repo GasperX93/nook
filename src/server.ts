@@ -7,7 +7,6 @@ import koaBodyparser from 'koa-bodyparser'
 import mount from 'koa-mount'
 import serve from 'koa-static'
 import * as path from 'path'
-import { Readable } from 'stream'
 
 import { ethers } from 'ethers'
 
@@ -50,28 +49,38 @@ export function runServer() {
     for (const [k, v] of Object.entries(context.headers)) {
       if (typeof v === 'string') headers[k.toLowerCase()] = v
     }
+    // Strip headers Koa / fetch will recompute or that confuse Bee
     delete headers.host
     delete headers['content-length']
+    delete headers.connection
+    delete headers['accept-encoding']
     const hasBody = ['POST', 'PUT', 'PATCH'].includes(context.method)
+    // Buffer the request body — avoids edge cases with streaming + duplex: 'half'
+    let body: Uint8Array | undefined
+
+    if (hasBody) {
+      const chunks: Buffer[] = []
+
+      for await (const chunk of context.req) chunks.push(chunk as Buffer)
+      body = chunks.length > 0 ? new Uint8Array(Buffer.concat(chunks)) : undefined
+    }
 
     try {
-      const res = await fetch(url, {
-        method: context.method,
-        headers,
-        body: hasBody ? (Readable.toWeb(context.req) as ReadableStream) : undefined,
-        // @ts-expect-error duplex: 'half' is required by Node fetch when body is a stream
-        duplex: 'half',
-      })
+      const res = await fetch(url, { method: context.method, headers, body: body as BodyInit | undefined })
 
       context.status = res.status
+      // Forward response headers EXCEPT CORS (Koa CORS middleware adds those —
+      // duplicating causes browsers to fail with "Network Error" even on 2xx)
+      // and EXCEPT transfer encodings Koa will recompute.
       res.headers.forEach((value, key) => {
-        if (key === 'content-length' || key === 'transfer-encoding') return
+        if (key === 'content-length' || key === 'transfer-encoding' || key === 'connection') return
+
+        if (key.startsWith('access-control-')) return
         context.set(key, value)
       })
-
-      if (res.body) {
-        context.body = Readable.fromWeb(res.body as never)
-      }
+      // Buffer response too — Bee API responses are small enough and this
+      // avoids Web Stream / Node Stream conversion issues
+      context.body = Buffer.from(await res.arrayBuffer())
     } catch (e) {
       logger.error(`bee-api proxy failed for ${url}: ${(e as Error).message}`)
       context.status = 502
