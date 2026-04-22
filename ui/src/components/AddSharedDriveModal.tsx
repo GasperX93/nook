@@ -1,14 +1,16 @@
 /**
- * AddSharedDriveModal — paste a share link to add a drive shared by someone else.
- * Supports both feed-based (live) and snapshot (legacy) share links.
+ * AddSharedDriveModal — paste a `nook://drive-share` link to add a drive shared
+ * by someone else. If the link bundles the sender's contact info, offer to add
+ * them as a contact in the same step.
  */
 import { Check, Copy, Download, RefreshCw, X } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 import { beeApi } from '../api/bee'
 import { serverApi } from '../api/server'
-import { parseShareLink } from '../hooks/useSharedDrives'
-import type { SharedFile } from '../hooks/useSharedDrives'
+import { parseShareLink, type SenderContactInfo, type SharedFile } from '../hooks/useSharedDrives'
+import { addContact, loadContacts } from '../notify/storage'
+import type { NookContact } from '../notify/types'
 
 interface AddSharedDriveModalProps {
   myPublicKey?: string
@@ -31,11 +33,34 @@ export default function AddSharedDriveModal({ myPublicKey, onClose, onAdd }: Add
   const [error, setError] = useState<string | null>(null)
   const [copiedKey, setCopiedKey] = useState(false)
 
-  async function handleAdd() {
-    const parsed = parseShareLink(link)
+  // Sender contact import
+  const existingContacts = useMemo<NookContact[]>(() => loadContacts(), [])
+  const [addAsContact, setAddAsContact] = useState(true)
+  const [contactNickname, setContactNickname] = useState('')
 
+  const parsed = useMemo(() => (link.trim() ? parseShareLink(link) : null), [link])
+  const sender: SenderContactInfo | undefined = parsed?.sender
+  const senderAlreadyContact = useMemo(() => {
+    if (!sender) return false
+
+    return existingContacts.some(c => c.id.toLowerCase() === sender.addr.toLowerCase())
+  }, [sender, existingContacts])
+  const showContactImport = Boolean(sender) && !senderAlreadyContact
+
+  // Pre-fill nickname from sender's bundled name (or empty if absent)
+  useEffect(() => {
+    if (sender && !contactNickname) setContactNickname(sender.name ?? '')
+  }, [sender, contactNickname])
+
+  async function handleAdd() {
     if (!parsed) {
       setError('Invalid share link.')
+
+      return
+    }
+
+    if (showContactImport && addAsContact && !contactNickname.trim()) {
+      setError('Type a nickname for the new contact, or uncheck "Add as contact".')
 
       return
     }
@@ -44,53 +69,44 @@ export default function AddSharedDriveModal({ myPublicKey, onClose, onAdd }: Add
     setError(null)
 
     try {
-      let driveName = name.trim() || 'Shared drive'
-      let files: SharedFile[] | undefined
-      let reference = ''
-      let actHistoryRef = ''
+      // Drive: read feed → get wrapper → ACT download metadata
+      const wrapperText = await serverApi.readFeed(parsed.feedTopic, parsed.feedOwner)
+      const wrapper = JSON.parse(wrapperText) as { ref: string; history: string }
 
-      if (parsed.type === 'feed' && parsed.feedTopic && parsed.feedOwner) {
-        // Feed-based: read feed → get wrapper → ACT download metadata
-        const wrapperText = await serverApi.readFeed(parsed.feedTopic, parsed.feedOwner)
-        const wrapper = JSON.parse(wrapperText) as { ref: string; history: string }
+      const blob = await beeApi.downloadFileWithACT(wrapper.ref, parsed.actPublisher, wrapper.history)
+      const metadataText = await blob.text()
+      const metadata = JSON.parse(metadataText)
 
-        const blob = await beeApi.downloadFileWithACT(wrapper.ref, parsed.actPublisher, wrapper.history)
-        const metadataText = await blob.text()
-        const metadata = JSON.parse(metadataText)
+      const driveName = name.trim() || metadata.name || 'Shared drive'
+      const files: SharedFile[] | undefined = metadata.files?.length ? metadata.files : undefined
 
-        if (metadata.files?.length) files = metadata.files
-
-        driveName = name.trim() || metadata.name || 'Shared drive'
-        reference = wrapper.ref
-        actHistoryRef = wrapper.history
-      } else if (parsed.type === 'snapshot' && parsed.reference && parsed.actHistoryRef) {
-        // Legacy snapshot: direct ACT download
-        const blob = await beeApi.downloadFileWithACT(parsed.reference, parsed.actPublisher, parsed.actHistoryRef)
-        const text = await blob.text()
-
-        try {
-          const metadata = JSON.parse(text)
-
-          if (metadata.name) driveName = name.trim() || metadata.name
-
-          if (metadata.files?.length) files = metadata.files
-        } catch {
-          // Not JSON — single file
-        }
-
-        reference = parsed.reference
-        actHistoryRef = parsed.actHistoryRef
-      }
-
+      // Add the drive
       onAdd({
         name: driveName,
-        reference,
+        reference: wrapper.ref,
         actPublisher: parsed.actPublisher,
-        actHistoryRef,
+        actHistoryRef: wrapper.history,
         files,
-        feedTopic: parsed.type === 'feed' ? parsed.feedTopic : undefined,
-        feedOwner: parsed.type === 'feed' ? parsed.feedOwner : undefined,
+        feedTopic: parsed.feedTopic,
+        feedOwner: parsed.feedOwner,
       })
+
+      // Optionally add the sender as contact
+      if (showContactImport && addAsContact && sender) {
+        try {
+          addContact(existingContacts, {
+            id: sender.addr.toLowerCase(),
+            nickname: contactNickname.trim(),
+            walletPublicKey: sender.walletPublicKey,
+            beePublicKey: sender.beePublicKey,
+            source: 'drive-share',
+            addedAt: Date.now(),
+          })
+        } catch {
+          // Race with another tab adding the same contact — non-fatal
+        }
+      }
+
       onClose()
     } catch {
       setError('Could not access this drive. Make sure the owner has granted you access using your sharing key.')
@@ -142,11 +158,50 @@ export default function AddSharedDriveModal({ myPublicKey, onClose, onAdd }: Add
           <textarea
             value={link}
             onChange={e => setLink(e.target.value)}
-            placeholder="swarm://feed?topic=...&owner=...&publisher=..."
+            placeholder="nook://drive-share?topic=...&owner=...&publisher=...&addr=...&wpub=...&bpub=..."
             className="w-full rounded-lg border px-3 py-2 text-xs font-mono focus:outline-none resize-none h-20"
             style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
           />
         </div>
+
+        {/* Sender contact import — only when link includes contact info AND not already a contact */}
+        {showContactImport && sender && (
+          <div
+            className="rounded-lg border p-3 space-y-2"
+            style={{ backgroundColor: 'rgb(var(--bg))', borderColor: 'rgb(var(--border))' }}
+          >
+            <label className="flex items-start gap-2 text-xs cursor-pointer">
+              <input
+                type="checkbox"
+                checked={addAsContact}
+                onChange={e => setAddAsContact(e.target.checked)}
+                className="mt-0.5"
+              />
+              <span style={{ color: 'rgb(var(--fg))' }}>
+                Also add sender as contact{' '}
+                <span className="font-mono" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  ({sender.addr.slice(0, 8)}…{sender.addr.slice(-4)})
+                </span>
+              </span>
+            </label>
+            {addAsContact && (
+              <input
+                type="text"
+                value={contactNickname}
+                onChange={e => setContactNickname(e.target.value)}
+                placeholder="Nickname for this contact"
+                className="w-full rounded-lg border px-3 py-2 text-xs focus:outline-none"
+                style={{ backgroundColor: 'rgb(var(--bg-surface))', color: 'rgb(var(--fg))' }}
+              />
+            )}
+          </div>
+        )}
+
+        {sender && senderAlreadyContact && (
+          <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+            Sender is already in your contacts.
+          </p>
+        )}
 
         {error && (
           <div className="space-y-2">

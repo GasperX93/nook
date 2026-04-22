@@ -4,10 +4,19 @@
  * Generate a share link for the grantee to add the drive.
  */
 import { Copy, Check, Lock, RefreshCw, Trash2, Users, X } from 'lucide-react'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 
 import { topicFromString } from '../api/bee'
 import { serverApi } from '../api/server'
+import { useDerivedKey } from '../hooks/useDerivedKey'
+import { loadContacts } from '../notify/storage'
+import { buildShareLink } from '../hooks/useSharedDrives'
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes)
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('')
+}
 
 interface ShareFileEntry {
   name: string
@@ -51,10 +60,16 @@ export default function ShareModal({
   onClose,
   onUpdate,
 }: ShareModalProps) {
+  const { signer } = useDerivedKey()
+  const contacts = useMemo(() => loadContacts(), [])
+
   const [newKey, setNewKey] = useState('')
   const [newLabel, setNewLabel] = useState('')
   const [showSuggestions, setShowSuggestions] = useState(false)
   const [grantees, setGrantees] = useState<string[]>([])
+  const [senderName, setSenderName] = useState('')
+  // Legacy: older grantees were saved with manual labels before contacts existed.
+  // Read-only fallback for displaying their names; new grants pull from contacts.
   const [labels, setLabels] = useState<Record<string, string>>(() => {
     try {
       return JSON.parse(localStorage.getItem('nook-grantee-labels') ?? '{}')
@@ -95,11 +110,15 @@ export default function ShareModal({
     return clean
   }
 
-  /** Find a label for a key, matching compressed vs uncompressed formats */
+  /** Find a label for a key — prefers contact list, falls back to legacy label map. */
   function findLabel(key: string): string | undefined {
-    if (labels[key]) return labels[key]
-
     const keyX = stripKeyPrefix(key)
+
+    for (const c of contacts) {
+      if (stripKeyPrefix(c.beePublicKey) === keyX) return c.nickname
+    }
+
+    if (labels[key]) return labels[key]
 
     for (const [storedKey, label] of Object.entries(labels)) {
       if (stripKeyPrefix(storedKey) === keyX) return label
@@ -115,24 +134,21 @@ export default function ShareModal({
     return stripKeyPrefix(key) === stripKeyPrefix(myPublicKey)
   }
 
-  // Contact suggestions — filter from grantee labels, exclude already-added grantees
-  const contactSuggestions: [string, string][] = Object.entries(labels)
-    .filter(([key, label]) => {
-      // Exclude own key
-      if (isMyKey(key)) return false
+  // Contact suggestions — sourced from the main contact list (nook-contacts-v2),
+  // so adding someone in the Contacts page makes them available here without
+  // re-typing keys. Excludes self and already-granted contacts.
+  const contactSuggestions: [string, string][] = contacts
+    .filter(c => {
+      if (isMyKey(c.beePublicKey)) return false
 
-      // Exclude already-added grantees
-      if (grantees.some(g => stripKeyPrefix(g) === stripKeyPrefix(key))) return false
+      if (grantees.some(g => stripKeyPrefix(g) === stripKeyPrefix(c.beePublicKey))) return false
 
-      // Filter by typed name
-      if (newLabel.trim()) {
-        return label.toLowerCase().includes(newLabel.toLowerCase())
-      }
+      if (newLabel.trim()) return c.nickname.toLowerCase().includes(newLabel.toLowerCase())
 
-      // Show all contacts when input is empty/focused
       return true
     })
-    .slice(0, 6) // Max 6 suggestions
+    .map<[string, string]>(c => [c.beePublicKey, c.nickname])
+    .slice(0, 6)
 
   // Load existing grantees on first render
   if (!loadedGrantees && granteeRef) {
@@ -167,7 +183,11 @@ export default function ShareModal({
 
       setGrantees(prev => [...prev, key])
 
-      if (newLabel.trim()) saveLabel(key, newLabel.trim())
+      // If user typed a manual label for someone NOT in their contact list,
+      // remember it (legacy behavior) so the grantee row shows a name.
+      const matchedContact = contacts.find(c => stripKeyPrefix(c.beePublicKey) === stripKeyPrefix(key))
+
+      if (newLabel.trim() && !matchedContact) saveLabel(key, newLabel.trim())
 
       setNewKey('')
       setNewLabel('')
@@ -205,7 +225,14 @@ export default function ShareModal({
 
   async function copyShareLink() {
     if (!actPublisher || !actHistoryRef || !beeAddress || !files?.length) return
+
+    if (!signer || !myPublicKey) {
+      setError('Derive your Nook key first (Contacts page) so the link can carry your contact info.')
+
+      return
+    }
     setLoading(true)
+    setError(null)
 
     try {
       const topic = await topicFromString(stampId + 'nook-drive-meta')
@@ -222,7 +249,18 @@ export default function ShareModal({
 
       await serverApi.createFeedUpdate(topic, wrapperResult.reference, stampId)
 
-      const link = `swarm://feed?topic=${topic}&owner=${beeAddress}&publisher=${actPublisher}`
+      const link = buildShareLink({
+        feedTopic: topic,
+        feedOwner: beeAddress,
+        actPublisher,
+        sender: {
+          addr: signer.getAddress(),
+          walletPublicKey: bytesToHex(signer.getPublicKey()),
+          beePublicKey: myPublicKey,
+          name: senderName.trim() || undefined,
+        },
+      })
+
       navigator.clipboard.writeText(link)
       setCopiedLink(true)
       setTimeout(() => setCopiedLink(false), 2000)
@@ -392,8 +430,17 @@ export default function ShareModal({
           {actPublisher && beeAddress && grantees.length > 0 && (
             <div className="space-y-2">
               <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-                After granting access, send them the drive link:
+                After granting access, send them the drive link. The link also bundles your contact info so they can add
+                you in one click.
               </p>
+              <input
+                type="text"
+                value={senderName}
+                onChange={e => setSenderName(e.target.value)}
+                placeholder="Your name (optional, shown to recipient)"
+                className="w-full rounded-lg border px-3 py-2 text-xs focus:outline-none"
+                style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
+              />
               <button
                 onClick={copyShareLink}
                 disabled={loading}
