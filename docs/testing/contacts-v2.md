@@ -15,17 +15,21 @@ What's new vs Phase 1a:
 - Funded Bee node, light mode, at least one usable stamp (only required if you want to publish to the registry — share-link mode works without)
 - For the deep-link test below: nothing extra; it works in browser
 
-## 1. Update your branch
+## 1. Get on `develop`
+
+We integrate every in-flight feature into the `develop` branch so all testers run the same canonical version. Always test from `develop`:
 
 ```bash
 cd <your nook clone>
 git fetch
-git checkout feat/contacts-page
+git checkout develop
 git pull
 cd ui && rm -rf node_modules/.vite && npm install && cd ..
 ```
 
-The `rm -rf node_modules/.vite` is the gotcha that bit us last time — the SHA bump means Vite needs to re-optimize the new SDK on next start, and its cache is otherwise sticky.
+The `rm -rf node_modules/.vite` is the gotcha that's bitten us repeatedly — when the SDK pin changes, Vite needs to re-optimize on next start and its cache is otherwise sticky.
+
+> **Why `develop` and not `feat/contacts-page` directly?** Multiple feature branches in flight can resolve to slightly different SDK pins. `develop` is the single integration point — both testers on `develop` always get the same pin, lockfile, and node_modules. Avoids asymmetric "I can find you but you can't find me" issues that come from version drift.
 
 ## 2. Start Nook
 

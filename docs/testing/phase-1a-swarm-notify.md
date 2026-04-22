@@ -11,18 +11,20 @@ This is a **smoke test before Phase 2**. We're not validating UX or polish here 
 - A funded Bee node (light mode, with at least one usable postage stamp)
 - For step 5 only: ~0.001 xDAI on Gnosis Chain for the on-chain notification
 
-## 1. Get the branch
+## 1. Get on `develop`
+
+All in-flight features are merged into `develop` so testers run the same canonical version:
 
 ```bash
 cd <your nook clone>
 git fetch
-git checkout feat/add-swarm-notify
+git checkout develop
 git pull
 npm install
-cd ui && npm install && cd ..
+cd ui && rm -rf node_modules/.vite && npm install && cd ..
 ```
 
-`ui/package.json` adds `@swarm-notify/sdk` as a git dependency. Install pulls + builds it via the `prepare` script — this can take ~30s the first time.
+`ui/package.json` adds `@swarm-notify/sdk` as a git dependency. Install pulls + builds it via the `prepare` script — this can take ~30s the first time. The Vite cache clear is the gotcha that's bitten us repeatedly when the SDK pin changes.
 
 ### Bee API proxy for Vite dev server
 
