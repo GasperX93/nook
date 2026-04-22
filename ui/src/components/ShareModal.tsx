@@ -223,48 +223,54 @@ export default function ShareModal({
     }
   }
 
-  async function copyShareLink() {
-    if (!actPublisher || !actHistoryRef || !beeAddress || !files?.length) return
+  /**
+   * Re-upload metadata with the latest ACT history (so newly-granted users can
+   * read it) and update the feed pointer. Returns the share link.
+   *
+   * Both Copy link and Send notification need to do this — extracted so the
+   * recipient never gets a stale link pointing at metadata they can't decrypt.
+   */
+  async function refreshAndBuildLink(): Promise<string> {
+    if (!actPublisher || !actHistoryRef || !beeAddress || !files?.length) {
+      throw new Error('Drive is not ready to share yet')
+    }
 
     if (!signer || !myPublicKey) {
-      setError('Derive your Nook key first (Contacts page) so the link can carry your contact info.')
-
-      return
+      throw new Error('Derive your Nook key first (Contacts page) so the link can carry your contact info.')
     }
+    const topic = await topicFromString(stampId + 'nook-drive-meta')
+    const metadata = JSON.stringify({
+      files: files.map(f => ({ name: f.name, reference: f.reference, historyRef: f.historyRef, size: f.size })),
+    })
+    const uploaded = await serverApi.uploadACTMetadata(stampId, metadata, actHistoryRef)
+    const wrapper = JSON.stringify({ ref: uploaded.reference, history: uploaded.historyRef })
+    const wrapperResult = await serverApi.uploadRawBytes(stampId, wrapper)
+
+    await serverApi.createFeedUpdate(topic, wrapperResult.reference, stampId)
+
+    return buildShareLink({
+      feedTopic: topic,
+      feedOwner: beeAddress,
+      actPublisher,
+      sender: {
+        addr: signer.getAddress(),
+        walletPublicKey: bytesToHex(signer.getPublicKey()),
+        name: senderName.trim() || undefined,
+      },
+    })
+  }
+
+  async function copyShareLink() {
     setLoading(true)
     setError(null)
-
     try {
-      const topic = await topicFromString(stampId + 'nook-drive-meta')
-
-      // Re-upload metadata with LATEST history (includes all grantees) and update feed
-      const metadata = JSON.stringify({
-        files: files.map(f => ({ name: f.name, reference: f.reference, historyRef: f.historyRef, size: f.size })),
-      })
-      const uploaded = await serverApi.uploadACTMetadata(stampId, metadata, actHistoryRef)
-
-      // Upload wrapper as raw bytes (not /bzz file) so feed reader can use /bytes to read it
-      const wrapper = JSON.stringify({ ref: uploaded.reference, history: uploaded.historyRef })
-      const wrapperResult = await serverApi.uploadRawBytes(stampId, wrapper)
-
-      await serverApi.createFeedUpdate(topic, wrapperResult.reference, stampId)
-
-      const link = buildShareLink({
-        feedTopic: topic,
-        feedOwner: beeAddress,
-        actPublisher,
-        sender: {
-          addr: signer.getAddress(),
-          walletPublicKey: bytesToHex(signer.getPublicKey()),
-          name: senderName.trim() || undefined,
-        },
-      })
+      const link = await refreshAndBuildLink()
 
       navigator.clipboard.writeText(link)
       setCopiedLink(true)
       setTimeout(() => setCopiedLink(false), 2000)
-    } catch {
-      setError('Failed to generate share link')
+    } catch (e) {
+      setError((e as Error).message || 'Failed to generate share link')
     } finally {
       setLoading(false)
     }
