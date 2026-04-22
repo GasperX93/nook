@@ -7,6 +7,7 @@ import koaBodyparser from 'koa-bodyparser'
 import mount from 'koa-mount'
 import serve from 'koa-static'
 import * as path from 'path'
+import { Readable } from 'stream'
 
 import { ethers } from 'ethers'
 
@@ -30,6 +31,53 @@ export function runServer() {
   const app = new Koa()
   logger.info(`Serving UI from path: ${UI_DIST}`)
   app.use(mount('/dashboard', serve(UI_DIST)))
+
+  // Pass-through proxy: /bee-api/* → http://127.0.0.1:1633/*
+  // Mirrors the Vite dev proxy so renderer code can use `${origin}/bee-api`
+  // unchanged in both dev (Vite, port 3002) and prod (Koa, port 3054). Without
+  // this, anything using bee-js from the renderer 404s on the prod path.
+  // Registered before bodyparser so the request body stream stays intact.
+  app.use(async (context, next) => {
+    if (!context.path.startsWith('/bee-api')) {
+      await next()
+
+      return
+    }
+    const beePath = context.path.replace(/^\/bee-api/, '')
+    const url = `http://127.0.0.1:1633${beePath}${context.search || ''}`
+    const headers: Record<string, string> = {}
+
+    for (const [k, v] of Object.entries(context.headers)) {
+      if (typeof v === 'string') headers[k.toLowerCase()] = v
+    }
+    delete headers.host
+    delete headers['content-length']
+    const hasBody = ['POST', 'PUT', 'PATCH'].includes(context.method)
+
+    try {
+      const res = await fetch(url, {
+        method: context.method,
+        headers,
+        body: hasBody ? (Readable.toWeb(context.req) as ReadableStream) : undefined,
+        // @ts-expect-error duplex: 'half' is required by Node fetch when body is a stream
+        duplex: 'half',
+      })
+
+      context.status = res.status
+      res.headers.forEach((value, key) => {
+        if (key === 'content-length' || key === 'transfer-encoding') return
+        context.set(key, value)
+      })
+
+      if (res.body) {
+        context.body = Readable.fromWeb(res.body as never)
+      }
+    } catch (e) {
+      logger.error(`bee-api proxy failed for ${url}: ${(e as Error).message}`)
+      context.status = 502
+      context.body = { error: 'Bee node unreachable' }
+    }
+  })
 
   app.use(async (context, next) => {
     const corsOrigin = process.env.NODE_ENV === 'development' ? '*' : `http://localhost:${port.value}`
@@ -169,8 +217,8 @@ export function runServer() {
     }
   })
   router.get('/feed-read', async context => {
-    const topicHex = context.query['topic'] as string
-    const owner = context.query['owner'] as string
+    const topicHex = context.query.topic as string
+    const owner = context.query.owner as string
 
     if (!topicHex || !owner) {
       context.status = 400
@@ -280,7 +328,7 @@ export function runServer() {
 
       if (historyRef) headers['swarm-act-history-address'] = historyRef
 
-      if (beePassword) headers['Authorization'] = `Bearer ${beePassword}`
+      if (beePassword) headers.Authorization = `Bearer ${beePassword}`
 
       const response = await fetch('http://127.0.0.1:1633/bytes', {
         method: 'POST',
@@ -310,8 +358,8 @@ export function runServer() {
 
   router.get('/act/download/:hash', async context => {
     const { hash } = context.params
-    const actPublisher = context.query['publisher'] as string
-    const actHistoryRef = context.query['history'] as string
+    const actPublisher = context.query.publisher as string
+    const actHistoryRef = context.query.history as string
 
     if (!actPublisher || !actHistoryRef) {
       context.status = 400
@@ -328,7 +376,7 @@ export function runServer() {
         'swarm-act-history-address': actHistoryRef,
       }
 
-      if (beePassword) headers['Authorization'] = `Bearer ${beePassword}`
+      if (beePassword) headers.Authorization = `Bearer ${beePassword}`
 
       // Try /bzz first (files/collections), then /bytes (raw data like metadata)
       let response = await fetch(`http://127.0.0.1:1633/bzz/${hash}/`, { headers, redirect: 'follow' })
@@ -379,7 +427,7 @@ export function runServer() {
 
       if (historyRef) headers['swarm-act-history-address'] = historyRef
 
-      if (beePassword) headers['Authorization'] = `Bearer ${beePassword}`
+      if (beePassword) headers.Authorization = `Bearer ${beePassword}`
 
       const response = await fetch('http://127.0.0.1:1633/grantee', {
         method: 'POST',

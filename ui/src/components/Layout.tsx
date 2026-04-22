@@ -9,11 +9,13 @@ import {
   Settings,
   Terminal,
   User,
+  Users,
   Wallet,
 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
-import { useDisconnect } from 'wagmi'
+import { useAccount, useDisconnect, useSwitchChain } from 'wagmi'
+import { gnosis } from 'wagmi/chains'
 import { weiToDai } from '../api/bee'
 import { useBeeHealth, usePeers, useStamps, useStatus, useWallet } from '../api/queries'
 import { useAppStore } from '../store/app'
@@ -22,6 +24,7 @@ import Onboarding from './Onboarding'
 const mainNavItems = [
   { to: '/drive', icon: HardDrive, label: 'Drive' },
   { to: '/account', icon: User, label: 'Account' },
+  { to: '/contacts', icon: Users, label: 'Contacts' },
 ]
 
 const settingsNavItem = { to: '/settings', icon: Settings, label: 'Settings' }
@@ -103,10 +106,20 @@ export default function Layout() {
   const { devMode, onboardingCompleted, setOnboardingCompleted } = useAppStore()
   const navigate = useNavigate()
   const location = useLocation()
+  const { chain } = useAccount()
+  const { switchChain } = useSwitchChain()
+
+  // Auto-switch to Gnosis Chain — Nook only operates on Gnosis
+  useEffect(() => {
+    if (chain && chain.id !== gnosis.id && switchChain) {
+      switchChain({ chainId: gnosis.id })
+    }
+  }, [chain, switchChain])
 
   const pageTitles: Record<string, string> = {
     '/drive': 'Drive',
     '/account': 'Account',
+    '/contacts': 'Contacts',
     '/settings': 'Settings',
     '/dev': 'Dev mode',
     '/apps/website-publisher': 'Publish website',
