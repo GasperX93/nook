@@ -1,14 +1,15 @@
 import { Bee } from '@ethersphere/bee-js'
-import { mailbox } from '@swarm-notify/sdk'
-import { FileText, Send } from 'lucide-react'
+import { identity, mailbox } from '@swarm-notify/sdk'
+import { FileText, Mail, Send } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { useStamps } from '../api/queries'
 import AddSharedDriveModal from '../components/AddSharedDriveModal'
 import { useSharedDrives } from '../hooks/useSharedDrives'
 import { useDerivedKey } from '../hooks/useDerivedKey'
+import { loadInvitations, markInvitationProcessed, pendingInvitations, type Invitation } from '../notify/invitations'
 import { appendSent, loadReadCursors, loadThreads, markRead, unreadCount } from '../notify/messages'
-import { loadContacts } from '../notify/storage'
+import { addContact, loadContacts } from '../notify/storage'
 import { toLibraryContact, type NookContact } from '../notify/types'
 
 const BEE_URL = `${window.location.origin}/bee-api`
@@ -30,7 +31,10 @@ export default function Messages() {
   const { data: stamps } = useStamps()
 
   const bee = useMemo(() => new Bee(BEE_URL), [])
-  const contacts = useMemo<NookContact[]>(() => loadContacts(), [])
+  // Re-read each render cycle so newly-added contacts (eg via accepting an
+  // invitation) appear without a remount.
+  const [contacts, setContacts] = useState<NookContact[]>(() => loadContacts())
+  const [invitations, setInvitations] = useState<Invitation[]>(() => loadInvitations())
 
   const [threads, setThreads] = useState(() => loadThreads())
   const [cursors, setCursors] = useState(() => loadReadCursors())
@@ -40,18 +44,63 @@ export default function Messages() {
   const [error, setError] = useState<string | null>(null)
   // Pre-filled share link when the user clicks "Add drive" on a drive-share card
   const [importingLink, setImportingLink] = useState<string | null>(null)
+  // Invitation acceptance state — nickname input + in-flight flag
+  const [inviteNickname, setInviteNickname] = useState('')
+  const [acceptingInvite, setAcceptingInvite] = useState(false)
   const sharedDrives = useSharedDrives()
   const scrollRef = useRef<HTMLDivElement>(null)
+
+  const pending = useMemo(() => pendingInvitations(invitations), [invitations])
 
   const stampId = (stamps ?? []).find(s => s.usable)?.batchID ?? ''
   const selected = contacts.find(c => c.id === selectedId) ?? null
   const selectedThread = selected ? (threads[selected.id.toLowerCase()] ?? []) : []
+  // If the selected entry isn't a contact, it might be a pending invitation.
+  const selectedInvite = !selected ? (pending.find(i => i.senderAddr === selectedId?.toLowerCase()) ?? null) : null
 
-  // Inbox polling now lives at the Layout level (useInboxPolling) so messages
-  // arrive even when this page isn't mounted. We just re-read localStorage on
-  // a short interval to pick up Layout's writes and reflect new messages here.
+  async function handleAcceptInvite() {
+    if (!selectedInvite || !inviteNickname.trim()) return
+    setAcceptingInvite(true)
+    setError(null)
+    try {
+      // Resolve sender's identity via their feed to get wpub + bpub
+      const resolved = await identity.resolve(bee, selectedInvite.senderAddr)
+
+      if (!resolved) {
+        setError('Could not resolve sender identity. They may have unpublished.')
+
+        return
+      }
+
+      const next = addContact(contacts, {
+        id: selectedInvite.senderAddr,
+        nickname: inviteNickname.trim(),
+        walletPublicKey: resolved.walletPublicKey,
+        beePublicKey: resolved.beePublicKey,
+        source: 'identity-feed',
+        addedAt: Date.now(),
+      })
+
+      setContacts(next)
+      setInvitations(prev => markInvitationProcessed(prev, selectedInvite.senderAddr))
+      setSelectedId(selectedInvite.senderAddr) // switch into the new conversation
+      setInviteNickname('')
+    } catch (e) {
+      setError((e as Error).message ?? 'Failed to add contact')
+    } finally {
+      setAcceptingInvite(false)
+    }
+  }
+
+  // Inbox + invitation polling lives at the Layout level. We just re-read
+  // localStorage on a short interval to pick up writes (new messages,
+  // contacts added in another tab, on-chain invitations).
   useEffect(() => {
-    const id = setInterval(() => setThreads(loadThreads()), 3_000)
+    const id = setInterval(() => {
+      setThreads(loadThreads())
+      setContacts(loadContacts())
+      setInvitations(loadInvitations())
+    }, 3_000)
 
     return () => clearInterval(id)
   }, [])
@@ -139,7 +188,7 @@ export default function Messages() {
     )
   }
 
-  if (contacts.length === 0) {
+  if (contacts.length === 0 && pending.length === 0) {
     return (
       <div className="flex flex-col p-6 gap-4 max-w-3xl">
         <h2 className="text-2xl font-semibold">Messages</h2>
@@ -166,6 +215,35 @@ export default function Messages() {
           </h2>
         </div>
         <div className="flex-1 overflow-auto">
+          {/* Pending invitations — on-chain pings from senders not yet in contacts */}
+          {pending.map(inv => {
+            const isActive = inv.senderAddr === selectedId?.toLowerCase()
+
+            return (
+              <button
+                key={inv.senderAddr}
+                onClick={() => {
+                  setSelectedId(inv.senderAddr)
+                  setInviteNickname('')
+                }}
+                className="w-full text-left px-4 py-3 border-b flex flex-col gap-1 transition-colors"
+                style={{
+                  borderColor: 'rgb(var(--border))',
+                  backgroundColor: isActive ? 'rgba(247,104,8,0.12)' : 'rgba(96,165,250,0.06)',
+                }}
+              >
+                <div className="flex items-center gap-2">
+                  <Mail size={12} style={{ color: '#60a5fa' }} />
+                  <span className="font-medium text-sm truncate font-mono" style={{ color: 'rgb(var(--fg))' }}>
+                    {short(inv.senderAddr, 8)}
+                  </span>
+                </div>
+                <span className="text-xs truncate" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  Wants to reach you
+                </span>
+              </button>
+            )
+          })}
           {contacts.map(c => {
             const thread = threads[c.id.toLowerCase()]
             const unread = unreadCount(thread, cursors[c.id.toLowerCase()])
@@ -319,6 +397,58 @@ export default function Messages() {
               </div>
             </div>
           </>
+        ) : selectedInvite ? (
+          <div className="flex-1 flex flex-col p-6 gap-4 max-w-xl">
+            <div className="flex items-center gap-2">
+              <Mail size={18} style={{ color: '#60a5fa' }} />
+              <h2 className="text-base font-semibold" style={{ color: 'rgb(var(--fg))' }}>
+                Someone wants to reach you
+              </h2>
+            </div>
+            <div
+              className="rounded-lg border p-4 space-y-2"
+              style={{ backgroundColor: 'rgb(var(--bg-surface))', borderColor: 'rgb(var(--border))' }}
+            >
+              <p className="text-xs font-mono break-all" style={{ color: 'rgb(var(--fg-muted))' }}>
+                {selectedInvite.senderAddr}
+              </p>
+              <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                They sent you an on-chain wake-up at block {selectedInvite.blockNumber}. Add them as a contact to see
+                any messages or drive shares they&apos;ve sent.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Nickname
+              </label>
+              <input
+                type="text"
+                value={inviteNickname}
+                onChange={e => setInviteNickname(e.target.value)}
+                placeholder="e.g. Alice"
+                className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-none"
+                style={{
+                  backgroundColor: 'rgb(var(--bg))',
+                  color: 'rgb(var(--fg))',
+                  borderColor: 'rgb(var(--border))',
+                }}
+                autoFocus
+              />
+            </div>
+            {error && (
+              <p className="text-xs" style={{ color: '#ef4444' }}>
+                {error}
+              </p>
+            )}
+            <button
+              onClick={handleAcceptInvite}
+              disabled={acceptingInvite || !inviteNickname.trim()}
+              className="self-start px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-40"
+              style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+            >
+              {acceptingInvite ? 'Resolving & adding…' : 'Add as contact'}
+            </button>
+          </div>
         ) : (
           <div className="flex-1 flex items-center justify-center">
             <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>

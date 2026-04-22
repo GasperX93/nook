@@ -20,6 +20,8 @@ import { gnosis } from 'wagmi/chains'
 import { weiToDai } from '../api/bee'
 import { useBeeHealth, usePeers, useStamps, useStatus, useWallet } from '../api/queries'
 import { useInboxPolling } from '../hooks/useInboxPolling'
+import { useRegistryPolling } from '../hooks/useRegistryPolling'
+import { loadInvitations, pendingInvitations } from '../notify/invitations'
 import { loadReadCursors, loadThreads, totalUnread } from '../notify/messages'
 import { useAppStore } from '../store/app'
 import Onboarding from './Onboarding'
@@ -138,6 +140,9 @@ export default function Layout() {
   // Background inbox polling — keeps unread badge fresh whether or not the
   // Messages page is mounted. Side-effect hook; writes to localStorage threads.
   useInboxPolling()
+  // Background on-chain notification polling — surfaces wake-up pings from
+  // senders who aren't yet in our contact list (see #62/#63).
+  useRegistryPolling()
 
   // Total unread messages across all conversations — drives a badge on the
   // Messages sidebar entry. Re-reads localStorage on a short interval; cheap,
@@ -145,7 +150,12 @@ export default function Layout() {
   const [messagesUnread, setMessagesUnread] = useState(0)
 
   useEffect(() => {
-    const tick = () => setMessagesUnread(totalUnread(loadThreads(), loadReadCursors()))
+    const tick = () => {
+      const unread = totalUnread(loadThreads(), loadReadCursors())
+      const pending = pendingInvitations(loadInvitations()).length
+
+      setMessagesUnread(unread + pending)
+    }
 
     tick()
     const id = setInterval(tick, 3_000)
