@@ -47,6 +47,17 @@ export default function Messages() {
   // Invitation acceptance state — nickname input + in-flight flag
   const [inviteNickname, setInviteNickname] = useState('')
   const [acceptingInvite, setAcceptingInvite] = useState(false)
+  // Pre-acceptance peek: read sender's identity feed + mailbox so the
+  // invitation panel can show context (sender name, their first message)
+  // before the recipient commits to adding the contact.
+  type InvitePreview = {
+    loading: boolean
+    senderName?: string
+    firstSubject?: string
+    firstBody?: string
+    error?: string
+  }
+  const [invitePreview, setInvitePreview] = useState<InvitePreview>({ loading: false })
   const sharedDrives = useSharedDrives()
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -91,6 +102,70 @@ export default function Messages() {
       setAcceptingInvite(false)
     }
   }
+
+  // When user selects a pending invitation, peek the sender's mailbox feed.
+  // Read-only: no contact saved yet. Tries to extract a friendly name from
+  // the message subject pattern emitted by ShareModal: "Name shared "X" with you".
+  useEffect(() => {
+    if (!selectedInvite || !signer) {
+      setInvitePreview({ loading: false })
+
+      return
+    }
+    let cancelled = false
+
+    setInvitePreview({ loading: true })
+    const myAddr = signer.getAddress()
+    const senderAddr = selectedInvite.senderAddr
+
+    ;(async () => {
+      try {
+        const resolved = await identity.resolve(bee, senderAddr)
+
+        if (cancelled) return
+
+        if (!resolved) {
+          setInvitePreview({ loading: false, error: 'Sender identity not published.' })
+
+          return
+        }
+        // Construct a temp Contact for the read — never persisted.
+        const tempContact = {
+          ethAddress: senderAddr,
+          nickname: '',
+          walletPublicKey: resolved.walletPublicKey,
+          beePublicKey: resolved.beePublicKey,
+          addedAt: Date.now(),
+        }
+        const messages = await mailbox.readMessages(bee, signer.getSigningKey(), myAddr, tempContact)
+
+        if (cancelled) return
+        const first = messages[messages.length - 1] ?? messages[0]
+        // Extract sender name from "Name shared "X" with you" pattern.
+        const match = first?.subject?.match(/^(.+?)\s+shared\s+"/)
+        const extractedName = match?.[1]?.trim()
+
+        setInvitePreview({
+          loading: false,
+          senderName: extractedName,
+          firstSubject: first?.subject,
+          firstBody: first?.body,
+        })
+
+        // Pre-fill nickname suggestion if we have one and the user hasn't typed.
+        if (extractedName && !inviteNickname) setInviteNickname(extractedName)
+      } catch (e) {
+        if (cancelled) return
+        setInvitePreview({ loading: false, error: (e as Error).message ?? 'Could not preview' })
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+    // inviteNickname intentionally omitted — only auto-fill once on first load
+    // eslint-disable-next-line
+  }, [selectedInvite, signer, bee])
 
   // Inbox + invitation polling lives at the Layout level. We just re-read
   // localStorage on a short interval to pick up writes (new messages,
@@ -402,7 +477,9 @@ export default function Messages() {
             <div className="flex items-center gap-2">
               <Mail size={18} style={{ color: '#60a5fa' }} />
               <h2 className="text-base font-semibold" style={{ color: 'rgb(var(--fg))' }}>
-                Someone wants to reach you
+                {invitePreview.senderName
+                  ? `${invitePreview.senderName} wants to reach you`
+                  : 'Someone wants to reach you'}
               </h2>
             </div>
             <div
@@ -412,10 +489,35 @@ export default function Messages() {
               <p className="text-xs font-mono break-all" style={{ color: 'rgb(var(--fg-muted))' }}>
                 {selectedInvite.senderAddr}
               </p>
-              <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-                They sent you an on-chain wake-up at block {selectedInvite.blockNumber}. Add them as a contact to see
-                any messages or drive shares they&apos;ve sent.
-              </p>
+              {invitePreview.loading && (
+                <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  Reading sender&apos;s mailbox feed…
+                </p>
+              )}
+              {invitePreview.firstSubject && (
+                <div className="rounded border-l-2 pl-3 py-1 mt-2" style={{ borderColor: 'rgb(var(--accent))' }}>
+                  <p className="text-sm font-medium" style={{ color: 'rgb(var(--fg))' }}>
+                    {invitePreview.firstSubject}
+                  </p>
+                  {invitePreview.firstBody && (
+                    <p className="text-xs mt-1" style={{ color: 'rgb(var(--fg-muted))' }}>
+                      {invitePreview.firstBody}
+                    </p>
+                  )}
+                </div>
+              )}
+              {invitePreview.error && (
+                <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  Couldn&apos;t peek the sender&apos;s feed yet ({invitePreview.error}). Add them as a contact to see
+                  the message.
+                </p>
+              )}
+              {!invitePreview.loading && !invitePreview.firstSubject && !invitePreview.error && (
+                <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  They sent you an on-chain wake-up at block {selectedInvite.blockNumber}. Add them as a contact to see
+                  any messages or drive shares they&apos;ve sent.
+                </p>
+              )}
             </div>
             <div className="space-y-2">
               <label className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>

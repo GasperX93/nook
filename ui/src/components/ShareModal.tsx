@@ -372,7 +372,11 @@ export default function ShareModal({
 
     const myAddr = signer.getAddress()
     const fileCount = files.length
-    const subject = `"${driveName}" shared with you`
+    // Subject leads with sender name so a recipient peeking at the feed (eg
+    // from an on-chain invitation, before adding us as contact) sees who.
+    const subject = senderName.trim()
+      ? `${senderName.trim()} shared "${driveName}" with you`
+      : `"${driveName}" shared with you`
     const body = `Drive shared. Open in Nook to add it.`
     const provider = sendOnChain && walletClient ? createNotifyProvider(walletClient) : null
 
