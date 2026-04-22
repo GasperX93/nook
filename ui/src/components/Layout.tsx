@@ -5,6 +5,7 @@ import {
   Globe,
   HardDrive,
   LogOut,
+  MessageSquare,
   RefreshCw,
   Settings,
   Terminal,
@@ -29,7 +30,10 @@ const mainNavItems = [
 
 const settingsNavItem = { to: '/settings', icon: Settings, label: 'Settings' }
 
-const appNavItems = [{ to: '/apps/website-publisher', icon: Globe, label: 'Publish', sublabel: 'website' }]
+const appNavItems = [
+  { to: '/apps/messages', icon: MessageSquare, label: 'Messages', sublabel: '' },
+  { to: '/apps/website-publisher', icon: Globe, label: 'Publish', sublabel: 'website' },
+]
 
 function WalletDropdown({ displayName, address, avatar }: { displayName: string; address: string; avatar?: string }) {
   const [open, setOpen] = useState(false)
@@ -122,6 +126,7 @@ export default function Layout() {
     '/contacts': 'Contacts',
     '/settings': 'Settings',
     '/dev': 'Dev mode',
+    '/apps/messages': 'Messages',
     '/apps/website-publisher': 'Publish website',
   }
   const pageTitle = pageTitles[location.pathname] ?? ''
@@ -242,8 +247,12 @@ export default function Layout() {
               <Icon size={15} />
               <span className="text-[9px] font-medium leading-tight text-center">
                 {label}
-                <br />
-                {sublabel}
+                {sublabel && (
+                  <>
+                    <br />
+                    {sublabel}
+                  </>
+                )}
               </span>
             </NavLink>
           ))}

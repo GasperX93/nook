@@ -5,6 +5,7 @@ import Contacts from './pages/Contacts'
 import Dev from './pages/Dev'
 import Drive from './pages/Drive'
 import Settings from './pages/Settings'
+import Messages from './apps/Messages'
 import WebsitePublisher from './apps/WebsitePublisher'
 
 export default function App() {
@@ -19,6 +20,7 @@ export default function App() {
         <Route path="settings" element={<Settings />} />
         <Route path="logs" element={<Navigate to="/dev" replace />} />
         <Route path="dev" element={<Dev />} />
+        <Route path="apps/messages" element={<Messages />} />
         <Route path="apps/website-publisher" element={<WebsitePublisher />} />
       </Route>
     </Routes>
