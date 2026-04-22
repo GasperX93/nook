@@ -98,7 +98,9 @@ export function SwarmNotifyTest() {
       const readback = await identity.resolve(bee, ethAddr)
 
       if (readback) {
-        addLog(`  verify: OK — walletPubKey=${full(readback.walletPublicKey)}, beePubKey=${full(readback.beePublicKey)}`)
+        addLog(
+          `  verify: OK — walletPubKey=${full(readback.walletPublicKey)}, beePubKey=${full(readback.beePublicKey)}`,
+        )
       } else {
         addLog(`  verify: FAILED — identity not readable after publish`)
       }
@@ -226,6 +228,7 @@ export function SwarmNotifyTest() {
 
       if (inbox.length === 0) {
         addLog('No messages')
+
         if (contacts.length > 0) {
           addLog(`  → checked ${contacts.length} contact feed(s), all empty or not found`)
           addLog(`  → make sure the sender used YOUR Nook address in their feed topic`)
@@ -248,7 +251,9 @@ export function SwarmNotifyTest() {
     if (!walletClient) return addLog('ERROR: Connect wallet to send Gnosis tx')
 
     if (walletClient.chain?.id !== GNOSIS_CHAIN_ID) {
-      return addLog(`ERROR: Wallet on chain ${walletClient.chain?.id} (${walletClient.chain?.name}), need Gnosis (${GNOSIS_CHAIN_ID})`)
+      return addLog(
+        `ERROR: Wallet on chain ${walletClient.chain?.id} (${walletClient.chain?.name}), need Gnosis (${GNOSIS_CHAIN_ID})`,
+      )
     }
 
     if (!addresses) return addLog('ERROR: Bee addresses not loaded')
@@ -269,9 +274,15 @@ export function SwarmNotifyTest() {
       addLog(`  recipient pubKey: ${full(recipient.walletPublicKey)}`)
       addLog(`  payload.sender: ${full(myAddr)}`)
       const t0 = Date.now()
-      const txHash = await registry.sendNotification(provider, REGISTRY_ADDRESS, recipientPubKey, recipient.ethAddress, {
-        sender: myAddr,
-      })
+      const txHash = await registry.sendNotification(
+        provider,
+        REGISTRY_ADDRESS,
+        recipientPubKey,
+        recipient.ethAddress,
+        {
+          sender: myAddr,
+        },
+      )
       addLog(`  duration: ${Date.now() - t0}ms`)
       addLog(`Notification tx: ${full(txHash)}`)
     } catch (e) {
@@ -355,9 +366,7 @@ export function SwarmNotifyTest() {
             'connect wallet to derive Nook address'
           )}
         </div>
-        <div>
-          Bee: {addresses ? <span style={{ color: 'rgb(var(--fg))' }}>overlay {addresses.overlay}</span> : '—'}
-        </div>
+        <div>Bee: {addresses ? <span style={{ color: 'rgb(var(--fg))' }}>overlay {addresses.overlay}</span> : '—'}</div>
         <div>
           Stamp:{' '}
           {usableStamps.length > 0 ? (
@@ -529,11 +538,12 @@ export function SwarmNotifyTest() {
               <div
                 key={i}
                 style={{
-                  color: line.includes('FAILED') || line.includes('ERROR')
-                    ? '#ef4444'
-                    : line.startsWith('[') && !line.includes('  ')
-                      ? 'rgb(var(--fg))'
-                      : undefined,
+                  color:
+                    line.includes('FAILED') || line.includes('ERROR')
+                      ? '#ef4444'
+                      : line.startsWith('[') && !line.includes('  ')
+                        ? 'rgb(var(--fg))'
+                        : undefined,
                 }}
               >
                 {line}

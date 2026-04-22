@@ -53,6 +53,24 @@ export default function Contacts() {
   const [adding, setAdding] = useState(false)
   const [addError, setAddError] = useState<string | null>(null)
 
+  // If launched via a nook://contact?... deep link, the URL has ?contact=<encoded>
+  // Read it once on mount, switch to share-link mode, prefill the input.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const incoming = params.get('contact')
+
+    if (incoming) {
+      setAddMode('share-link')
+      setShareLinkInput(incoming)
+      // Clean the param from the URL so reloads don't re-prefill
+      params.delete('contact')
+      const next = params.toString()
+      const newSearch = next ? `?${next}` : ''
+
+      window.history.replaceState({}, '', `${window.location.pathname}${newSearch}${window.location.hash}`)
+    }
+  }, [])
+
   const [publishing, setPublishing] = useState(false)
   const [publishError, setPublishError] = useState<string | null>(null)
   const [publishedTick, setPublishedTick] = useState(0)

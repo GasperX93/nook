@@ -169,8 +169,8 @@ export function runServer() {
     }
   })
   router.get('/feed-read', async context => {
-    const topicHex = context.query['topic'] as string
-    const owner = context.query['owner'] as string
+    const topicHex = context.query.topic as string
+    const owner = context.query.owner as string
 
     if (!topicHex || !owner) {
       context.status = 400
@@ -280,7 +280,7 @@ export function runServer() {
 
       if (historyRef) headers['swarm-act-history-address'] = historyRef
 
-      if (beePassword) headers['Authorization'] = `Bearer ${beePassword}`
+      if (beePassword) headers.Authorization = `Bearer ${beePassword}`
 
       const response = await fetch('http://127.0.0.1:1633/bytes', {
         method: 'POST',
@@ -310,8 +310,8 @@ export function runServer() {
 
   router.get('/act/download/:hash', async context => {
     const { hash } = context.params
-    const actPublisher = context.query['publisher'] as string
-    const actHistoryRef = context.query['history'] as string
+    const actPublisher = context.query.publisher as string
+    const actHistoryRef = context.query.history as string
 
     if (!actPublisher || !actHistoryRef) {
       context.status = 400
@@ -328,7 +328,7 @@ export function runServer() {
         'swarm-act-history-address': actHistoryRef,
       }
 
-      if (beePassword) headers['Authorization'] = `Bearer ${beePassword}`
+      if (beePassword) headers.Authorization = `Bearer ${beePassword}`
 
       // Try /bzz first (files/collections), then /bytes (raw data like metadata)
       let response = await fetch(`http://127.0.0.1:1633/bzz/${hash}/`, { headers, redirect: 'follow' })
@@ -379,7 +379,7 @@ export function runServer() {
 
       if (historyRef) headers['swarm-act-history-address'] = historyRef
 
-      if (beePassword) headers['Authorization'] = `Bearer ${beePassword}`
+      if (beePassword) headers.Authorization = `Bearer ${beePassword}`
 
       const response = await fetch('http://127.0.0.1:1633/grantee', {
         method: 'POST',
