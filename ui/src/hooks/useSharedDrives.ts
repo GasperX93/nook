@@ -39,49 +39,79 @@ function persist(drives: SharedDrive[]) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(drives))
 }
 
-export interface ParsedShareLink {
-  type: 'feed' | 'snapshot'
-  // Feed-based (live)
-  feedTopic?: string
-  feedOwner?: string
-  actPublisher: string
-  // Snapshot-based (legacy)
-  reference?: string
-  actHistoryRef?: string
+/**
+ * Sender's contact info derived from a drive-share link.
+ * `beePublicKey` is reconstructed from the link's `publisher` field — no
+ * separate `bpub` is carried in the URL (it'd duplicate `publisher`).
+ */
+export interface SenderContactInfo {
+  addr: string
+  walletPublicKey: string
+  beePublicKey: string
+  name?: string
 }
 
-/** Parse a share link into its components. Supports both feed-based and legacy snapshot links. */
+export interface ParsedShareLink {
+  feedTopic: string
+  feedOwner: string
+  actPublisher: string
+  /** Present when sender bundled contact info in the link. */
+  sender?: SenderContactInfo
+}
+
+/**
+ * Parse a `nook://drive-share?...` link.
+ * Required params: topic, owner, publisher.
+ * Optional contact bundle: addr + wpub (+ optional name).
+ * `publisher` doubles as the sender's Bee pubkey when contact info is present.
+ *
+ * Legacy `swarm://feed?...` links are NOT accepted — pre-release schema break.
+ */
 export function parseShareLink(link: string): ParsedShareLink | null {
   try {
-    const clean = link.trim().replace('swarm://', '')
-    const [path, query] = clean.split('?')
+    const trimmed = link.trim()
+    const NOOK_PREFIX = 'nook://drive-share?'
 
-    if (!query) return null
-
-    const params = new URLSearchParams(query)
+    if (!trimmed.startsWith(NOOK_PREFIX)) return null
+    const params = new URLSearchParams(trimmed.slice(NOOK_PREFIX.length))
+    const feedTopic = params.get('topic')
+    const feedOwner = params.get('owner')
     const actPublisher = params.get('publisher')
 
-    if (!actPublisher) return null
+    if (!feedTopic || !feedOwner || !actPublisher) return null
 
-    // Feed-based: swarm://feed?topic=...&owner=...&publisher=...
-    if (path === 'feed') {
-      const feedTopic = params.get('topic')
-      const feedOwner = params.get('owner')
+    const addr = params.get('addr')
+    const wpub = params.get('wpub')
+    const name = params.get('name') ?? undefined
+    const sender = addr && wpub ? { addr, walletPublicKey: wpub, beePublicKey: actPublisher, name } : undefined
 
-      if (!feedTopic || !feedOwner) return null
-
-      return { type: 'feed', feedTopic, feedOwner, actPublisher }
-    }
-
-    // Legacy snapshot: swarm://reference?publisher=...&history=...
-    const actHistoryRef = params.get('history')
-
-    if (!actHistoryRef || path.length < 64) return null
-
-    return { type: 'snapshot', reference: path, actPublisher, actHistoryRef }
+    return { feedTopic, feedOwner, actPublisher, sender }
   } catch {
     return null
   }
+}
+
+/**
+ * Build a share link. The sender's `beePublicKey` MUST equal `actPublisher` —
+ * the link only encodes it once via `publisher`.
+ */
+export function buildShareLink(args: {
+  feedTopic: string
+  feedOwner: string
+  actPublisher: string
+  sender: Omit<SenderContactInfo, 'beePublicKey'>
+}): string {
+  const params = new URLSearchParams({
+    topic: args.feedTopic,
+    owner: args.feedOwner,
+    publisher: args.actPublisher,
+    addr: args.sender.addr,
+    wpub: args.sender.walletPublicKey,
+  })
+
+  if (args.sender.name) params.set('name', args.sender.name)
+
+  return `nook://drive-share?${params.toString()}`
 }
 
 export function useSharedDrives() {

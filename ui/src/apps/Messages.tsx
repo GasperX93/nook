@@ -1,16 +1,18 @@
 import { Bee } from '@ethersphere/bee-js'
-import { mailbox } from '@swarm-notify/sdk'
-import { Send } from 'lucide-react'
+import { identity, mailbox } from '@swarm-notify/sdk'
+import { FileText, Mail, Send } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { useStamps } from '../api/queries'
+import AddSharedDriveModal from '../components/AddSharedDriveModal'
+import { useSharedDrives } from '../hooks/useSharedDrives'
 import { useDerivedKey } from '../hooks/useDerivedKey'
-import { appendSent, loadReadCursors, loadThreads, markRead, mergeReceived, unreadCount } from '../notify/messages'
-import { loadContacts } from '../notify/storage'
+import { loadInvitations, markInvitationProcessed, pendingInvitations, type Invitation } from '../notify/invitations'
+import { appendSent, loadReadCursors, loadThreads, markRead, unreadCount } from '../notify/messages'
+import { addContact, loadContacts } from '../notify/storage'
 import { toLibraryContact, type NookContact } from '../notify/types'
 
 const BEE_URL = `${window.location.origin}/bee-api`
-const POLL_INTERVAL_MS = 30_000
 
 function short(s: string, n = 6): string {
   return s.length <= n * 2 + 3 ? s : `${s.slice(0, n)}…${s.slice(-n)}`
@@ -29,56 +31,154 @@ export default function Messages() {
   const { data: stamps } = useStamps()
 
   const bee = useMemo(() => new Bee(BEE_URL), [])
-  const contacts = useMemo<NookContact[]>(() => loadContacts(), [])
+  // Re-read each render cycle so newly-added contacts (eg via accepting an
+  // invitation) appear without a remount.
+  const [contacts, setContacts] = useState<NookContact[]>(() => loadContacts())
+  const [invitations, setInvitations] = useState<Invitation[]>(() => loadInvitations())
 
   const [threads, setThreads] = useState(() => loadThreads())
   const [cursors, setCursors] = useState(() => loadReadCursors())
   const [selectedId, setSelectedId] = useState<string | null>(contacts[0]?.id ?? null)
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
-  const [polling, setPolling] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Pre-filled share link when the user clicks "Add drive" on a drive-share card
+  const [importingLink, setImportingLink] = useState<string | null>(null)
+  // Invitation acceptance state — nickname input + in-flight flag
+  const [inviteNickname, setInviteNickname] = useState('')
+  const [acceptingInvite, setAcceptingInvite] = useState(false)
+  // Pre-acceptance peek: read sender's identity feed + mailbox so the
+  // invitation panel can show context (sender name, their first message)
+  // before the recipient commits to adding the contact.
+  type InvitePreview = {
+    loading: boolean
+    senderName?: string
+    firstSubject?: string
+    firstBody?: string
+    error?: string
+  }
+  const [invitePreview, setInvitePreview] = useState<InvitePreview>({ loading: false })
+  const sharedDrives = useSharedDrives()
   const scrollRef = useRef<HTMLDivElement>(null)
+
+  const pending = useMemo(() => pendingInvitations(invitations), [invitations])
 
   const stampId = (stamps ?? []).find(s => s.usable)?.batchID ?? ''
   const selected = contacts.find(c => c.id === selectedId) ?? null
   const selectedThread = selected ? (threads[selected.id.toLowerCase()] ?? []) : []
+  // If the selected entry isn't a contact, it might be a pending invitation.
+  const selectedInvite = !selected ? (pending.find(i => i.senderAddr === selectedId?.toLowerCase()) ?? null) : null
 
-  const checkInbox = useMemo(
-    () => async () => {
-      if (!signer || contacts.length === 0) return
-      setPolling(true)
-      setError(null)
-      try {
-        const myAddr = signer.getAddress()
-        const inbox = await mailbox.checkInbox(bee, signer.getSigningKey(), myAddr, contacts.map(toLibraryContact))
+  async function handleAcceptInvite() {
+    if (!selectedInvite || !inviteNickname.trim()) return
+    setAcceptingInvite(true)
+    setError(null)
+    try {
+      // Resolve sender's identity via their feed to get wpub + bpub
+      const resolved = await identity.resolve(bee, selectedInvite.senderAddr)
 
-        setThreads(prev => {
-          let next = prev
+      if (!resolved) {
+        setError('Could not resolve sender identity. They may have unpublished.')
 
-          for (const { contact, messages } of inbox) {
-            next = mergeReceived(next, contact.ethAddress, messages)
-          }
-
-          return next
-        })
-      } catch (e) {
-        setError((e as Error).message)
-      } finally {
-        setPolling(false)
+        return
       }
-    },
-    [bee, contacts, signer],
-  )
 
-  // Initial fetch + polling loop
+      const next = addContact(contacts, {
+        id: selectedInvite.senderAddr,
+        nickname: inviteNickname.trim(),
+        walletPublicKey: resolved.walletPublicKey,
+        beePublicKey: resolved.beePublicKey,
+        source: 'identity-feed',
+        addedAt: Date.now(),
+      })
+
+      setContacts(next)
+      setInvitations(prev => markInvitationProcessed(prev, selectedInvite.senderAddr))
+      setSelectedId(selectedInvite.senderAddr) // switch into the new conversation
+      setInviteNickname('')
+    } catch (e) {
+      setError((e as Error).message ?? 'Failed to add contact')
+    } finally {
+      setAcceptingInvite(false)
+    }
+  }
+
+  // When user selects a pending invitation, peek the sender's mailbox feed.
+  // Read-only: no contact saved yet. Tries to extract a friendly name from
+  // the message subject pattern emitted by ShareModal: "Name shared "X" with you".
   useEffect(() => {
-    if (!signer) return
-    void checkInbox()
-    const id = setInterval(() => void checkInbox(), POLL_INTERVAL_MS)
+    if (!selectedInvite || !signer) {
+      setInvitePreview({ loading: false })
+
+      return
+    }
+    let cancelled = false
+
+    setInvitePreview({ loading: true })
+    const myAddr = signer.getAddress()
+    const senderAddr = selectedInvite.senderAddr
+
+    ;(async () => {
+      try {
+        const resolved = await identity.resolve(bee, senderAddr)
+
+        if (cancelled) return
+
+        if (!resolved) {
+          setInvitePreview({ loading: false, error: 'Sender identity not published.' })
+
+          return
+        }
+        // Construct a temp Contact for the read — never persisted.
+        const tempContact = {
+          ethAddress: senderAddr,
+          nickname: '',
+          walletPublicKey: resolved.walletPublicKey,
+          beePublicKey: resolved.beePublicKey,
+          addedAt: Date.now(),
+        }
+        const messages = await mailbox.readMessages(bee, signer.getSigningKey(), myAddr, tempContact)
+
+        if (cancelled) return
+        const first = messages[messages.length - 1] ?? messages[0]
+        // Extract sender name from "Name shared "X" with you" pattern.
+        const match = first?.subject?.match(/^(.+?)\s+shared\s+"/)
+        const extractedName = match?.[1]?.trim()
+
+        setInvitePreview({
+          loading: false,
+          senderName: extractedName,
+          firstSubject: first?.subject,
+          firstBody: first?.body,
+        })
+
+        // Pre-fill nickname suggestion if we have one and the user hasn't typed.
+        if (extractedName && !inviteNickname) setInviteNickname(extractedName)
+      } catch (e) {
+        if (cancelled) return
+        setInvitePreview({ loading: false, error: (e as Error).message ?? 'Could not preview' })
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+    // inviteNickname intentionally omitted — only auto-fill once on first load
+    // eslint-disable-next-line
+  }, [selectedInvite, signer, bee])
+
+  // Inbox + invitation polling lives at the Layout level. We just re-read
+  // localStorage on a short interval to pick up writes (new messages,
+  // contacts added in another tab, on-chain invitations).
+  useEffect(() => {
+    const id = setInterval(() => {
+      setThreads(loadThreads())
+      setContacts(loadContacts())
+      setInvitations(loadInvitations())
+    }, 3_000)
 
     return () => clearInterval(id)
-  }, [signer, checkInbox])
+  }, [])
 
   // Auto-scroll to bottom on new messages or thread change
   useEffect(() => {
@@ -163,7 +263,7 @@ export default function Messages() {
     )
   }
 
-  if (contacts.length === 0) {
+  if (contacts.length === 0 && pending.length === 0) {
     return (
       <div className="flex flex-col p-6 gap-4 max-w-3xl">
         <h2 className="text-2xl font-semibold">Messages</h2>
@@ -188,13 +288,37 @@ export default function Messages() {
           <h2 className="text-sm font-semibold uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
             Conversations
           </h2>
-          {polling && (
-            <span className="text-[10px]" style={{ color: 'rgb(var(--fg-muted))' }}>
-              syncing…
-            </span>
-          )}
         </div>
         <div className="flex-1 overflow-auto">
+          {/* Pending invitations — on-chain pings from senders not yet in contacts */}
+          {pending.map(inv => {
+            const isActive = inv.senderAddr === selectedId?.toLowerCase()
+
+            return (
+              <button
+                key={inv.senderAddr}
+                onClick={() => {
+                  setSelectedId(inv.senderAddr)
+                  setInviteNickname('')
+                }}
+                className="w-full text-left px-4 py-3 border-b flex flex-col gap-1 transition-colors"
+                style={{
+                  borderColor: 'rgb(var(--border))',
+                  backgroundColor: isActive ? 'rgba(247,104,8,0.12)' : 'rgba(96,165,250,0.06)',
+                }}
+              >
+                <div className="flex items-center gap-2">
+                  <Mail size={12} style={{ color: '#60a5fa' }} />
+                  <span className="font-medium text-sm truncate font-mono" style={{ color: 'rgb(var(--fg))' }}>
+                    {short(inv.senderAddr, 8)}
+                  </span>
+                </div>
+                <span className="text-xs truncate" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  Wants to reach you
+                </span>
+              </button>
+            )
+          })}
           {contacts.map(c => {
             const thread = threads[c.id.toLowerCase()]
             const unread = unreadCount(thread, cursors[c.id.toLowerCase()])
@@ -251,24 +375,67 @@ export default function Messages() {
                   No messages yet. Say hello.
                 </p>
               ) : (
-                selectedThread.map(m => (
-                  <div
-                    key={m.id}
-                    className={`max-w-[70%] rounded-2xl px-4 py-2 ${m.direction === 'sent' ? 'self-end' : 'self-start'}`}
-                    style={{
-                      backgroundColor: m.direction === 'sent' ? 'rgb(var(--accent))' : 'rgb(var(--bg-surface))',
-                      color: m.direction === 'sent' ? '#fff' : 'rgb(var(--fg))',
-                    }}
-                  >
-                    <p className="text-sm whitespace-pre-wrap break-words">{m.body}</p>
-                    <p
-                      className="text-[10px] mt-1"
-                      style={{ color: m.direction === 'sent' ? 'rgba(255,255,255,0.7)' : 'rgb(var(--fg-muted))' }}
+                selectedThread.map(m => {
+                  if (m.kind === 'drive-share' && m.driveShareLink) {
+                    const isSent = m.direction === 'sent'
+
+                    return (
+                      <div
+                        key={m.id}
+                        className={`max-w-[80%] rounded-2xl border px-4 py-3 space-y-2 ${isSent ? 'self-end' : 'self-start'}`}
+                        style={{
+                          backgroundColor: 'rgb(var(--bg-surface))',
+                          borderColor: 'rgb(var(--accent))',
+                          color: 'rgb(var(--fg))',
+                        }}
+                      >
+                        <div className="flex items-center gap-2">
+                          <FileText size={14} style={{ color: 'rgb(var(--accent))' }} />
+                          <span className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--accent))' }}>
+                            {isSent ? 'Drive shared' : 'Drive shared with you'}
+                          </span>
+                        </div>
+                        <div>
+                          <p className="text-sm font-semibold">{m.driveName ?? 'Encrypted drive'}</p>
+                          <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                            {m.fileCount ?? 0} file{m.fileCount === 1 ? '' : 's'}
+                          </p>
+                        </div>
+                        {!isSent && (
+                          <button
+                            onClick={() => setImportingLink(m.driveShareLink!)}
+                            className="w-full py-1.5 rounded-lg text-xs font-semibold"
+                            style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+                          >
+                            Add drive
+                          </button>
+                        )}
+                        <p className="text-[10px]" style={{ color: 'rgb(var(--fg-muted))' }}>
+                          {formatTime(m.ts)}
+                        </p>
+                      </div>
+                    )
+                  }
+
+                  return (
+                    <div
+                      key={m.id}
+                      className={`max-w-[70%] rounded-2xl px-4 py-2 ${m.direction === 'sent' ? 'self-end' : 'self-start'}`}
+                      style={{
+                        backgroundColor: m.direction === 'sent' ? 'rgb(var(--accent))' : 'rgb(var(--bg-surface))',
+                        color: m.direction === 'sent' ? '#fff' : 'rgb(var(--fg))',
+                      }}
                     >
-                      {formatTime(m.ts)}
-                    </p>
-                  </div>
-                ))
+                      <p className="text-sm whitespace-pre-wrap break-words">{m.body}</p>
+                      <p
+                        className="text-[10px] mt-1"
+                        style={{ color: m.direction === 'sent' ? 'rgba(255,255,255,0.7)' : 'rgb(var(--fg-muted))' }}
+                      >
+                        {formatTime(m.ts)}
+                      </p>
+                    </div>
+                  )
+                })
               )}
             </div>
             <div className="border-t p-4" style={{ borderColor: 'rgb(var(--border))' }}>
@@ -305,6 +472,85 @@ export default function Messages() {
               </div>
             </div>
           </>
+        ) : selectedInvite ? (
+          <div className="flex-1 flex flex-col p-6 gap-4 max-w-xl">
+            <div className="flex items-center gap-2">
+              <Mail size={18} style={{ color: '#60a5fa' }} />
+              <h2 className="text-base font-semibold" style={{ color: 'rgb(var(--fg))' }}>
+                {invitePreview.senderName
+                  ? `${invitePreview.senderName} wants to reach you`
+                  : 'Someone wants to reach you'}
+              </h2>
+            </div>
+            <div
+              className="rounded-lg border p-4 space-y-2"
+              style={{ backgroundColor: 'rgb(var(--bg-surface))', borderColor: 'rgb(var(--border))' }}
+            >
+              <p className="text-xs font-mono break-all" style={{ color: 'rgb(var(--fg-muted))' }}>
+                {selectedInvite.senderAddr}
+              </p>
+              {invitePreview.loading && (
+                <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  Reading sender&apos;s mailbox feed…
+                </p>
+              )}
+              {invitePreview.firstSubject && (
+                <div className="rounded border-l-2 pl-3 py-1 mt-2" style={{ borderColor: 'rgb(var(--accent))' }}>
+                  <p className="text-sm font-medium" style={{ color: 'rgb(var(--fg))' }}>
+                    {invitePreview.firstSubject}
+                  </p>
+                  {invitePreview.firstBody && (
+                    <p className="text-xs mt-1" style={{ color: 'rgb(var(--fg-muted))' }}>
+                      {invitePreview.firstBody}
+                    </p>
+                  )}
+                </div>
+              )}
+              {invitePreview.error && (
+                <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  Couldn&apos;t peek the sender&apos;s feed yet ({invitePreview.error}). Add them as a contact to see
+                  the message.
+                </p>
+              )}
+              {!invitePreview.loading && !invitePreview.firstSubject && !invitePreview.error && (
+                <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  They sent you an on-chain wake-up at block {selectedInvite.blockNumber}. Add them as a contact to see
+                  any messages or drive shares they&apos;ve sent.
+                </p>
+              )}
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Nickname
+              </label>
+              <input
+                type="text"
+                value={inviteNickname}
+                onChange={e => setInviteNickname(e.target.value)}
+                placeholder="e.g. Alice"
+                className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-none"
+                style={{
+                  backgroundColor: 'rgb(var(--bg))',
+                  color: 'rgb(var(--fg))',
+                  borderColor: 'rgb(var(--border))',
+                }}
+                autoFocus
+              />
+            </div>
+            {error && (
+              <p className="text-xs" style={{ color: '#ef4444' }}>
+                {error}
+              </p>
+            )}
+            <button
+              onClick={handleAcceptInvite}
+              disabled={acceptingInvite || !inviteNickname.trim()}
+              className="self-start px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-40"
+              style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+            >
+              {acceptingInvite ? 'Resolving & adding…' : 'Add as contact'}
+            </button>
+          </div>
         ) : (
           <div className="flex-1 flex items-center justify-center">
             <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
@@ -313,6 +559,14 @@ export default function Messages() {
           </div>
         )}
       </div>
+
+      {importingLink && (
+        <AddSharedDriveModal
+          initialLink={importingLink}
+          onClose={() => setImportingLink(null)}
+          onAdd={drive => sharedDrives.add(drive)}
+        />
+      )}
     </div>
   )
 }

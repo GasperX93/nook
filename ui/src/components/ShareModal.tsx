@@ -3,11 +3,35 @@
  * Paste a sharing key (Bee publicKey) to grant access.
  * Generate a share link for the grantee to add the drive.
  */
-import { Copy, Check, Lock, RefreshCw, Trash2, Users, X } from 'lucide-react'
-import { useState } from 'react'
+import { Bee } from '@ethersphere/bee-js'
+import { identity, mailbox, registry } from '@swarm-notify/sdk'
+import { Bell, Copy, Check, Lock, RefreshCw, Trash2, Users, X } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { useWalletClient } from 'wagmi'
 
 import { topicFromString } from '../api/bee'
 import { serverApi } from '../api/server'
+import { useDerivedKey } from '../hooks/useDerivedKey'
+import { GNOSIS_CHAIN_ID, REGISTRY_ADDRESS } from '../notify/constants'
+import { appendSentDriveShare, loadThreads } from '../notify/messages'
+import { createNotifyProvider } from '../notify/provider'
+import { addContact, loadContacts } from '../notify/storage'
+import { toLibraryContact } from '../notify/types'
+import { buildShareLink } from '../hooks/useSharedDrives'
+
+const BEE_URL = `${window.location.origin}/bee-api`
+
+function hexToBytes(hex: string): Uint8Array {
+  const clean = hex.startsWith('0x') ? hex.slice(2) : hex
+
+  return new Uint8Array(clean.match(/.{2}/g)!.map(b => parseInt(b, 16)))
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes)
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('')
+}
 
 interface ShareFileEntry {
   name: string
@@ -39,6 +63,10 @@ function isValidPublicKey(key: string): boolean {
   return /^[0-9a-fA-F]+$/.test(clean) && (clean.length === 66 || clean.length === 130)
 }
 
+function isEthAddress(s: string): boolean {
+  return /^0x[0-9a-fA-F]{40}$/.test(s.trim())
+}
+
 export default function ShareModal({
   driveName,
   stampId,
@@ -51,10 +79,26 @@ export default function ShareModal({
   onClose,
   onUpdate,
 }: ShareModalProps) {
+  const { signer } = useDerivedKey()
+  const { data: walletClient } = useWalletClient()
+  const contacts = useMemo(() => loadContacts(), [])
+  const bee = useMemo(() => new Bee(BEE_URL), [])
+
   const [newKey, setNewKey] = useState('')
   const [newLabel, setNewLabel] = useState('')
   const [showSuggestions, setShowSuggestions] = useState(false)
   const [grantees, setGrantees] = useState<string[]>([])
+  const [senderName, setSenderName] = useState('')
+  // Per-grantee notification status keyed by lowercased contact id (Nook addr)
+  type NotifyStatus = 'idle' | 'sending' | 'sent' | 'failed'
+  const [notifyStatus, setNotifyStatus] = useState<Record<string, NotifyStatus>>({})
+  const [notifying, setNotifying] = useState(false)
+  // Optional on-chain wake-up — fires a Gnosis registry event so recipients
+  // who haven't added you yet still get a "someone wants to reach you" signal.
+  const [sendOnChain, setSendOnChain] = useState(false)
+  const [onChainStatus, setOnChainStatus] = useState<Record<string, NotifyStatus>>({})
+  // Legacy: older grantees were saved with manual labels before contacts existed.
+  // Read-only fallback for displaying their names; new grants pull from contacts.
   const [labels, setLabels] = useState<Record<string, string>>(() => {
     try {
       return JSON.parse(localStorage.getItem('nook-grantee-labels') ?? '{}')
@@ -95,11 +139,15 @@ export default function ShareModal({
     return clean
   }
 
-  /** Find a label for a key, matching compressed vs uncompressed formats */
+  /** Find a label for a key — prefers contact list, falls back to legacy label map. */
   function findLabel(key: string): string | undefined {
-    if (labels[key]) return labels[key]
-
     const keyX = stripKeyPrefix(key)
+
+    for (const c of contacts) {
+      if (stripKeyPrefix(c.beePublicKey) === keyX) return c.nickname
+    }
+
+    if (labels[key]) return labels[key]
 
     for (const [storedKey, label] of Object.entries(labels)) {
       if (stripKeyPrefix(storedKey) === keyX) return label
@@ -115,24 +163,21 @@ export default function ShareModal({
     return stripKeyPrefix(key) === stripKeyPrefix(myPublicKey)
   }
 
-  // Contact suggestions — filter from grantee labels, exclude already-added grantees
-  const contactSuggestions: [string, string][] = Object.entries(labels)
-    .filter(([key, label]) => {
-      // Exclude own key
-      if (isMyKey(key)) return false
+  // Contact suggestions — sourced from the main contact list (nook-contacts-v2),
+  // so adding someone in the Contacts page makes them available here without
+  // re-typing keys. Excludes self and already-granted contacts.
+  const contactSuggestions: [string, string][] = contacts
+    .filter(c => {
+      if (isMyKey(c.beePublicKey)) return false
 
-      // Exclude already-added grantees
-      if (grantees.some(g => stripKeyPrefix(g) === stripKeyPrefix(key))) return false
+      if (grantees.some(g => stripKeyPrefix(g) === stripKeyPrefix(c.beePublicKey))) return false
 
-      // Filter by typed name
-      if (newLabel.trim()) {
-        return label.toLowerCase().includes(newLabel.toLowerCase())
-      }
+      if (newLabel.trim()) return c.nickname.toLowerCase().includes(newLabel.toLowerCase())
 
-      // Show all contacts when input is empty/focused
       return true
     })
-    .slice(0, 6) // Max 6 suggestions
+    .map<[string, string]>(c => [c.beePublicKey, c.nickname])
+    .slice(0, 6)
 
   // Load existing grantees on first render
   if (!loadedGrantees && granteeRef) {
@@ -144,18 +189,54 @@ export default function ShareModal({
   }
 
   async function handleGrant() {
-    const key = newKey.trim()
-
-    if (!isValidPublicKey(key)) {
-      setError('Invalid sharing key. Must be a 66 or 130 character hex public key.')
-
-      return
-    }
+    const input = newKey.trim()
+    let key = input
 
     setLoading(true)
     setError(null)
 
     try {
+      // Accept Nook address as input — resolve via identity feed to bpub.
+      // Saves the user from hunting for the raw sharing key when they only
+      // have the recipient's address (eg first-contact scenario).
+      if (isEthAddress(input)) {
+        const resolved = await identity.resolve(bee, input)
+
+        if (!resolved) {
+          setError(
+            `Could not find identity for ${input}. They must publish first, or paste their sharing key directly.`,
+          )
+
+          return
+        }
+        key = resolved.beePublicKey
+        // If we resolved an address and have a label, save the contact so
+        // the user doesn't repeat this lookup next time.
+        const alreadyContact = contacts.some(c => c.id.toLowerCase() === input.toLowerCase())
+
+        if (!alreadyContact && newLabel.trim()) {
+          try {
+            // Persists to localStorage; in-memory `contacts` here stays stale
+            // until next render, which is fine — only matters for repeat
+            // grants in the same modal session.
+            addContact(contacts, {
+              id: input.toLowerCase(),
+              nickname: newLabel.trim(),
+              walletPublicKey: resolved.walletPublicKey,
+              beePublicKey: resolved.beePublicKey,
+              source: 'identity-feed',
+              addedAt: Date.now(),
+            })
+          } catch {
+            // Race: contact added in another tab — non-fatal
+          }
+        }
+      } else if (!isValidPublicKey(input)) {
+        setError('Paste a Nook address (0x… 42 chars) or a 66/130-char hex sharing key.')
+
+        return
+      }
+
       let result
 
       if (granteeRef && actHistoryRef) {
@@ -167,7 +248,12 @@ export default function ShareModal({
 
       setGrantees(prev => [...prev, key])
 
-      if (newLabel.trim()) saveLabel(key, newLabel.trim())
+      // If user typed a manual label for someone NOT in their contact list
+      // (and we didn't already save them via address resolve), remember it
+      // so the grantee row shows a name.
+      const matchedContact = contacts.find(c => stripKeyPrefix(c.beePublicKey) === stripKeyPrefix(key))
+
+      if (newLabel.trim() && !matchedContact) saveLabel(key, newLabel.trim())
 
       setNewKey('')
       setNewLabel('')
@@ -203,34 +289,195 @@ export default function ShareModal({
     }
   }
 
+  /**
+   * Re-upload metadata with the latest ACT history (so newly-granted users can
+   * read it) and update the feed pointer. Returns the share link.
+   *
+   * Both Copy link and Send notification need to do this — extracted so the
+   * recipient never gets a stale link pointing at metadata they can't decrypt.
+   */
+  async function refreshAndBuildLink(): Promise<string> {
+    if (!actPublisher || !actHistoryRef || !beeAddress || !files?.length) {
+      throw new Error('Drive is not ready to share yet')
+    }
+
+    if (!signer || !myPublicKey) {
+      throw new Error('Derive your Nook key first (Contacts page) so the link can carry your contact info.')
+    }
+    const topic = await topicFromString(stampId + 'nook-drive-meta')
+    const metadata = JSON.stringify({
+      files: files.map(f => ({ name: f.name, reference: f.reference, historyRef: f.historyRef, size: f.size })),
+    })
+    const uploaded = await serverApi.uploadACTMetadata(stampId, metadata, actHistoryRef)
+    const wrapper = JSON.stringify({ ref: uploaded.reference, history: uploaded.historyRef })
+    const wrapperResult = await serverApi.uploadRawBytes(stampId, wrapper)
+
+    await serverApi.createFeedUpdate(topic, wrapperResult.reference, stampId)
+
+    return buildShareLink({
+      feedTopic: topic,
+      feedOwner: beeAddress,
+      actPublisher,
+      sender: {
+        addr: signer.getAddress(),
+        walletPublicKey: bytesToHex(signer.getPublicKey()),
+        name: senderName.trim() || undefined,
+      },
+    })
+  }
+
   async function copyShareLink() {
-    if (!actPublisher || !actHistoryRef || !beeAddress || !files?.length) return
     setLoading(true)
-
+    setError(null)
     try {
-      const topic = await topicFromString(stampId + 'nook-drive-meta')
+      const link = await refreshAndBuildLink()
 
-      // Re-upload metadata with LATEST history (includes all grantees) and update feed
-      const metadata = JSON.stringify({
-        files: files.map(f => ({ name: f.name, reference: f.reference, historyRef: f.historyRef, size: f.size })),
-      })
-      const uploaded = await serverApi.uploadACTMetadata(stampId, metadata, actHistoryRef)
-
-      // Upload wrapper as raw bytes (not /bzz file) so feed reader can use /bytes to read it
-      const wrapper = JSON.stringify({ ref: uploaded.reference, history: uploaded.historyRef })
-      const wrapperResult = await serverApi.uploadRawBytes(stampId, wrapper)
-
-      await serverApi.createFeedUpdate(topic, wrapperResult.reference, stampId)
-
-      const link = `swarm://feed?topic=${topic}&owner=${beeAddress}&publisher=${actPublisher}`
       navigator.clipboard.writeText(link)
       setCopiedLink(true)
       setTimeout(() => setCopiedLink(false), 2000)
-    } catch {
-      setError('Failed to generate share link')
+    } catch (e) {
+      setError((e as Error).message || 'Failed to generate share link')
     } finally {
       setLoading(false)
     }
+  }
+
+  /** Find the contact whose beePublicKey matches this grantee key, if any. */
+  function contactForGrantee(granteeKey: string) {
+    const keyX = stripKeyPrefix(granteeKey)
+
+    return contacts.find(c => stripKeyPrefix(c.beePublicKey) === keyX)
+  }
+
+  /**
+   * Grantees that can be notified — they're in the contact list (so we have
+   * their wpub for ECDH) and not us. Excludes already-sent recipients in the
+   * current session so re-clicks don't re-fire.
+   */
+  const notifiableGrantees = useMemo(
+    () =>
+      grantees
+        .filter(key => !isMyKey(key))
+        .map(key => ({ granteeKey: key, contact: contactForGrantee(key) }))
+        .filter((g): g is { granteeKey: string; contact: NonNullable<ReturnType<typeof contactForGrantee>> } =>
+          Boolean(g.contact),
+        ),
+    [grantees, contacts],
+  )
+
+  const pendingNotify = notifiableGrantees.filter(g => notifyStatus[g.contact.id] !== 'sent')
+
+  async function handleNotifyAll() {
+    if (!signer) {
+      setError('No Nook key — derive your key on the Contacts page (it resets on every reload).')
+
+      return
+    }
+
+    if (!files?.length) {
+      setError('Drive has no files to share yet.')
+
+      return
+    }
+
+    if (pendingNotify.length === 0) return
+
+    if (sendOnChain) {
+      if (!walletClient) {
+        setError('Connect a wallet to send on-chain wake-up notifications.')
+
+        return
+      }
+
+      if (walletClient.chain?.id !== GNOSIS_CHAIN_ID) {
+        setError(`Switch wallet to Gnosis Chain (id ${GNOSIS_CHAIN_ID}) for on-chain wake-up.`)
+
+        return
+      }
+    }
+    setNotifying(true)
+    setError(null)
+
+    let link: string
+
+    try {
+      // Refresh the feed once before notifying — recipients all read the same
+      // metadata, so we don't pay this per-recipient.
+      link = await refreshAndBuildLink()
+    } catch (e) {
+      setError((e as Error).message || 'Failed to prepare drive link')
+      setNotifying(false)
+
+      return
+    }
+
+    const myAddr = signer.getAddress()
+    const fileCount = files.length
+    // Subject leads with sender name so a recipient peeking at the feed (eg
+    // from an on-chain invitation, before adding us as contact) sees who.
+    const subject = senderName.trim()
+      ? `${senderName.trim()} shared "${driveName}" with you`
+      : `"${driveName}" shared with you`
+    const body = `Drive shared. Open in Nook to add it.`
+    const provider = sendOnChain && walletClient ? createNotifyProvider(walletClient) : null
+
+    let lastFailMsg: string | null = null
+
+    for (const { contact } of pendingNotify) {
+      setNotifyStatus(prev => ({ ...prev, [contact.id]: 'sending' }))
+      try {
+        await mailbox.send(
+          bee,
+          signer.getSigningKey(),
+          stampId,
+          signer.getSigningKey(),
+          myAddr,
+          toLibraryContact(contact),
+          {
+            subject,
+            body,
+            type: 'drive-share',
+            driveShareLink: link,
+            driveName,
+            fileCount,
+          },
+        )
+        // Save locally so the sender sees the message in their own thread
+        const threads = loadThreads()
+
+        appendSentDriveShare(threads, contact.id, { driveShareLink: link, driveName, fileCount })
+        setNotifyStatus(prev => ({ ...prev, [contact.id]: 'sent' }))
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error(`Notify ${contact.nickname} failed:`, e)
+        lastFailMsg = (e as Error).message ?? 'send failed'
+        setNotifyStatus(prev => ({ ...prev, [contact.id]: 'failed' }))
+      }
+
+      // On-chain wake-up — fired AFTER mailbox so the message is already in
+      // the feed by the time recipient discovers the event and resolves us.
+      if (provider) {
+        setOnChainStatus(prev => ({ ...prev, [contact.id]: 'sending' }))
+        try {
+          const recipientPubKey = hexToBytes(contact.walletPublicKey)
+          const txHash = await registry.sendNotification(provider, REGISTRY_ADDRESS, recipientPubKey, contact.id, {
+            sender: myAddr,
+          })
+
+          // eslint-disable-next-line no-console
+          console.log(`On-chain wake-up to ${contact.nickname}: tx ${txHash}`)
+          setOnChainStatus(prev => ({ ...prev, [contact.id]: 'sent' }))
+        } catch (e) {
+          // eslint-disable-next-line no-console
+          console.error(`On-chain notify ${contact.nickname} failed:`, e)
+          lastFailMsg = (e as Error).message ?? 'on-chain send failed'
+          setOnChainStatus(prev => ({ ...prev, [contact.id]: 'failed' }))
+        }
+      }
+    }
+
+    if (lastFailMsg) setError(`Notification send failed: ${lastFailMsg}`)
+    setNotifying(false)
   }
 
   return (
@@ -273,6 +520,8 @@ export default function ShareModal({
               grantees.map(key => {
                 const isMe = isMyKey(key)
                 const label = findLabel(key)
+                const contact = contactForGrantee(key)
+                const status = contact ? notifyStatus[contact.id] : undefined
 
                 return (
                   <div key={key} className="flex items-center justify-between px-3 py-2">
@@ -291,6 +540,55 @@ export default function ShareModal({
                           style={{ backgroundColor: 'rgba(74,222,128,0.12)', color: '#4ade80' }}
                         >
                           you
+                        </span>
+                      )}
+                      {!isMe && status === 'sent' && (
+                        <span
+                          className="ml-2 text-[10px] font-sans font-medium px-1.5 py-0.5 rounded"
+                          style={{ backgroundColor: 'rgba(74,222,128,0.12)', color: '#4ade80' }}
+                        >
+                          notified
+                        </span>
+                      )}
+                      {!isMe && contact && onChainStatus[contact.id] === 'sent' && (
+                        <span
+                          className="ml-1 text-[10px] font-sans font-medium px-1.5 py-0.5 rounded"
+                          style={{ backgroundColor: 'rgba(96,165,250,0.12)', color: '#60a5fa' }}
+                        >
+                          + on-chain
+                        </span>
+                      )}
+                      {!isMe && contact && onChainStatus[contact.id] === 'failed' && (
+                        <span
+                          className="ml-1 text-[10px] font-sans font-medium px-1.5 py-0.5 rounded"
+                          style={{ backgroundColor: 'rgba(239,68,68,0.12)', color: '#ef4444' }}
+                        >
+                          on-chain failed
+                        </span>
+                      )}
+                      {!isMe && status === 'sending' && (
+                        <span
+                          className="ml-2 text-[10px] font-sans font-medium px-1.5 py-0.5 rounded"
+                          style={{ color: 'rgb(var(--fg-muted))' }}
+                        >
+                          sending…
+                        </span>
+                      )}
+                      {!isMe && status === 'failed' && (
+                        <span
+                          className="ml-2 text-[10px] font-sans font-medium px-1.5 py-0.5 rounded"
+                          style={{ backgroundColor: 'rgba(239,68,68,0.12)', color: '#ef4444' }}
+                        >
+                          failed
+                        </span>
+                      )}
+                      {!isMe && !contact && (
+                        <span
+                          className="ml-2 text-[10px] font-sans px-1.5 py-0.5 rounded"
+                          style={{ color: 'rgb(var(--fg-muted))' }}
+                          title="Add this person to Contacts to enable in-app notifications"
+                        >
+                          not in contacts
                         </span>
                       )}
                     </span>
@@ -364,7 +662,7 @@ export default function ShareModal({
                 type="text"
                 value={newKey}
                 onChange={e => setNewKey(e.target.value)}
-                placeholder="Paste their sharing key"
+                placeholder="Nook address (0x…) or sharing key"
                 className="flex-1 rounded-lg border px-3 py-2 text-xs font-mono focus:outline-none"
                 style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
               />
@@ -392,8 +690,17 @@ export default function ShareModal({
           {actPublisher && beeAddress && grantees.length > 0 && (
             <div className="space-y-2">
               <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-                After granting access, send them the drive link:
+                After granting access, send them the drive link. The link also bundles your contact info so they can add
+                you in one click.
               </p>
+              <input
+                type="text"
+                value={senderName}
+                onChange={e => setSenderName(e.target.value)}
+                placeholder="Your name (optional, shown to recipient)"
+                className="w-full rounded-lg border px-3 py-2 text-xs focus:outline-none"
+                style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
+              />
               <button
                 onClick={copyShareLink}
                 disabled={loading}
@@ -412,6 +719,63 @@ export default function ShareModal({
                 )}
                 {loading ? 'Generating…' : copiedLink ? 'Link copied!' : 'Copy drive link'}
               </button>
+
+              {/* Notify in Messages — sends a typed drive-share message to each
+                  contact-grantee. Skips grantees not in the contact list. */}
+              {notifiableGrantees.length > 0 &&
+                (() => {
+                  const names = pendingNotify.map(p => p.contact.nickname)
+                  let recipients: string
+
+                  if (names.length === 0) recipients = ''
+                  else if (names.length <= 2) recipients = names.join(', ')
+                  else recipients = `${names.length} contacts`
+
+                  return (
+                    <>
+                      <button
+                        onClick={handleNotifyAll}
+                        disabled={notifying || pendingNotify.length === 0}
+                        className="w-full py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 disabled:opacity-40 transition-colors border"
+                        style={{
+                          backgroundColor: 'rgb(var(--bg))',
+                          color: 'rgb(var(--fg))',
+                          borderColor: 'rgb(var(--border))',
+                        }}
+                        title={
+                          pendingNotify.length === 0
+                            ? 'All eligible grantees already notified in this session'
+                            : `Send a Messages notification to ${recipients}`
+                        }
+                      >
+                        {notifying ? <RefreshCw size={11} className="animate-spin" /> : <Bell size={11} />}
+                        {notifying
+                          ? 'Sending…'
+                          : pendingNotify.length === 0
+                            ? 'All notified'
+                            : `Send notification to ${recipients}`}
+                      </button>
+
+                      {/* On-chain wake-up toggle — useful when recipient hasn't
+                          added you back yet, so mailbox poll wouldn't pick it up. */}
+                      <label
+                        className="flex items-start gap-2 text-[11px] cursor-pointer pt-1"
+                        style={{ color: 'rgb(var(--fg-muted))' }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={sendOnChain}
+                          onChange={e => setSendOnChain(e.target.checked)}
+                          className="mt-0.5"
+                        />
+                        <span>
+                          Also send on-chain wake-up (~0.001 xDAI) — for recipients who haven&apos;t added you back yet.
+                          Requires wallet on Gnosis Chain.
+                        </span>
+                      </label>
+                    </>
+                  )
+                })()}
             </div>
           )}
 

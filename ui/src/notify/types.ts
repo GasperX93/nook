@@ -21,7 +21,7 @@ export interface NookContact {
   /** ENS name if known */
   ensName?: string
   /** How this contact was added — for UX badges + future reasoning */
-  source: 'identity-feed' | 'share-link'
+  source: 'identity-feed' | 'share-link' | 'drive-share'
   /** Unix timestamp ms */
   addedAt: number
 }
