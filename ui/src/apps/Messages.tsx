@@ -1,9 +1,11 @@
 import { Bee } from '@ethersphere/bee-js'
 import { mailbox } from '@swarm-notify/sdk'
-import { Send } from 'lucide-react'
+import { FileText, Send } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { useStamps } from '../api/queries'
+import AddSharedDriveModal from '../components/AddSharedDriveModal'
+import { useSharedDrives } from '../hooks/useSharedDrives'
 import { useDerivedKey } from '../hooks/useDerivedKey'
 import { appendSent, loadReadCursors, loadThreads, markRead, mergeReceived, unreadCount } from '../notify/messages'
 import { loadContacts } from '../notify/storage'
@@ -38,6 +40,9 @@ export default function Messages() {
   const [sending, setSending] = useState(false)
   const [polling, setPolling] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Pre-filled share link when the user clicks "Add drive" on a drive-share card
+  const [importingLink, setImportingLink] = useState<string | null>(null)
+  const sharedDrives = useSharedDrives()
   const scrollRef = useRef<HTMLDivElement>(null)
 
   const stampId = (stamps ?? []).find(s => s.usable)?.batchID ?? ''
@@ -251,24 +256,67 @@ export default function Messages() {
                   No messages yet. Say hello.
                 </p>
               ) : (
-                selectedThread.map(m => (
-                  <div
-                    key={m.id}
-                    className={`max-w-[70%] rounded-2xl px-4 py-2 ${m.direction === 'sent' ? 'self-end' : 'self-start'}`}
-                    style={{
-                      backgroundColor: m.direction === 'sent' ? 'rgb(var(--accent))' : 'rgb(var(--bg-surface))',
-                      color: m.direction === 'sent' ? '#fff' : 'rgb(var(--fg))',
-                    }}
-                  >
-                    <p className="text-sm whitespace-pre-wrap break-words">{m.body}</p>
-                    <p
-                      className="text-[10px] mt-1"
-                      style={{ color: m.direction === 'sent' ? 'rgba(255,255,255,0.7)' : 'rgb(var(--fg-muted))' }}
+                selectedThread.map(m => {
+                  if (m.kind === 'drive-share' && m.driveShareLink) {
+                    const isSent = m.direction === 'sent'
+
+                    return (
+                      <div
+                        key={m.id}
+                        className={`max-w-[80%] rounded-2xl border px-4 py-3 space-y-2 ${isSent ? 'self-end' : 'self-start'}`}
+                        style={{
+                          backgroundColor: 'rgb(var(--bg-surface))',
+                          borderColor: 'rgb(var(--accent))',
+                          color: 'rgb(var(--fg))',
+                        }}
+                      >
+                        <div className="flex items-center gap-2">
+                          <FileText size={14} style={{ color: 'rgb(var(--accent))' }} />
+                          <span className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--accent))' }}>
+                            {isSent ? 'Drive shared' : 'Drive shared with you'}
+                          </span>
+                        </div>
+                        <div>
+                          <p className="text-sm font-semibold">{m.driveName ?? 'Encrypted drive'}</p>
+                          <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                            {m.fileCount ?? 0} file{m.fileCount === 1 ? '' : 's'}
+                          </p>
+                        </div>
+                        {!isSent && (
+                          <button
+                            onClick={() => setImportingLink(m.driveShareLink!)}
+                            className="w-full py-1.5 rounded-lg text-xs font-semibold"
+                            style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+                          >
+                            Add drive
+                          </button>
+                        )}
+                        <p className="text-[10px]" style={{ color: 'rgb(var(--fg-muted))' }}>
+                          {formatTime(m.ts)}
+                        </p>
+                      </div>
+                    )
+                  }
+
+                  return (
+                    <div
+                      key={m.id}
+                      className={`max-w-[70%] rounded-2xl px-4 py-2 ${m.direction === 'sent' ? 'self-end' : 'self-start'}`}
+                      style={{
+                        backgroundColor: m.direction === 'sent' ? 'rgb(var(--accent))' : 'rgb(var(--bg-surface))',
+                        color: m.direction === 'sent' ? '#fff' : 'rgb(var(--fg))',
+                      }}
                     >
-                      {formatTime(m.ts)}
-                    </p>
-                  </div>
-                ))
+                      <p className="text-sm whitespace-pre-wrap break-words">{m.body}</p>
+                      <p
+                        className="text-[10px] mt-1"
+                        style={{ color: m.direction === 'sent' ? 'rgba(255,255,255,0.7)' : 'rgb(var(--fg-muted))' }}
+                      >
+                        {formatTime(m.ts)}
+                      </p>
+                    </div>
+                  )
+                })
               )}
             </div>
             <div className="border-t p-4" style={{ borderColor: 'rgb(var(--border))' }}>
@@ -313,6 +361,14 @@ export default function Messages() {
           </div>
         )}
       </div>
+
+      {importingLink && (
+        <AddSharedDriveModal
+          initialLink={importingLink}
+          onClose={() => setImportingLink(null)}
+          onAdd={drive => sharedDrives.add(drive)}
+        />
+      )}
     </div>
   )
 }

@@ -14,6 +14,8 @@ import type { NookContact } from '../notify/types'
 
 interface AddSharedDriveModalProps {
   myPublicKey?: string
+  /** Pre-fill the share-link textarea (e.g. when opened from a Messages drive-share card) */
+  initialLink?: string
   onClose: () => void
   onAdd: (drive: {
     name: string
@@ -26,8 +28,8 @@ interface AddSharedDriveModalProps {
   }) => void
 }
 
-export default function AddSharedDriveModal({ myPublicKey, onClose, onAdd }: AddSharedDriveModalProps) {
-  const [link, setLink] = useState('')
+export default function AddSharedDriveModal({ myPublicKey, initialLink, onClose, onAdd }: AddSharedDriveModalProps) {
+  const [link, setLink] = useState(initialLink ?? '')
   const [name, setName] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
