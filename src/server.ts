@@ -74,6 +74,7 @@ export function runServer() {
       // and EXCEPT transfer encodings Koa will recompute.
       res.headers.forEach((value, key) => {
         if (key === 'content-length' || key === 'transfer-encoding' || key === 'connection') return
+
         // fetch() auto-decompresses; forwarding content-encoding makes the browser
         // try to decode plain bytes → ERR_CONTENT_DECODING_FAILED
         if (key === 'content-encoding') return
