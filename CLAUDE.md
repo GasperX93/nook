@@ -38,6 +38,40 @@ npm run purge:data     # Clear app data folder
 npm run purge:logs     # Clear app logs folder
 ```
 
+## Git workflow
+
+```
+feature branches  →  develop  →  master
+   (daily work)     (integration)  (releases)
+```
+
+- **`develop`** is the default branch and the canonical baseline for testers. All in-flight features merge here first.
+- **`master`** is for released versions only. Tagged with `vX.Y.Z` after each release.
+- Both branches are protected — every change goes through a PR with the `lint-types-test` CI check.
+
+### Day-to-day
+
+- New feature / fix → branch off `develop`, PR to `develop`
+- Testers always work from `develop` (`git checkout develop && git pull && cd ui && rm -rf node_modules/.vite && npm install && cd ..`). The Vite cache clear is the recurring gotcha when SDK pins change.
+- Things break in `develop`? Fix in another PR to `develop`. `master` stays unaffected.
+
+### Releasing (master gets updated)
+
+1. PR `develop → master` (`gh pr create --base master --head develop`)
+2. CI runs, merge
+3. Bump `package.json` + `ui/package.json` versions, commit "chore: bump version to X.Y.Z" (push to master)
+4. `git tag vX.Y.Z && git push origin vX.Y.Z`
+5. `gh release create vX.Y.Z` with notes (see release section in user memory `MEMORY.md`)
+6. `npm run publish:mac:arm64` to package + `gh release upload` artifacts
+
+### Hotfixes (rare)
+
+Critical bug in production that can't wait for `develop`:
+
+1. Branch `fix/critical-x` off `master`
+2. PR to `master`, merge, tag patch release (e.g., `vX.Y.Z+1`)
+3. **Back-merge `master` into `develop`** so the fix isn't lost on next release: `git checkout develop && git merge master --no-ff`
+
 ## Architecture
 
 The app has two main layers:
