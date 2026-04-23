@@ -1,4 +1,4 @@
-import { ExternalLink } from 'lucide-react'
+import { ExternalLink, Moon, Sun } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAddresses, useBeeHealth, useConfig, useInfo, usePeers, useTopology, useUpdateConfig } from '../api/queries'
@@ -29,7 +29,7 @@ export default function Settings() {
   const [rpcDraft, setRpcDraft] = useState('')
   const [rpcSaved, setRpcSaved] = useState(false)
 
-  const { devMode, setDevMode } = useAppStore()
+  const { devMode, setDevMode, theme, setTheme } = useAppStore()
 
   useEffect(() => {
     if (config) {
@@ -118,6 +118,40 @@ export default function Settings() {
                 </button>
               </div>
             )}
+          </div>
+
+          {/* Appearance */}
+          <div className="rounded-xl border p-5 space-y-3" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
+            <div>
+              <p className="text-sm mb-1" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Appearance
+              </p>
+              <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Toggle between dark and light theme. Light theme is a preview — final polish coming with the redesign.
+              </p>
+            </div>
+            <div className="flex gap-2">
+              {(['dark', 'light'] as const).map(t => {
+                const active = theme === t
+                const Icon = t === 'dark' ? Moon : Sun
+
+                return (
+                  <button
+                    key={t}
+                    onClick={() => setTheme(t)}
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold transition-colors border"
+                    style={{
+                      backgroundColor: active ? 'rgb(var(--accent))' : 'rgb(var(--bg))',
+                      color: active ? '#fff' : 'rgb(var(--fg))',
+                      borderColor: active ? 'rgb(var(--accent))' : 'rgb(var(--border))',
+                    }}
+                  >
+                    <Icon size={13} />
+                    {t === 'dark' ? 'Dark' : 'Light'}
+                  </button>
+                )
+              })}
+            </div>
           </div>
 
           {/* Version info */}
