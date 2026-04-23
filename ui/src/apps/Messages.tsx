@@ -5,6 +5,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { useStamps } from '../api/queries'
 import AddSharedDriveModal from '../components/AddSharedDriveModal'
+import { Button } from '../components/ui/button'
+import { Input } from '../components/ui/input'
+import { Textarea } from '../components/ui/textarea'
 import { useSharedDrives } from '../hooks/useSharedDrives'
 import { useDerivedKey } from '../hooks/useDerivedKey'
 import { loadInvitations, markInvitationProcessed, pendingInvitations, type Invitation } from '../notify/invitations'
@@ -190,9 +193,19 @@ export default function Messages() {
     return () => clearInterval(id)
   }, [])
 
-  // Auto-scroll to bottom on new messages or thread change
+  // Auto-scroll to bottom on selection / new messages. Defer with rAF so the
+  // measurement happens after the new bubbles have laid out — without this,
+  // scrollHeight can be stale on the first render after switching contacts
+  // and the view ends up at the top of the thread.
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
+    const el = scrollRef.current
+
+    if (!el) return
+    const id = requestAnimationFrame(() => {
+      el.scrollTop = el.scrollHeight
+    })
+
+    return () => cancelAnimationFrame(id)
   }, [selectedId, selectedThread.length])
 
   // Mark read when a thread is open and gets new messages
@@ -262,13 +275,9 @@ export default function Messages() {
         <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
           Derive your Nook key to start messaging.
         </p>
-        <button
-          onClick={derive}
-          className="self-start px-4 py-2 rounded text-xs font-semibold uppercase tracking-widest"
-          style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
-        >
+        <Button onClick={derive} className="self-start uppercase tracking-widest">
           Derive key
-        </button>
+        </Button>
       </div>
     )
   }
@@ -352,7 +361,7 @@ export default function Messages() {
                   {unread > 0 && (
                     <span
                       className="text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0"
-                      style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+                      style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
                     >
                       {unread}
                     </span>
@@ -412,13 +421,9 @@ export default function Messages() {
                           </p>
                         </div>
                         {!isSent && (
-                          <button
-                            onClick={() => setImportingLink(m.driveShareLink!)}
-                            className="w-full py-1.5 rounded-lg text-xs font-semibold"
-                            style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
-                          >
+                          <Button onClick={() => setImportingLink(m.driveShareLink!)} size="sm" className="w-full">
                             Add drive
-                          </button>
+                          </Button>
                         )}
                         <p className="text-[10px]" style={{ color: 'rgb(var(--fg-muted))' }}>
                           {formatTime(m.ts)}
@@ -430,18 +435,15 @@ export default function Messages() {
                   return (
                     <div
                       key={m.id}
-                      className={`max-w-[70%] rounded-2xl px-4 py-2 ${m.direction === 'sent' ? 'self-end' : 'self-start'}`}
-                      style={{
-                        backgroundColor: m.direction === 'sent' ? 'rgb(var(--accent))' : 'rgb(var(--bg-surface))',
-                        color: m.direction === 'sent' ? '#fff' : 'rgb(var(--fg))',
-                      }}
+                      className={`max-w-[70%] rounded-2xl px-4 py-2 ${
+                        m.direction === 'sent'
+                          ? 'self-end bg-muted'
+                          : 'self-start bg-background border'
+                      }`}
                     >
-                      <p className="text-sm whitespace-pre-wrap break-words">{m.body}</p>
-                      <p
-                        className="text-[10px] mt-1"
-                        style={{ color: m.direction === 'sent' ? 'rgba(255,255,255,0.7)' : 'rgb(var(--fg-muted))' }}
-                      >
-                        {formatTime(m.ts)}
+                      <p className="text-sm whitespace-pre-wrap break-words text-foreground">{m.body}</p>
+                      <p className="text-[10px] mt-1 text-right text-muted-foreground">
+                        {m.direction === 'sent' ? 'You' : selected.nickname} | {formatTime(m.ts)}
                       </p>
                     </div>
                   )
@@ -455,30 +457,18 @@ export default function Messages() {
                 </p>
               )}
               <div className="flex gap-2 items-end">
-                <textarea
+                <Textarea
                   value={draft}
                   onChange={e => setDraft(e.target.value)}
                   onKeyDown={handleKeyDown}
                   placeholder={`Message ${selected.nickname}…`}
                   rows={1}
-                  className="flex-1 rounded-lg border px-3 py-2 text-sm resize-none focus:outline-none"
-                  style={{
-                    backgroundColor: 'rgb(var(--bg))',
-                    color: 'rgb(var(--fg))',
-                    borderColor: 'rgb(var(--border))',
-                    minHeight: 40,
-                    maxHeight: 160,
-                  }}
+                  className="flex-1 resize-none"
+                  style={{ minHeight: 40, maxHeight: 160 }}
                 />
-                <button
-                  onClick={handleSend}
-                  disabled={sending || !draft.trim()}
-                  className="rounded-lg p-2.5 transition-opacity disabled:opacity-40"
-                  style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
-                  title="Send (Enter)"
-                >
+                <Button onClick={handleSend} disabled={sending || !draft.trim()} size="icon" title="Send (Enter)">
                   <Send size={16} />
-                </button>
+                </Button>
               </div>
             </div>
           </>
@@ -533,17 +523,10 @@ export default function Messages() {
               <label className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
                 Nickname
               </label>
-              <input
-                type="text"
+              <Input
                 value={inviteNickname}
                 onChange={e => setInviteNickname(e.target.value)}
                 placeholder="e.g. Alice"
-                className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-none"
-                style={{
-                  backgroundColor: 'rgb(var(--bg))',
-                  color: 'rgb(var(--fg))',
-                  borderColor: 'rgb(var(--border))',
-                }}
                 autoFocus
               />
             </div>
@@ -552,14 +535,13 @@ export default function Messages() {
                 {error}
               </p>
             )}
-            <button
+            <Button
               onClick={handleAcceptInvite}
               disabled={acceptingInvite || !inviteNickname.trim()}
-              className="self-start px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-40"
-              style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+              className="self-start"
             >
               {acceptingInvite ? 'Resolving & adding…' : 'Add as contact'}
-            </button>
+            </Button>
           </div>
         ) : (
           <div className="flex-1 flex items-center justify-center">

@@ -419,7 +419,7 @@ export default function WebsitePublisher() {
               <button
                 onClick={() => navigate('/account')}
                 className="shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold"
-                style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+                style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
               >
                 Go to Wallet
               </button>
@@ -495,7 +495,7 @@ export default function WebsitePublisher() {
               onClick={publish}
               disabled={!canAfford || !cost}
               className="flex-1 px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-40"
-              style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+              style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
             >
               Publish
             </button>

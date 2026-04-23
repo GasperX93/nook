@@ -11,6 +11,9 @@ import { serverApi } from '../api/server'
 import { parseShareLink, type SenderContactInfo, type SharedFile } from '../hooks/useSharedDrives'
 import { addContact, loadContacts } from '../notify/storage'
 import type { NookContact } from '../notify/types'
+import { Button } from './ui/button'
+import { Input } from './ui/input'
+import { Textarea } from './ui/textarea'
 
 interface AddSharedDriveModalProps {
   myPublicKey?: string
@@ -133,36 +136,27 @@ export default function AddSharedDriveModal({ myPublicKey, initialLink, onClose,
             <Download size={14} style={{ color: 'rgb(var(--accent))' }} />
             <p className="text-sm font-semibold">Add shared drive</p>
           </div>
-          <button onClick={onClose} style={{ color: 'rgb(var(--fg-muted))' }}>
+          <Button onClick={onClose} variant="ghost" size="icon" className="h-8 w-8">
             <X size={16} />
-          </button>
+          </Button>
         </div>
 
         <div>
           <p className="text-xs uppercase tracking-widest mb-2" style={{ color: 'rgb(var(--fg-muted))' }}>
             Drive name
           </p>
-          <input
-            type="text"
-            value={name}
-            onChange={e => setName(e.target.value)}
-            placeholder="e.g. Alice's documents"
-            className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-none"
-            style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
-            autoFocus
-          />
+          <Input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Alice's documents" autoFocus />
         </div>
 
         <div>
           <p className="text-xs uppercase tracking-widest mb-2" style={{ color: 'rgb(var(--fg-muted))' }}>
             Share link
           </p>
-          <textarea
+          <Textarea
             value={link}
             onChange={e => setLink(e.target.value)}
             placeholder="nook://drive-share?topic=...&owner=...&publisher=...&addr=...&wpub=...&bpub=..."
-            className="w-full rounded-lg border px-3 py-2 text-xs font-mono focus:outline-none resize-none h-20"
-            style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
+            className="font-mono text-xs h-20 resize-none"
           />
         </div>
 
@@ -187,13 +181,11 @@ export default function AddSharedDriveModal({ myPublicKey, initialLink, onClose,
               </span>
             </label>
             {addAsContact && (
-              <input
-                type="text"
+              <Input
                 value={contactNickname}
                 onChange={e => setContactNickname(e.target.value)}
                 placeholder="Nickname for this contact"
-                className="w-full rounded-lg border px-3 py-2 text-xs focus:outline-none"
-                style={{ backgroundColor: 'rgb(var(--bg-surface))', color: 'rgb(var(--fg))' }}
+                className="text-xs"
               />
             )}
           </div>
@@ -222,18 +214,19 @@ export default function AddSharedDriveModal({ myPublicKey, initialLink, onClose,
                   <code className="text-xs font-mono truncate flex-1" style={{ color: 'rgb(var(--fg-muted))' }}>
                     {myPublicKey}
                   </code>
-                  <button
+                  <Button
                     onClick={() => {
                       navigator.clipboard.writeText(myPublicKey)
                       setCopiedKey(true)
                       setTimeout(() => setCopiedKey(false), 2000)
                     }}
-                    className="shrink-0 flex items-center gap-1 text-xs font-medium"
-                    style={{ color: copiedKey ? '#4ade80' : 'rgb(var(--accent))' }}
+                    variant="link"
+                    size="sm"
+                    className="shrink-0 h-auto p-0"
                   >
                     {copiedKey ? <Check size={10} /> : <Copy size={10} />}
                     {copiedKey ? 'Copied' : 'Copy'}
-                  </button>
+                  </Button>
                 </div>
               </div>
             )}
@@ -241,22 +234,13 @@ export default function AddSharedDriveModal({ myPublicKey, initialLink, onClose,
         )}
 
         <div className="flex gap-3">
-          <button
-            onClick={onClose}
-            className="flex-1 py-2 rounded-lg text-sm"
-            style={{ color: 'rgb(var(--fg-muted))' }}
-          >
+          <Button onClick={onClose} variant="ghost" className="flex-1">
             Cancel
-          </button>
-          <button
-            onClick={handleAdd}
-            disabled={loading || !link.trim()}
-            className="flex-1 py-2 rounded-lg text-sm font-semibold disabled:opacity-40 flex items-center justify-center gap-2"
-            style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
-          >
-            {loading && <RefreshCw size={13} className="animate-spin" />}
+          </Button>
+          <Button onClick={handleAdd} disabled={loading || !link.trim()} className="flex-1">
+            {loading && <RefreshCw className="animate-spin" />}
             {loading ? 'Verifying…' : 'Add drive'}
-          </button>
+          </Button>
         </div>
       </div>
     </div>

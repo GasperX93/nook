@@ -5,6 +5,7 @@ import { useAccount, usePublicClient, useSwitchChain, useWalletClient } from 'wa
 import { getWalletClient } from '@wagmi/core'
 import { mainnet } from 'wagmi/chains'
 import { wagmiConfig } from '../wagmi'
+import { Button } from './ui/button'
 
 // EIP-1577 / ENSIP-7: Swarm content hash encoding
 const SWARM_PREFIX = 'e40101fa011b20'
@@ -238,9 +239,9 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
           <h2 className="text-sm font-semibold" style={{ color: 'rgb(var(--fg))' }}>
             Link ENS domain
           </h2>
-          <button onClick={onClose} className="p-1 rounded transition-colors" style={{ color: 'rgb(var(--fg-muted))' }}>
+          <Button onClick={onClose} variant="ghost" size="icon" className="h-8 w-8">
             <X size={16} />
-          </button>
+          </Button>
         </div>
 
         {/* Not connected */}
@@ -339,14 +340,9 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
                   </p>
                 </div>
 
-                <button
-                  onClick={lookupDomain}
-                  disabled={state === 'checking' || !ensName.trim()}
-                  className="w-full px-4 py-2 rounded-lg text-xs font-semibold transition-colors disabled:opacity-40"
-                  style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
-                >
+                <Button onClick={lookupDomain} disabled={state === 'checking' || !ensName.trim()} className="w-full">
                   {state === 'checking' ? 'Checking...' : 'Continue'}
-                </button>
+                </Button>
 
                 <p className="text-[10px] text-center" style={{ color: 'rgb(var(--fg-muted))' }}>
                   Don't have a domain?{' '}
@@ -421,21 +417,13 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
                 ) : null}
 
                 <div className="flex gap-2">
-                  <button
-                    onClick={reset}
-                    className="px-3 py-2 rounded-lg text-xs font-semibold transition-colors"
-                    style={{ color: 'rgb(var(--fg-muted))' }}
-                  >
+                  <Button onClick={reset} variant="ghost">
                     Back
-                  </button>
+                  </Button>
                   {!alreadySet && (
-                    <button
-                      onClick={linkDomain}
-                      className="flex-1 px-4 py-2 rounded-lg text-xs font-semibold transition-colors"
-                      style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
-                    >
+                    <Button onClick={linkDomain} className="flex-1">
                       {needsChainSwitch ? 'Switch network & link' : 'Link domain'}
-                    </button>
+                    </Button>
                   )}
                 </div>
               </div>
@@ -515,13 +503,7 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
                     </a>
                   </div>
                 )}
-                <button
-                  onClick={onClose}
-                  className="px-4 py-2 rounded-lg text-xs font-semibold transition-colors"
-                  style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
-                >
-                  Done
-                </button>
+                <Button onClick={onClose}>Done</Button>
               </div>
             )}
           </>

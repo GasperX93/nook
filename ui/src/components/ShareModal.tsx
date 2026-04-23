@@ -18,6 +18,8 @@ import { createNotifyProvider } from '../notify/provider'
 import { addContact, loadContacts } from '../notify/storage'
 import { toLibraryContact } from '../notify/types'
 import { buildShareLink } from '../hooks/useSharedDrives'
+import { Button } from './ui/button'
+import { Input } from './ui/input'
 
 const BEE_URL = `${window.location.origin}/bee-api`
 
@@ -497,9 +499,9 @@ export default function ShareModal({
             <Lock size={14} style={{ color: 'rgb(var(--accent))' }} />
             <p className="text-sm font-semibold">Share "{driveName}"</p>
           </div>
-          <button onClick={onClose} style={{ color: 'rgb(var(--fg-muted))' }}>
+          <Button onClick={onClose} variant="ghost" size="icon" className="h-8 w-8">
             <X size={16} />
-          </button>
+          </Button>
         </div>
 
         {/* Grantee list */}
@@ -593,15 +595,16 @@ export default function ShareModal({
                       )}
                     </span>
                     {!isMe && (
-                      <button
+                      <Button
                         onClick={async () => handleRevoke(key)}
                         disabled={loading}
-                        className="shrink-0 ml-2 transition-colors hover:text-red-400 disabled:opacity-40"
-                        style={{ color: 'rgb(var(--fg-muted))' }}
+                        variant="ghost"
+                        size="icon"
+                        className="shrink-0 ml-2 h-7 w-7 hover:text-red-400"
                         title="Revoke access"
                       >
                         <Trash2 size={12} />
-                      </button>
+                      </Button>
                     )}
                   </div>
                 )
@@ -617,8 +620,7 @@ export default function ShareModal({
           </p>
           <div className="space-y-2">
             <div className="relative">
-              <input
-                type="text"
+              <Input
                 value={newLabel}
                 onChange={e => {
                   setNewLabel(e.target.value)
@@ -627,8 +629,7 @@ export default function ShareModal({
                 onFocus={() => setShowSuggestions(true)}
                 onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
                 placeholder="Name or select from contacts"
-                className="w-full rounded-lg border px-3 py-2 text-xs focus:outline-none"
-                style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
+                className="text-xs"
               />
               {showSuggestions && contactSuggestions.length > 0 && (
                 <div
@@ -658,23 +659,16 @@ export default function ShareModal({
               )}
             </div>
             <div className="flex gap-2">
-              <input
-                type="text"
+              <Input
                 value={newKey}
                 onChange={e => setNewKey(e.target.value)}
                 placeholder="Nook address (0x…) or sharing key"
-                className="flex-1 rounded-lg border px-3 py-2 text-xs font-mono focus:outline-none"
-                style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
+                className="flex-1 font-mono text-xs"
               />
-              <button
-                onClick={handleGrant}
-                disabled={loading || !newKey.trim()}
-                className="px-3 py-2 rounded-lg text-xs font-semibold disabled:opacity-40 flex items-center gap-1"
-                style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
-              >
-                {loading ? <RefreshCw size={11} className="animate-spin" /> : null}
+              <Button onClick={handleGrant} disabled={loading || !newKey.trim()} size="sm">
+                {loading ? <RefreshCw className="animate-spin" /> : null}
                 Grant
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -693,32 +687,21 @@ export default function ShareModal({
                 After granting access, send them the drive link. The link also bundles your contact info so they can add
                 you in one click.
               </p>
-              <input
-                type="text"
+              <Input
                 value={senderName}
                 onChange={e => setSenderName(e.target.value)}
                 placeholder="Your name (optional, shown to recipient)"
-                className="w-full rounded-lg border px-3 py-2 text-xs focus:outline-none"
-                style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
+                className="text-xs"
               />
-              <button
+              <Button
                 onClick={copyShareLink}
                 disabled={loading}
-                className="w-full py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 disabled:opacity-40 transition-colors"
-                style={{
-                  backgroundColor: copiedLink ? 'rgba(74,222,128,0.15)' : 'rgb(var(--accent))',
-                  color: copiedLink ? '#4ade80' : '#fff',
-                }}
+                variant={copiedLink ? 'secondary' : 'default'}
+                className="w-full"
               >
-                {loading ? (
-                  <RefreshCw size={11} className="animate-spin" />
-                ) : copiedLink ? (
-                  <Check size={11} />
-                ) : (
-                  <Copy size={11} />
-                )}
+                {loading ? <RefreshCw className="animate-spin" /> : copiedLink ? <Check /> : <Copy />}
                 {loading ? 'Generating…' : copiedLink ? 'Link copied!' : 'Copy drive link'}
-              </button>
+              </Button>
 
               {/* Notify in Messages — sends a typed drive-share message to each
                   contact-grantee. Skips grantees not in the contact list. */}
@@ -733,28 +716,24 @@ export default function ShareModal({
 
                   return (
                     <>
-                      <button
+                      <Button
                         onClick={handleNotifyAll}
                         disabled={notifying || pendingNotify.length === 0}
-                        className="w-full py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 disabled:opacity-40 transition-colors border"
-                        style={{
-                          backgroundColor: 'rgb(var(--bg))',
-                          color: 'rgb(var(--fg))',
-                          borderColor: 'rgb(var(--border))',
-                        }}
+                        variant="outline"
+                        className="w-full"
                         title={
                           pendingNotify.length === 0
                             ? 'All eligible grantees already notified in this session'
                             : `Send a Messages notification to ${recipients}`
                         }
                       >
-                        {notifying ? <RefreshCw size={11} className="animate-spin" /> : <Bell size={11} />}
+                        {notifying ? <RefreshCw className="animate-spin" /> : <Bell />}
                         {notifying
                           ? 'Sending…'
                           : pendingNotify.length === 0
                             ? 'All notified'
                             : `Send notification to ${recipients}`}
-                      </button>
+                      </Button>
 
                       {/* On-chain wake-up toggle — useful when recipient hasn't
                           added you back yet, so mailbox poll wouldn't pick it up. */}

@@ -55,6 +55,7 @@ import {
 import AddSharedDriveModal from '../components/AddSharedDriveModal'
 import ENSModal from '../components/ENSModal'
 import ShareModal from '../components/ShareModal'
+import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -468,7 +469,7 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
             onClick={doExtend}
             disabled={topup.isPending || !cost}
             className="flex-1 py-2 rounded-lg text-sm font-semibold disabled:opacity-40"
-            style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+            style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
           >
             {topup.isPending ? 'Extending…' : 'Extend drive'}
           </button>
@@ -658,7 +659,7 @@ function UpdateFeedModal({ record, onClose }: { record: UploadRecord; onClose: (
                 onClick={doUpdate}
                 disabled={!content}
                 className="flex-1 py-2 rounded-lg text-sm font-semibold disabled:opacity-40"
-                style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+                style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
               >
                 Publish update
               </button>
@@ -839,7 +840,7 @@ function RetrieveModal({ onClose }: { onClose: () => void }) {
             onClick={retrieve}
             disabled={loading || !hash.trim()}
             className="flex-1 py-2 rounded-lg text-sm font-semibold disabled:opacity-40 flex items-center justify-center gap-2"
-            style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+            style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
           >
             {loading ? <RefreshCw size={13} className="animate-spin" /> : <Download size={13} />}
             {loading ? 'Downloading…' : 'Download'}
@@ -2175,7 +2176,7 @@ export default function Drive() {
             <button
               onClick={() => setShowBuyModal(true)}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0"
-              style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+              style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
             >
               <Plus size={12} />
               New drive
@@ -2184,7 +2185,7 @@ export default function Drive() {
             <button
               onClick={() => setShowAddSharedModal(true)}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0"
-              style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+              style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
             >
               <Plus size={12} />
               Add shared drive
@@ -2193,30 +2194,16 @@ export default function Drive() {
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-1 mb-4">
-          <button
-            onClick={() => setDriveTab('mine')}
-            className="px-3 py-1.5 rounded text-xs font-semibold uppercase tracking-widest transition-colors"
-            style={
-              driveTab === 'mine'
-                ? { backgroundColor: 'rgb(var(--accent))', color: '#fff' }
-                : { color: 'rgb(var(--fg-muted))' }
-            }
-          >
-            My Drives{allStamps.length > 0 ? ` (${allStamps.length})` : ''}
-          </button>
-          <button
-            onClick={() => setDriveTab('shared')}
-            className="px-3 py-1.5 rounded text-xs font-semibold uppercase tracking-widest transition-colors"
-            style={
-              driveTab === 'shared'
-                ? { backgroundColor: 'rgb(var(--accent))', color: '#fff' }
-                : { color: 'rgb(var(--fg-muted))' }
-            }
-          >
-            Shared with me{sharedDrives.drives.length > 0 ? ` (${sharedDrives.drives.length})` : ''}
-          </button>
-        </div>
+        <Tabs value={driveTab} onValueChange={v => setDriveTab(v as 'mine' | 'shared')} className="mb-4">
+          <TabsList>
+            <TabsTrigger value="mine">
+              My drives{allStamps.length > 0 ? ` (${allStamps.length})` : ''}
+            </TabsTrigger>
+            <TabsTrigger value="shared">
+              Shared with me{sharedDrives.drives.length > 0 ? ` (${sharedDrives.drives.length})` : ''}
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
 
         {/* Content */}
         {search ? (
@@ -2281,7 +2268,7 @@ export default function Drive() {
             <button
               onClick={() => setShowBuyModal(true)}
               className="mt-2 px-4 py-2 rounded-lg text-sm font-semibold"
-              style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+              style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
             >
               New drive
             </button>
@@ -2605,7 +2592,7 @@ export default function Drive() {
           <button
             onClick={() => setAddingFile(v => !v)}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0"
-            style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+            style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
           >
             <Upload size={12} />
             Upload
@@ -2640,7 +2627,7 @@ export default function Drive() {
           <button
             onClick={() => setAddingFile(v => !v)}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0"
-            style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+            style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
           >
             <Upload size={12} />
             Upload

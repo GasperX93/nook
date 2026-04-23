@@ -1,6 +1,7 @@
 import { ConnectButton } from '@rainbow-me/rainbowkit'
 import {
   AlertTriangle,
+  Contact,
   Copy,
   Globe,
   HardDrive,
@@ -9,12 +10,10 @@ import {
   RefreshCw,
   Settings,
   Terminal,
-  User,
-  Users,
   Wallet,
 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
+import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useAccount, useDisconnect, useSwitchChain } from 'wagmi'
 import { gnosis } from 'wagmi/chains'
 import { weiToDai } from '../api/bee'
@@ -25,18 +24,30 @@ import { loadInvitations, pendingInvitations } from '../notify/invitations'
 import { loadReadCursors, loadThreads, totalUnread } from '../notify/messages'
 import { useAppStore } from '../store/app'
 import Onboarding from './Onboarding'
+import {
+  Sidebar,
+  SidebarFooter,
+  SidebarHeader,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarSection,
+  SidebarSectionLabel,
+  SidebarSeparator,
+  SidebarSpacer,
+  SidebarTrigger,
+} from './ui/sidebar'
 
 const mainNavItems = [
   { to: '/drive', icon: HardDrive, label: 'Drive' },
-  { to: '/account', icon: User, label: 'Account' },
-  { to: '/contacts', icon: Users, label: 'Contacts' },
+  { to: '/account', icon: Wallet, label: 'Account' },
+  { to: '/contacts', icon: Contact, label: 'Contacts' },
 ]
 
 const settingsNavItem = { to: '/settings', icon: Settings, label: 'Settings' }
 
 const appNavItems = [
-  { to: '/apps/messages', icon: MessageSquare, label: 'Messages', sublabel: '' },
-  { to: '/apps/website-publisher', icon: Globe, label: 'Publish', sublabel: 'website' },
+  { to: '/apps/messages', icon: MessageSquare, label: 'Messages' },
+  { to: '/apps/website-publisher', icon: Globe, label: 'Publish website' },
 ]
 
 function WalletDropdown({ displayName, address, avatar }: { displayName: string; address: string; avatar?: string }) {
@@ -204,203 +215,148 @@ export default function Layout() {
   const dotLabel = beeChecking ? '···' : isSyncing ? 'sync' : beeOnline ? 'live' : 'off'
 
   return (
-    <div className="flex h-screen overflow-hidden" style={{ backgroundColor: 'rgb(var(--bg))' }}>
-      {/* Sidebar */}
-      <aside
-        className="w-16 flex flex-col items-center pt-5 pb-4 shrink-0 border-r gap-1"
-        style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
-      >
-        {/* Wordmark */}
-        <span className="text-[10px] font-bold uppercase tracking-widest mb-2" style={{ color: 'rgb(var(--fg))' }}>
-          Nook
-        </span>
-
-        {/* Node status dot */}
-        <div
-          className="flex flex-col items-center gap-1 mb-3"
-          title={`Bee node: ${dotLabel}${beeOnline ? ` · ${peerCount} peers` : ''}`}
-        >
-          <div
-            className="w-2 h-2 rounded-full transition-colors"
-            style={{ backgroundColor: dotColor, boxShadow: beeOnline ? `0 0 6px ${dotColor}` : 'none' }}
-          />
-          <span className="text-[8px] uppercase tracking-widest font-semibold" style={{ color: dotColor }}>
-            {dotLabel}
-          </span>
-        </div>
-
-        <div className="w-10 mb-2" style={{ borderTop: '1px solid rgba(255,255,255,0.25)' }} />
-
-        {/* Main nav — Drive + Account */}
-        <nav className="flex flex-col gap-0.5 w-full px-2">
-          {navItems.map(({ to, icon: Icon, label }) => (
-            <NavLink
-              key={to}
-              to={to}
-              onClick={to === '/drive' ? () => navigate(to, { state: { ts: Date.now() } }) : undefined}
-              className={({ isActive }) =>
-                [
-                  'flex flex-col items-center gap-0.5 py-2 rounded-lg transition-colors w-full',
-                  isActive ? 'text-white' : 'text-[rgb(var(--fg-muted))] hover:text-[rgb(var(--fg))]',
-                ].join(' ')
-              }
-              style={({ isActive }) => (isActive ? { backgroundColor: 'rgba(247,104,8,0.65)' } : {})}
+    <SidebarProvider>
+      <div className="flex h-screen overflow-hidden" style={{ backgroundColor: 'rgb(var(--bg))' }}>
+        {/* Sidebar */}
+        <Sidebar>
+          <SidebarHeader>
+            <span className="text-[10px] font-bold uppercase tracking-widest mb-2 text-sidebar-foreground">Nook</span>
+            {/* Node status dot */}
+            <div
+              className="flex flex-col items-center gap-1 mb-3"
+              title={`Bee node: ${dotLabel}${beeOnline ? ` · ${peerCount} peers` : ''}`}
             >
-              <Icon size={15} />
-              <span className="text-[9px] font-medium leading-none">{label}</span>
-            </NavLink>
-          ))}
-        </nav>
+              <div
+                className="w-2 h-2 rounded-full transition-colors"
+                style={{ backgroundColor: dotColor, boxShadow: beeOnline ? `0 0 6px ${dotColor}` : 'none' }}
+              />
+              <span className="text-[8px] uppercase tracking-widest font-semibold" style={{ color: dotColor }}>
+                {dotLabel}
+              </span>
+            </div>
+          </SidebarHeader>
 
-        {/* Apps section */}
-        <div className="w-10 my-3" style={{ borderTop: '1px solid rgba(255,255,255,0.25)' }} />
-        <span
-          className="text-[8px] font-bold uppercase tracking-widest mb-1.5 w-full text-center"
-          style={{ color: 'rgb(var(--fg-muted))' }}
-        >
-          Apps
-        </span>
-        <nav className="flex flex-col gap-0.5 w-full px-2">
-          {appNavItems.map(({ to, icon: Icon, label, sublabel }) => {
-            const badge = to === '/apps/messages' ? messagesUnread : 0
+          <SidebarSeparator />
 
-            return (
-              <NavLink
+          <SidebarSection>
+            {navItems.map(({ to, icon, label }) => (
+              <SidebarMenuItem
                 key={to}
                 to={to}
+                icon={icon}
+                label={label}
+                onClick={to === '/drive' ? () => navigate(to, { state: { ts: Date.now() } }) : undefined}
+              />
+            ))}
+          </SidebarSection>
+
+          <SidebarSeparator />
+          <SidebarSectionLabel>Apps</SidebarSectionLabel>
+          <SidebarSection>
+            {appNavItems.map(({ to, icon, label }) => (
+              <SidebarMenuItem
+                key={to}
+                to={to}
+                icon={icon}
+                label={label}
+                badge={to === '/apps/messages' ? messagesUnread : undefined}
                 onClick={() => navigate(to, { state: { ts: Date.now() } })}
-                className={({ isActive }) =>
-                  [
-                    'flex flex-col items-center gap-0.5 py-2 rounded-lg transition-colors w-full relative',
-                    isActive ? 'text-white' : 'text-[rgb(var(--fg-muted))] hover:text-[rgb(var(--fg))]',
-                  ].join(' ')
-                }
-                style={({ isActive }) => (isActive ? { backgroundColor: 'rgba(247,104,8,0.65)' } : {})}
-              >
-                <div className="relative">
-                  <Icon size={15} />
-                  {badge > 0 && (
-                    <span
-                      className="absolute -top-1.5 -right-2 text-[8px] font-bold leading-none px-1 py-0.5 rounded-full min-w-[14px] text-center"
-                      style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+              />
+            ))}
+          </SidebarSection>
+
+          <SidebarSpacer />
+          <SidebarSeparator />
+          <SidebarFooter>
+            <SidebarSection>
+              <SidebarMenuItem to={settingsNavItem.to} icon={settingsNavItem.icon} label={settingsNavItem.label} />
+            </SidebarSection>
+            <div className="pt-2">
+              <SidebarTrigger />
+            </div>
+          </SidebarFooter>
+        </Sidebar>
+
+        {/* Main content */}
+        <main className="flex-1 overflow-auto flex flex-col">
+          {/* Top bar — page title + wallet connect */}
+          <div className="flex items-center justify-between px-6 shrink-0 relative" style={{ height: 52 }}>
+            <h1 className="text-sm font-semibold uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
+              {pageTitle}
+            </h1>
+            <ConnectButton.Custom>
+              {({ account, chain, openConnectModal, mounted }) => {
+                if (!mounted) return null
+
+                if (!account || !chain) {
+                  return (
+                    <button
+                      onClick={openConnectModal}
+                      className="nook-wallet-btn flex items-center gap-2 px-3 py-1.5 rounded-full text-xs transition-colors border"
                     >
-                      {badge > 99 ? '99+' : badge}
-                    </span>
-                  )}
-                </div>
-                <span className="text-[9px] font-medium leading-tight text-center">
-                  {label}
-                  {sublabel && (
-                    <>
-                      <br />
-                      {sublabel}
-                    </>
-                  )}
-                </span>
-              </NavLink>
-            )
-          })}
-        </nav>
+                      Connect Wallet
+                    </button>
+                  )
+                }
 
-        {/* Settings pinned to bottom */}
-        <div className="flex-1" />
-        <div className="w-10 mb-2" style={{ borderTop: '1px solid rgba(255,255,255,0.25)' }} />
-        <nav className="w-full px-2">
-          <NavLink
-            to={settingsNavItem.to}
-            className={({ isActive }) =>
-              [
-                'flex flex-col items-center gap-0.5 py-2 rounded-lg transition-colors w-full',
-                isActive ? 'text-white' : 'text-[rgb(var(--fg-muted))] hover:text-[rgb(var(--fg))]',
-              ].join(' ')
-            }
-            style={({ isActive }) => (isActive ? { backgroundColor: 'rgba(247,104,8,0.65)' } : {})}
-          >
-            <settingsNavItem.icon size={15} />
-            <span className="text-[9px] font-medium leading-none">{settingsNavItem.label}</span>
-          </NavLink>
-        </nav>
-      </aside>
-
-      {/* Main content */}
-      <main className="flex-1 overflow-auto flex flex-col">
-        {/* Top bar — page title + wallet connect */}
-        <div className="flex items-center justify-between px-6 shrink-0 relative" style={{ height: 52 }}>
-          <h1 className="text-sm font-semibold uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
-            {pageTitle}
-          </h1>
-          <ConnectButton.Custom>
-            {({ account, chain, openConnectModal, mounted }) => {
-              if (!mounted) return null
-
-              if (!account || !chain) {
                 return (
-                  <button
-                    onClick={openConnectModal}
-                    className="nook-wallet-btn flex items-center gap-2 px-3 py-1.5 rounded-full text-xs transition-colors border"
-                  >
-                    Connect Wallet
-                  </button>
+                  <WalletDropdown
+                    displayName={account.displayName}
+                    address={account.address}
+                    avatar={account.ensAvatar}
+                  />
                 )
-              }
-
-              return (
-                <WalletDropdown
-                  displayName={account.displayName}
-                  address={account.address}
-                  avatar={account.ensAvatar}
-                />
-              )
-            }}
-          </ConnectButton.Custom>
-        </div>
-
-        {/* Starting up — friendly indicator */}
-        {showStarting && !showOnboarding && (
-          <div
-            className="flex items-center gap-2.5 px-4 py-2.5 text-xs shrink-0"
-            style={{ backgroundColor: 'rgba(247,104,8,0.08)', borderBottom: '1px solid rgba(247,104,8,0.15)' }}
-          >
-            <RefreshCw size={12} className="animate-spin shrink-0" style={{ color: 'rgb(var(--accent))' }} />
-            <span style={{ color: 'rgb(var(--accent))' }}>Starting Bee node and connecting to the network…</span>
+              }}
+            </ConnectButton.Custom>
           </div>
-        )}
 
-        {/* Bee down — only shown after it was previously online */}
-        {showDown && !showOnboarding && (
-          <div
-            className="flex items-center gap-2 px-4 py-2.5 text-xs shrink-0"
-            style={{ backgroundColor: 'rgba(239,68,68,0.1)', borderBottom: '1px solid rgba(239,68,68,0.2)' }}
-          >
-            <AlertTriangle size={13} className="shrink-0" style={{ color: '#ef4444' }} />
-            <span style={{ color: '#ef4444' }}>Bee node is not running. Check the Logs tab for details.</span>
+          {/* Starting up — friendly indicator */}
+          {showStarting && !showOnboarding && (
+            <div
+              className="flex items-center gap-2.5 px-4 py-2.5 text-xs shrink-0"
+              style={{ backgroundColor: 'rgba(247,104,8,0.08)', borderBottom: '1px solid rgba(247,104,8,0.15)' }}
+            >
+              <RefreshCw size={12} className="animate-spin shrink-0" style={{ color: 'rgb(var(--accent))' }} />
+              <span style={{ color: 'rgb(var(--accent))' }}>Starting Bee node and connecting to the network…</span>
+            </div>
+          )}
+
+          {/* Bee down — only shown after it was previously online */}
+          {showDown && !showOnboarding && (
+            <div
+              className="flex items-center gap-2 px-4 py-2.5 text-xs shrink-0"
+              style={{ backgroundColor: 'rgba(239,68,68,0.1)', borderBottom: '1px solid rgba(239,68,68,0.2)' }}
+            >
+              <AlertTriangle size={13} className="shrink-0" style={{ color: '#ef4444' }} />
+              <span style={{ color: '#ef4444' }}>Bee node is not running. Check the Logs tab for details.</span>
+            </div>
+          )}
+
+          {/* Needs funding — shown when Bee exits because wallet has no xDAI */}
+          {showFundingWarning && !showOnboarding && (
+            <div
+              className="flex items-center gap-2.5 px-4 py-2.5 text-xs shrink-0"
+              style={{ backgroundColor: 'rgba(247,104,8,0.08)', borderBottom: '1px solid rgba(247,104,8,0.15)' }}
+            >
+              <Wallet size={12} className="shrink-0" style={{ color: 'rgb(var(--accent))' }} />
+              <span style={{ color: 'rgb(var(--accent))' }}>
+                Fund your node wallet to start.{' '}
+                <button
+                  onClick={() => navigate('/account')}
+                  className="underline font-semibold"
+                  style={{ color: 'rgb(var(--accent))' }}
+                >
+                  Go to Wallet →
+                </button>
+              </span>
+            </div>
+          )}
+
+          <div className="flex-1 overflow-auto flex flex-col">
+            {showOnboarding ? <Onboarding skipReady={onboardingCompleted} /> : <Outlet />}
           </div>
-        )}
-
-        {/* Needs funding — shown when Bee exits because wallet has no xDAI */}
-        {showFundingWarning && !showOnboarding && (
-          <div
-            className="flex items-center gap-2.5 px-4 py-2.5 text-xs shrink-0"
-            style={{ backgroundColor: 'rgba(247,104,8,0.08)', borderBottom: '1px solid rgba(247,104,8,0.15)' }}
-          >
-            <Wallet size={12} className="shrink-0" style={{ color: 'rgb(var(--accent))' }} />
-            <span style={{ color: 'rgb(var(--accent))' }}>
-              Fund your node wallet to start.{' '}
-              <button
-                onClick={() => navigate('/account')}
-                className="underline font-semibold"
-                style={{ color: 'rgb(var(--accent))' }}
-              >
-                Go to Wallet →
-              </button>
-            </span>
-          </div>
-        )}
-
-        <div className="flex-1 overflow-auto flex flex-col">
-          {showOnboarding ? <Onboarding skipReady={onboardingCompleted} /> : <Outlet />}
-        </div>
-      </main>
-    </div>
+        </main>
+      </div>
+    </SidebarProvider>
   )
 }
