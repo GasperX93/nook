@@ -248,7 +248,7 @@ export default function Contacts() {
       <div>
         <h1 className="text-2xl font-bold mb-1">Contacts</h1>
         <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
-          People you can send messages to and share drives with. Add by Nook address (registry) or share link (manual).
+          People you can send messages to and share drives with. Add by Nook address (identity feed) or share link (manual).
         </p>
       </div>
 
@@ -264,7 +264,7 @@ export default function Contacts() {
           <div className="flex-1 text-sm">
             <p className="font-semibold mb-1">Make yourself reachable</p>
             <p style={{ color: 'rgb(var(--fg-muted))' }}>
-              Either publish your Nook address to the registry (others find you by typing it) or share your contact link
+              Either publish your Nook address to the identity feed (others find you by typing it) or share your contact link
               manually below. Either way works — pick what you prefer.
             </p>
           </div>
@@ -324,7 +324,7 @@ export default function Contacts() {
                 {published ? 'Published' : 'Not published'}
               </span>
               <button onClick={handlePublish} disabled={publishing || !stampId} className={btnGhost} style={ghostStyle}>
-                {publishing ? 'Publishing…' : published ? 'Republish' : 'Publish to registry'}
+                {publishing ? 'Publishing…' : published ? 'Republish' : 'Publish to identity feed'}
               </button>
               {myShareLink && (
                 <button
@@ -350,7 +350,7 @@ export default function Contacts() {
             )}
 
             <p className="text-xs leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
-              Two ways to be reachable: <strong>publish to the registry</strong> (others type your Nook address) or{' '}
+              Two ways to be reachable: <strong>publish to the identity feed</strong> (others type your Nook address) or{' '}
               <strong>send your share link</strong> (others paste it). Both unlock messaging and drive sharing.
               Publishing is voluntary — share-link works without it.
             </p>
@@ -372,7 +372,7 @@ export default function Contacts() {
               onChange={() => setAddMode('registry')}
               name="add-mode"
             />
-            <span>Find on registry</span>
+            <span>Find on identity feed</span>
           </label>
           <label className="inline-flex items-center gap-2 cursor-pointer">
             <input
@@ -488,7 +488,7 @@ export default function Contacts() {
                         backgroundColor: 'rgba(255,255,255,0.05)',
                       }}
                     >
-                      {c.source === 'identity-feed' ? 'registry' : 'share link'}
+                      {c.source === 'identity-feed' ? 'identity feed' : 'share link'}
                     </span>
                   </p>
                   <code className="text-xs font-mono" style={{ color: 'rgb(var(--fg-muted))' }}>
