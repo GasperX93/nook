@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from 'react'
 
 import { useAddresses, useStamps } from '../api/queries'
 import { useDerivedKey } from '../hooks/useDerivedKey'
+import { loadInvitations, removeInvitationsFor } from '../notify/invitations'
 import { decodeShareLink, encodeShareLink } from '../notify/share-link'
 import {
   addContact,
@@ -216,6 +217,9 @@ export default function Contacts() {
 
     setContacts(updated)
     saveContacts(updated)
+    // Wipe any lingering invitation rows for this sender so a future on-chain
+    // wake-up from them surfaces as a fresh invitation instead of being dedup'd.
+    removeInvitationsFor(loadInvitations(), id)
   }
 
   async function handleCopy(value: string, kind: 'address' | 'share-link') {
