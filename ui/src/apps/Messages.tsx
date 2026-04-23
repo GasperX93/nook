@@ -5,6 +5,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { useStamps } from '../api/queries'
 import AddSharedDriveModal from '../components/AddSharedDriveModal'
+import { Button } from '../components/ui/button'
+import { Input } from '../components/ui/input'
+import { Textarea } from '../components/ui/textarea'
 import { useSharedDrives } from '../hooks/useSharedDrives'
 import { useDerivedKey } from '../hooks/useDerivedKey'
 import { loadInvitations, markInvitationProcessed, pendingInvitations, type Invitation } from '../notify/invitations'
@@ -252,13 +255,9 @@ export default function Messages() {
         <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
           Derive your Nook key to start messaging.
         </p>
-        <button
-          onClick={derive}
-          className="self-start px-4 py-2 rounded text-xs font-semibold uppercase tracking-widest"
-          style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
-        >
+        <Button onClick={derive} className="self-start uppercase tracking-widest">
           Derive key
-        </button>
+        </Button>
       </div>
     )
   }
@@ -402,13 +401,9 @@ export default function Messages() {
                           </p>
                         </div>
                         {!isSent && (
-                          <button
-                            onClick={() => setImportingLink(m.driveShareLink!)}
-                            className="w-full py-1.5 rounded-lg text-xs font-semibold"
-                            style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
-                          >
+                          <Button onClick={() => setImportingLink(m.driveShareLink!)} size="sm" className="w-full">
                             Add drive
-                          </button>
+                          </Button>
                         )}
                         <p className="text-[10px]" style={{ color: 'rgb(var(--fg-muted))' }}>
                           {formatTime(m.ts)}
@@ -445,30 +440,18 @@ export default function Messages() {
                 </p>
               )}
               <div className="flex gap-2 items-end">
-                <textarea
+                <Textarea
                   value={draft}
                   onChange={e => setDraft(e.target.value)}
                   onKeyDown={handleKeyDown}
                   placeholder={`Message ${selected.nickname}…`}
                   rows={1}
-                  className="flex-1 rounded-lg border px-3 py-2 text-sm resize-none focus:outline-none"
-                  style={{
-                    backgroundColor: 'rgb(var(--bg))',
-                    color: 'rgb(var(--fg))',
-                    borderColor: 'rgb(var(--border))',
-                    minHeight: 40,
-                    maxHeight: 160,
-                  }}
+                  className="flex-1 resize-none"
+                  style={{ minHeight: 40, maxHeight: 160 }}
                 />
-                <button
-                  onClick={handleSend}
-                  disabled={sending || !draft.trim()}
-                  className="rounded-lg p-2.5 transition-opacity disabled:opacity-40"
-                  style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
-                  title="Send (Enter)"
-                >
+                <Button onClick={handleSend} disabled={sending || !draft.trim()} size="icon" title="Send (Enter)">
                   <Send size={16} />
-                </button>
+                </Button>
               </div>
             </div>
           </>
@@ -523,17 +506,10 @@ export default function Messages() {
               <label className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
                 Nickname
               </label>
-              <input
-                type="text"
+              <Input
                 value={inviteNickname}
                 onChange={e => setInviteNickname(e.target.value)}
                 placeholder="e.g. Alice"
-                className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-none"
-                style={{
-                  backgroundColor: 'rgb(var(--bg))',
-                  color: 'rgb(var(--fg))',
-                  borderColor: 'rgb(var(--border))',
-                }}
                 autoFocus
               />
             </div>
@@ -542,14 +518,13 @@ export default function Messages() {
                 {error}
               </p>
             )}
-            <button
+            <Button
               onClick={handleAcceptInvite}
               disabled={acceptingInvite || !inviteNickname.trim()}
-              className="self-start px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-40"
-              style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+              className="self-start"
             >
               {acceptingInvite ? 'Resolving & adding…' : 'Add as contact'}
-            </button>
+            </Button>
           </div>
         ) : (
           <div className="flex-1 flex items-center justify-center">

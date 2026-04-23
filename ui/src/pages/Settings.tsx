@@ -2,6 +2,9 @@ import { ExternalLink, Moon, Sun } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAddresses, useBeeHealth, useConfig, useInfo, usePeers, useTopology, useUpdateConfig } from '../api/queries'
+import { Button } from '../components/ui/button'
+import { Input } from '../components/ui/input'
+import { Switch } from '../components/ui/switch'
 import { useAppStore } from '../store/app'
 
 type SettingsTab = 'general' | 'network'
@@ -96,26 +99,21 @@ export default function Settings() {
               </p>
             ) : (
               <div className="flex gap-3">
-                <input
-                  type="text"
+                <Input
                   value={rpcDraft}
                   onChange={e => setRpcDraft(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && saveRpc()}
                   placeholder={DEFAULT_RPC}
-                  className="flex-1 rounded-lg border px-3 py-2 text-xs font-mono focus:outline-none"
-                  style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
+                  className="font-mono text-xs"
                 />
-                <button
+                <Button
                   onClick={saveRpc}
                   disabled={updateConfig.isPending}
-                  className="px-4 py-2 rounded-lg text-xs font-semibold shrink-0 transition-colors disabled:opacity-40"
-                  style={{
-                    backgroundColor: rpcSaved ? 'rgba(74,222,128,0.15)' : 'rgb(var(--accent))',
-                    color: rpcSaved ? '#4ade80' : '#fff',
-                  }}
+                  variant={rpcSaved ? 'secondary' : 'default'}
+                  size="sm"
                 >
                   {rpcSaved ? 'Saved' : 'Save'}
-                </button>
+                </Button>
               </div>
             )}
           </div>
@@ -136,19 +134,10 @@ export default function Settings() {
                 const Icon = t === 'dark' ? Moon : Sun
 
                 return (
-                  <button
-                    key={t}
-                    onClick={() => setTheme(t)}
-                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold transition-colors border"
-                    style={{
-                      backgroundColor: active ? 'rgb(var(--accent))' : 'rgb(var(--bg))',
-                      color: active ? '#fff' : 'rgb(var(--fg))',
-                      borderColor: active ? 'rgb(var(--accent))' : 'rgb(var(--border))',
-                    }}
-                  >
-                    <Icon size={13} />
+                  <Button key={t} onClick={() => setTheme(t)} variant={active ? 'default' : 'outline'} size="sm">
+                    <Icon />
                     {t === 'dark' ? 'Dark' : 'Light'}
-                  </button>
+                  </Button>
                 )
               })}
             </div>
@@ -227,31 +216,12 @@ export default function Settings() {
                   Shows logs and node configuration.
                 </p>
               </div>
-              <button
-                role="switch"
-                aria-checked={devMode}
-                onClick={() => setDevMode(!devMode)}
-                className="relative rounded-full transition-colors shrink-0"
-                style={{
-                  backgroundColor: devMode ? 'rgb(var(--accent))' : 'rgb(var(--border))',
-                  width: 40,
-                  height: 22,
-                }}
-              >
-                <span
-                  className="absolute top-0.5 rounded-full bg-white transition-transform"
-                  style={{ width: 18, height: 18, left: 2, transform: devMode ? 'translateX(18px)' : 'translateX(0)' }}
-                />
-              </button>
+              <Switch checked={devMode} onCheckedChange={setDevMode} />
             </div>
             {devMode && (
-              <button
-                onClick={() => navigate('/dev')}
-                className="text-xs font-medium transition-colors"
-                style={{ color: 'rgb(var(--accent))' }}
-              >
+              <Button onClick={() => navigate('/dev')} variant="link" className="self-start h-auto p-0">
                 Open Developer page →
-              </button>
+              </Button>
             )}
           </div>
         </div>

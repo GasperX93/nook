@@ -5,6 +5,8 @@
 import { ConnectButton } from '@rainbow-me/rainbowkit'
 import { Wallet } from 'lucide-react'
 
+import { Button } from './ui/button'
+
 interface WalletGateProps {
   message?: string
 }
@@ -23,14 +25,9 @@ export default function WalletGate({
       </p>
       <ConnectButton.Custom>
         {({ openConnectModal, connectModalOpen }) => (
-          <button
-            onClick={openConnectModal}
-            disabled={connectModalOpen}
-            className="px-4 py-1.5 rounded-lg text-xs font-semibold disabled:opacity-40"
-            style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
-          >
+          <Button onClick={openConnectModal} disabled={connectModalOpen} size="sm">
             Connect Wallet
-          </button>
+          </Button>
         )}
       </ConnectButton.Custom>
     </div>
