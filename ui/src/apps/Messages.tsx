@@ -183,9 +183,19 @@ export default function Messages() {
     return () => clearInterval(id)
   }, [])
 
-  // Auto-scroll to bottom on new messages or thread change
+  // Auto-scroll to bottom on selection / new messages. Defer with rAF so the
+  // measurement happens after the new bubbles have laid out — without this,
+  // scrollHeight can be stale on the first render after switching contacts
+  // and the view ends up at the top of the thread.
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
+    const el = scrollRef.current
+
+    if (!el) return
+    const id = requestAnimationFrame(() => {
+      el.scrollTop = el.scrollHeight
+    })
+
+    return () => cancelAnimationFrame(id)
   }, [selectedId, selectedThread.length])
 
   // Mark read when a thread is open and gets new messages
@@ -415,18 +425,15 @@ export default function Messages() {
                   return (
                     <div
                       key={m.id}
-                      className={`max-w-[70%] rounded-2xl px-4 py-2 ${m.direction === 'sent' ? 'self-end' : 'self-start'}`}
-                      style={{
-                        backgroundColor: m.direction === 'sent' ? 'rgb(var(--accent))' : 'rgb(var(--bg-surface))',
-                        color: m.direction === 'sent' ? '#fff' : 'rgb(var(--fg))',
-                      }}
+                      className={`max-w-[70%] rounded-2xl px-4 py-2 ${
+                        m.direction === 'sent'
+                          ? 'self-end bg-muted'
+                          : 'self-start bg-background border'
+                      }`}
                     >
-                      <p className="text-sm whitespace-pre-wrap break-words">{m.body}</p>
-                      <p
-                        className="text-[10px] mt-1"
-                        style={{ color: m.direction === 'sent' ? 'rgba(255,255,255,0.7)' : 'rgb(var(--fg-muted))' }}
-                      >
-                        {formatTime(m.ts)}
+                      <p className="text-sm whitespace-pre-wrap break-words text-foreground">{m.body}</p>
+                      <p className="text-[10px] mt-1 text-right text-muted-foreground">
+                        {m.direction === 'sent' ? 'You' : selected.nickname} | {formatTime(m.ts)}
                       </p>
                     </div>
                   )

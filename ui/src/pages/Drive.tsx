@@ -55,6 +55,7 @@ import {
 import AddSharedDriveModal from '../components/AddSharedDriveModal'
 import ENSModal from '../components/ENSModal'
 import ShareModal from '../components/ShareModal'
+import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -2193,30 +2194,16 @@ export default function Drive() {
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-1 mb-4">
-          <button
-            onClick={() => setDriveTab('mine')}
-            className="px-3 py-1.5 rounded text-xs font-semibold uppercase tracking-widest transition-colors"
-            style={
-              driveTab === 'mine'
-                ? { backgroundColor: 'rgb(var(--accent))', color: '#fff' }
-                : { color: 'rgb(var(--fg-muted))' }
-            }
-          >
-            My Drives{allStamps.length > 0 ? ` (${allStamps.length})` : ''}
-          </button>
-          <button
-            onClick={() => setDriveTab('shared')}
-            className="px-3 py-1.5 rounded text-xs font-semibold uppercase tracking-widest transition-colors"
-            style={
-              driveTab === 'shared'
-                ? { backgroundColor: 'rgb(var(--accent))', color: '#fff' }
-                : { color: 'rgb(var(--fg-muted))' }
-            }
-          >
-            Shared with me{sharedDrives.drives.length > 0 ? ` (${sharedDrives.drives.length})` : ''}
-          </button>
-        </div>
+        <Tabs value={driveTab} onValueChange={v => setDriveTab(v as 'mine' | 'shared')} className="mb-4">
+          <TabsList>
+            <TabsTrigger value="mine">
+              My drives{allStamps.length > 0 ? ` (${allStamps.length})` : ''}
+            </TabsTrigger>
+            <TabsTrigger value="shared">
+              Shared with me{sharedDrives.drives.length > 0 ? ` (${sharedDrives.drives.length})` : ''}
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
 
         {/* Content */}
         {search ? (

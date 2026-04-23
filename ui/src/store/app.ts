@@ -10,7 +10,7 @@ export type Theme = 'dark' | 'light'
 function readInitialTheme(): Theme {
   const stored = localStorage.getItem(THEME_KEY)
 
-  return stored === 'light' ? 'light' : 'dark'
+  return stored === 'dark' ? 'dark' : 'light'
 }
 
 function applyThemeClass(theme: Theme) {

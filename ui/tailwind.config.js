@@ -41,6 +41,13 @@ module.exports = {
           DEFAULT: 'rgb(var(--bg-surface) / <alpha-value>)',
           foreground: 'rgb(var(--fg) / <alpha-value>)',
         },
+        sidebar: {
+          DEFAULT: 'rgb(var(--sidebar-bg) / <alpha-value>)',
+          foreground: 'rgb(var(--sidebar-fg) / <alpha-value>)',
+          muted: 'rgb(var(--sidebar-fg-muted) / <alpha-value>)',
+          accent: 'rgb(var(--sidebar-accent-bg) / <alpha-value>)',
+          border: 'rgb(var(--sidebar-border) / <alpha-value>)',
+        },
       },
       borderRadius: {
         lg: 'var(--radius)',
