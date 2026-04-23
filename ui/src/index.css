@@ -1,15 +1,38 @@
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Theme tokens — derived from the Figma design system (shadcn-flavored).
+ * Variables are kept under their existing Nook names so Phase A can ship
+ * without touching components. Phase B will introduce shadcn primitives
+ * with their canonical variable names alongside these.
+ *
+ * Default theme: dark. Toggled at <html> level via .dark / .light class
+ * (managed by useAppStore.setTheme).
+ */
 @layer base {
-  :root {
+  /* Dark theme — Nook's existing palette plus Figma green accent */
+  :root,
+  :root.dark {
     --bg: 15 17 23;
     --bg-surface: 24 27 35;
     --fg: 240 244 248;
     --fg-muted: 120 130 150;
     --border: 38 42 54;
-    --accent: 247 104 8;
+    --accent: 0 200 83; /* Figma: Green #00c853 (was orange #f76808) */
+  }
+
+  /* Light theme — Figma values */
+  :root.light {
+    --bg: 255 255 255; /* #ffffff */
+    --bg-surface: 245 245 245; /* #f5f5f5 */
+    --fg: 10 10 10; /* #0a0a0a */
+    --fg-muted: 115 115 115; /* #737373 */
+    --border: 229 229 229; /* #e5e5e5 — light-mode separator */
+    --accent: 0 200 83; /* shared with dark */
   }
 
   * {
@@ -19,7 +42,7 @@
   body {
     background-color: rgb(var(--bg));
     color: rgb(var(--fg));
-    font-family: ui-monospace, 'Cascadia Code', 'Fira Code', monospace;
+    font-family: 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif;
     -webkit-font-smoothing: antialiased;
   }
 
@@ -37,9 +60,9 @@
   }
 }
 
-/* RainbowKit — match Nook's monospace font */
+/* RainbowKit — match Nook's typeface */
 [data-rk] button {
-  font-family: ui-monospace, 'Cascadia Code', 'Fira Code', monospace !important;
+  font-family: 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif !important;
 }
 
 /* Prevent multichain widget's RainbowKit CSS from overriding our global connect button */
