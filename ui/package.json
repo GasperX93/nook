@@ -12,7 +12,10 @@
   },
   "dependencies": {
     "@ethersphere/bee-js": "^11.1.1",
+    "@radix-ui/react-dialog": "^1.1.15",
     "@radix-ui/react-slot": "^1.2.4",
+    "@radix-ui/react-switch": "^1.2.6",
+    "@radix-ui/react-tabs": "^1.1.13",
     "@rainbow-me/rainbowkit": "^2.2.10",
     "@swarm-notify/sdk": "github:GasperX93/swarm-notify#afc9675ec0a27ea2a6aad9be7bd2399508373999",
     "@tanstack/react-query": "^5.90.21",
