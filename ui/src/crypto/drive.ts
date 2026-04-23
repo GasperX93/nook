@@ -42,6 +42,7 @@ export function driveFeedTopic(creatorAddress: string, driveId: string): Uint8Ar
     ? creatorAddress.toLowerCase()
     : '0x' + creatorAddress.toLowerCase()
   const input = new TextEncoder().encode(`nook:drive:${normalized}:${driveId}`)
+
   return keccak_256(input)
 }
 

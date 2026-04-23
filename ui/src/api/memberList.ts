@@ -27,6 +27,7 @@ export interface MemberListDoc {
 function canonicalJson(doc: Omit<MemberListDoc, 'signature'>): string {
   const { v, driveId, creatorAddress, writeKeyVersion, updatedAt, members } = doc
   const sortedMembers = [...members].sort((a, b) => a.ethAddress.localeCompare(b.ethAddress))
+
   return JSON.stringify({ v, driveId, creatorAddress, writeKeyVersion, updatedAt, members: sortedMembers })
 }
 
@@ -39,6 +40,7 @@ export async function signMemberList(
   const sigBytes = new Uint8Array(65)
   sigBytes.set(sig.toCompactRawBytes(), 0)
   sigBytes[64] = sig.recovery ?? 0
+
   return { ...doc, signature: bytesToHex(sigBytes) }
 }
 
@@ -49,6 +51,7 @@ export function verifyMemberList(doc: MemberListDoc, expectedCreatorPub: Uint8Ar
     const sigBytes = hexToBytes(doc.signature)
     const sig = secp256k1.Signature.fromCompact(sigBytes.slice(0, 64)).addRecoveryBit(sigBytes[64])
     const recoveredPub = sig.recoverPublicKey(digest).toRawBytes(false)
+
     return equalBytes(recoveredPub, expectedCreatorPub)
   } catch {
     return false
@@ -80,6 +83,7 @@ export async function updateMemberList(args: UpdateMemberListArgs): Promise<Upda
   let newMembers: MemberEntry[] = current?.members ?? [seed]
 
   const change = args.change
+
   if ('add' in change) {
     newMembers = newMembers.filter(m => m.ethAddress !== change.add.ethAddress)
     newMembers.push(change.add)
@@ -105,12 +109,14 @@ export async function updateMemberList(args: UpdateMemberListArgs): Promise<Upda
 
   const bytes = new TextEncoder().encode(JSON.stringify(doc))
   const upload = await args.bee.uploadData(args.stamp, bytes)
+
   return { ref: upload.reference.toUint8Array(), doc }
 }
 
 export async function fetchMemberList(bee: Bee, ref: Uint8Array): Promise<MemberListDoc | null> {
   try {
     const data = await bee.downloadData(ref)
+
     return JSON.parse(new TextDecoder().decode(data.toUint8Array())) as MemberListDoc
   } catch {
     return null
@@ -121,6 +127,7 @@ function hexToBytes(hex: string): Uint8Array {
   const clean = hex.startsWith('0x') ? hex.slice(2) : hex
   const out = new Uint8Array(clean.length / 2)
   for (let i = 0; i < out.length; i++) out[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16)
+
   return out
 }
 
@@ -132,5 +139,6 @@ function bytesToHex(bytes: Uint8Array): string {
 
 function equalBytes(a: Uint8Array, b: Uint8Array): boolean {
   if (a.length !== b.length) return false
+
   return a.every((v, i) => v === b[i])
 }

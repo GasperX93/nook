@@ -28,7 +28,9 @@ export async function readLatestEntry(args: ReadLatestArgs): Promise<DriveFeedEn
     const result = await reader.downloadPayload()
     const text = new TextDecoder().decode(result.payload.toUint8Array())
     const parsed = JSON.parse(text) as DriveFeedEntry
+
     if (parsed.v !== 1) throw new Error(`driveFeed: unsupported entry version ${parsed.v}`)
+
     return parsed
   } catch (err) {
     if (isNotFoundError(err)) return null
@@ -47,11 +49,13 @@ export async function writeEntry(args: WriteEntryArgs): Promise<Reference> {
   const bytes = new TextEncoder().encode(JSON.stringify(payload))
   const writer = args.bee.makeFeedWriter(new Topic(args.topicHex), new PrivateKey(args.writeKeyPriv))
   const result = await writer.uploadPayload(args.stamp, bytes)
+
   return result.reference
 }
 
 function isNotFoundError(err: unknown): boolean {
   if (!err || typeof err !== 'object') return false
   const msg = String((err as { message?: string }).message ?? '').toLowerCase()
+
   return msg.includes('not found') || msg.includes('404')
 }

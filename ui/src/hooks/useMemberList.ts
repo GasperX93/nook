@@ -12,6 +12,7 @@ export function useMemberList(drive: SharedDriveV2): MemberListDoc | null {
   useEffect(() => {
     if (!drive.cachedMemberListRef) {
       setDoc(null)
+
       return
     }
 
@@ -21,13 +22,16 @@ export function useMemberList(drive: SharedDriveV2): MemberListDoc | null {
     async function load() {
       const ref = hexToBytes(drive.cachedMemberListRef!)
       const fetched = await fetchMemberList(bee, ref)
+
       if (cancelled) return
 
       if (fetched && drive.walletPublicKey) {
         const creatorPub = secp256k1.ProjectivePoint.fromHex(drive.walletPublicKey).toRawBytes(false)
+
         if (!verifyMemberList(fetched, creatorPub)) {
           console.warn('useMemberList: signature verification failed for drive', drive.driveId)
           setDoc(null)
+
           return
         }
       }
@@ -50,5 +54,6 @@ function hexToBytes(hex: string): Uint8Array {
   const clean = hex.startsWith('0x') ? hex.slice(2) : hex
   const out = new Uint8Array(clean.length / 2)
   for (let i = 0; i < out.length; i++) out[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16)
+
   return out
 }

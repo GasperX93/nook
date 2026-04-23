@@ -30,6 +30,7 @@ const V2_DRIVES_KEY = 'nook-shared-drives-v2'
 function loadKnownDriveIds(): Set<string> {
   try {
     const stored = JSON.parse(localStorage.getItem(V2_DRIVES_KEY) ?? '[]') as Array<{ driveId: string }>
+
     return new Set(stored.map(d => d.driveId))
   } catch {
     return new Set()
@@ -40,6 +41,7 @@ function loadKnownDriveIds(): Set<string> {
 function persistNewDrive(drive: SharedDriveV2): void {
   try {
     const existing = JSON.parse(localStorage.getItem(V2_DRIVES_KEY) ?? '[]') as SharedDriveV2[]
+
     if (existing.some(d => d.driveId === drive.driveId)) return
     localStorage.setItem(V2_DRIVES_KEY, JSON.stringify([...existing, drive]))
   } catch {
@@ -86,10 +88,13 @@ export function useInboxPolling(): void {
           for (const msg of messages) {
             if (msg.type !== 'drive-share' || !msg.driveShareLink) continue
             const parsed = parseShareLinkTyped(msg.driveShareLink)
+
             if (!parsed || parsed.type !== 'nook-drive-share-v2') continue
+
             if (knownIds.has(parsed.driveId)) continue
 
             let writeKeyHex: string | undefined
+
             if (parsed.writeKeyBlob && parsed.role === 'writer') {
               try {
                 const wkBytes = await decryptWriteKey(hexToBytes(parsed.writeKeyBlob), signer.getSigningKey())
@@ -133,6 +138,7 @@ function hexToBytes(hex: string): Uint8Array {
   const clean = hex.startsWith('0x') ? hex.slice(2) : hex
   const out = new Uint8Array(clean.length / 2)
   for (let i = 0; i < out.length; i++) out[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16)
+
   return out
 }
 

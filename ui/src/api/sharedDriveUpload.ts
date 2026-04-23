@@ -41,6 +41,7 @@ export async function uploadToSharedDrive(args: UploadArgs): Promise<UploadResul
   const { bee, stamp, drive, mySigningKey, file, onProgress } = args
 
   if (!drive.writeKey) throw new Error('uploadToSharedDrive: writeKey missing (reader-only drive)')
+
   if (!drive.walletPublicKey) throw new Error('uploadToSharedDrive: creator walletPublicKey missing')
 
   const writeKeyPriv = hexToBytes(drive.writeKey)
@@ -55,6 +56,7 @@ export async function uploadToSharedDrive(args: UploadArgs): Promise<UploadResul
 
   onProgress?.('fetching_feed')
   const latest = await readLatestEntry({ bee, topicHex: drive.driveFeedTopic, ownerAddress })
+
   if (!latest) throw new Error('uploadToSharedDrive: drive feed is empty')
 
   const historyRef = hexToBytes(latest.historyRef)
@@ -68,9 +70,7 @@ export async function uploadToSharedDrive(args: UploadArgs): Promise<UploadResul
   })
 
   const manifestData = await bee.downloadData(manifestRef)
-  const manifest = JSON.parse(
-    new TextDecoder().decode(manifestData.toUint8Array()),
-  ) as { v: 1; files: ManifestFile[] }
+  const manifest = JSON.parse(new TextDecoder().decode(manifestData.toUint8Array())) as { v: 1; files: ManifestFile[] }
 
   onProgress?.('uploading_file')
   const fileUpload = await bee.uploadData(stamp, file.bytes)
@@ -111,6 +111,7 @@ export async function uploadToSharedDrive(args: UploadArgs): Promise<UploadResul
   })
 
   onProgress?.('done')
+
   return {
     fileRef: bytesToHex(fileRef),
     newManifestRef: bytesToHex(newManifestRef),
@@ -122,6 +123,7 @@ function hexToBytes(hex: string): Uint8Array {
   const clean = hex.startsWith('0x') ? hex.slice(2) : hex
   const out = new Uint8Array(clean.length / 2)
   for (let i = 0; i < out.length; i++) out[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16)
+
   return out
 }
 

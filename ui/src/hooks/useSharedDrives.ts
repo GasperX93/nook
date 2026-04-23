@@ -104,6 +104,7 @@ export function useSharedDrivesV2() {
       if (prev.some(d => d.driveId === drive.driveId)) return prev
       const next = [...prev, drive]
       persistV2(next)
+
       return next
     })
   }
@@ -112,6 +113,7 @@ export function useSharedDrivesV2() {
     setDrives(prev => {
       const next = prev.map(d => (d.driveId === driveId ? { ...d, ...patch } : d))
       persistV2(next)
+
       return next
     })
   }
@@ -120,6 +122,7 @@ export function useSharedDrivesV2() {
     setDrives(prev => {
       const next = prev.filter(d => d.driveId !== driveId)
       persistV2(next)
+
       return next
     })
   }
@@ -160,14 +163,17 @@ export function parseShareLinkTyped(link: string): ParsedShareLinkTyped | null {
   try {
     const trimmed = link.trim()
     const NOOK_PREFIX = 'nook://drive-share?'
+
     if (!trimmed.startsWith(NOOK_PREFIX)) return null
     const params = new URLSearchParams(trimmed.slice(NOOK_PREFIX.length))
 
     const driveId = params.get('driveId')
+
     if (driveId) {
       const creator = params.get('creator')?.toLowerCase()
       const topic = params.get('topic')
       const pub = params.get('pub')
+
       if (!creator || !topic || !pub) return null
       const version = parseInt(params.get('version') ?? '1', 10)
       const name = decodeURIComponent(params.get('name') ?? '')
@@ -176,18 +182,32 @@ export function parseShareLinkTyped(link: string): ParsedShareLinkTyped | null {
       const addr = params.get('addr')
       const wpub = params.get('wpub')
       const sender = addr && wpub ? { addr, walletPublicKey: wpub, beePublicKey: pub, name: undefined } : undefined
-      return { type: 'nook-drive-share-v2', driveId, creatorAddress: creator, driveFeedTopic: topic, walletPublicKey: pub, writeKeyVersion: version, name, role, writeKeyBlob, sender }
+
+      return {
+        type: 'nook-drive-share-v2',
+        driveId,
+        creatorAddress: creator,
+        driveFeedTopic: topic,
+        walletPublicKey: pub,
+        writeKeyVersion: version,
+        name,
+        role,
+        writeKeyBlob,
+        sender,
+      }
     }
 
     // v1 legacy
     const feedTopic = params.get('topic')
     const feedOwner = params.get('owner')
     const actPublisher = params.get('publisher')
+
     if (!feedTopic || !feedOwner || !actPublisher) return null
     const addr = params.get('addr')
     const wpub = params.get('wpub')
     const name = params.get('name') ?? undefined
     const sender = addr && wpub ? { addr, walletPublicKey: wpub, beePublicKey: actPublisher, name } : undefined
+
     return { type: 'nook-drive-share-v1', feedTopic, feedOwner, actPublisher, sender }
   } catch {
     return null
@@ -209,11 +229,14 @@ export function buildV2ShareLink(
     name: drive.name,
     role,
   })
+
   if (role === 'writer' && writeKeyBlob) params.set('writeKey', bytesToHex(writeKeyBlob))
+
   if (sender) {
     params.set('addr', sender.addr)
     params.set('wpub', sender.walletPublicKey)
   }
+
   return `nook://drive-share?${params.toString()}`
 }
 

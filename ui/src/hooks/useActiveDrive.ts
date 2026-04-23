@@ -16,6 +16,7 @@ export function useActiveDrive(): ActiveDriveCtx {
 
   const writeKeyBytes = useMemo(() => {
     if (!drive?.writeKey) return null
+
     return hexToBytes(drive.writeKey)
   }, [drive?.writeKey])
 
@@ -32,5 +33,6 @@ function hexToBytes(hex: string): Uint8Array {
   for (let i = 0; i < out.length; i++) {
     out[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16)
   }
+
   return out
 }
