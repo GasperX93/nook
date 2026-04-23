@@ -22,6 +22,7 @@ import {
   Upload,
   Users,
 } from 'lucide-react'
+import { Bee } from '@ethersphere/bee-js'
 import { useQueryClient } from '@tanstack/react-query'
 import React, { useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
@@ -43,7 +44,7 @@ import { useAddresses, useBuyStamp, useChainState, useStamps, useTopupStamp, use
 import { useAppStore } from '../store/app'
 import { useDerivedKey } from '../hooks/useDerivedKey'
 import { useDriveMetadata } from '../hooks/useDriveMetadata'
-import { useSharedDrives } from '../hooks/useSharedDrives'
+import { useSharedDrives, useSharedDrivesV2, type SharedDriveV2 } from '../hooks/useSharedDrives'
 import { useUploadHistory, type DriveFolder, type UploadRecord } from '../hooks/useUploadHistory'
 import {
   detectIndexDocument,
@@ -52,9 +53,11 @@ import {
   totalSize,
   type FileEntry,
 } from '../utils/directory'
+import { createSharedDrive } from '../api/createSharedDrive'
 import AddSharedDriveModal from '../components/AddSharedDriveModal'
 import ENSModal from '../components/ENSModal'
 import ShareModal from '../components/ShareModal'
+import ShareModalV2 from '../components/ShareModalV2'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -1765,6 +1768,152 @@ function AddFilePanel({ driveId, encrypted, actHistoryRef, onDone, onAdd, onActH
   )
 }
 
+// ─── CreateCollaborativeDriveModal ────────────────────────────────────────────
+
+const BEE_URL = `${window.location.origin}/bee-api`
+
+function CreateCollaborativeDriveModal({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void
+  onCreated: (drive: SharedDriveV2) => void
+}) {
+  const { data: stamps } = useStamps()
+  const { signer, derive } = useDerivedKey()
+  const [name, setName] = useState('')
+  const [stampId, setStampId] = useState('')
+  const [creating, setCreating] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const usableStamps = (stamps ?? []).filter(s => s.usable)
+
+  useEffect(() => {
+    if (!stampId && usableStamps.length > 0) setStampId(usableStamps[0].batchID)
+  }, [usableStamps.length]) // eslint-disable-line
+
+  async function handleCreate() {
+    if (!name.trim() || !stampId) return
+    setCreating(true)
+    setError(null)
+    try {
+      let activeSigner = signer
+
+      if (!activeSigner) activeSigner = await derive()
+
+      if (!activeSigner) {
+        setError('Connect your wallet to create a collaborative drive.')
+        setCreating(false)
+
+        return
+      }
+      const bee = new Bee(BEE_URL)
+      const creatorAddress = activeSigner.getAddress()
+      const { drive } = await createSharedDrive({
+        bee,
+        signer: activeSigner,
+        creatorAddress,
+        stamp: stampId,
+        name: name.trim(),
+      })
+      onCreated(drive)
+      onClose()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not create drive.')
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 flex items-center justify-center z-50"
+      style={{ backgroundColor: 'rgba(0,0,0,0.6)' }}
+      onClick={onClose}
+    >
+      <div
+        className="rounded-xl border p-6 w-96 space-y-5"
+        style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-2">
+          <Users size={14} style={{ color: 'rgb(var(--accent))' }} />
+          <p className="text-sm font-semibold">New collaborative drive</p>
+        </div>
+
+        <div>
+          <p className="text-xs uppercase tracking-widest mb-2" style={{ color: 'rgb(var(--fg-muted))' }}>
+            Drive name <span style={{ color: '#ef4444' }}>*</span>
+          </p>
+          <input
+            type="text"
+            value={name}
+            onChange={e => setName(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && void handleCreate()}
+            placeholder="e.g. Team docs, Shared photos…"
+            className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-none"
+            style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
+            autoFocus
+          />
+        </div>
+
+        <div>
+          <p className="text-xs uppercase tracking-widest mb-2" style={{ color: 'rgb(var(--fg-muted))' }}>
+            Storage drive
+          </p>
+          {usableStamps.length === 0 ? (
+            <p className="text-xs" style={{ color: '#ef4444' }}>
+              No usable drives found. Buy a drive first from "My Drives".
+            </p>
+          ) : (
+            <select
+              value={stampId}
+              onChange={e => setStampId(e.target.value)}
+              className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-none"
+              style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
+            >
+              {usableStamps.map(s => (
+                <option key={s.batchID} value={s.batchID}>
+                  {s.label || `${s.batchID.slice(0, 12)}…`} · {ttlToDays(s.batchTTL)} left
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+
+        <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+          Files are stored encrypted on your drive. You can grant others read or write access after creation.
+        </p>
+
+        {error && (
+          <p className="text-xs" style={{ color: '#ef4444' }}>
+            {error}
+          </p>
+        )}
+
+        <div className="flex gap-3">
+          <button
+            onClick={onClose}
+            className="flex-1 py-2 rounded-lg text-sm"
+            style={{ color: 'rgb(var(--fg-muted))' }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => void handleCreate()}
+            disabled={creating || !name.trim() || !stampId}
+            className="flex-1 py-2 rounded-lg text-sm font-semibold disabled:opacity-40 flex items-center justify-center gap-2"
+            style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+          >
+            {creating && <RefreshCw size={13} className="animate-spin" />}
+            {creating ? 'Creating…' : 'Create drive'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Main component ────────────────────────────────────────────────────────────
 
 // ─── SharedDriveCard ──────────────────────────────────────────────────────────
@@ -2046,6 +2195,7 @@ export default function Drive() {
   const location = useLocation()
   const driveMetadata = useDriveMetadata()
   const sharedDrives = useSharedDrives()
+  const sharedDrivesV2 = useSharedDrivesV2()
 
   const [customDriveLabels, setCustomDriveLabels] = useState<Record<string, string>>(() => {
     try {
@@ -2069,6 +2219,8 @@ export default function Drive() {
   const [showExtendModal, setShowExtendModal] = useState<string | null>(null) // batchID
   const [showShareModal, setShowShareModal] = useState<string | null>(null) // batchID
   const [showAddSharedModal, setShowAddSharedModal] = useState(false)
+  const [showCreateSharedModal, setShowCreateSharedModal] = useState(false)
+  const [showShareModalV2, setShowShareModalV2] = useState<SharedDriveV2 | null>(null)
   const [driveTab, setDriveTab] = useState<'mine' | 'shared'>('mine')
   const [addingFile, setAddingFile] = useState(false)
   const [search, setSearch] = useState('')
@@ -2181,14 +2333,24 @@ export default function Drive() {
               New drive
             </button>
           ) : (
-            <button
-              onClick={() => setShowAddSharedModal(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0"
-              style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
-            >
-              <Plus size={12} />
-              Add shared drive
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowCreateSharedModal(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium shrink-0"
+                style={{ color: 'rgb(var(--fg-muted))' }}
+              >
+                <Users size={12} />
+                New collaborative
+              </button>
+              <button
+                onClick={() => setShowAddSharedModal(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0"
+                style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+              >
+                <Plus size={12} />
+                Add shared drive
+              </button>
+            </div>
           )}
         </div>
 
@@ -2214,7 +2376,10 @@ export default function Drive() {
                 : { color: 'rgb(var(--fg-muted))' }
             }
           >
-            Shared with me{sharedDrives.drives.length > 0 ? ` (${sharedDrives.drives.length})` : ''}
+            Shared with me
+            {sharedDrives.drives.length + sharedDrivesV2.drives.length > 0
+              ? ` (${sharedDrives.drives.length + sharedDrivesV2.drives.length})`
+              : ''}
           </button>
         </div>
 
@@ -2247,12 +2412,50 @@ export default function Drive() {
           </div>
         ) : driveTab === 'shared' ? (
           /* Shared drives tab */
-          sharedDrives.drives.length === 0 ? (
+          sharedDrives.drives.length === 0 && sharedDrivesV2.drives.length === 0 ? (
             <p className="text-xs text-center py-8" style={{ color: 'rgb(var(--fg-muted))' }}>
               No shared drives yet. When someone shares a drive with you, paste the share link here.
             </p>
           ) : (
             <div className="border-t" style={{ borderColor: 'rgb(var(--border))' }}>
+              {sharedDrivesV2.drives.map(drive => (
+                <div
+                  key={drive.driveId}
+                  className="flex items-center justify-between px-4 py-3 border-b"
+                  style={{ borderColor: 'rgb(var(--border))' }}
+                >
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">{drive.name}</p>
+                    <p className="text-xs mt-0.5" style={{ color: 'rgb(var(--fg-muted))' }}>
+                      <span
+                        className="px-1.5 py-0.5 rounded mr-1 text-[10px]"
+                        style={{ backgroundColor: 'rgba(74,222,128,0.1)', color: '#4ade80' }}
+                      >
+                        {drive.myRole}
+                      </span>
+                      {drive.creatorAddress.slice(0, 8)}…{drive.creatorAddress.slice(-4)}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 ml-3">
+                    {drive.myRole === 'creator' && (
+                      <button
+                        onClick={() => setShowShareModalV2(drive)}
+                        className="text-xs px-2 py-1 rounded border"
+                        style={{ borderColor: 'rgb(var(--border))', color: 'rgb(var(--fg-muted))' }}
+                      >
+                        Share
+                      </button>
+                    )}
+                    <button
+                      onClick={() => sharedDrivesV2.removeDrive(drive.driveId)}
+                      className="text-xs px-2 py-1 rounded border"
+                      style={{ borderColor: 'rgb(var(--border))', color: 'rgb(var(--fg-muted))' }}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              ))}
               {sharedDrives.drives.map(drive => (
                 <SharedDriveCard
                   key={drive.id}
@@ -2326,6 +2529,7 @@ export default function Drive() {
             myPublicKey={nodeAddresses?.publicKey}
             onClose={() => setShowAddSharedModal(false)}
             onAdd={drive => sharedDrives.add(drive)}
+            onAddV2={drive => sharedDrivesV2.addDrive(drive)}
           />
         )}
 
@@ -2366,6 +2570,16 @@ export default function Drive() {
               />
             )
           })()}
+        {showShareModalV2 && <ShareModalV2 drive={showShareModalV2} onClose={() => setShowShareModalV2(null)} />}
+        {showCreateSharedModal && (
+          <CreateCollaborativeDriveModal
+            onClose={() => setShowCreateSharedModal(false)}
+            onCreated={drive => {
+              sharedDrivesV2.addDrive(drive)
+              setShowCreateSharedModal(false)
+            }}
+          />
+        )}
         {updatingRecord && <UpdateFeedModal record={updatingRecord} onClose={() => setUpdatingId(null)} />}
         {retrieveOpen && <RetrieveModal onClose={() => setRetrieveOpen(false)} />}
         {ensRecordId &&

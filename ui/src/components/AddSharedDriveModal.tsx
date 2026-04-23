@@ -8,7 +8,16 @@ import { useEffect, useMemo, useState } from 'react'
 
 import { beeApi } from '../api/bee'
 import { serverApi } from '../api/server'
-import { parseShareLink, type SenderContactInfo, type SharedFile } from '../hooks/useSharedDrives'
+import { decryptWriteKey } from '../crypto/drive'
+import {
+  parseShareLink,
+  parseShareLinkTyped,
+  useSharedDrivesV2,
+  type SenderContactInfo,
+  type SharedDriveV2,
+  type SharedFile,
+} from '../hooks/useSharedDrives'
+import { useDerivedKey } from '../hooks/useDerivedKey'
 import { addContact, loadContacts } from '../notify/storage'
 import type { NookContact } from '../notify/types'
 
@@ -26,22 +35,39 @@ interface AddSharedDriveModalProps {
     feedTopic?: string
     feedOwner?: string
   }) => void
+  /** Called when a v2 shared drive is imported — separate from legacy onAdd */
+  onAddV2?: (drive: SharedDriveV2) => void
 }
 
-export default function AddSharedDriveModal({ myPublicKey, initialLink, onClose, onAdd }: AddSharedDriveModalProps) {
+export default function AddSharedDriveModal({
+  myPublicKey,
+  initialLink,
+  onClose,
+  onAdd,
+  onAddV2,
+}: AddSharedDriveModalProps) {
   const [link, setLink] = useState(initialLink ?? '')
   const [name, setName] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [copiedKey, setCopiedKey] = useState(false)
 
+  const { signer, derive } = useDerivedKey()
+  const { addDrive: addDriveV2 } = useSharedDrivesV2()
+
   // Sender contact import
   const existingContacts = useMemo<NookContact[]>(() => loadContacts(), [])
   const [addAsContact, setAddAsContact] = useState(true)
   const [contactNickname, setContactNickname] = useState('')
 
+  const parsedTyped = useMemo(() => (link.trim() ? parseShareLinkTyped(link) : null), [link])
   const parsed = useMemo(() => (link.trim() ? parseShareLink(link) : null), [link])
-  const sender: SenderContactInfo | undefined = parsed?.sender
+  const sender: SenderContactInfo | undefined =
+    (parsedTyped?.type === 'nook-drive-share-v1'
+      ? parsedTyped.sender
+      : parsedTyped?.type === 'nook-drive-share-v2'
+        ? parsedTyped.sender
+        : undefined) ?? parsed?.sender
   const senderAlreadyContact = useMemo(() => {
     if (!sender) return false
 
@@ -55,7 +81,7 @@ export default function AddSharedDriveModal({ myPublicKey, initialLink, onClose,
   }, [sender, contactNickname])
 
   async function handleAdd() {
-    if (!parsed) {
+    if (!parsedTyped && !parsed) {
       setError('Invalid share link.')
 
       return
@@ -69,6 +95,69 @@ export default function AddSharedDriveModal({ myPublicKey, initialLink, onClose,
 
     setLoading(true)
     setError(null)
+
+    // ── V2 shared drive path ────────────────────────────────────────────────
+    if (parsedTyped?.type === 'nook-drive-share-v2') {
+      try {
+        let writeKeyHex: string | undefined
+
+        if (parsedTyped.writeKeyBlob && parsedTyped.role === 'writer') {
+          let activeSigner = signer
+
+          if (!activeSigner) activeSigner = await derive()
+
+          if (!activeSigner) {
+            setError('Connect your wallet to import a writer drive.')
+            setLoading(false)
+
+            return
+          }
+          try {
+            const wkBytes = await decryptWriteKey(hexToBytes(parsedTyped.writeKeyBlob), activeSigner.getSigningKey())
+            writeKeyHex = bytesToHex(wkBytes)
+          } catch {
+            // Decryption failed — add as reader-only
+          }
+        }
+
+        const driveName = name.trim() || parsedTyped.name || 'Shared drive'
+        const drive: SharedDriveV2 = {
+          driveId: parsedTyped.driveId,
+          name: driveName,
+          creatorAddress: parsedTyped.creatorAddress,
+          myRole: writeKeyHex ? 'writer' : 'reader',
+          writeKey: writeKeyHex,
+          writeKeyVersion: parsedTyped.writeKeyVersion,
+          walletPublicKey: parsedTyped.walletPublicKey,
+          driveFeedTopic: parsedTyped.driveFeedTopic,
+          addedAt: Date.now(),
+        }
+
+        if (onAddV2) onAddV2(drive)
+        else addDriveV2(drive)
+
+        if (showContactImport && addAsContact && sender) {
+          tryAddSenderContact(sender, contactNickname.trim(), existingContacts)
+        }
+
+        onClose()
+
+        return
+      } catch {
+        setError('Could not add this drive. Check the link and try again.')
+        setLoading(false)
+
+        return
+      }
+    }
+
+    // ── Legacy v1 path ──────────────────────────────────────────────────────
+    if (!parsed) {
+      setError('Invalid share link.')
+      setLoading(false)
+
+      return
+    }
 
     try {
       // Drive: read feed → get wrapper → ACT download metadata
@@ -114,6 +203,21 @@ export default function AddSharedDriveModal({ myPublicKey, initialLink, onClose,
       setError('Could not access this drive. Make sure the owner has granted you access using your sharing key.')
     } finally {
       setLoading(false)
+    }
+  }
+
+  function tryAddSenderContact(senderInfo: SenderContactInfo, nickname: string, contacts: NookContact[]) {
+    try {
+      addContact(contacts, {
+        id: senderInfo.addr.toLowerCase(),
+        nickname,
+        walletPublicKey: senderInfo.walletPublicKey,
+        beePublicKey: senderInfo.beePublicKey,
+        source: 'drive-share',
+        addedAt: Date.now(),
+      })
+    } catch {
+      // Race with another tab — non-fatal
     }
   }
 
@@ -261,4 +365,18 @@ export default function AddSharedDriveModal({ myPublicKey, initialLink, onClose,
       </div>
     </div>
   )
+}
+
+function hexToBytes(hex: string): Uint8Array {
+  const clean = hex.startsWith('0x') ? hex.slice(2) : hex
+  const out = new Uint8Array(clean.length / 2)
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16)
+
+  return out
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes)
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('')
 }
