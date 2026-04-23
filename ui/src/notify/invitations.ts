@@ -56,6 +56,20 @@ export function addInvitation(invs: Invitation[], senderAddr: string, blockNumbe
   return updated
 }
 
+/**
+ * Drop all invitation rows for a sender. Called when the user removes the
+ * sender from contacts, so a future on-chain wake-up from them surfaces as
+ * a fresh invitation instead of being dedup'd against a ghost row.
+ */
+export function removeInvitationsFor(invs: Invitation[], senderAddr: string): Invitation[] {
+  const id = senderAddr.toLowerCase()
+  const updated = invs.filter(i => i.senderAddr !== id)
+
+  saveInvitations(updated)
+
+  return updated
+}
+
 /** Mark an invitation processed once user adds the sender as contact. */
 export function markInvitationProcessed(invs: Invitation[], senderAddr: string): Invitation[] {
   const id = senderAddr.toLowerCase()
