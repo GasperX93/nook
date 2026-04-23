@@ -35,6 +35,27 @@
     --accent: 0 200 83; /* shared with dark */
   }
 
+  /*
+   * shadcn-aligned tokens — chain to Nook vars so the new primitives consume
+   * the same source-of-truth as existing inline-styled components. Two notes
+   * on the naming overlap with Nook's own variables:
+   *
+   *  - Nook's --accent is the BRAND action color (used inline as
+   *    rgb(var(--accent))). We keep it untouched and map shadcn's --primary
+   *    to it. New `bg-primary` classes get Nook's brand color.
+   *  - shadcn's "accent" slot is a subtle hover bg (not a brand color), so
+   *    we expose it as --surface-hover here and map Tailwind's `accent`
+   *    color name to it (see tailwind.config.js). This avoids name clash
+   *    with Nook's --accent.
+   */
+  :root {
+    --primary-foreground: 255 255 255;
+    --destructive: 220 38 38; /* #dc2626 */
+    --destructive-foreground: 255 255 255;
+    --surface-hover: var(--bg-surface); /* shadcn 'accent' (hover bg) */
+    --radius: 0.5rem; /* 8px — Figma rounded-md */
+  }
+
   * {
     border-color: rgb(var(--border));
   }

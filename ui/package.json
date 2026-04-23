@@ -12,10 +12,12 @@
   },
   "dependencies": {
     "@ethersphere/bee-js": "^11.1.1",
+    "@radix-ui/react-slot": "^1.2.4",
     "@rainbow-me/rainbowkit": "^2.2.10",
     "@swarm-notify/sdk": "github:GasperX93/swarm-notify#afc9675ec0a27ea2a6aad9be7bd2399508373999",
     "@tanstack/react-query": "^5.90.21",
     "@upcoming/multichain-widget": "^0.10.8",
+    "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "ethereum-cryptography": "^3.2.0",
     "lucide-react": "^0.577.0",
