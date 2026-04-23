@@ -377,7 +377,7 @@ export default function Wallet() {
               className="px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-40 transition-opacity shrink-0"
               style={{
                 backgroundColor: redeemDone ? 'rgba(74,222,128,0.15)' : 'rgb(var(--accent))',
-                color: redeemDone ? '#4ade80' : '#fff',
+                color: redeemDone ? '#4ade80' : 'rgb(var(--primary-foreground))',
               }}
             >
               {redeeming ? 'Redeeming…' : redeemDone ? 'Done' : 'Redeem'}
@@ -530,7 +530,7 @@ function SharingKey({ addresses }: { addresses?: NodeAddresses }) {
           className="shrink-0 px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1"
           style={{
             backgroundColor: copied ? 'rgba(74,222,128,0.15)' : 'rgb(var(--accent))',
-            color: copied ? '#4ade80' : '#fff',
+            color: copied ? '#4ade80' : 'rgb(var(--primary-foreground))',
           }}
         >
           {copied ? <Check size={11} /> : <Copy size={11} />}
