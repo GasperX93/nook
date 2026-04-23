@@ -469,7 +469,7 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
             onClick={doExtend}
             disabled={topup.isPending || !cost}
             className="flex-1 py-2 rounded-lg text-sm font-semibold disabled:opacity-40"
-            style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+            style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
           >
             {topup.isPending ? 'Extending…' : 'Extend drive'}
           </button>
@@ -659,7 +659,7 @@ function UpdateFeedModal({ record, onClose }: { record: UploadRecord; onClose: (
                 onClick={doUpdate}
                 disabled={!content}
                 className="flex-1 py-2 rounded-lg text-sm font-semibold disabled:opacity-40"
-                style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+                style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
               >
                 Publish update
               </button>
@@ -840,7 +840,7 @@ function RetrieveModal({ onClose }: { onClose: () => void }) {
             onClick={retrieve}
             disabled={loading || !hash.trim()}
             className="flex-1 py-2 rounded-lg text-sm font-semibold disabled:opacity-40 flex items-center justify-center gap-2"
-            style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+            style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
           >
             {loading ? <RefreshCw size={13} className="animate-spin" /> : <Download size={13} />}
             {loading ? 'Downloading…' : 'Download'}
@@ -2176,7 +2176,7 @@ export default function Drive() {
             <button
               onClick={() => setShowBuyModal(true)}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0"
-              style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+              style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
             >
               <Plus size={12} />
               New drive
@@ -2185,7 +2185,7 @@ export default function Drive() {
             <button
               onClick={() => setShowAddSharedModal(true)}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0"
-              style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+              style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
             >
               <Plus size={12} />
               Add shared drive
@@ -2268,7 +2268,7 @@ export default function Drive() {
             <button
               onClick={() => setShowBuyModal(true)}
               className="mt-2 px-4 py-2 rounded-lg text-sm font-semibold"
-              style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+              style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
             >
               New drive
             </button>
@@ -2592,7 +2592,7 @@ export default function Drive() {
           <button
             onClick={() => setAddingFile(v => !v)}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0"
-            style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+            style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
           >
             <Upload size={12} />
             Upload
@@ -2627,7 +2627,7 @@ export default function Drive() {
           <button
             onClick={() => setAddingFile(v => !v)}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0"
-            style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+            style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
           >
             <Upload size={12} />
             Upload

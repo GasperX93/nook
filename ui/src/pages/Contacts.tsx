@@ -240,7 +240,7 @@ export default function Contacts() {
     'px-4 py-2 rounded text-xs font-semibold uppercase tracking-widest transition-opacity disabled:opacity-40 disabled:cursor-not-allowed'
   const btnGhost =
     'px-3 py-1.5 rounded text-xs font-semibold uppercase tracking-widest transition-opacity disabled:opacity-40 disabled:cursor-not-allowed'
-  const accentStyle = { backgroundColor: 'rgb(var(--accent))', color: '#fff' }
+  const accentStyle = { backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }
   const ghostStyle = { backgroundColor: 'rgb(var(--bg))', border: '1px solid rgb(var(--border))' }
 
   return (

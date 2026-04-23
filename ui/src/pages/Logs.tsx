@@ -29,7 +29,7 @@ export default function Logs() {
               onClick={() => setTab(t)}
               className="px-3 py-1.5 rounded text-xs font-semibold uppercase tracking-widest transition-colors"
               style={
-                tab === t ? { backgroundColor: 'rgb(var(--accent))', color: '#fff' } : { color: 'rgb(var(--fg-muted))' }
+                tab === t ? { backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' } : { color: 'rgb(var(--fg-muted))' }
               }
             >
               {t === 'bee' ? 'Bee' : 'Desktop'}

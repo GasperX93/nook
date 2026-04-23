@@ -332,7 +332,7 @@ export function SwarmNotifyTest() {
   const btnClass =
     'px-3 py-1.5 rounded text-xs font-semibold uppercase tracking-widest transition-opacity disabled:opacity-40'
   const btnStyle = { backgroundColor: 'rgb(var(--bg))', border: '1px solid rgb(var(--border))' }
-  const accentStyle = { backgroundColor: 'rgb(var(--accent))', color: '#fff' }
+  const accentStyle = { backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }
   const inputClass = 'rounded border px-2 py-1 text-xs font-mono focus:outline-none w-full'
   const inputStyle = {
     backgroundColor: 'rgb(var(--bg))',

@@ -351,7 +351,7 @@ export default function Messages() {
                   {unread > 0 && (
                     <span
                       className="text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0"
-                      style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+                      style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
                     >
                       {unread}
                     </span>

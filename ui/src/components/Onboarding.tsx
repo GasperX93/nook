@@ -176,7 +176,7 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
             <button
               onClick={() => setStep('funding')}
               className="px-6 py-3 rounded-lg text-sm font-semibold transition-opacity"
-              style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+              style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
             >
               Continue →
             </button>
@@ -323,7 +323,7 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
             <button
               onClick={finish}
               className="px-6 py-3 rounded-lg text-sm font-semibold transition-opacity"
-              style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+              style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
             >
               Create your first drive →
             </button>
