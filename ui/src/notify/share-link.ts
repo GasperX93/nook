@@ -32,7 +32,7 @@ export interface DecodeError {
   error: string
 }
 
-function normalizeHex(value: string, expectedHexLen: number, label: string): string {
+export function normalizeHex(value: string, expectedHexLen: number, label: string): string {
   const stripped = value.startsWith('0x') ? value.slice(2) : value
 
   if (stripped.length !== expectedHexLen) {
