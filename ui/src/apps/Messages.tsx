@@ -64,7 +64,17 @@ export default function Messages() {
   const sharedDrives = useSharedDrives()
   const scrollRef = useRef<HTMLDivElement>(null)
 
-  const pending = useMemo(() => pendingInvitations(invitations), [invitations])
+  // Hide invitations from senders who are already contacts. Otherwise an old
+  // invitation row pinned to the top of the list (created before the contact
+  // was added) can shadow the actual conversation: clicking it shows the
+  // "Add as contact" panel instead of the message thread, making it look like
+  // no messages arrived. addContact never marks the invitation processed, so
+  // the row would otherwise live forever.
+  const pending = useMemo(() => {
+    const known = new Set(contacts.map(c => c.id.toLowerCase()))
+
+    return pendingInvitations(invitations).filter(i => !known.has(i.senderAddr))
+  }, [invitations, contacts])
 
   const stampId = (stamps ?? []).find(s => s.usable)?.batchID ?? ''
   const selected = contacts.find(c => c.id === selectedId) ?? null
