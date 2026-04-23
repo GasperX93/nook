@@ -52,6 +52,7 @@ export interface Status {
   config: Record<string, unknown> | null
   mode: BeeMode
   address?: string
+  needsFunding?: boolean
 }
 
 export interface Peers {

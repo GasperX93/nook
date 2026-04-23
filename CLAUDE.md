@@ -51,8 +51,8 @@ The app has two main layers:
 | `server.ts` | Koa HTTP server — REST API + serves React dashboard at `/dashboard` |
 | `launcher.ts` | Spawns the Bee binary as a child process, streams logs |
 | `lifecycle.ts` | `BeeManager`: start/stop/restart Bee; keep-alive loop |
-| `funding-monitor.ts` | Detects ultra-light/light mode, polls wallet balance via RPC, auto-switches to light mode when funded |
-| `status.ts` | `/status` endpoint — exposes `mode` (ultra-light/light), `assetsReady` |
+| `funding-monitor.ts` | Detects ultra-light/light mode, polls wallet balance via RPC, auto-switches to light mode when funded, exposes `needsFunding` when light-mode wallet is empty |
+| `status.ts` | `/status` endpoint — exposes `mode` (ultra-light/light), `assetsReady`, `needsFunding` |
 | `config.ts` | Reads/writes Bee YAML config |
 | `downloader.ts` | Downloads the correct Bee binary version |
 | `blockchain.ts` | Wallet management, BZZ/DAI transactions |
@@ -63,7 +63,7 @@ The app has two main layers:
 
 **Startup sequence** (`index.ts`): migrations → splash → download Bee if needed → API key → free port → start Koa server → init Bee config → launch Bee → start funding monitor → setup tray → keep-alive loop.
 
-**Ultra-light / light mode**: New installs start in ultra-light mode (`swap-enable: false`, no `blockchain-rpc-endpoint`). Bee API is available immediately without funds. The funding monitor polls wallet balance every 15s. When xDAI is detected: stop Bee → write `blockchain-rpc-endpoint` and `swap-enable: true` → restart in light mode. Postage sync takes ~2–3 minutes thanks to clean snapshot loading.
+**Ultra-light / light mode**: New installs start in ultra-light mode (`swap-enable: false`, no `blockchain-rpc-endpoint`). Bee API is available immediately without funds. The funding monitor polls wallet balance every 15s in **both** modes. In ultra-light mode, when xDAI is detected: stop Bee → write `blockchain-rpc-endpoint` and `swap-enable: true` → restart in light mode. In light mode, if the wallet has insufficient xDAI, the monitor sets `needsFunding: true` on the `/status` endpoint so the UI can show the funding banner. Postage sync takes ~2–3 minutes thanks to clean snapshot loading.
 
 **Server** (`server.ts`): Koa REST API. Public routes: `/info`, `/price`. Auth-required routes (API key header): `/status`, `/config`, `/logs/*`, `/restart`, `/swap`, `/redeem`, `/buy-stamp`, `/feed-update`, `/feed-read`, `/withdraw`, `/peers`, `/act/*`, `/grantee`, `/upload-bytes`.
 

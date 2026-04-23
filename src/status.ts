@@ -1,7 +1,7 @@
 import { readFileSync } from 'fs'
 import { join } from 'path'
 import { isBeeAssetReady } from './downloader'
-import { BeeMode, getMode } from './funding-monitor'
+import { BeeMode, getMode, getNeedsFunding } from './funding-monitor'
 import { checkPath, getPath } from './path'
 import { readConfigYaml } from './config'
 
@@ -10,12 +10,14 @@ interface Status {
   config?: Record<string, any>
   assetsReady: boolean
   mode: BeeMode
+  needsFunding: boolean
 }
 
 export function getStatus() {
   const status: Status = {
     assetsReady: isBeeAssetReady(),
     mode: getMode(),
+    needsFunding: getNeedsFunding(),
   }
 
   if (!checkPath('config.yaml') || !checkPath('data-dir')) {

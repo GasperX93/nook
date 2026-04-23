@@ -16,6 +16,7 @@ const RPC_ENDPOINT = 'https://rpc.gnosischain.com'
 
 let currentMode: BeeMode = 'light'
 let pollTimer: ReturnType<typeof setInterval> | null = null
+let needsFunding = false
 
 export function detectMode(): BeeMode {
   if (!checkPath('config.yaml')) return 'ultra-light'
@@ -31,11 +32,13 @@ export function getMode(): BeeMode {
   return currentMode
 }
 
+export function getNeedsFunding(): boolean {
+  return needsFunding
+}
+
 export function startMonitorIfNeeded() {
   currentMode = detectMode()
   logger.info(`Bee mode: ${currentMode}`)
-
-  if (currentMode === 'light') return
 
   if (pollTimer) return
 
@@ -68,10 +71,21 @@ async function checkBalance(address: string, rpc: string) {
     const provider = new providers.JsonRpcProvider(rpc, 100)
     const balance = await provider.getBalance(`0x${address}`)
     const threshold = utils.parseEther(MIN_XDAI)
+    const funded = balance.gte(threshold)
 
-    if (balance.gte(threshold)) {
+    if (currentMode === 'ultra-light' && funded) {
       logger.info(`Funding detected (${utils.formatEther(balance)} xDAI) — switching to light mode`)
+      needsFunding = false
       await switchToLightMode()
+    } else if (currentMode === 'light') {
+      const wasMissing = needsFunding
+      needsFunding = !funded
+
+      if (needsFunding && !wasMissing) {
+        logger.warn(`Wallet 0x${address} has insufficient xDAI — node needs funding to deploy chequebook`)
+      } else if (!needsFunding && wasMissing) {
+        logger.info(`Funding detected (${utils.formatEther(balance)} xDAI) — wallet is now funded`)
+      }
     }
   } catch (err) {
     // RPC failures are non-fatal — retry next interval
