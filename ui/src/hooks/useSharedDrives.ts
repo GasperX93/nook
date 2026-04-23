@@ -4,6 +4,8 @@
  */
 import { useState } from 'react'
 
+import { normalizeHex } from '../notify/share-link'
+
 const STORAGE_KEY = 'nook-shared-drives'
 
 export interface SharedFile {
@@ -74,16 +76,31 @@ export function parseShareLink(link: string): ParsedShareLink | null {
 
     if (!trimmed.startsWith(NOOK_PREFIX)) return null
     const params = new URLSearchParams(trimmed.slice(NOOK_PREFIX.length))
-    const feedTopic = params.get('topic')
-    const feedOwner = params.get('owner')
-    const actPublisher = params.get('publisher')
+    const rawTopic = params.get('topic')
+    const rawOwner = params.get('owner')
+    const rawPublisher = params.get('publisher')
 
-    if (!feedTopic || !feedOwner || !actPublisher) return null
+    if (!rawTopic || !rawOwner || !rawPublisher) return null
 
-    const addr = params.get('addr')
-    const wpub = params.get('wpub')
+    // Validate shape — same rules used by the contact-link parser. Catches
+    // truncated / malformed links before they pollute localStorage with
+    // garbage that breaks ECIES + downstream hexToBytes calls.
+    const feedTopic = normalizeHex(rawTopic, 64, 'topic')
+    const feedOwner = '0x' + normalizeHex(rawOwner, 40, 'owner')
+    const actPublisher = normalizeHex(rawPublisher, 66, 'publisher')
+
+    const rawAddr = params.get('addr')
+    const rawWpub = params.get('wpub')
     const name = params.get('name') ?? undefined
-    const sender = addr && wpub ? { addr, walletPublicKey: wpub, beePublicKey: actPublisher, name } : undefined
+
+    let sender: ParsedShareLink['sender']
+
+    if (rawAddr && rawWpub) {
+      const addr = '0x' + normalizeHex(rawAddr, 40, 'addr')
+      const walletPublicKey = normalizeHex(rawWpub, 66, 'wpub')
+
+      sender = { addr, walletPublicKey, beePublicKey: actPublisher, name }
+    }
 
     return { feedTopic, feedOwner, actPublisher, sender }
   } catch {
