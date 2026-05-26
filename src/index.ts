@@ -5,7 +5,7 @@ import PACKAGE_JSON from '../package.json'
 import { ensureApiKey } from './api-key'
 import { openDashboardInBrowser } from './browser'
 import { getNookVersionFromFile, writeNookVersionFile } from './config'
-import { runDownloader } from './downloader'
+import { EXPECTED_BEE_VERSION, getInstalledBeeVersion, runDownloader } from './downloader'
 import { runElectronTray } from './electron'
 import { startChequebookMonitor } from './chequebook-monitor'
 import { startMonitorIfNeeded } from './funding-monitor'
@@ -80,16 +80,20 @@ async function main() {
 
   // check if the assets and the bee binary matches the desktop version
   const desktopFileVersion = getNookVersionFromFile()
-  const force = desktopFileVersion !== PACKAGE_JSON.version
+  const desktopVersionChanged = desktopFileVersion !== PACKAGE_JSON.version
+  const installedBeeVersion = getInstalledBeeVersion()
+  const beeVersionMismatch = installedBeeVersion !== null && installedBeeVersion !== EXPECTED_BEE_VERSION
+  const force = desktopVersionChanged || beeVersionMismatch
 
   logger.info(
-    `Desktop version: ${PACKAGE_JSON.version}, desktop file version: ${desktopFileVersion}, downloading assets: ${force}`,
+    `Desktop version: ${PACKAGE_JSON.version}, desktop file version: ${desktopFileVersion}, ` +
+      `installed Bee: ${installedBeeVersion ?? 'none'}, expected Bee: ${EXPECTED_BEE_VERSION}, downloading assets: ${force}`,
   )
 
   if (force) {
     splash.setMessage('Downloading Bee')
     await runDownloader(true)
-    writeNookVersionFile()
+    if (desktopVersionChanged) writeNookVersionFile()
   }
 
   ensureApiKey()
