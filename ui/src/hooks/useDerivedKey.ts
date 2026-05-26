@@ -14,22 +14,25 @@ import { SIGN_MESSAGE } from '../crypto/signer'
 import { useIdentityStore } from '../store/identity'
 
 export function useDerivedKey() {
-  const { address, isConnected } = useAccount()
+  const { address, isConnected, status } = useAccount()
   const { signMessageAsync } = useSignMessage()
   const { signer, deriving, error, walletAddress, setSigner, setDeriving, setError, clear } = useIdentityStore()
 
-  // Clear signer when wallet disconnects or switches to a different address
+  // Clear signer when wallet disconnects or switches to a different address.
+  // Only treat 'disconnected' as terminal — during 'connecting' / 'reconnecting'
+  // wagmi briefly reports !isConnected on page load, which would otherwise wipe
+  // the sessionStorage-cached signer before reconnect completes.
   useEffect(() => {
-    if (!isConnected) {
+    if (status === 'disconnected') {
       if (signer) clear()
 
       return
     }
 
-    if (walletAddress && address && walletAddress.toLowerCase() !== address.toLowerCase()) {
+    if (status === 'connected' && walletAddress && address && walletAddress.toLowerCase() !== address.toLowerCase()) {
       clear()
     }
-  }, [isConnected, address, walletAddress, signer, clear])
+  }, [status, address, walletAddress, signer, clear])
 
   const derive = useCallback(async () => {
     // Already derived for this wallet
