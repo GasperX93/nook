@@ -76,7 +76,7 @@ Key files:
 - `ui/src/api/server.ts` — calls to the Nook Koa backend (ACT metadata, grantees, feeds, stamps)
 - `ui/src/api/feeds.ts` — metadata feed operations for encrypted drives (DriveMetadata type, topic calculation, read/write)
 - `ui/src/crypto/signer.ts` — wallet key derivation: NookSigner interface, HMAC-SHA256 sub-keys from wallet signature
-- `ui/src/store/identity.ts` — Zustand store for wallet-derived signer (in-memory only, never persisted)
+- `ui/src/store/identity.ts` — Zustand store for wallet-derived signer; the raw signature is persisted to **sessionStorage** under `nook.derivedKey.v1`, cleared on wallet disconnect, address switch, or window close. Never written to localStorage or disk.
 - `ui/src/hooks/useDriveMetadata.ts` — per-drive ACT metadata in localStorage (encrypted flag, history refs, grantee refs)
 - `ui/src/hooks/useSharedDrives.ts` — shared drives localStorage store, share link parsing (feed-based and legacy snapshot)
 - `ui/src/hooks/useDerivedKey.ts` — wallet → signer derivation hook with deterministic check
