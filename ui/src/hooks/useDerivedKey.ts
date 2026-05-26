@@ -3,13 +3,14 @@
  *
  * Does NOT derive on wallet connect (users connect for multichain top-up too).
  * Only derives when `derive()` is called (e.g., when user enables encryption).
- * Caches the signer in the identity store for the session.
+ * Caches the wallet signature in the identity store (sessionStorage-backed)
+ * so refresh does not require re-signing.
  * Clears on wallet disconnect or wallet switch.
  */
 import { useCallback, useEffect } from 'react'
 import { useAccount, useSignMessage } from 'wagmi'
 
-import { createWalletSigner, SIGN_MESSAGE } from '../crypto/signer'
+import { SIGN_MESSAGE } from '../crypto/signer'
 import { useIdentityStore } from '../store/identity'
 
 export function useDerivedKey() {
@@ -59,11 +60,10 @@ export function useDerivedKey() {
         return null
       }
 
-      const newSigner = createWalletSigner(signature1)
+      setSigner(signature1, address)
 
-      setSigner(newSigner, address)
-
-      return newSigner
+      // setSigner reconstructs the signer; read it back from the store.
+      return useIdentityStore.getState().signer
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Signature rejected'
 

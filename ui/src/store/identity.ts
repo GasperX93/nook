@@ -1,40 +1,94 @@
 /**
- * Identity store — holds the wallet-derived signer in memory.
+ * Identity store — holds the wallet-derived signer.
  *
- * NEVER persisted to localStorage or disk. Key is re-derived from
- * wallet signature on each session.
+ * Persisted to sessionStorage (cleared on window close, wallet disconnect,
+ * or wallet address switch). What we cache is the raw wallet signature;
+ * the signer object is reconstructed via createWalletSigner on hydration.
+ * Never persisted to localStorage or disk.
  */
 import { create } from 'zustand'
 
-import type { NookSigner } from '../crypto/signer'
+import { createWalletSigner, type NookSigner } from '../crypto/signer'
+
+const SESSION_STORAGE_KEY = 'nook.derivedKey.v1'
+
+interface PersistedShape {
+  signatureHex: string
+  walletAddress: string
+}
+
+function readPersisted(): PersistedShape | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = window.sessionStorage.getItem(SESSION_STORAGE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as PersistedShape
+    if (typeof parsed.signatureHex !== 'string' || typeof parsed.walletAddress !== 'string') return null
+
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+function writePersisted(value: PersistedShape): void {
+  if (typeof window === 'undefined') return
+  try {
+    window.sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(value))
+  } catch {
+    // sessionStorage may be unavailable (private mode, quota); fail silently
+  }
+}
+
+function clearPersisted(): void {
+  if (typeof window === 'undefined') return
+  try {
+    window.sessionStorage.removeItem(SESSION_STORAGE_KEY)
+  } catch {
+    // ignore
+  }
+}
 
 interface IdentityState {
-  /** The derived signer, or null if not yet derived */
   signer: NookSigner | null
-
-  /** True while waiting for user to approve the signature */
   deriving: boolean
-
-  /** Error message if derivation failed */
   error: string | null
-
   /** Wallet address that produced this signer (to detect wallet switches) */
   walletAddress: string | null
 
-  setSigner: (signer: NookSigner, walletAddress: string) => void
+  /** Store the raw signature; signer is reconstructed and the value is persisted to sessionStorage. */
+  setSigner: (signatureHex: string, walletAddress: string) => void
   setDeriving: (deriving: boolean) => void
   setError: (error: string | null) => void
   clear: () => void
 }
 
+function hydrate(): Pick<IdentityState, 'signer' | 'walletAddress'> {
+  const persisted = readPersisted()
+  if (!persisted) return { signer: null, walletAddress: null }
+  try {
+    return { signer: createWalletSigner(persisted.signatureHex), walletAddress: persisted.walletAddress }
+  } catch {
+    clearPersisted()
+
+    return { signer: null, walletAddress: null }
+  }
+}
+
 export const useIdentityStore = create<IdentityState>()(set => ({
-  signer: null,
+  ...hydrate(),
   deriving: false,
   error: null,
-  walletAddress: null,
 
-  setSigner: (signer, walletAddress) => set({ signer, walletAddress, deriving: false, error: null }),
+  setSigner: (signatureHex, walletAddress) => {
+    const signer = createWalletSigner(signatureHex)
+    writePersisted({ signatureHex, walletAddress })
+    set({ signer, walletAddress, deriving: false, error: null })
+  },
   setDeriving: deriving => set({ deriving }),
   setError: error => set({ error, deriving: false }),
-  clear: () => set({ signer: null, walletAddress: null, deriving: false, error: null }),
+  clear: () => {
+    clearPersisted()
+    set({ signer: null, walletAddress: null, deriving: false, error: null })
+  },
 }))
