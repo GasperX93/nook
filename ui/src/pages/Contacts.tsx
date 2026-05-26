@@ -252,7 +252,8 @@ export default function Contacts() {
       <div>
         <h1 className="text-2xl font-bold mb-1">Contacts</h1>
         <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
-          People you can send messages to and share drives with. Add by Nook address (identity feed) or share link (manual).
+          People you can send messages to and share drives with. Add by Nook address (identity feed) or share link
+          (manual).
         </p>
       </div>
 
@@ -268,8 +269,8 @@ export default function Contacts() {
           <div className="flex-1 text-sm">
             <p className="font-semibold mb-1">Make yourself reachable</p>
             <p style={{ color: 'rgb(var(--fg-muted))' }}>
-              Either publish your Nook address to the identity feed (others find you by typing it) or share your contact link
-              manually below. Either way works — pick what you prefer.
+              Either publish your Nook address to the identity feed (others find you by typing it) or share your contact
+              link manually below. Either way works — pick what you prefer.
             </p>
           </div>
           <button onClick={handleDismissHint} aria-label="Dismiss" className="p-1 hover:opacity-60">

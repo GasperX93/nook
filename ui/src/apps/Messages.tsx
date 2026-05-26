@@ -436,9 +436,7 @@ export default function Messages() {
                     <div
                       key={m.id}
                       className={`max-w-[70%] rounded-2xl px-4 py-2 ${
-                        m.direction === 'sent'
-                          ? 'self-end bg-muted'
-                          : 'self-start bg-background border'
+                        m.direction === 'sent' ? 'self-end bg-muted' : 'self-start bg-background border'
                       }`}
                     >
                       <p className="text-sm whitespace-pre-wrap break-words text-foreground">{m.body}</p>

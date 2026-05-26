@@ -2196,9 +2196,7 @@ export default function Drive() {
         {/* Tabs */}
         <Tabs value={driveTab} onValueChange={v => setDriveTab(v as 'mine' | 'shared')} className="mb-4">
           <TabsList>
-            <TabsTrigger value="mine">
-              My drives{allStamps.length > 0 ? ` (${allStamps.length})` : ''}
-            </TabsTrigger>
+            <TabsTrigger value="mine">My drives{allStamps.length > 0 ? ` (${allStamps.length})` : ''}</TabsTrigger>
             <TabsTrigger value="shared">
               Shared with me{sharedDrives.drives.length > 0 ? ` (${sharedDrives.drives.length})` : ''}
             </TabsTrigger>
