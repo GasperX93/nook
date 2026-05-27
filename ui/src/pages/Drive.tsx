@@ -1092,7 +1092,6 @@ function DriveCard({
   onShare,
   onMoveToFolder,
 }: DriveCardProps) {
-  const [expanded, setExpanded] = useState(false)
   const [inlineDraggingId, setInlineDraggingId] = useState<string | null>(null)
   const [inlineDragOverFolderId, setInlineDragOverFolderId] = useState<string | null>(null)
   const [renaming, setRenaming] = useState(false)
@@ -1118,22 +1117,6 @@ function DriveCard({
 
     return parts.join(', ') || '0 files'
   })()
-
-  const driveClickTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  function handleDriveClick() {
-    if (driveClickTimer.current !== null) {
-      clearTimeout(driveClickTimer.current)
-      driveClickTimer.current = null
-      onOpen()
-
-      return
-    }
-    driveClickTimer.current = setTimeout(() => {
-      driveClickTimer.current = null
-      setExpanded(v => !v)
-    }, 300)
-  }
 
   function renderInlineFolder(folder: DriveFolder, depth: number): React.ReactElement {
     return (
@@ -1177,12 +1160,8 @@ function DriveCard({
       <div
         className="flex items-center gap-3 px-4 py-3 hover:bg-[rgb(var(--bg-surface))] transition-colors"
         style={{ cursor: 'pointer' }}
-        onClick={handleDriveClick}
+        onClick={() => onOpen()}
       >
-        {/* Expand chevron */}
-        <span style={{ color: 'rgb(var(--fg-muted))' }}>
-          {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-        </span>
         {encrypted ? (
           <Lock size={14} className="shrink-0" style={{ color: 'rgb(var(--accent))' }} />
         ) : (
@@ -1348,42 +1327,6 @@ function DriveCard({
       </div>
 
       {/* Inline file preview — only rendered when expanded and there's content */}
-      {expanded && (rootFolders.length > 0 || rootFiles.length > 0) && (
-        <div className="border-t" style={{ borderColor: 'rgb(var(--border))' }}>
-          <div className="py-2 px-6">
-            {rootFolders.length > 0 && (
-              <div className="space-y-0.5 mb-0.5">{rootFolders.map(folder => renderInlineFolder(folder, 0))}</div>
-            )}
-            {rootFiles.length > 0 && (
-              <div className="divide-y" style={{ borderColor: 'rgb(var(--border))' }}>
-                {rootFiles.map(r => (
-                  <RecordRow
-                    key={r.id}
-                    record={r}
-                    copiedId={copiedId}
-                    downloadingId={downloadingId}
-                    downloadPct={downloadPct}
-                    gatewayUrl={gatewayUrl}
-                    onCopy={onCopy}
-                    onUpdate={onUpdate}
-                    onDownload={onDownload}
-                    onRemove={onRemove}
-                    onSetENS={onSetENS}
-                    onDragStart={(e, id) => {
-                      e.dataTransfer.setData('recordId', id)
-                      setInlineDraggingId(id)
-                    }}
-                    onDragEnd={() => {
-                      setInlineDraggingId(null)
-                      setInlineDragOverFolderId(null)
-                    }}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
     </div>
   )
 }
