@@ -339,7 +339,7 @@ export default function Contacts() {
               </Button>
             </div>
             <div className="flex-1 min-h-0">
-              <Messages initialContactId={selected.id} hideContactList />
+              <Messages key={selected.id} initialContactId={selected.id} hideContactList />
             </div>
           </>
         ) : (
