@@ -14,6 +14,7 @@ import {
   HardDrive,
   Lock,
   MoreVertical,
+  PanelLeft,
   Pencil,
   Plus,
   RefreshCw,
@@ -59,6 +60,7 @@ import AddSharedDriveModal from '../components/AddSharedDriveModal'
 import ENSModal from '../components/ENSModal'
 import ShareModal from '../components/ShareModal'
 import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs'
+import { useSidebar } from '../components/ui/sidebar'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -1964,6 +1966,7 @@ function SharedDriveCard({
 }
 
 export default function Drive() {
+  const { toggle: toggleSidebar } = useSidebar()
   const { data: stamps } = useStamps()
   const {
     records,
@@ -2080,6 +2083,24 @@ export default function Drive() {
       <div className="p-6 max-w-4xl mx-auto">
         {/* Header */}
         <div className="flex items-center gap-3 mb-4">
+          <button
+            onClick={toggleSidebar}
+            aria-label="Toggle sidebar"
+            className="w-8 h-8 flex items-center justify-center rounded-lg transition-colors hover:bg-white/[0.04] shrink-0"
+            style={{ color: 'rgb(var(--fg-muted))' }}
+          >
+            <PanelLeft size={16} />
+          </button>
+
+          <Tabs value={driveTab} onValueChange={v => setDriveTab(v as 'mine' | 'shared')}>
+            <TabsList>
+              <TabsTrigger value="mine">My drives{allStamps.length > 0 ? ` (${allStamps.length})` : ''}</TabsTrigger>
+              <TabsTrigger value="shared">
+                Shared with me{sharedDrives.drives.length > 0 ? ` (${sharedDrives.drives.length})` : ''}
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+
           <div className="flex-1" />
 
           <button
@@ -2131,16 +2152,6 @@ export default function Drive() {
             />
           </div>
         )}
-
-        {/* Tabs */}
-        <Tabs value={driveTab} onValueChange={v => setDriveTab(v as 'mine' | 'shared')} className="mb-4">
-          <TabsList>
-            <TabsTrigger value="mine">My drives{allStamps.length > 0 ? ` (${allStamps.length})` : ''}</TabsTrigger>
-            <TabsTrigger value="shared">
-              Shared with me{sharedDrives.drives.length > 0 ? ` (${sharedDrives.drives.length})` : ''}
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
 
         {/* Content */}
         {search ? (
