@@ -46,6 +46,12 @@ export function normalizeHex(value: string, expectedHexLen: number, label: strin
   return stripped.toLowerCase()
 }
 
+/**
+ * Contact-link URL scheme is versioned so future readers can distinguish
+ * payload shapes. v1: addr + wpub + bpub. A future v2 might drop bpub
+ * (resolved via identity feed) once Swarm ships portable stamps + ACT
+ * with external signers.
+ */
 export function encodeShareLink(payload: ShareLinkPayload): string {
   const params = new URLSearchParams()
 
@@ -55,12 +61,14 @@ export function encodeShareLink(payload: ShareLinkPayload): string {
 
   if (payload.nickname) params.set('name', payload.nickname)
 
-  return `nook://contact?${params.toString()}`
+  return `nook://contact/v1?${params.toString()}`
 }
 
 export function decodeShareLink(input: string): DecodeResult | DecodeError {
   const trimmed = input.trim()
 
+  // Accept both the v1 path (`nook://contact/v1?...`) and the legacy
+  // unversioned form (`nook://contact?...`) for backwards compatibility.
   if (!trimmed.startsWith('nook://contact')) {
     return { ok: false, error: 'Not a Nook contact link (must start with nook://contact)' }
   }

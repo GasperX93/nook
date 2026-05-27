@@ -125,11 +125,11 @@ export default function Identity() {
 
         {!walletConnected && (
           <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
-            Connect your wallet (top right) to derive your Nook address.
+            Connect your wallet (top right) to set up your Nook identity.
           </p>
         )}
 
-        {walletConnected && !signer && <Button onClick={derive}>Derive key</Button>}
+        {walletConnected && !signer && <Button onClick={derive}>Set up Nook identity</Button>}
 
         {signer && myAddress && (
           <>

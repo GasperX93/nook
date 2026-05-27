@@ -119,4 +119,18 @@ export const serverApi = {
 
   patchGrantees: async (ref: string, stampId: string, historyRef: string, add?: string[], revoke?: string[]) =>
     serverPatch<{ ref: string; historyRef: string }>(`/grantee/${ref}`, { stampId, historyRef, add, revoke }),
+
+  // ─── Identity cache (Electron safeStorage, OS keychain) ─────────────────
+
+  readIdentityCache: async () => serverGet<{ available: boolean; value: string | null }>('/identity-cache'),
+
+  writeIdentityCache: async (value: string) =>
+    serverPost<{ stored: boolean; available: boolean }>('/identity-cache', { value }),
+
+  clearIdentityCache: async () => {
+    const response = await fetch('/identity-cache', { method: 'DELETE', headers: authHeaders() })
+    if (!response.ok) throw new Error('Failed to clear identity cache')
+
+    return (await response.json()) as { cleared: boolean }
+  },
 }

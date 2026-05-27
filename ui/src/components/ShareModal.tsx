@@ -371,7 +371,7 @@ export default function ShareModal({
 
   async function handleNotifyAll() {
     if (!signer) {
-      setError('No Nook key — derive your key on the Contacts page (it resets on every reload).')
+      setError('No Nook identity — set it up on the Account → Identity tab.')
 
       return
     }

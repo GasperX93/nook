@@ -20,6 +20,13 @@ export interface LocalDriveMetadata {
   granteeRef?: string
   /** Number of grantees (including owner) */
   granteeCount?: number
+  /**
+   * Wallet-derived Nook address of the user who created this drive. Optional
+   * for back-compat with drives created before this field landed. Used as the
+   * migration anchor when Swarm ships portable stamps + ACT-with-external-
+   * signer: the drive can be re-anchored from bpub to this wpub.
+   */
+  creatorWpub?: string
 }
 
 function load(): Record<string, LocalDriveMetadata> {

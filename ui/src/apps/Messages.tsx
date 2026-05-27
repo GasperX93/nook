@@ -280,10 +280,10 @@ export default function Messages({ initialContactId, hideContactList }: Messages
       <div className="flex flex-col p-6 gap-4 max-w-3xl">
         <h2 className="text-2xl font-semibold">Messages</h2>
         <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
-          Derive your Nook key to start messaging.
+          Set up your Nook identity to start messaging.
         </p>
         <Button onClick={derive} className="self-start uppercase tracking-widest">
-          Derive key
+          Set up Nook identity
         </Button>
       </div>
     )

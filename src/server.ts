@@ -13,6 +13,12 @@ import { ethers } from 'ethers'
 import PACKAGE_JSON from '../package.json'
 import { getApiKey } from './api-key'
 import { redeemGiftCode, sendBzzTransaction, sendNativeTransaction } from './blockchain'
+import {
+  clearIdentityCache,
+  isIdentityCacheAvailable,
+  readIdentityCache,
+  writeIdentityCache,
+} from './identity-cache'
 import { readConfigYaml, readWalletPasswordOrThrow, writeConfigYaml } from './config'
 import { runLauncher } from './launcher'
 import { BeeManager } from './lifecycle'
@@ -130,6 +136,27 @@ export function runServer() {
   // Authenticated endpoints
   router.get('/status', context => {
     context.body = getStatus()
+  })
+  router.get('/identity-cache', context => {
+    context.body = {
+      available: isIdentityCacheAvailable(),
+      value: readIdentityCache(),
+    }
+  })
+  router.post('/identity-cache', context => {
+    const body = context.request.body as { value?: string }
+    if (typeof body?.value !== 'string') {
+      context.status = 400
+      context.body = { error: 'Missing or invalid "value"' }
+
+      return
+    }
+    const ok = writeIdentityCache(body.value)
+    context.body = { stored: ok, available: isIdentityCacheAvailable() }
+  })
+  router.delete('/identity-cache', context => {
+    clearIdentityCache()
+    context.body = { cleared: true }
   })
   router.get('/peers', async context => {
     try {

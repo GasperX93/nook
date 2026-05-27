@@ -2047,6 +2047,7 @@ export default function Drive() {
   const location = useLocation()
   const driveMetadata = useDriveMetadata()
   const sharedDrives = useSharedDrives()
+  const { signer } = useDerivedKey()
 
   const [customDriveLabels, setCustomDriveLabels] = useState<Record<string, string>>(() => {
     try {
@@ -2319,7 +2320,10 @@ export default function Drive() {
             onClose={() => setShowBuyModal(false)}
             onCreated={(batchId, encrypted) => {
               if (encrypted) {
-                driveMetadata.set(batchId, { encrypted: true })
+                driveMetadata.set(batchId, {
+                  encrypted: true,
+                  creatorWpub: signer?.getAddress() ?? undefined,
+                })
               }
             }}
           />
