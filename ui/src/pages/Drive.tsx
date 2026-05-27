@@ -514,10 +514,19 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
           )}
         </div>
 
-        <p className="text-sm">
-          <span style={{ color: 'rgb(var(--fg-muted))' }}>Cost: </span>
-          <span className="font-semibold">{cost ? `${cost.bzzCost} BZZ` : 'Free'}</span>
-        </p>
+        {canSubmit && (
+          <div className="text-sm space-y-1">
+            <p>
+              <span style={{ color: 'rgb(var(--fg-muted))' }}>Cost: </span>
+              <span className="font-semibold">{cost ? `${cost.bzzCost} BZZ` : 'Free'}</span>
+            </p>
+            {willDilute && !willTopup && (
+              <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Note: extending capacity halves the drive's remaining time. Enable duration too to compensate.
+              </p>
+            )}
+          </div>
+        )}
 
         {extendError && (
           <p className="text-xs" style={{ color: '#ef4444' }}>
