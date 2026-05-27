@@ -93,9 +93,9 @@ function ttlToDays(seconds: number): string {
 
   if (d <= 0) return '<1d'
 
-  if (d < 30) return `${d}d`
+  if (d < 365) return `${d}d`
 
-  return `${Math.floor(d / 30)}mo`
+  return `${Math.floor(d / 365)}y`
 }
 
 function ttlColor(seconds: number): string {
@@ -390,6 +390,7 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
   const [extendError, setExtendError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const { data: chainState } = useChainState()
+  const { data: wallet } = useWallet()
   const queryClient = useQueryClient()
 
   const targetDepth = capacityEnabled && capacityOptions[capacityIdx] ? capacityOptions[capacityIdx].depth : stamp.depth
@@ -421,7 +422,9 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
     return { amount: amount.toString(), bzzCost: plurToBzz(totalPlur.toString()) }
   })()
 
-  const canSubmit = willDilute || totalSecondsToBuy > 0
+  const bzzBalance = wallet ? Number(plurToBzz(wallet.bzzBalance)) : null
+  const canAfford = cost && bzzBalance !== null ? bzzBalance >= Number(cost.bzzCost) : true
+  const canSubmit = (willDilute || totalSecondsToBuy > 0) && canAfford
 
   async function doExtend() {
     if (!canSubmit) return
@@ -532,11 +535,16 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
           )}
         </div>
 
-        {canSubmit && (
+        {(willDilute || totalSecondsToBuy > 0) && (
           <div className="text-sm space-y-1">
             <p>
               <span style={{ color: 'rgb(var(--fg-muted))' }}>Cost: </span>
               <span className="font-semibold">{cost ? `${cost.bzzCost} BZZ` : 'Free'}</span>
+              {cost && !canAfford && (
+                <span className="ml-2 text-xs" style={{ color: '#ef4444' }}>
+                  Insufficient BZZ
+                </span>
+              )}
             </p>
           </div>
         )}
