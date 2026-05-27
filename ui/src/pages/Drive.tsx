@@ -380,15 +380,11 @@ function BuyDriveModal({
 // ─── ExtendModal ───────────────────────────────────────────────────────────────
 
 function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) {
-  // Capacity options include the current size as the first entry (visual context),
-  // plus all strictly larger depths. Picking the current size = no-op (no dilute call).
-  const capacityOptions = SIZE_PRESETS.filter(s => s.depth >= stamp.depth)
-  const currentCapacityIdx = capacityOptions.findIndex(s => s.depth === stamp.depth)
-  const firstLargerIdx = capacityOptions.findIndex(s => s.depth > stamp.depth)
+  // Capacity options: only depths strictly larger than current. Dilute can't shrink
+  // and picking the current size is a no-op, so we don't show either.
+  const capacityOptions = SIZE_PRESETS.filter(s => s.depth > stamp.depth)
   const [capacityEnabled, setCapacityEnabled] = useState(false)
-  // When the user enables the toggle, default to the first LARGER option so the
-  // selection visibly represents an extension. Falls back to current if there's nothing larger.
-  const [capacityIdx, setCapacityIdx] = useState(firstLargerIdx >= 0 ? firstLargerIdx : currentCapacityIdx)
+  const [capacityIdx, setCapacityIdx] = useState(0)
   const [durationEnabled, setDurationEnabled] = useState(false)
   const [durationIdx, setDurationIdx] = useState(0)
   const [extendError, setExtendError] = useState<string | null>(null)
@@ -481,36 +477,28 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
             <Switch
               checked={capacityEnabled}
               onCheckedChange={setCapacityEnabled}
-              disabled={firstLargerIdx < 0}
+              disabled={capacityOptions.length === 0}
             />
           </label>
           {capacityEnabled && capacityOptions.length > 0 && (
             <div className="grid grid-cols-3 gap-2">
-              {capacityOptions.map((s, i) => {
-                const isCurrent = s.depth === stamp.depth
-                const isActive = capacityIdx === i
-
-                return (
-                  <button
-                    key={s.label}
-                    onClick={() => !isCurrent && setCapacityIdx(i)}
-                    disabled={isCurrent}
-                    className="px-3 py-2 rounded-lg border text-sm transition-all disabled:cursor-not-allowed"
-                    style={{
-                      borderColor: isActive ? 'rgb(var(--accent))' : 'rgb(var(--border))',
-                      backgroundColor: isActive && !isCurrent ? 'rgba(247,104,8,0.08)' : 'transparent',
-                      color: isActive && !isCurrent ? 'rgb(var(--fg))' : 'rgb(var(--fg-muted))',
-                      opacity: isCurrent ? 0.5 : 1,
-                    }}
-                  >
-                    {s.label}
-                    {isCurrent && <span className="block text-[10px] mt-0.5">Current</span>}
-                  </button>
-                )
-              })}
+              {capacityOptions.map((s, i) => (
+                <button
+                  key={s.label}
+                  onClick={() => setCapacityIdx(i)}
+                  className="px-3 py-2 rounded-lg border text-sm transition-all"
+                  style={{
+                    borderColor: capacityIdx === i ? 'rgb(var(--accent))' : 'rgb(var(--border))',
+                    backgroundColor: capacityIdx === i ? 'rgba(247,104,8,0.08)' : 'transparent',
+                    color: capacityIdx === i ? 'rgb(var(--fg))' : 'rgb(var(--fg-muted))',
+                  }}
+                >
+                  {s.label}
+                </button>
+              ))}
             </div>
           )}
-          {firstLargerIdx < 0 && (
+          {capacityOptions.length === 0 && (
             <p className="text-[11px]" style={{ color: 'rgb(var(--fg-muted))' }}>
               Drive is already at the maximum size.
             </p>
