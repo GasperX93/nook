@@ -13,14 +13,17 @@ import {
   Globe,
   HardDrive,
   Lock,
+  MoreVertical,
   Pencil,
   Plus,
   RefreshCw,
   Rss,
   Search,
+  Share2,
   Trash2,
   Upload,
   Users,
+  X,
 } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import React, { useEffect, useRef, useState } from 'react'
@@ -1096,6 +1099,8 @@ function DriveCard({
   const [inlineDragOverFolderId, setInlineDragOverFolderId] = useState<string | null>(null)
   const [renaming, setRenaming] = useState(false)
   const [renameInput, setRenameInput] = useState('')
+  const [kebabOpen, setKebabOpen] = useState(false)
+  const kebabRef = useRef<HTMLDivElement>(null)
   const MAX_TTL = 365 * 24 * 3600
   const ttlPct = Math.min((stamp.batchTTL / MAX_TTL) * 100, 100)
   const color = ttlColor(stamp.batchTTL)
@@ -1103,9 +1108,25 @@ function DriveCard({
   const driveName = customName || stamp.label || `${stamp.batchID.slice(0, 8)}…`
   const capacityBytes = depthToBytes(stamp.depth)
   const usedBytes = records.reduce((s, r) => s + r.size, 0)
+  const usagePct = capacityBytes > 0 ? Math.min((usedBytes / capacityBytes) * 100, 100) : 0
   const maxUtilization = 1 << (stamp.depth - stamp.bucketDepth)
   const utilizationPct = Math.round((stamp.utilization / maxUtilization) * 100)
   const isFull = stamp.utilization >= maxUtilization
+  const ttlDays = stamp.batchTTL / 86400
+  const isCriticalTtl = stamp.usable && ttlDays > 0 && ttlDays <= 7
+  const needsExtend = stamp.usable && (isCriticalTtl || isFull)
+  const hasWebsite = records.some(r => r.type === 'website')
+
+  // Close kebab on outside click
+  useEffect(() => {
+    if (!kebabOpen) return
+    const handler = (e: MouseEvent) => {
+      if (kebabRef.current && !kebabRef.current.contains(e.target as Node)) setKebabOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+
+    return () => document.removeEventListener('mousedown', handler)
+  }, [kebabOpen])
   const rootFolders = folders.filter(f => !f.parentFolderId)
   const rootFiles = records.filter(r => !r.folderId)
   const itemSummary = (() => {
@@ -1158,175 +1179,209 @@ function DriveCard({
   return (
     <div className="border-b" style={{ borderColor: 'rgb(var(--border))' }}>
       <div
-        className="flex items-center gap-3 px-4 py-3 hover:bg-[rgb(var(--bg-surface))] transition-colors"
-        style={{ cursor: 'pointer' }}
+        className="px-4 py-3 hover:bg-[rgb(var(--bg-surface))] transition-colors cursor-pointer"
         onClick={() => onOpen()}
       >
-        {encrypted ? (
-          <Lock size={14} className="shrink-0" style={{ color: 'rgb(var(--accent))' }} />
-        ) : (
-          <HardDrive size={14} className="shrink-0" style={{ color: 'rgb(var(--fg-muted))' }} />
-        )}
-
-        {/* Drive name — unnamed drives show a prompt; named drives show pencil on hover */}
-        {renaming ? (
-          <input
-            autoFocus
-            value={renameInput}
-            onChange={e => setRenameInput(e.target.value)}
-            onBlur={() => {
-              const val = renameInput.trim()
-
-              if (val) {
-                onRename(val)
-                setRenaming(false)
-              } else if (hasName) setRenaming(false)
-              // if no name and input empty, keep open
-            }}
-            onKeyDown={e => {
-              if (e.key === 'Enter') {
+        {/* Top line: name + pills + actions */}
+        <div className="flex items-center gap-2">
+          {renaming ? (
+            <input
+              autoFocus
+              value={renameInput}
+              onChange={e => setRenameInput(e.target.value)}
+              onBlur={() => {
                 const val = renameInput.trim()
 
                 if (val) {
                   onRename(val)
                   setRenaming(false)
-                }
-              }
+                } else if (hasName) setRenaming(false)
+              }}
+              onKeyDown={e => {
+                if (e.key === 'Enter') {
+                  const val = renameInput.trim()
 
-              if (e.key === 'Escape' && hasName) setRenaming(false)
-            }}
-            onClick={e => e.stopPropagation()}
-            placeholder="Name this drive…"
-            className="text-sm font-medium bg-transparent border-b outline-none flex-1 min-w-0"
-            style={{ borderColor: 'rgb(var(--accent))', color: 'rgb(var(--fg))' }}
-          />
-        ) : !hasName ? (
-          <button
-            onClick={e => {
-              e.stopPropagation()
-              setRenameInput('')
-              setRenaming(true)
-            }}
-            className="text-sm flex-1 text-left min-w-0"
-            style={{ color: 'rgb(var(--fg-muted))', fontStyle: 'italic' }}
-          >
-            Name this drive…
-          </button>
-        ) : (
-          <span className="text-sm font-medium truncate flex-1 group/name flex items-center gap-1 min-w-0">
-            <span className="truncate">{driveName}</span>
+                  if (val) {
+                    onRename(val)
+                    setRenaming(false)
+                  }
+                }
+
+                if (e.key === 'Escape' && hasName) setRenaming(false)
+              }}
+              onClick={e => e.stopPropagation()}
+              placeholder="Name this drive…"
+              className="text-base font-semibold bg-transparent border-b outline-none flex-1 min-w-0"
+              style={{ borderColor: 'rgb(var(--accent))', color: 'rgb(var(--fg))' }}
+            />
+          ) : !hasName ? (
             <button
               onClick={e => {
                 e.stopPropagation()
-                setRenameInput(driveName)
+                setRenameInput('')
                 setRenaming(true)
               }}
-              className="opacity-0 group-hover/name:opacity-100 transition-opacity shrink-0"
-              style={{ color: 'rgb(var(--fg-muted))' }}
+              className="text-base font-semibold text-left min-w-0 truncate"
+              style={{ color: 'rgb(var(--fg-muted))', fontStyle: 'italic' }}
             >
-              <Pencil size={10} />
+              Name this drive…
             </button>
-          </span>
-        )}
+          ) : (
+            <span className="text-base font-semibold truncate min-w-0">{driveName}</span>
+          )}
 
-        {/* Confirming badge */}
-        {!stamp.usable && (
-          <span
-            className="text-[10px] px-1.5 py-0.5 rounded font-semibold uppercase tracking-widest animate-pulse shrink-0"
-            style={{ backgroundColor: 'rgba(247,104,8,0.1)', color: 'rgb(var(--accent))' }}
-          >
-            Confirming…
-          </span>
-        )}
-
-        {/* Encrypted badge + Share button */}
-        {encrypted && (
-          <>
-            <button
-              onClick={e => {
-                e.stopPropagation()
-
-                if (onShare) onShare()
-              }}
-              className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0"
-              style={{
-                backgroundColor: 'rgba(247,104,8,0.1)',
-                color: 'rgb(var(--accent))',
-                cursor: onShare ? 'pointer' : 'default',
-              }}
+          {/* Encrypted pill */}
+          {encrypted && (
+            <span
+              className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium shrink-0"
+              style={{ backgroundColor: '#3b82f6', color: 'white' }}
             >
-              <Lock size={9} />
+              <Lock size={11} />
               Encrypted{granteeCount && granteeCount > 1 ? ` · ${granteeCount - 1} shared` : ''}
-            </button>
-            {onShare && (
+            </span>
+          )}
+
+          {/* Confirming pill */}
+          {!stamp.usable && (
+            <span
+              className="text-[10px] px-2 py-0.5 rounded-full font-semibold uppercase tracking-widest animate-pulse shrink-0"
+              style={{ backgroundColor: 'rgba(247,104,8,0.1)', color: 'rgb(var(--accent))' }}
+            >
+              Confirming…
+            </span>
+          )}
+
+          {/* Website pill */}
+          {hasWebsite && (
+            <span
+              className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium shrink-0"
+              style={{ backgroundColor: 'rgba(74,222,128,0.1)', color: '#4ade80' }}
+            >
+              <Globe size={11} />
+              Website
+            </span>
+          )}
+
+          {/* Right-side actions */}
+          <div className="ml-auto flex items-center gap-2 shrink-0">
+            {needsExtend && (
               <button
                 onClick={e => {
                   e.stopPropagation()
-                  onShare()
+                  onExtend()
                 }}
-                className="text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0 transition-colors"
-                style={{ color: 'rgb(var(--accent))' }}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors"
+                style={{ backgroundColor: 'rgb(var(--fg))', color: 'rgb(var(--bg))' }}
               >
-                Share
+                Extend storage
               </button>
             )}
-          </>
-        )}
 
-        {/* Website badge */}
-        {records.some(r => r.type === 'website') && (
-          <span
-            className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0"
-            style={{ backgroundColor: 'rgba(74,222,128,0.1)', color: '#4ade80' }}
-          >
-            <Globe size={9} />
-            Website
-          </span>
-        )}
-
-        {/* Item count */}
-        <span className="text-xs shrink-0" style={{ color: 'rgb(var(--fg-muted))' }}>
-          {itemSummary}
-        </span>
-
-        {/* Storage usage + utilization */}
-        <span className="text-xs shrink-0" style={{ color: 'rgb(var(--fg-muted))' }}>
-          {usedBytes > 0 ? `${formatBytes(usedBytes)} / ${formatBytes(capacityBytes)}` : formatBytes(capacityBytes)}
-        </span>
-
-        {isFull && (
-          <span
-            className="text-[10px] font-semibold px-1.5 py-0.5 rounded shrink-0"
-            style={{ backgroundColor: 'rgba(239,68,68,0.15)', color: '#ef4444' }}
-          >
-            Full
-          </span>
-        )}
-
-        {/* TTL bar + label */}
-        <div className="flex items-center gap-1.5 shrink-0" style={{ color }}>
-          <Clock size={10} />
-          <div className="w-16 h-1 rounded-full shrink-0" style={{ backgroundColor: 'rgb(var(--border))' }}>
-            <div className="h-1 rounded-full" style={{ width: `${ttlPct}%`, backgroundColor: color }} />
+            <div ref={kebabRef} className="relative">
+              <button
+                onClick={e => {
+                  e.stopPropagation()
+                  setKebabOpen(v => !v)
+                }}
+                aria-label="Drive actions"
+                className="w-7 h-7 flex items-center justify-center rounded hover:bg-white/10 transition-colors"
+                style={{ color: 'rgb(var(--fg-muted))' }}
+              >
+                <MoreVertical size={16} />
+              </button>
+              {kebabOpen && (
+                <div
+                  className="absolute right-0 top-full mt-1 rounded-lg border py-1 z-40 w-44"
+                  style={{ backgroundColor: 'rgb(var(--bg-surface))', borderColor: 'rgb(var(--border))' }}
+                  onClick={e => e.stopPropagation()}
+                >
+                  <button
+                    onClick={() => {
+                      setKebabOpen(false)
+                      onExtend()
+                    }}
+                    disabled={!stamp.usable}
+                    className="flex items-center gap-2 w-full px-3 py-2 text-xs transition-colors hover:bg-white/5 disabled:opacity-40 disabled:cursor-not-allowed"
+                    style={{ color: 'rgb(var(--fg))' }}
+                  >
+                    <Clock size={13} style={{ color: 'rgb(var(--fg-muted))' }} />
+                    Extend storage
+                  </button>
+                  {encrypted && onShare && (
+                    <button
+                      onClick={() => {
+                        setKebabOpen(false)
+                        onShare()
+                      }}
+                      className="flex items-center gap-2 w-full px-3 py-2 text-xs transition-colors hover:bg-white/5"
+                      style={{ color: 'rgb(var(--fg))' }}
+                    >
+                      <Share2 size={13} style={{ color: 'rgb(var(--fg-muted))' }} />
+                      Share…
+                    </button>
+                  )}
+                  <button
+                    onClick={() => {
+                      setKebabOpen(false)
+                      setRenameInput(hasName ? driveName : '')
+                      setRenaming(true)
+                    }}
+                    className="flex items-center gap-2 w-full px-3 py-2 text-xs transition-colors hover:bg-white/5"
+                    style={{ color: 'rgb(var(--fg))' }}
+                  >
+                    <Pencil size={13} style={{ color: 'rgb(var(--fg-muted))' }} />
+                    Rename
+                  </button>
+                  <button
+                    disabled
+                    title="Coming soon"
+                    className="flex items-center gap-2 w-full px-3 py-2 text-xs opacity-40 cursor-not-allowed"
+                    style={{ color: 'rgb(var(--fg))' }}
+                  >
+                    <X size={13} style={{ color: 'rgb(var(--fg-muted))' }} />
+                    Forget
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
-          <span className="text-[10px] w-10 text-right shrink-0">{ttlToDays(stamp.batchTTL)}</span>
         </div>
 
-        {/* Extend */}
-        <button
-          onClick={e => {
-            e.stopPropagation()
-            onExtend()
-          }}
-          className="text-xs shrink-0 transition-colors"
-          style={{ color: 'rgb(var(--fg-muted))' }}
-          disabled={!stamp.usable}
-        >
-          Extend
-        </button>
+        {/* Bottom line: utilization bar + size + days-left pill + items */}
+        <div className="flex items-center gap-3 mt-2 text-xs">
+          <div
+            className="w-32 h-1 rounded-full shrink-0"
+            style={{ backgroundColor: 'rgb(var(--border))' }}
+            aria-label={`${Math.round(usagePct)}% used`}
+          >
+            <div
+              className="h-1 rounded-full"
+              style={{
+                width: `${usagePct}%`,
+                backgroundColor: isFull ? '#ef4444' : 'rgb(var(--fg))',
+              }}
+            />
+          </div>
+          <span style={{ color: isFull ? '#ef4444' : 'rgb(var(--fg-muted))' }}>
+            {usedBytes > 0 ? `${formatBytes(usedBytes)} / ${formatBytes(capacityBytes)}` : formatBytes(capacityBytes)}
+          </span>
+          {stamp.usable && (
+            <span
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full"
+              style={
+                isCriticalTtl
+                  ? { backgroundColor: 'rgba(239,68,68,0.1)', color: '#ef4444' }
+                  : { backgroundColor: 'rgba(255,255,255,0.05)', color: 'rgb(var(--fg-muted))' }
+              }
+            >
+              <Clock size={11} />
+              {ttlToDays(stamp.batchTTL)}
+            </span>
+          )}
+          <span style={{ color: 'rgb(var(--border))' }}>|</span>
+          <span style={{ color: 'rgb(var(--fg-muted))' }}>{itemSummary}</span>
+        </div>
       </div>
-
-      {/* Inline file preview — only rendered when expanded and there's content */}
     </div>
   )
 }
@@ -1954,6 +2009,7 @@ export default function Drive() {
   const [driveTab, setDriveTab] = useState<'mine' | 'shared'>('mine')
   const [addingFile, setAddingFile] = useState(false)
   const [search, setSearch] = useState('')
+  const [searchOpen, setSearchOpen] = useState(false)
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
   const [downloadPct, setDownloadPct] = useState<number | null>(null)
@@ -2024,31 +2080,15 @@ export default function Drive() {
       <div className="p-6">
         {/* Header */}
         <div className="flex items-center gap-3 mb-4">
-          <div className="relative w-full max-w-[500px]">
-            <Search
-              size={11}
-              className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
-              style={{ color: 'rgb(var(--fg-muted))' }}
-            />
-            <input
-              type="text"
-              placeholder="Search all files…"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              className="w-full pl-7 pr-3 py-1.5 rounded-lg border text-xs focus:outline-none"
-              style={{ backgroundColor: 'rgb(var(--bg-surface))', color: 'rgb(var(--fg))' }}
-            />
-          </div>
-
           <div className="flex-1" />
 
           <button
-            onClick={() => setRetrieveOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium shrink-0 transition-colors"
-            style={{ color: 'rgb(var(--fg-muted))' }}
+            onClick={() => setSearchOpen(v => !v)}
+            aria-label="Search files"
+            className="w-8 h-8 flex items-center justify-center rounded-lg transition-colors hover:bg-white/[0.04] shrink-0"
+            style={{ color: searchOpen ? 'rgb(var(--fg))' : 'rgb(var(--fg-muted))' }}
           >
-            <Download size={12} />
-            Retrieve
+            <Search size={16} />
           </button>
 
           {driveTab === 'mine' ? (
@@ -2071,6 +2111,26 @@ export default function Drive() {
             </button>
           )}
         </div>
+
+        {/* Expandable search */}
+        {searchOpen && (
+          <div className="mb-4 relative max-w-[500px]">
+            <Search
+              size={12}
+              className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
+              style={{ color: 'rgb(var(--fg-muted))' }}
+            />
+            <input
+              autoFocus
+              type="text"
+              placeholder="Search all files…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="w-full pl-7 pr-3 py-1.5 rounded-lg border text-xs focus:outline-none"
+              style={{ backgroundColor: 'rgb(var(--bg-surface))', color: 'rgb(var(--fg))' }}
+            />
+          </div>
+        )}
 
         {/* Tabs */}
         <Tabs value={driveTab} onValueChange={v => setDriveTab(v as 'mine' | 'shared')} className="mb-4">
