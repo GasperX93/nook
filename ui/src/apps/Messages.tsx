@@ -1,7 +1,8 @@
 import { Bee } from '@ethersphere/bee-js'
-import { identity, mailbox } from '@swarm-notify/sdk'
+import { identity, mailbox, registry } from '@swarm-notify/sdk'
 import { FileText, Mail, Send } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useWalletClient } from 'wagmi'
 
 import { useStamps } from '../api/queries'
 import AddSharedDriveModal from '../components/AddSharedDriveModal'
@@ -10,8 +11,18 @@ import { Input } from '../components/ui/input'
 import { Textarea } from '../components/ui/textarea'
 import { useSharedDrives } from '../hooks/useSharedDrives'
 import { useDerivedKey } from '../hooks/useDerivedKey'
+import { GNOSIS_CHAIN_ID, REGISTRY_ADDRESS } from '../notify/constants'
+import {
+  defaultInviteMessage,
+  deriveConnectionState,
+  getMyDisplayName,
+  recordInviteSent,
+  setMyDisplayName,
+  type ConnectionState,
+} from '../notify/contact-state'
 import { loadInvitations, markInvitationProcessed, pendingInvitations, type Invitation } from '../notify/invitations'
 import { appendSent, loadReadCursors, loadThreads, markRead, unreadCount } from '../notify/messages'
+import { createNotifyProvider } from '../notify/provider'
 import { addContact, loadContacts } from '../notify/storage'
 import { toLibraryContact, type NookContact } from '../notify/types'
 
@@ -19,6 +30,12 @@ const BEE_URL = `${window.location.origin}/bee-api`
 
 function short(s: string, n = 6): string {
   return s.length <= n * 2 + 3 ? s : `${s.slice(0, n)}…${s.slice(-n)}`
+}
+
+function hexToBytes(hex: string): Uint8Array {
+  const clean = hex.startsWith('0x') ? hex.slice(2) : hex
+
+  return new Uint8Array(clean.match(/.{2}/g)!.map(b => parseInt(b, 16)))
 }
 
 function formatTime(ts: number): string {
@@ -70,6 +87,13 @@ export default function Messages({ initialContactId, hideContactList }: Messages
   const [invitePreview, setInvitePreview] = useState<InvitePreview>({ loading: false })
   const sharedDrives = useSharedDrives()
   const scrollRef = useRef<HTMLDivElement>(null)
+  const { data: walletClient } = useWalletClient()
+
+  // Sender's display name — used in the default invite template "X would
+  // like to connect" and shown to the recipient when they receive the
+  // invitation. Captured inline on first invite send, then reused.
+  const [myDisplayName, setMyDisplayNameState] = useState<string>(() => getMyDisplayName())
+  const [pendingNicknameInput, setPendingNicknameInput] = useState('')
 
   // Hide invitations from senders who are already contacts. Otherwise an old
   // invitation row pinned to the top of the list (created before the contact
@@ -86,6 +110,9 @@ export default function Messages({ initialContactId, hideContactList }: Messages
   const stampId = (stamps ?? []).find(s => s.usable)?.batchID ?? ''
   const selected = contacts.find(c => c.id === selectedId) ?? null
   const selectedThread = selected ? (threads[selected.id.toLowerCase()] ?? []) : []
+  const hasInbound = selectedThread.some(m => m.direction === 'received')
+  const connectionState: ConnectionState = selected ? deriveConnectionState(selected.id, hasInbound) : 'not-connected'
+  const needsNickname = connectionState !== 'connected' && !myDisplayName
   // If the selected entry isn't a contact, it might be a pending invitation.
   const selectedInvite = !selected ? (pending.find(i => i.senderAddr === selectedId?.toLowerCase()) ?? null) : null
 
@@ -226,18 +253,60 @@ export default function Messages({ initialContactId, hideContactList }: Messages
   }, [selected, selectedThread, cursors])
 
   async function handleSend() {
-    if (!signer || !selected || !draft.trim()) return
+    if (!signer || !selected) return
+
+    // For 'connected' state we require a typed body. For invite states an
+    // empty body falls back to the "<displayName> would like to connect" template.
+    const isInviteState = connectionState !== 'connected'
+    const trimmed = draft.trim()
+
+    if (!isInviteState && !trimmed) return
 
     if (!stampId) {
       setError('No usable stamp — buy one in Account → My Storage')
 
       return
     }
+
+    // Lock in a display name on first invite, then reuse forever.
+    let name = myDisplayName
+
+    if (isInviteState && !name) {
+      const candidate = pendingNicknameInput.trim()
+
+      if (!candidate) {
+        setError('Enter your name so the recipient knows who is reaching out.')
+
+        return
+      }
+      name = candidate
+      setMyDisplayName(candidate)
+      setMyDisplayNameState(candidate)
+    }
+
+    const body = trimmed || (isInviteState && name ? defaultInviteMessage(name) : '')
+
+    if (!body) return
+
+    // On-chain wake-up is only fired in invite states. Validate prerequisites early.
+    if (isInviteState) {
+      if (!walletClient) {
+        setError('Connect your wallet to send an invite (an on-chain ping is required).')
+
+        return
+      }
+
+      if (walletClient.chain?.id !== GNOSIS_CHAIN_ID) {
+        setError(`Switch wallet to Gnosis Chain (id ${GNOSIS_CHAIN_ID}) to send an invite.`)
+
+        return
+      }
+    }
+
     setSending(true)
     setError(null)
     try {
       const myAddr = signer.getAddress()
-      const body = draft.trim()
 
       await mailbox.send(
         bee,
@@ -248,6 +317,16 @@ export default function Messages({ initialContactId, hideContactList }: Messages
         toLibraryContact(selected),
         { subject: '', body },
       )
+
+      // Fire the on-chain wake-up so the recipient discovers this message
+      // even if they haven't added us as a contact yet.
+      if (isInviteState && walletClient) {
+        const provider = createNotifyProvider(walletClient)
+        const recipientPubKey = hexToBytes(selected.walletPublicKey)
+        await registry.sendNotification(provider, REGISTRY_ADDRESS, recipientPubKey, selected.id, { sender: myAddr })
+        recordInviteSent(selected.id)
+      }
+
       setThreads(prev => appendSent(prev, selected.id, body))
       setDraft('')
     } catch (e) {
@@ -389,13 +468,19 @@ export default function Messages({ initialContactId, hideContactList }: Messages
       <div className="flex-1 flex flex-col min-w-0">
         {selected ? (
           <>
-            <div className="px-6 py-3 border-b" style={{ borderColor: 'rgb(var(--border))' }}>
-              <h2 className="text-base font-semibold" style={{ color: 'rgb(var(--fg))' }}>
-                {selected.nickname}
-              </h2>
-              <p className="text-xs font-mono" style={{ color: 'rgb(var(--fg-muted))' }}>
-                {short(selected.id, 8)}
-              </p>
+            <div
+              className="px-6 py-3 border-b flex items-center justify-between gap-3"
+              style={{ borderColor: 'rgb(var(--border))' }}
+            >
+              <div>
+                <h2 className="text-base font-semibold" style={{ color: 'rgb(var(--fg))' }}>
+                  {selected.nickname}
+                </h2>
+                <p className="text-xs font-mono" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  {short(selected.id, 8)}
+                </p>
+              </div>
+              <ConnectionStatusBadge state={connectionState} contactId={selected.id} />
             </div>
             <div ref={scrollRef} className="flex-1 overflow-auto px-6 py-4 flex flex-col gap-3">
               {selectedThread.length === 0 ? (
@@ -457,24 +542,70 @@ export default function Messages({ initialContactId, hideContactList }: Messages
                 })
               )}
             </div>
-            <div className="border-t p-4" style={{ borderColor: 'rgb(var(--border))' }}>
+            <div className="border-t p-4 space-y-2" style={{ borderColor: 'rgb(var(--border))' }}>
               {error && (
                 <p className="text-xs mb-2" style={{ color: '#ef4444' }}>
                   {error}
                 </p>
               )}
+
+              {needsNickname && (
+                <div
+                  className="rounded-lg border p-3 space-y-2"
+                  style={{ backgroundColor: 'rgb(var(--bg-surface))', borderColor: 'rgb(var(--border))' }}
+                >
+                  <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                    What should they call you? Shown to the recipient in your invite.
+                  </p>
+                  <Input
+                    autoFocus
+                    value={pendingNicknameInput}
+                    onChange={e => setPendingNicknameInput(e.target.value)}
+                    placeholder="Your name"
+                  />
+                </div>
+              )}
+
               <div className="flex gap-2 items-end">
                 <Textarea
                   value={draft}
                   onChange={e => setDraft(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder={`Message ${selected.nickname}…`}
+                  placeholder={
+                    connectionState === 'connected'
+                      ? `Message ${selected.nickname}…`
+                      : myDisplayName
+                        ? `Optional — defaults to "${myDisplayName} would like to connect"`
+                        : `Optional message — your name will be added`
+                  }
                   rows={1}
                   className="flex-1 resize-none"
                   style={{ minHeight: 40, maxHeight: 160 }}
                 />
-                <Button onClick={handleSend} disabled={sending || !draft.trim()} size="icon" title="Send (Enter)">
-                  <Send size={16} />
+                <Button
+                  onClick={handleSend}
+                  disabled={
+                    sending ||
+                    (needsNickname && !pendingNicknameInput.trim()) ||
+                    (connectionState === 'connected' && !draft.trim())
+                  }
+                  size={connectionState === 'connected' ? 'icon' : 'sm'}
+                  title={
+                    connectionState === 'connected'
+                      ? 'Send (Enter)'
+                      : connectionState === 'not-connected'
+                        ? 'Send invite'
+                        : 'Resend invite'
+                  }
+                  className={connectionState === 'connected' ? '' : 'whitespace-nowrap'}
+                >
+                  {connectionState === 'connected' ? (
+                    <Send size={16} />
+                  ) : connectionState === 'not-connected' ? (
+                    'Send invite'
+                  ) : (
+                    'Resend invite'
+                  )}
                 </Button>
               </div>
             </div>
@@ -568,4 +699,77 @@ export default function Messages({ initialContactId, hideContactList }: Messages
       )}
     </div>
   )
+}
+
+function ConnectionStatusBadge({ state, contactId }: { state: ConnectionState; contactId: string }) {
+  // For invite-sent states, show how long ago we sent it.
+  const sentAt = state === 'invite-sent-fresh' || state === 'invite-sent-stale' ? getInviteSentAtMs(contactId) : null
+  const hint = sentAt ? formatAge(sentAt) : null
+
+  const style: Record<ConnectionState, { label: string; bg: string; fg: string; dot: string }> = {
+    'not-connected': {
+      label: 'Not yet connected',
+      bg: 'rgba(255,255,255,0.06)',
+      fg: 'rgb(var(--fg-muted))',
+      dot: 'rgb(var(--fg-muted))',
+    },
+    'invite-sent-fresh': {
+      label: hint ? `Invite sent ${hint} ago` : 'Invite sent — waiting',
+      bg: 'rgba(247,104,8,0.10)',
+      fg: 'rgb(var(--accent))',
+      dot: 'rgb(var(--accent))',
+    },
+    'invite-sent-stale': {
+      label: hint ? `Sent ${hint} ago — you can resend` : 'Older invite — you can resend',
+      bg: 'rgba(247,104,8,0.10)',
+      fg: 'rgb(var(--accent))',
+      dot: 'rgb(var(--accent))',
+    },
+    connected: {
+      label: 'Connected',
+      bg: 'rgba(34,197,94,0.12)',
+      fg: 'rgb(74,222,128)',
+      dot: 'rgb(34,197,94)',
+    },
+  }
+  const s = style[state]
+
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest px-2 py-1 rounded shrink-0"
+      style={{ backgroundColor: s.bg, color: s.fg }}
+    >
+      <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: s.dot }} />
+      {s.label}
+    </span>
+  )
+}
+
+function getInviteSentAtMs(contactId: string): number | null {
+  // Re-read each render — cheap localStorage lookup, keeps badge fresh after Send invite.
+  try {
+    const raw = localStorage.getItem('nook-invitations-sent-v1')
+
+    if (!raw) return null
+    const map = JSON.parse(raw) as Record<string, { sentAt: number }>
+
+    return map[contactId.toLowerCase()]?.sentAt ?? null
+  } catch {
+    return null
+  }
+}
+
+function formatAge(sentAtMs: number): string {
+  const diff = Date.now() - sentAtMs
+  const minutes = Math.floor(diff / 60_000)
+
+  if (minutes < 1) return 'just now'
+
+  if (minutes < 60) return `${minutes}m`
+  const hours = Math.floor(minutes / 60)
+
+  if (hours < 24) return `${hours}h`
+  const days = Math.floor(hours / 24)
+
+  return `${days}d`
 }
