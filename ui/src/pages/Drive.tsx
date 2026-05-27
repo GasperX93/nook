@@ -2077,7 +2077,7 @@ export default function Drive() {
 
   if (!activeDriveId) {
     return (
-      <div className="p-6">
+      <div className="p-6 max-w-4xl mx-auto">
         {/* Header */}
         <div className="flex items-center gap-3 mb-4">
           <div className="flex-1" />
