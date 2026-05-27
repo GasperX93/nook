@@ -236,6 +236,17 @@ export default function Contacts() {
               <Plus size={14} />
               Add contact
             </Button>
+            <select
+              value={sortMode}
+              onChange={e => setSortMode(e.target.value as SortMode)}
+              className="text-xs h-8 rounded border bg-transparent px-2 cursor-pointer focus:outline-none"
+              style={{ color: 'rgb(var(--fg-muted))', borderColor: 'rgb(var(--border))' }}
+              aria-label="Sort contacts"
+            >
+              <option value="name">Sort: Name</option>
+              <option value="date">Sort: Date added</option>
+              <option value="address">Sort: Address</option>
+            </select>
           </div>
         </div>
 
@@ -258,25 +269,12 @@ export default function Contacts() {
         ) : (
           <div className="rounded-lg border overflow-hidden" style={{ borderColor: 'rgb(var(--border))' }}>
             <div
-              className="grid grid-cols-[1fr_110px_110px] gap-2 px-3 py-2 text-[10px] uppercase tracking-widest items-center relative"
+              className="grid grid-cols-[1fr_110px_110px] gap-2 px-3 py-2 text-[10px] uppercase tracking-widest items-center"
               style={{ color: 'rgb(var(--fg-muted))', backgroundColor: 'rgb(var(--bg))' }}
             >
               <div>Name</div>
               <div>Date added</div>
-              <div className="flex items-center justify-between gap-2">
-                <span>Address</span>
-                <select
-                  value={sortMode}
-                  onChange={e => setSortMode(e.target.value as SortMode)}
-                  className="text-[10px] uppercase tracking-widest bg-transparent border rounded px-1.5 py-0.5 cursor-pointer focus:outline-none"
-                  style={{ color: 'rgb(var(--fg-muted))', borderColor: 'rgb(var(--border))' }}
-                  aria-label="Sort"
-                >
-                  <option value="name">Name</option>
-                  <option value="date">Date</option>
-                  <option value="address">Address</option>
-                </select>
-              </div>
+              <div>Address</div>
             </div>
             <ul className="divide-y" style={{ borderColor: 'rgb(var(--border))' }}>
               {sortedFilteredContacts.map(c => {
