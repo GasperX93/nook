@@ -2083,7 +2083,6 @@ export default function Drive() {
 
   // Folder UI state
   const [openFolderId, setOpenFolderId] = useState<string | null>(null)
-  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dragOverId, setDragOverId] = useState<string | 'root' | null>(null)
   const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null)
@@ -2097,7 +2096,6 @@ export default function Drive() {
     setAddingFile(false)
     setSearch('')
     setOpenFolderId(null)
-    setExpandedFolders(new Set())
     // eslint-disable-next-line
   }, [location.key])
 
@@ -2383,17 +2381,6 @@ export default function Drive() {
 
   // ── Folder helpers ───────────────────────────────────────────────────────────
 
-  function toggleFolder(id: string) {
-    setExpandedFolders(prev => {
-      const next = new Set(prev)
-
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-
-      return next
-    })
-  }
-
   function startRename(folder: DriveFolder) {
     setRenamingFolderId(folder.id)
     setRenameValue(folder.name)
@@ -2457,7 +2444,6 @@ export default function Drive() {
 
   function renderFolder(folder: DriveFolder, depth: number): React.ReactElement {
     const isOver = dragOverId === folder.id
-    const isExpanded = expandedFolders.has(folder.id)
     const childFolders = folders.filter(f => f.parentFolderId === folder.id)
     const folderRecords = driveRecords.filter(r => r.folderId === folder.id)
     const count = folderRecords.length + childFolders.length
@@ -2467,9 +2453,6 @@ export default function Drive() {
       <div key={folder.id}>
         <div
           onClick={() => {
-            if (renamingFolderId !== folder.id) toggleFolder(folder.id)
-          }}
-          onDoubleClick={() => {
             if (renamingFolderId !== folder.id) setOpenFolderId(folder.id)
           }}
           onDragOver={e => {
@@ -2488,9 +2471,6 @@ export default function Drive() {
             outlineOffset: '-2px',
           }}
         >
-          <span style={{ color: 'rgb(var(--fg-muted))' }}>
-            {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-          </span>
           <FolderOpen size={13} style={{ color: 'rgb(var(--fg-muted))' }} />
           {renamingFolderId === folder.id ? (
             <input
@@ -2542,19 +2522,6 @@ export default function Drive() {
             <Trash2 size={11} />
           </button>
         </div>
-
-        {isExpanded && (
-          <div className="mt-1 pl-4 space-y-1">
-            {childFolders.map(child => renderFolder(child, depth + 1))}
-            {folderRecords.length > 0 && (
-              <div className="divide-y" style={{ borderColor: 'rgb(var(--border))' }}>
-                {folderRecords.map(record => (
-                  <RecordRow key={record.id} record={record} {...commonRowProps} />
-                ))}
-              </div>
-            )}
-          </div>
-        )}
       </div>
     )
   }
