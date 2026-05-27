@@ -465,7 +465,7 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
             {stamp.label || `${stamp.batchID.slice(0, 20)}…`}
           </p>
           <p className="text-xs mt-0.5" style={{ color: 'rgb(var(--fg-muted))' }}>
-            {depthToCapacity(stamp.depth)} · {ttlToDays(stamp.batchTTL)} remaining
+            {depthToCapacity(stamp.depth)} · {Math.floor(stamp.batchTTL / 86400)} days remaining
           </p>
         </div>
 
