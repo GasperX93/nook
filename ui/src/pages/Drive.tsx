@@ -1213,7 +1213,7 @@ function DriveCard({
               }}
               onClick={e => e.stopPropagation()}
               placeholder="Name this drive…"
-              className="text-base font-semibold bg-transparent border-b outline-none flex-1 min-w-0"
+              className="text-lg font-medium bg-transparent border-b outline-none flex-1 min-w-0"
               style={{ borderColor: 'rgb(var(--accent))', color: 'rgb(var(--fg))' }}
             />
           ) : !hasName ? (
@@ -1223,22 +1223,22 @@ function DriveCard({
                 setRenameInput('')
                 setRenaming(true)
               }}
-              className="text-base font-semibold text-left min-w-0 truncate"
+              className="text-lg font-medium text-left min-w-0 truncate"
               style={{ color: 'rgb(var(--fg-muted))', fontStyle: 'italic' }}
             >
               Name this drive…
             </button>
           ) : (
-            <span className="text-base font-semibold truncate min-w-0">{driveName}</span>
+            <span className="text-lg font-medium truncate min-w-0">{driveName}</span>
           )}
 
           {/* Encrypted pill */}
           {encrypted && (
             <span
-              className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium shrink-0"
+              className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-semibold shrink-0"
               style={{ backgroundColor: '#3b82f6', color: 'white' }}
             >
-              <Lock size={11} />
+              <Lock size={12} />
               Encrypted{granteeCount && granteeCount > 1 ? ` · ${granteeCount - 1} shared` : ''}
             </span>
           )}
@@ -1350,7 +1350,7 @@ function DriveCard({
         </div>
 
         {/* Bottom line: utilization bar + size + days-left pill + items */}
-        <div className="flex items-center gap-3 mt-2 text-xs">
+        <div className="flex items-center gap-2 mt-2 text-sm">
           <div
             className="w-32 h-1 rounded-full shrink-0"
             style={{ backgroundColor: 'rgb(var(--border))' }}
@@ -2080,7 +2080,7 @@ export default function Drive() {
 
   if (!activeDriveId) {
     return (
-      <div className="p-6 max-w-6xl mx-auto">
+      <div className="p-6 max-w-3xl mx-auto">
         {/* Header */}
         <div className="flex items-center gap-3 mb-4">
           <button
