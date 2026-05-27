@@ -1093,7 +1093,6 @@ function DriveCard({
   onMoveToFolder,
 }: DriveCardProps) {
   const [expanded, setExpanded] = useState(false)
-  const [expandedInlineFolders, setExpandedInlineFolders] = useState<Set<string>>(new Set())
   const [inlineDraggingId, setInlineDraggingId] = useState<string | null>(null)
   const [inlineDragOverFolderId, setInlineDragOverFolderId] = useState<string | null>(null)
   const [renaming, setRenaming] = useState(false)
@@ -1121,7 +1120,6 @@ function DriveCard({
   })()
 
   const driveClickTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const folderClickTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
 
   function handleDriveClick() {
     if (driveClickTimer.current !== null) {
@@ -1137,37 +1135,11 @@ function DriveCard({
     }, 300)
   }
 
-  function handleFolderClick(id: string) {
-    if (folderClickTimers.current.has(id)) {
-      clearTimeout(folderClickTimers.current.get(id))
-      folderClickTimers.current.delete(id)
-      onOpen(id)
-
-      return
-    }
-    const timer = setTimeout(() => {
-      folderClickTimers.current.delete(id)
-      setExpandedInlineFolders(prev => {
-        const next = new Set(prev)
-
-        if (next.has(id)) next.delete(id)
-        else next.add(id)
-
-        return next
-      })
-    }, 300)
-    folderClickTimers.current.set(id, timer)
-  }
-
   function renderInlineFolder(folder: DriveFolder, depth: number): React.ReactElement {
-    const isExpanded = expandedInlineFolders.has(folder.id)
-    const childFolders = folders.filter(f => f.parentFolderId === folder.id)
-    const folderFiles = records.filter(r => r.folderId === folder.id)
-
     return (
       <div key={folder.id} style={{ paddingLeft: `${depth * 12}px` }}>
         <div
-          onClick={() => handleFolderClick(folder.id)}
+          onClick={() => onOpen(folder.id)}
           onDragOver={e => {
             e.preventDefault()
             setInlineDragOverFolderId(folder.id)
@@ -1193,44 +1165,9 @@ function DriveCard({
             outlineOffset: '-2px',
           }}
         >
-          <span style={{ color: 'rgb(var(--fg-muted))' }}>
-            {isExpanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-          </span>
           <FolderOpen size={11} style={{ color: 'rgb(var(--fg-muted))' }} />
           <span className="text-xs flex-1 truncate">{folder.name}</span>
         </div>
-        {isExpanded && (
-          <div className="ml-3 pl-2 border-l" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>
-            {childFolders.map(child => renderInlineFolder(child, depth + 1))}
-            {folderFiles.length > 0 && (
-              <div className="divide-y" style={{ borderColor: 'rgb(var(--border))' }}>
-                {folderFiles.map(r => (
-                  <RecordRow
-                    key={r.id}
-                    record={r}
-                    copiedId={copiedId}
-                    downloadingId={downloadingId}
-                    downloadPct={downloadPct}
-                    gatewayUrl={gatewayUrl}
-                    onCopy={onCopy}
-                    onUpdate={onUpdate}
-                    onDownload={onDownload}
-                    onRemove={onRemove}
-                    onSetENS={onSetENS}
-                    onDragStart={(e, id) => {
-                      e.dataTransfer.setData('recordId', id)
-                      setInlineDraggingId(id)
-                    }}
-                    onDragEnd={() => {
-                      setInlineDraggingId(null)
-                      setInlineDragOverFolderId(null)
-                    }}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-        )}
       </div>
     )
   }
