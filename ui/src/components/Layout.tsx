@@ -6,7 +6,6 @@ import {
   Globe,
   HardDrive,
   LogOut,
-  MessageSquare,
   RefreshCw,
   Settings,
   Terminal,
@@ -20,8 +19,6 @@ import { weiToDai } from '../api/bee'
 import { useBeeHealth, usePeers, useStamps, useStatus, useWallet } from '../api/queries'
 import { useInboxPolling } from '../hooks/useInboxPolling'
 import { useRegistryPolling } from '../hooks/useRegistryPolling'
-import { loadInvitations, pendingInvitations } from '../notify/invitations'
-import { loadReadCursors, loadThreads, totalUnread } from '../notify/messages'
 import { useAppStore } from '../store/app'
 import Onboarding from './Onboarding'
 import {
@@ -45,10 +42,7 @@ const mainNavItems = [
 
 const settingsNavItem = { to: '/settings', icon: Settings, label: 'Settings' }
 
-const appNavItems = [
-  { to: '/apps/messages', icon: MessageSquare, label: 'Messages' },
-  { to: '/apps/website-publisher', icon: Globe, label: 'Publish website' },
-]
+const appNavItems = [{ to: '/apps/website-publisher', icon: Globe, label: 'Publish website' }]
 
 function WalletDropdown({ displayName, address, avatar }: { displayName: string; address: string; avatar?: string }) {
   const [open, setOpen] = useState(false)
@@ -155,25 +149,6 @@ export default function Layout() {
   // senders who aren't yet in our contact list (see #62/#63).
   useRegistryPolling()
 
-  // Total unread messages across all conversations — drives a badge on the
-  // Messages sidebar entry. Re-reads localStorage on a short interval; cheap,
-  // and avoids needing a global store just for one indicator.
-  const [messagesUnread, setMessagesUnread] = useState(0)
-
-  useEffect(() => {
-    const tick = () => {
-      const unread = totalUnread(loadThreads(), loadReadCursors())
-      const pending = pendingInvitations(loadInvitations()).length
-
-      setMessagesUnread(unread + pending)
-    }
-
-    tick()
-    const id = setInterval(tick, 3_000)
-
-    return () => clearInterval(id)
-  }, [])
-
   // Track whether Bee has connected at least once this session.
   // Before that we show a friendly "starting" indicator instead of an error.
   const hasEverBeenOnline = useRef(false)
@@ -259,7 +234,6 @@ export default function Layout() {
                 to={to}
                 icon={icon}
                 label={label}
-                badge={to === '/apps/messages' ? messagesUnread : undefined}
                 onClick={() => navigate(to, { state: { ts: Date.now() } })}
               />
             ))}

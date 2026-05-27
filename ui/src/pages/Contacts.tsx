@@ -1,61 +1,53 @@
 import { Bee } from '@ethersphere/bee-js'
 import { identity } from '@swarm-notify/sdk'
-import { Check, Copy, Trash2, X } from 'lucide-react'
+import { Check, Copy, MessageSquare, Plus, Search, Send, Share2, Trash2, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
-import { useAddresses, useStamps } from '../api/queries'
-import { useDerivedKey } from '../hooks/useDerivedKey'
+import Messages from '../apps/Messages'
+import { loadThreads } from '../notify/messages'
+import { Button } from '../components/ui/button'
+import { Input } from '../components/ui/input'
+import { Textarea } from '../components/ui/textarea'
 import { loadInvitations, removeInvitationsFor } from '../notify/invitations'
 import { decodeShareLink, encodeShareLink } from '../notify/share-link'
-import {
-  addContact,
-  isIdentityPublished,
-  isOnboardingDismissed,
-  loadContacts,
-  markIdentityPublished,
-  markOnboardingDismissed,
-  removeContact,
-  saveContacts,
-} from '../notify/storage'
+import { addContact, loadContacts, removeContact, saveContacts } from '../notify/storage'
 import type { NookContact } from '../notify/types'
 
 const BEE_URL = `${window.location.origin}/bee-api`
-
-function bytesToHex(bytes: Uint8Array): string {
-  return Array.from(bytes)
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('')
-}
 
 function short(s: string, n = 6): string {
   return s.length <= n * 2 + 3 ? s : `${s.slice(0, n)}…${s.slice(-n)}`
 }
 
+function formatDate(ts: number): string {
+  return new Date(ts).toISOString().slice(0, 10)
+}
+
 type AddMode = 'registry' | 'share-link'
+type SortMode = 'name' | 'date' | 'address'
 
 export default function Contacts() {
-  const { signer, derive, walletConnected } = useDerivedKey()
-  const { data: addresses } = useAddresses()
-  const { data: stamps } = useStamps()
-
   const bee = useMemo(() => new Bee(BEE_URL), [])
   const [contacts, setContacts] = useState<NookContact[]>(() => loadContacts())
 
-  const [addMode, setAddMode] = useState<AddMode>('registry')
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [composeFor, setComposeFor] = useState<string | null>(null)
+  const [addOpen, setAddOpen] = useState(false)
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [sortMode, setSortMode] = useState<SortMode>('name')
 
-  // Registry mode form
+  // Add-contact dialog state
+  const [addMode, setAddMode] = useState<AddMode>('registry')
   const [registryAddr, setRegistryAddr] = useState('')
   const [registryNickname, setRegistryNickname] = useState('')
-
-  // Share-link mode form
   const [shareLinkInput, setShareLinkInput] = useState('')
   const [shareLinkOverrideName, setShareLinkOverrideName] = useState('')
-
   const [adding, setAdding] = useState(false)
   const [addError, setAddError] = useState<string | null>(null)
 
-  // If launched via a nook://contact?... deep link, the URL has ?contact=<encoded>
-  // Read it once on mount, switch to share-link mode, prefill the input.
+  // If launched via a nook://contact?... deep link, the URL has ?contact=<encoded>.
+  // Open the add dialog with share-link tab pre-filled.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const incoming = params.get('contact')
@@ -63,7 +55,7 @@ export default function Contacts() {
     if (incoming) {
       setAddMode('share-link')
       setShareLinkInput(incoming)
-      // Clean the param from the URL so reloads don't re-prefill
+      setAddOpen(true)
       params.delete('contact')
       const next = params.toString()
       const newSearch = next ? `?${next}` : ''
@@ -72,71 +64,52 @@ export default function Contacts() {
     }
   }, [])
 
-  const [publishing, setPublishing] = useState(false)
-  const [publishError, setPublishError] = useState<string | null>(null)
-  const [publishedTick, setPublishedTick] = useState(0)
+  const [copied, setCopied] = useState<'detail-address' | 'detail-share' | null>(null)
 
-  const [copied, setCopied] = useState<'address' | 'share-link' | null>(null)
-  const [hintDismissed, setHintDismissed] = useState(() => isOnboardingDismissed())
-
-  const usableStamps = (stamps ?? []).filter(s => s.usable)
-  const stampId = usableStamps[0]?.batchID ?? null
-  const myAddress = signer?.getAddress() ?? null
-  const published = myAddress ? isIdentityPublished(myAddress) : false
-
-  useEffect(() => {
-    void publishedTick
-  }, [publishedTick])
-
-  // Compute decoded share-link preview live as the user types
   const decoded = useMemo(() => {
     if (!shareLinkInput.trim()) return null
 
     return decodeShareLink(shareLinkInput.trim())
   }, [shareLinkInput])
 
-  // Compute my own share link to display + copy
-  const myShareLink = useMemo(() => {
-    if (!signer || !addresses) return null
+  const sortedFilteredContacts = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase()
+    const filtered = q
+      ? contacts.filter(c => c.nickname.toLowerCase().includes(q) || c.id.toLowerCase().includes(q))
+      : contacts
+    const sorted = [...filtered]
 
-    return encodeShareLink({
-      ethAddress: signer.getAddress(),
-      walletPublicKey: bytesToHex(signer.getPublicKey()),
-      beePublicKey: addresses.publicKey,
-    })
-  }, [signer, addresses])
+    if (sortMode === 'name') sorted.sort((a, b) => a.nickname.localeCompare(b.nickname))
 
-  async function handlePublish() {
-    if (!signer) return setPublishError('Derive your key first')
+    if (sortMode === 'date') sorted.sort((a, b) => b.addedAt - a.addedAt)
 
-    if (!addresses) return setPublishError('Bee node not reachable')
+    if (sortMode === 'address') sorted.sort((a, b) => a.id.localeCompare(b.id))
 
-    if (!stampId) return setPublishError('Buy a drive first to enable publishing')
+    return sorted
+  }, [contacts, searchQuery, sortMode])
 
-    setPublishing(true)
-    setPublishError(null)
-    try {
-      await identity.publish(bee, signer.getSigningKey(), stampId, {
-        walletPublicKey: bytesToHex(signer.getPublicKey()),
-        beePublicKey: addresses.publicKey,
-        ethAddress: signer.getAddress(),
-      })
-      const readback = await identity.resolve(bee, signer.getAddress())
+  const selected = useMemo(() => contacts.find(c => c.id === selectedId) ?? null, [contacts, selectedId])
 
-      if (!readback) {
-        setPublishError('Published but could not verify — try again')
+  // Reset compose mode when selection changes
+  useEffect(() => {
+    setComposeFor(null)
+  }, [selectedId])
 
-        return
-      }
-      markIdentityPublished(signer.getAddress())
-      setPublishedTick(t => t + 1)
-      markOnboardingDismissed()
-      setHintDismissed(true)
-    } catch (e) {
-      setPublishError((e as Error).message)
-    } finally {
-      setPublishing(false)
-    }
+  // Show the message thread if the contact already has history OR the user just hit Send message.
+  const hasThread = useMemo(() => {
+    if (!selectedId) return false
+    const t = loadThreads()[selectedId.toLowerCase()]
+
+    return Array.isArray(t) && t.length > 0
+  }, [selectedId, composeFor])
+  const showThread = hasThread || composeFor === selectedId
+
+  function resetAddForm() {
+    setRegistryAddr('')
+    setRegistryNickname('')
+    setShareLinkInput('')
+    setShareLinkOverrideName('')
+    setAddError(null)
   }
 
   async function handleAddByRegistry() {
@@ -152,7 +125,7 @@ export default function Contacts() {
       const result = await identity.resolve(bee, registryAddr.trim())
 
       if (!result) {
-        setAddError('No identity found — they must publish, or use a share link instead')
+        setAddError('No identity found — they must publish, or use a contact link instead')
 
         return
       }
@@ -167,8 +140,8 @@ export default function Contacts() {
       const updated = addContact(contacts, next)
 
       setContacts(updated)
-      setRegistryAddr('')
-      setRegistryNickname('')
+      resetAddForm()
+      setAddOpen(false)
     } catch (e) {
       setAddError((e as Error).message)
     } finally {
@@ -180,7 +153,7 @@ export default function Contacts() {
     setAddError(null)
 
     if (!decoded) {
-      setAddError('Paste a share link first')
+      setAddError('Paste a contact link first')
 
       return
     }
@@ -205,8 +178,8 @@ export default function Contacts() {
       const updated = addContact(contacts, next)
 
       setContacts(updated)
-      setShareLinkInput('')
-      setShareLinkOverrideName('')
+      resetAddForm()
+      setAddOpen(false)
     } catch (e) {
       setAddError((e as Error).message)
     }
@@ -217,302 +190,334 @@ export default function Contacts() {
 
     setContacts(updated)
     saveContacts(updated)
-    // Wipe any lingering invitation rows for this sender so a future on-chain
-    // wake-up from them surfaces as a fresh invitation instead of being dedup'd.
     removeInvitationsFor(loadInvitations(), id)
+
+    if (selectedId === id) setSelectedId(null)
   }
 
-  async function handleCopy(value: string, kind: 'address' | 'share-link') {
+  async function handleCopy(value: string, kind: 'detail-address' | 'detail-share') {
     await navigator.clipboard.writeText(value)
     setCopied(kind)
     setTimeout(() => setCopied(null), 1500)
   }
 
-  function handleDismissHint() {
-    markOnboardingDismissed()
-    setHintDismissed(true)
-  }
+  function handleShareContact(c: NookContact) {
+    const link = encodeShareLink({
+      ethAddress: c.id,
+      walletPublicKey: c.walletPublicKey,
+      beePublicKey: c.beePublicKey,
+      nickname: c.nickname,
+    })
 
-  const cardStyle = { backgroundColor: 'rgb(var(--bg-surface))' }
-  const inputStyle = {
-    backgroundColor: 'rgb(var(--bg))',
-    color: 'rgb(var(--fg))',
-    borderColor: 'rgb(var(--border))',
+    void handleCopy(link, 'detail-share')
   }
-  const inputClass = 'rounded border px-3 py-2 text-sm font-mono focus:outline-none w-full'
-  const btnPrimary =
-    'px-4 py-2 rounded text-xs font-semibold uppercase tracking-widest transition-opacity disabled:opacity-40 disabled:cursor-not-allowed'
-  const btnGhost =
-    'px-3 py-1.5 rounded text-xs font-semibold uppercase tracking-widest transition-opacity disabled:opacity-40 disabled:cursor-not-allowed'
-  const accentStyle = { backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }
-  const ghostStyle = { backgroundColor: 'rgb(var(--bg))', border: '1px solid rgb(var(--border))' }
 
   return (
-    <div className="p-6 max-w-4xl space-y-4">
-      <div>
-        <h1 className="text-2xl font-bold mb-1">Contacts</h1>
-        <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
-          People you can send messages to and share drives with. Add by Nook address (identity feed) or share link
-          (manual).
-        </p>
-      </div>
-
-      {/* Onboarding hint */}
-      {!hintDismissed && !published && (
-        <div
-          className="rounded-xl border p-4 flex items-start gap-3"
-          style={{
-            backgroundColor: 'rgba(247,104,8,0.06)',
-            borderColor: 'rgba(247,104,8,0.3)',
-          }}
-        >
-          <div className="flex-1 text-sm">
-            <p className="font-semibold mb-1">Make yourself reachable</p>
-            <p style={{ color: 'rgb(var(--fg-muted))' }}>
-              Either publish your Nook address to the identity feed (others find you by typing it) or share your contact
-              link manually below. Either way works — pick what you prefer.
-            </p>
+    <div className="flex h-full">
+      {/* LEFT PANE (50%) */}
+      <div
+        className="flex-1 basis-1/2 min-w-0 border-r overflow-y-auto p-5 space-y-4"
+        style={{ borderColor: 'rgb(var(--border))' }}
+      >
+        {/* Header row: title + search + Add contact */}
+        <div className="flex items-center gap-2">
+          <h1 className="text-lg font-semibold">Contacts</h1>
+          <div className="ml-auto flex items-center gap-2">
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={() => setSearchOpen(v => !v)}
+              aria-label="Toggle search"
+              className="h-8 w-8"
+            >
+              <Search size={14} />
+            </Button>
+            <Button size="sm" onClick={() => setAddOpen(true)} className="inline-flex items-center gap-1.5">
+              <Plus size={14} />
+              Add contact
+            </Button>
           </div>
-          <button onClick={handleDismissHint} aria-label="Dismiss" className="p-1 hover:opacity-60">
-            <X size={16} />
-          </button>
-        </div>
-      )}
-
-      {/* My identity */}
-      <div className="rounded-xl border p-5 space-y-3" style={cardStyle}>
-        <p className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
-          Your Nook address
-        </p>
-
-        {!walletConnected && (
-          <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
-            Connect your wallet (top right) to derive your Nook address.
-          </p>
-        )}
-
-        {walletConnected && !signer && (
-          <button onClick={derive} className={btnPrimary} style={accentStyle}>
-            Derive key
-          </button>
-        )}
-
-        {signer && myAddress && (
-          <>
-            <div className="flex items-center gap-2 flex-wrap">
-              <code className="text-sm font-mono break-all" style={{ color: 'rgb(var(--fg))' }}>
-                {myAddress}
-              </code>
-              <button
-                onClick={async () => handleCopy(myAddress, 'address')}
-                className="p-1.5 rounded hover:opacity-70 inline-flex items-center gap-1 text-xs"
-                style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg-muted))' }}
-                aria-label="Copy address"
-              >
-                {copied === 'address' ? <Check size={12} /> : <Copy size={12} />}
-                <span>{copied === 'address' ? 'Copied' : 'Copy'}</span>
-              </button>
-            </div>
-
-            <div className="flex items-center gap-3 pt-2 flex-wrap">
-              <span
-                className="inline-flex items-center gap-2 text-xs px-2 py-1 rounded"
-                style={{
-                  backgroundColor: published ? 'rgba(34,197,94,0.12)' : 'rgba(255,255,255,0.06)',
-                  color: published ? 'rgb(74,222,128)' : 'rgb(var(--fg-muted))',
-                }}
-              >
-                <span
-                  className="w-1.5 h-1.5 rounded-full"
-                  style={{ backgroundColor: published ? 'rgb(34,197,94)' : 'rgb(var(--fg-muted))' }}
-                />
-                {published ? 'Published' : 'Not published'}
-              </span>
-              <button onClick={handlePublish} disabled={publishing || !stampId} className={btnGhost} style={ghostStyle}>
-                {publishing ? 'Publishing…' : published ? 'Republish' : 'Publish to identity feed'}
-              </button>
-              {myShareLink && (
-                <button
-                  onClick={async () => handleCopy(myShareLink, 'share-link')}
-                  className={btnGhost}
-                  style={ghostStyle}
-                  aria-label="Copy share link"
-                >
-                  {copied === 'share-link' ? 'Copied' : 'Copy share link'}
-                </button>
-              )}
-              {!stampId && (
-                <span className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-                  No stamp — publishing needs a drive
-                </span>
-              )}
-            </div>
-
-            {publishError && (
-              <p className="text-xs" style={{ color: 'rgb(248,113,113)' }}>
-                {publishError}
-              </p>
-            )}
-
-            <p className="text-xs leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
-              Two ways to be reachable: <strong>publish to the identity feed</strong> (others type your Nook address) or{' '}
-              <strong>send your share link</strong> (others paste it). Both unlock messaging and drive sharing.
-              Publishing is voluntary — share-link works without it.
-            </p>
-          </>
-        )}
-      </div>
-
-      {/* Add contact */}
-      <div className="rounded-xl border p-5 space-y-3" style={cardStyle}>
-        <p className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
-          Add contact
-        </p>
-
-        <div className="flex gap-4 text-sm">
-          <label className="inline-flex items-center gap-2 cursor-pointer">
-            <input
-              type="radio"
-              checked={addMode === 'registry'}
-              onChange={() => setAddMode('registry')}
-              name="add-mode"
-            />
-            <span>Find on identity feed</span>
-          </label>
-          <label className="inline-flex items-center gap-2 cursor-pointer">
-            <input
-              type="radio"
-              checked={addMode === 'share-link'}
-              onChange={() => setAddMode('share-link')}
-              name="add-mode"
-            />
-            <span>Paste share link</span>
-          </label>
         </div>
 
-        {addMode === 'registry' && (
-          <div className="space-y-2">
-            <div className="grid grid-cols-1 md:grid-cols-[2fr_1fr] gap-2">
-              <input
-                type="text"
-                className={inputClass}
-                style={inputStyle}
-                placeholder="Nook address (0x…)"
-                value={registryAddr}
-                onChange={e => setRegistryAddr(e.target.value)}
-                disabled={adding}
-              />
-              <input
-                type="text"
-                className={inputClass}
-                style={inputStyle}
-                placeholder="Nickname"
-                value={registryNickname}
-                onChange={e => setRegistryNickname(e.target.value)}
-                disabled={adding}
-              />
-            </div>
-            <button onClick={handleAddByRegistry} disabled={adding} className={btnGhost} style={ghostStyle}>
-              {adding ? 'Looking up…' : 'Look up & add'}
-            </button>
-          </div>
+        {searchOpen && (
+          <Input
+            autoFocus
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            placeholder="Search by name or address"
+          />
         )}
 
-        {addMode === 'share-link' && (
-          <div className="space-y-2">
-            <textarea
-              className={`${inputClass} h-20 resize-none`}
-              style={inputStyle}
-              placeholder="nook://contact?addr=0x…&wpub=…&bpub=…&name=…"
-              value={shareLinkInput}
-              onChange={e => setShareLinkInput(e.target.value)}
-              disabled={adding}
-            />
-            {decoded && decoded.ok && (
-              <div
-                className="text-xs space-y-1 p-3 rounded"
-                style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg-muted))' }}
-              >
-                <p>
-                  <span style={{ color: 'rgb(var(--fg))' }}>Address:</span> {decoded.payload.ethAddress}
-                </p>
-                <p>
-                  <span style={{ color: 'rgb(var(--fg))' }}>Suggested nickname:</span>{' '}
-                  {decoded.payload.nickname ?? '(none — provide one below)'}
-                </p>
-                <p style={{ color: 'rgb(74,222,128)' }}>✓ All keys present (wallet + bee)</p>
-              </div>
-            )}
-            {decoded && !decoded.ok && (
-              <p className="text-xs" style={{ color: 'rgb(248,113,113)' }}>
-                {decoded.error}
-              </p>
-            )}
-            <input
-              type="text"
-              className={inputClass}
-              style={inputStyle}
-              placeholder="Override nickname (optional)"
-              value={shareLinkOverrideName}
-              onChange={e => setShareLinkOverrideName(e.target.value)}
-              disabled={adding}
-            />
-            <button onClick={handleAddByShareLink} disabled={adding} className={btnGhost} style={ghostStyle}>
-              Add from share link
-            </button>
-          </div>
-        )}
-
-        {addError && (
-          <p className="text-xs" style={{ color: 'rgb(248,113,113)' }}>
-            {addError}
-          </p>
-        )}
-      </div>
-
-      {/* Contact list */}
-      <div className="rounded-xl border p-5 space-y-3" style={cardStyle}>
-        <p className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
-          Saved contacts ({contacts.length})
-        </p>
-        {contacts.length === 0 ? (
-          <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
-            No contacts yet. Add someone above.
+        {/* Table */}
+        {sortedFilteredContacts.length === 0 ? (
+          <p className="text-xs px-2 py-6 text-center" style={{ color: 'rgb(var(--fg-muted))' }}>
+            {contacts.length === 0
+              ? 'No contacts yet. Click "Add contact" to begin.'
+              : 'No contacts match this search.'}
           </p>
         ) : (
-          <ul className="divide-y" style={{ borderColor: 'rgb(var(--border))' }}>
-            {contacts.map(c => (
-              <li key={c.id} className="flex items-center justify-between py-2.5 gap-3">
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium truncate">
-                    {c.nickname}
-                    <span
-                      className="ml-2 text-xs px-1.5 py-0.5 rounded"
+          <div className="rounded-lg border overflow-hidden" style={{ borderColor: 'rgb(var(--border))' }}>
+            <div
+              className="grid grid-cols-[1fr_110px_110px] gap-2 px-3 py-2 text-[10px] uppercase tracking-widest items-center relative"
+              style={{ color: 'rgb(var(--fg-muted))', backgroundColor: 'rgb(var(--bg))' }}
+            >
+              <div>Name</div>
+              <div>Date added</div>
+              <div className="flex items-center justify-between gap-2">
+                <span>Address</span>
+                <select
+                  value={sortMode}
+                  onChange={e => setSortMode(e.target.value as SortMode)}
+                  className="text-[10px] uppercase tracking-widest bg-transparent border rounded px-1.5 py-0.5 cursor-pointer focus:outline-none"
+                  style={{ color: 'rgb(var(--fg-muted))', borderColor: 'rgb(var(--border))' }}
+                  aria-label="Sort"
+                >
+                  <option value="name">Name</option>
+                  <option value="date">Date</option>
+                  <option value="address">Address</option>
+                </select>
+              </div>
+            </div>
+            <ul className="divide-y" style={{ borderColor: 'rgb(var(--border))' }}>
+              {sortedFilteredContacts.map(c => {
+                const isSelected = selectedId === c.id
+
+                return (
+                  <li key={c.id}>
+                    <button
+                      onClick={() => setSelectedId(c.id)}
+                      className="grid grid-cols-[1fr_110px_110px] gap-2 px-3 py-2.5 w-full text-left items-center hover:bg-white/5"
                       style={{
-                        color: 'rgb(var(--fg-muted))',
-                        backgroundColor: 'rgba(255,255,255,0.05)',
+                        backgroundColor: isSelected ? 'rgba(255,255,255,0.06)' : 'transparent',
                       }}
                     >
-                      {c.source === 'identity-feed' ? 'identity feed' : 'share link'}
-                    </span>
-                  </p>
-                  <code className="text-xs font-mono" style={{ color: 'rgb(var(--fg-muted))' }}>
-                    {short(c.id)}
-                  </code>
-                </div>
-                <button
-                  onClick={() => handleRemoveContact(c.id)}
-                  className="p-2 rounded hover:opacity-70 text-xs inline-flex items-center gap-1"
-                  style={{ color: 'rgb(var(--fg-muted))' }}
-                  aria-label={`Remove ${c.nickname}`}
-                >
-                  <Trash2 size={14} />
-                </button>
-              </li>
-            ))}
-          </ul>
+                      <span className="text-sm font-medium truncate">{c.nickname}</span>
+                      <span className="text-xs font-mono" style={{ color: 'rgb(var(--fg-muted))' }}>
+                        {formatDate(c.addedAt)}
+                      </span>
+                      <span className="text-xs font-mono truncate" style={{ color: 'rgb(var(--fg-muted))' }}>
+                        {short(c.id, 4)}
+                      </span>
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          </div>
         )}
       </div>
+
+      {/* RIGHT PANE (50%) */}
+      <div className="flex-1 basis-1/2 flex flex-col min-w-0 overflow-hidden">
+        {!selected ? (
+          <div className="flex-1 flex items-center justify-center p-8">
+            <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
+              Select a contact to see their details
+            </p>
+          </div>
+        ) : showThread ? (
+          <>
+            <div
+              className="flex items-center justify-end gap-2 px-4 py-2 border-b shrink-0"
+              style={{ borderColor: 'rgb(var(--border))' }}
+            >
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleShareContact(selected)}
+                className="inline-flex items-center gap-1.5"
+              >
+                <Share2 size={14} />
+                {copied === 'detail-share' ? 'Copied' : 'Share contact'}
+              </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => handleRemoveContact(selected.id)}
+                aria-label={`Remove ${selected.nickname}`}
+                className="text-red-500 h-8 w-8"
+              >
+                <Trash2 size={14} />
+              </Button>
+            </div>
+            <div className="flex-1 min-h-0">
+              <Messages initialContactId={selected.id} hideContactList />
+            </div>
+          </>
+        ) : (
+          <div className="flex-1 flex items-center justify-center p-8 overflow-y-auto">
+            <div className="w-full max-w-md space-y-5">
+              <div
+                className="w-48 h-48 mx-auto rounded-lg"
+                style={{ backgroundColor: 'rgb(0,0,0)' }}
+                aria-label="Contact avatar"
+              />
+              <div className="text-center space-y-2">
+                <p className="text-xl font-semibold">{selected.nickname}</p>
+                <div className="flex items-center justify-center gap-2">
+                  <code className="text-xs font-mono break-all" style={{ color: 'rgb(var(--fg-muted))' }}>
+                    {selected.id}
+                  </code>
+                  <button
+                    onClick={async () => handleCopy(selected.id, 'detail-address')}
+                    className="p-1 rounded hover:opacity-70 inline-flex items-center gap-1 text-xs"
+                    style={{ color: 'rgb(var(--fg-muted))' }}
+                    aria-label="Copy address"
+                  >
+                    {copied === 'detail-address' ? <Check size={12} /> : <Copy size={12} />}
+                  </button>
+                </div>
+                <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  Date added {formatDate(selected.addedAt)}
+                </p>
+              </div>
+              <div className="flex items-center justify-center gap-2 pt-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setComposeFor(selected.id)}
+                  className="inline-flex items-center gap-1.5"
+                >
+                  <MessageSquare size={14} />
+                  Send message
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleShareContact(selected)}
+                  className="inline-flex items-center gap-1.5"
+                >
+                  <Share2 size={14} />
+                  {copied === 'detail-share' ? 'Copied' : 'Share contact'}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={() => handleRemoveContact(selected.id)}
+                  aria-label={`Remove ${selected.nickname}`}
+                  className="text-red-500 h-9 w-9"
+                >
+                  <Trash2 size={14} />
+                </Button>
+              </div>
+              <p className="text-[11px] text-center" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Added via {selected.source === 'identity-feed' ? 'identity feed' : 'contact link'}
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ADD CONTACT MODAL */}
+      {addOpen && (
+        <div
+          className="fixed inset-0 flex items-center justify-center z-50"
+          style={{ backgroundColor: 'rgba(0,0,0,0.6)' }}
+          onClick={() => setAddOpen(false)}
+        >
+          <div
+            className="rounded-xl border p-6 w-[460px] space-y-5"
+            style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-semibold">Add contact</p>
+              <Button onClick={() => setAddOpen(false)} variant="ghost" size="icon" className="h-8 w-8">
+                <X size={16} />
+              </Button>
+            </div>
+
+            <div className="flex gap-4 text-sm">
+              <label className="inline-flex items-center gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  checked={addMode === 'registry'}
+                  onChange={() => setAddMode('registry')}
+                  name="add-mode"
+                />
+                <span>Find on identity feed</span>
+              </label>
+              <label className="inline-flex items-center gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  checked={addMode === 'share-link'}
+                  onChange={() => setAddMode('share-link')}
+                  name="add-mode"
+                />
+                <span>Paste contact link</span>
+              </label>
+            </div>
+
+            {addMode === 'registry' && (
+              <div className="space-y-2">
+                <Input
+                  placeholder="Nook address (0x…)"
+                  value={registryAddr}
+                  onChange={e => setRegistryAddr(e.target.value)}
+                  disabled={adding}
+                />
+                <Input
+                  placeholder="Nickname"
+                  value={registryNickname}
+                  onChange={e => setRegistryNickname(e.target.value)}
+                  disabled={adding}
+                />
+                <Button onClick={handleAddByRegistry} disabled={adding} className="inline-flex items-center gap-1.5">
+                  <Send size={14} />
+                  {adding ? 'Looking up…' : 'Look up & add'}
+                </Button>
+              </div>
+            )}
+
+            {addMode === 'share-link' && (
+              <div className="space-y-2">
+                <Textarea
+                  className="h-20 resize-none font-mono text-xs"
+                  placeholder="nook://contact?addr=0x…&wpub=…&bpub=…&name=…"
+                  value={shareLinkInput}
+                  onChange={e => setShareLinkInput(e.target.value)}
+                  disabled={adding}
+                />
+                {decoded && decoded.ok && (
+                  <div
+                    className="text-xs space-y-1 p-3 rounded"
+                    style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg-muted))' }}
+                  >
+                    <p>
+                      <span style={{ color: 'rgb(var(--fg))' }}>Address:</span> {decoded.payload.ethAddress}
+                    </p>
+                    <p>
+                      <span style={{ color: 'rgb(var(--fg))' }}>Suggested nickname:</span>{' '}
+                      {decoded.payload.nickname ?? '(none — provide one below)'}
+                    </p>
+                    <p style={{ color: 'rgb(74,222,128)' }}>✓ All keys present (wallet + bee)</p>
+                  </div>
+                )}
+                {decoded && !decoded.ok && (
+                  <p className="text-xs" style={{ color: 'rgb(248,113,113)' }}>
+                    {decoded.error}
+                  </p>
+                )}
+                <Input
+                  placeholder="Override nickname (optional)"
+                  value={shareLinkOverrideName}
+                  onChange={e => setShareLinkOverrideName(e.target.value)}
+                  disabled={adding}
+                />
+                <Button onClick={handleAddByShareLink} disabled={adding}>
+                  Add from contact link
+                </Button>
+              </div>
+            )}
+
+            {addError && (
+              <p className="text-xs" style={{ color: 'rgb(248,113,113)' }}>
+                {addError}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -29,7 +29,14 @@ function formatTime(ts: number): string {
   return sameDay ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : d.toLocaleString()
 }
 
-export default function Messages() {
+interface MessagesProps {
+  /** Optional contact ID to preselect (used when opening Messages scoped to a single contact). */
+  initialContactId?: string
+  /** When true, suppress the inner conversation list so only the thread + compose render. */
+  hideContactList?: boolean
+}
+
+export default function Messages({ initialContactId, hideContactList }: MessagesProps = {}) {
   const { signer, derive, walletConnected } = useDerivedKey()
   const { data: stamps } = useStamps()
 
@@ -41,7 +48,7 @@ export default function Messages() {
 
   const [threads, setThreads] = useState(() => loadThreads())
   const [cursors, setCursors] = useState(() => loadReadCursors())
-  const [selectedId, setSelectedId] = useState<string | null>(contacts[0]?.id ?? null)
+  const [selectedId, setSelectedId] = useState<string | null>(initialContactId ?? contacts[0]?.id ?? null)
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -295,86 +302,88 @@ export default function Messages() {
 
   return (
     <div className="flex h-full overflow-hidden">
-      {/* Left pane — conversation list */}
-      <div
-        className="w-72 shrink-0 border-r flex flex-col"
-        style={{ borderColor: 'rgb(var(--border))', backgroundColor: 'rgb(var(--bg-surface))' }}
-      >
+      {/* Left pane — conversation list (hidden when Messages is embedded scoped to one contact) */}
+      {!hideContactList && (
         <div
-          className="px-4 py-3 border-b flex items-center justify-between"
-          style={{ borderColor: 'rgb(var(--border))' }}
+          className="w-72 shrink-0 border-r flex flex-col"
+          style={{ borderColor: 'rgb(var(--border))', backgroundColor: 'rgb(var(--bg-surface))' }}
         >
-          <h2 className="text-sm font-semibold uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
-            Conversations
-          </h2>
-        </div>
-        <div className="flex-1 overflow-auto">
-          {/* Pending invitations — on-chain pings from senders not yet in contacts */}
-          {pending.map(inv => {
-            const isActive = inv.senderAddr === selectedId?.toLowerCase()
+          <div
+            className="px-4 py-3 border-b flex items-center justify-between"
+            style={{ borderColor: 'rgb(var(--border))' }}
+          >
+            <h2 className="text-sm font-semibold uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
+              Conversations
+            </h2>
+          </div>
+          <div className="flex-1 overflow-auto">
+            {/* Pending invitations — on-chain pings from senders not yet in contacts */}
+            {pending.map(inv => {
+              const isActive = inv.senderAddr === selectedId?.toLowerCase()
 
-            return (
-              <button
-                key={inv.senderAddr}
-                onClick={() => {
-                  setSelectedId(inv.senderAddr)
-                  setInviteNickname('')
-                }}
-                className="w-full text-left px-4 py-3 border-b flex flex-col gap-1 transition-colors"
-                style={{
-                  borderColor: 'rgb(var(--border))',
-                  backgroundColor: isActive ? 'rgba(247,104,8,0.12)' : 'rgba(96,165,250,0.06)',
-                }}
-              >
-                <div className="flex items-center gap-2">
-                  <Mail size={12} style={{ color: '#60a5fa' }} />
-                  <span className="font-medium text-sm truncate font-mono" style={{ color: 'rgb(var(--fg))' }}>
-                    {short(inv.senderAddr, 8)}
-                  </span>
-                </div>
-                <span className="text-xs truncate" style={{ color: 'rgb(var(--fg-muted))' }}>
-                  Wants to reach you
-                </span>
-              </button>
-            )
-          })}
-          {contacts.map(c => {
-            const thread = threads[c.id.toLowerCase()]
-            const unread = unreadCount(thread, cursors[c.id.toLowerCase()])
-            const last = thread?.[thread.length - 1]
-            const isActive = c.id === selectedId
-
-            return (
-              <button
-                key={c.id}
-                onClick={() => setSelectedId(c.id)}
-                className="w-full text-left px-4 py-3 border-b flex flex-col gap-1 transition-colors"
-                style={{
-                  borderColor: 'rgb(var(--border))',
-                  backgroundColor: isActive ? 'rgba(247,104,8,0.12)' : undefined,
-                }}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-medium text-sm truncate" style={{ color: 'rgb(var(--fg))' }}>
-                    {c.nickname}
-                  </span>
-                  {unread > 0 && (
-                    <span
-                      className="text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0"
-                      style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
-                    >
-                      {unread}
+              return (
+                <button
+                  key={inv.senderAddr}
+                  onClick={() => {
+                    setSelectedId(inv.senderAddr)
+                    setInviteNickname('')
+                  }}
+                  className="w-full text-left px-4 py-3 border-b flex flex-col gap-1 transition-colors"
+                  style={{
+                    borderColor: 'rgb(var(--border))',
+                    backgroundColor: isActive ? 'rgba(247,104,8,0.12)' : 'rgba(96,165,250,0.06)',
+                  }}
+                >
+                  <div className="flex items-center gap-2">
+                    <Mail size={12} style={{ color: '#60a5fa' }} />
+                    <span className="font-medium text-sm truncate font-mono" style={{ color: 'rgb(var(--fg))' }}>
+                      {short(inv.senderAddr, 8)}
                     </span>
-                  )}
-                </div>
-                <span className="text-xs truncate" style={{ color: 'rgb(var(--fg-muted))' }}>
-                  {last ? `${last.direction === 'sent' ? 'You: ' : ''}${last.body}` : short(c.id)}
-                </span>
-              </button>
-            )
-          })}
+                  </div>
+                  <span className="text-xs truncate" style={{ color: 'rgb(var(--fg-muted))' }}>
+                    Wants to reach you
+                  </span>
+                </button>
+              )
+            })}
+            {contacts.map(c => {
+              const thread = threads[c.id.toLowerCase()]
+              const unread = unreadCount(thread, cursors[c.id.toLowerCase()])
+              const last = thread?.[thread.length - 1]
+              const isActive = c.id === selectedId
+
+              return (
+                <button
+                  key={c.id}
+                  onClick={() => setSelectedId(c.id)}
+                  className="w-full text-left px-4 py-3 border-b flex flex-col gap-1 transition-colors"
+                  style={{
+                    borderColor: 'rgb(var(--border))',
+                    backgroundColor: isActive ? 'rgba(247,104,8,0.12)' : undefined,
+                  }}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-medium text-sm truncate" style={{ color: 'rgb(var(--fg))' }}>
+                      {c.nickname}
+                    </span>
+                    {unread > 0 && (
+                      <span
+                        className="text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0"
+                        style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
+                      >
+                        {unread}
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-xs truncate" style={{ color: 'rgb(var(--fg-muted))' }}>
+                    {last ? `${last.direction === 'sent' ? 'You: ' : ''}${last.body}` : short(c.id)}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Right pane — selected thread + compose */}
       <div className="flex-1 flex flex-col min-w-0">
