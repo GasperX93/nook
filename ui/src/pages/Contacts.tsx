@@ -433,7 +433,7 @@ export default function Contacts() {
                   onChange={() => setAddMode('registry')}
                   name="add-mode"
                 />
-                <span>Find on identity feed</span>
+                <span>Find by Nook address</span>
               </label>
               <label className="inline-flex items-center gap-2 cursor-pointer">
                 <input
