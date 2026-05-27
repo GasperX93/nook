@@ -486,20 +486,28 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
           </label>
           {capacityEnabled && capacityOptions.length > 0 && (
             <div className="grid grid-cols-3 gap-2">
-              {capacityOptions.map((s, i) => (
-                <button
-                  key={s.label}
-                  onClick={() => setCapacityIdx(i)}
-                  className="px-3 py-2 rounded-lg border text-sm transition-all"
-                  style={{
-                    borderColor: capacityIdx === i ? 'rgb(var(--accent))' : 'rgb(var(--border))',
-                    backgroundColor: capacityIdx === i ? 'rgba(247,104,8,0.08)' : 'transparent',
-                    color: capacityIdx === i ? 'rgb(var(--fg))' : 'rgb(var(--fg-muted))',
-                  }}
-                >
-                  {s.label}
-                </button>
-              ))}
+              {capacityOptions.map((s, i) => {
+                const isCurrent = s.depth === stamp.depth
+                const isActive = capacityIdx === i
+
+                return (
+                  <button
+                    key={s.label}
+                    onClick={() => !isCurrent && setCapacityIdx(i)}
+                    disabled={isCurrent}
+                    className="px-3 py-2 rounded-lg border text-sm transition-all disabled:cursor-not-allowed"
+                    style={{
+                      borderColor: isActive ? 'rgb(var(--accent))' : 'rgb(var(--border))',
+                      backgroundColor: isActive && !isCurrent ? 'rgba(247,104,8,0.08)' : 'transparent',
+                      color: isActive && !isCurrent ? 'rgb(var(--fg))' : 'rgb(var(--fg-muted))',
+                      opacity: isCurrent ? 0.5 : 1,
+                    }}
+                  >
+                    {s.label}
+                    {isCurrent && <span className="block text-[10px] mt-0.5">Current</span>}
+                  </button>
+                )
+              })}
             </div>
           )}
           {firstLargerIdx < 0 && (
