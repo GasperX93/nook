@@ -398,12 +398,34 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
 
   const targetDepth = capacityEnabled && capacityOptions[capacityIdx] ? capacityOptions[capacityIdx].depth : stamp.depth
   const willDilute = capacityEnabled && targetDepth > stamp.depth
-  const willTopup = durationEnabled
-  const canSubmit = willDilute || willTopup
-  const targetMonths = willTopup ? DURATION_PRESETS[durationIdx].months : 0
+  const userExtendMonths = durationEnabled ? DURATION_PRESETS[durationIdx].months : 0
 
-  // Cost is approximate: full price at target depth × target duration. Dilute itself is free.
-  const cost = willTopup && chainState ? calcStampCost(targetDepth, targetMonths, chainState.currentPrice) : null
+  // Compute the topup amount that, combined with the dilute (if any), produces:
+  //   - the user's current remaining TTL (preserved across the dilute halving), plus
+  //   - the additional months the user picked under "Extend duration"
+  //
+  // Math: per Bee protocol, each +1 depth in dilute halves remaining time. To restore
+  // it we need to top up enough to undo that halving. Then we add any user-requested
+  // duration on top.
+  const SECONDS_PER_MONTH = 30 * 86400
+  const SECONDS_PER_BLOCK = 5 // Gnosis chain
+  const depthDelta = targetDepth - stamp.depth
+  const recoverySeconds = depthDelta > 0 ? Math.floor(stamp.batchTTL * (1 - 1 / 2 ** depthDelta)) : 0
+  const extendSeconds = userExtendMonths * SECONDS_PER_MONTH
+  const totalSecondsToBuy = recoverySeconds + extendSeconds
+
+  // Cost = price-per-block × blocks × chunks-at-new-depth. Hidden from the user how it
+  // breaks down between dilute-recovery and user-requested time — they see one number.
+  const cost = (() => {
+    if (totalSecondsToBuy <= 0 || !chainState) return null
+    const blocks = BigInt(Math.floor(totalSecondsToBuy / SECONDS_PER_BLOCK))
+    const amount = BigInt(chainState.currentPrice) * blocks
+    const totalChunks = 1n << BigInt(targetDepth)
+    const totalPlur = amount * totalChunks
+    return { amount: amount.toString(), bzzCost: plurToBzz(totalPlur.toString()) }
+  })()
+
+  const canSubmit = willDilute || totalSecondsToBuy > 0
 
   async function doExtend() {
     if (!canSubmit) return
@@ -413,7 +435,7 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
       if (willDilute) {
         await beeApi.diluteStamp(stamp.batchID, targetDepth)
       }
-      if (willTopup && cost) {
+      if (cost) {
         await beeApi.topupStamp(stamp.batchID, cost.amount)
       }
       queryClient.refetchQueries({ queryKey: ['bee', 'stamps'] })
@@ -520,11 +542,6 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
               <span style={{ color: 'rgb(var(--fg-muted))' }}>Cost: </span>
               <span className="font-semibold">{cost ? `${cost.bzzCost} BZZ` : 'Free'}</span>
             </p>
-            {willDilute && !willTopup && (
-              <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-                Note: extending capacity halves the drive's remaining time. Enable duration too to compensate.
-              </p>
-            )}
           </div>
         )}
 
