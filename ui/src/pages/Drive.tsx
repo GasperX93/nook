@@ -380,10 +380,15 @@ function BuyDriveModal({
 // ─── ExtendModal ───────────────────────────────────────────────────────────────
 
 function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) {
-  // Capacity options: depths strictly larger than current. No "keep current" — the toggle handles that.
-  const capacityOptions = SIZE_PRESETS.filter(s => s.depth > stamp.depth)
+  // Capacity options include the current size as the first entry (visual context),
+  // plus all strictly larger depths. Picking the current size = no-op (no dilute call).
+  const capacityOptions = SIZE_PRESETS.filter(s => s.depth >= stamp.depth)
+  const currentCapacityIdx = capacityOptions.findIndex(s => s.depth === stamp.depth)
+  const firstLargerIdx = capacityOptions.findIndex(s => s.depth > stamp.depth)
   const [capacityEnabled, setCapacityEnabled] = useState(false)
-  const [capacityIdx, setCapacityIdx] = useState(0)
+  // When the user enables the toggle, default to the first LARGER option so the
+  // selection visibly represents an extension. Falls back to current if there's nothing larger.
+  const [capacityIdx, setCapacityIdx] = useState(firstLargerIdx >= 0 ? firstLargerIdx : currentCapacityIdx)
   const [durationEnabled, setDurationEnabled] = useState(false)
   const [durationIdx, setDurationIdx] = useState(0)
   const [extendError, setExtendError] = useState<string | null>(null)
@@ -454,7 +459,7 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
             <Switch
               checked={capacityEnabled}
               onCheckedChange={setCapacityEnabled}
-              disabled={capacityOptions.length === 0}
+              disabled={firstLargerIdx < 0}
             />
           </label>
           {capacityEnabled && capacityOptions.length > 0 && (
@@ -475,7 +480,7 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
               ))}
             </div>
           )}
-          {capacityOptions.length === 0 && (
+          {firstLargerIdx < 0 && (
             <p className="text-[11px]" style={{ color: 'rgb(var(--fg-muted))' }}>
               Drive is already at the maximum size.
             </p>
