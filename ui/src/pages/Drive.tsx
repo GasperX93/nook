@@ -378,22 +378,38 @@ function BuyDriveModal({
 
 // ─── ExtendModal ───────────────────────────────────────────────────────────────
 
+const EXTEND_SIZE_PRESETS = [
+  { label: 'Keep current', deltaDepth: 0 },
+  { label: '2× capacity', deltaDepth: 1 },
+  { label: '4× capacity', deltaDepth: 2 },
+]
+
 function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) {
   const [durationIdx, setDurationIdx] = useState(1)
+  const [sizeIdx, setSizeIdx] = useState(0)
   const [extendError, setExtendError] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
   const { data: chainState } = useChainState()
-  const topup = useTopupStamp()
   const queryClient = useQueryClient()
 
-  const cost = chainState
-    ? calcStampCost(stamp.depth, DURATION_PRESETS[durationIdx].months, chainState.currentPrice)
-    : null
+  const targetDepth = stamp.depth + EXTEND_SIZE_PRESETS[sizeIdx].deltaDepth
+  const targetMonths = DURATION_PRESETS[durationIdx].months
+
+  // Cost = full price at target depth + target duration, minus prepaid value already on the stamp.
+  // (Approximation; precise number comes back from Bee on submit.)
+  const cost = chainState ? calcStampCost(targetDepth, targetMonths, chainState.currentPrice) : null
 
   async function doExtend() {
     if (!cost) return
     setExtendError(null)
+    setSubmitting(true)
     try {
-      await topup.mutateAsync({ id: stamp.batchID, amount: cost.amount })
+      // Dilute first (free op, doubles capacity, halves remaining time).
+      if (EXTEND_SIZE_PRESETS[sizeIdx].deltaDepth > 0) {
+        await beeApi.diluteStamp(stamp.batchID, targetDepth)
+      }
+      // Then top up to the target duration (compensates for the dilute halving and adds requested time).
+      await beeApi.topupStamp(stamp.batchID, cost.amount)
       queryClient.refetchQueries({ queryKey: ['bee', 'stamps'] })
       queryClient.refetchQueries({ queryKey: ['bee', 'wallet'] })
       onClose()
@@ -403,6 +419,8 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
           ? 'Insufficient BZZ. Top up your wallet first.'
           : err?.message || 'Failed to extend drive.'
       setExtendError(msg)
+    } finally {
+      setSubmitting(false)
     }
   }
 
@@ -413,7 +431,7 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
       onClick={onClose}
     >
       <div
-        className="rounded-xl border p-6 w-80 space-y-5"
+        className="rounded-xl border p-6 w-96 space-y-5"
         style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
         onClick={e => e.stopPropagation()}
       >
@@ -429,7 +447,34 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
 
         <div>
           <p className="text-xs uppercase tracking-widest mb-2" style={{ color: 'rgb(var(--fg-muted))' }}>
-            Extend by
+            Capacity
+          </p>
+          <div className="grid grid-cols-3 gap-2">
+            {SIZE_PRESETS.map((s, i) => (
+              <button
+                key={s.label}
+                onClick={() => setSizeIdx(i)}
+                className="px-3 py-2 rounded-lg border text-sm transition-all"
+                style={{
+                  borderColor: sizeIdx === i ? 'rgb(var(--accent))' : 'rgb(var(--border))',
+                  backgroundColor: sizeIdx === i ? 'rgba(247,104,8,0.08)' : 'transparent',
+                  color: sizeIdx === i ? 'rgb(var(--fg))' : 'rgb(var(--fg-muted))',
+                }}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+          {sizeIdx > 0 && (
+            <p className="text-[11px] mt-1.5" style={{ color: 'rgb(var(--fg-muted))' }}>
+              {depthToCapacity(stamp.depth)} → {depthToCapacity(targetDepth)}
+            </p>
+          )}
+        </div>
+
+        <div>
+          <p className="text-xs uppercase tracking-widest mb-2" style={{ color: 'rgb(var(--fg-muted))' }}>
+            Duration
           </p>
           <div className="grid grid-cols-2 gap-2">
             {DURATION_PRESETS.map((d, i) => (
@@ -472,11 +517,11 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
           </button>
           <button
             onClick={doExtend}
-            disabled={topup.isPending || !cost}
+            disabled={submitting || !cost}
             className="flex-1 py-2 rounded-lg text-sm font-semibold disabled:opacity-40"
             style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
           >
-            {topup.isPending ? 'Extending…' : 'Extend drive'}
+            {submitting ? 'Extending…' : 'Extend drive'}
           </button>
         </div>
       </div>
