@@ -378,38 +378,38 @@ function BuyDriveModal({
 
 // ─── ExtendModal ───────────────────────────────────────────────────────────────
 
-const EXTEND_SIZE_PRESETS = [
-  { label: 'Keep current', deltaDepth: 0 },
-  { label: '2× capacity', deltaDepth: 1 },
-  { label: '4× capacity', deltaDepth: 2 },
-]
-
 function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) {
+  // Capacity options: current depth + 0/1/2/3, capped at SIZE_PRESETS max depth.
+  const capacityOptions = SIZE_PRESETS.filter(s => s.depth >= stamp.depth)
+  const [capacityIdx, setCapacityIdx] = useState(0)
+  // Duration: index 0 = "Keep current" (no topup). 1..N = DURATION_PRESETS entries.
   const [durationIdx, setDurationIdx] = useState(1)
-  const [sizeIdx, setSizeIdx] = useState(0)
   const [extendError, setExtendError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const { data: chainState } = useChainState()
   const queryClient = useQueryClient()
 
-  const targetDepth = stamp.depth + EXTEND_SIZE_PRESETS[sizeIdx].deltaDepth
-  const targetMonths = DURATION_PRESETS[durationIdx].months
+  const targetDepth = capacityOptions[capacityIdx]?.depth ?? stamp.depth
+  const willDilute = targetDepth > stamp.depth
+  const willTopup = durationIdx > 0
+  const canSubmit = willDilute || willTopup
+  const targetMonths = willTopup ? DURATION_PRESETS[durationIdx - 1].months : 0
 
-  // Cost = full price at target depth + target duration, minus prepaid value already on the stamp.
-  // (Approximation; precise number comes back from Bee on submit.)
-  const cost = chainState ? calcStampCost(targetDepth, targetMonths, chainState.currentPrice) : null
+  // Cost is approximate: full price at target depth × target duration. Dilute itself is free.
+  // If duration is "Keep current", cost is 0 (we only dilute).
+  const cost = willTopup && chainState ? calcStampCost(targetDepth, targetMonths, chainState.currentPrice) : null
 
   async function doExtend() {
-    if (!cost) return
+    if (!canSubmit) return
     setExtendError(null)
     setSubmitting(true)
     try {
-      // Dilute first (free op, doubles capacity, halves remaining time).
-      if (EXTEND_SIZE_PRESETS[sizeIdx].deltaDepth > 0) {
+      if (willDilute) {
         await beeApi.diluteStamp(stamp.batchID, targetDepth)
       }
-      // Then top up to the target duration (compensates for the dilute halving and adds requested time).
-      await beeApi.topupStamp(stamp.batchID, cost.amount)
+      if (willTopup && cost) {
+        await beeApi.topupStamp(stamp.batchID, cost.amount)
+      }
       queryClient.refetchQueries({ queryKey: ['bee', 'stamps'] })
       queryClient.refetchQueries({ queryKey: ['bee', 'wallet'] })
       onClose()
@@ -450,26 +450,21 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
             Capacity
           </p>
           <div className="grid grid-cols-3 gap-2">
-            {SIZE_PRESETS.map((s, i) => (
+            {capacityOptions.map((s, i) => (
               <button
                 key={s.label}
-                onClick={() => setSizeIdx(i)}
+                onClick={() => setCapacityIdx(i)}
                 className="px-3 py-2 rounded-lg border text-sm transition-all"
                 style={{
-                  borderColor: sizeIdx === i ? 'rgb(var(--accent))' : 'rgb(var(--border))',
-                  backgroundColor: sizeIdx === i ? 'rgba(247,104,8,0.08)' : 'transparent',
-                  color: sizeIdx === i ? 'rgb(var(--fg))' : 'rgb(var(--fg-muted))',
+                  borderColor: capacityIdx === i ? 'rgb(var(--accent))' : 'rgb(var(--border))',
+                  backgroundColor: capacityIdx === i ? 'rgba(247,104,8,0.08)' : 'transparent',
+                  color: capacityIdx === i ? 'rgb(var(--fg))' : 'rgb(var(--fg-muted))',
                 }}
               >
                 {s.label}
               </button>
             ))}
           </div>
-          {sizeIdx > 0 && (
-            <p className="text-[11px] mt-1.5" style={{ color: 'rgb(var(--fg-muted))' }}>
-              {depthToCapacity(stamp.depth)} → {depthToCapacity(targetDepth)}
-            </p>
-          )}
         </div>
 
         <div>
@@ -477,15 +472,26 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
             Duration
           </p>
           <div className="grid grid-cols-2 gap-2">
+            <button
+              onClick={() => setDurationIdx(0)}
+              className="px-3 py-2 rounded-lg border text-sm transition-all"
+              style={{
+                borderColor: durationIdx === 0 ? 'rgb(var(--accent))' : 'rgb(var(--border))',
+                backgroundColor: durationIdx === 0 ? 'rgba(247,104,8,0.08)' : 'transparent',
+                color: durationIdx === 0 ? 'rgb(var(--fg))' : 'rgb(var(--fg-muted))',
+              }}
+            >
+              Keep current
+            </button>
             {DURATION_PRESETS.map((d, i) => (
               <button
                 key={d.label}
-                onClick={() => setDurationIdx(i)}
+                onClick={() => setDurationIdx(i + 1)}
                 className="px-3 py-2 rounded-lg border text-sm transition-all"
                 style={{
-                  borderColor: durationIdx === i ? 'rgb(var(--accent))' : 'rgb(var(--border))',
-                  backgroundColor: durationIdx === i ? 'rgba(247,104,8,0.08)' : 'transparent',
-                  color: durationIdx === i ? 'rgb(var(--fg))' : 'rgb(var(--fg-muted))',
+                  borderColor: durationIdx === i + 1 ? 'rgb(var(--accent))' : 'rgb(var(--border))',
+                  backgroundColor: durationIdx === i + 1 ? 'rgba(247,104,8,0.08)' : 'transparent',
+                  color: durationIdx === i + 1 ? 'rgb(var(--fg))' : 'rgb(var(--fg-muted))',
                 }}
               >
                 {d.label}
@@ -494,12 +500,10 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
           </div>
         </div>
 
-        {cost && (
-          <p className="text-sm">
-            <span style={{ color: 'rgb(var(--fg-muted))' }}>Cost: </span>
-            <span className="font-semibold">{cost.bzzCost} BZZ</span>
-          </p>
-        )}
+        <p className="text-sm">
+          <span style={{ color: 'rgb(var(--fg-muted))' }}>Cost: </span>
+          <span className="font-semibold">{cost ? `${cost.bzzCost} BZZ` : 'Free'}</span>
+        </p>
 
         {extendError && (
           <p className="text-xs" style={{ color: '#ef4444' }}>
@@ -517,7 +521,7 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
           </button>
           <button
             onClick={doExtend}
-            disabled={submitting || !cost}
+            disabled={submitting || !canSubmit}
             className="flex-1 py-2 rounded-lg text-sm font-semibold disabled:opacity-40"
             style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
           >
