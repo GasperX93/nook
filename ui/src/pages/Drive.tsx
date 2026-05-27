@@ -1115,8 +1115,10 @@ function DriveCard({
   const utilizationPct = Math.round((stamp.utilization / maxUtilization) * 100)
   const isFull = stamp.utilization >= maxUtilization
   const ttlDays = stamp.batchTTL / 86400
+  // Critical = days-pill turns red. Matches Figma's 'red at ≤7 days' threshold.
   const isCriticalTtl = stamp.usable && ttlDays > 0 && ttlDays <= 7
-  const needsExtend = stamp.usable && (isCriticalTtl || isFull)
+  // Extend button surfaces earlier so users have time to act before things go red.
+  const needsExtend = stamp.usable && ((ttlDays > 0 && ttlDays <= 30) || isFull)
   const hasWebsite = records.some(r => r.type === 'website')
 
   // Close kebab on outside click
