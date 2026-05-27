@@ -59,6 +59,7 @@ import {
 import AddSharedDriveModal from '../components/AddSharedDriveModal'
 import ENSModal from '../components/ENSModal'
 import ShareModal from '../components/ShareModal'
+import { Switch } from '../components/ui/switch'
 import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { useSidebar } from '../components/ui/sidebar'
 
@@ -379,24 +380,24 @@ function BuyDriveModal({
 // ─── ExtendModal ───────────────────────────────────────────────────────────────
 
 function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) {
-  // Capacity options: current depth + 0/1/2/3, capped at SIZE_PRESETS max depth.
-  const capacityOptions = SIZE_PRESETS.filter(s => s.depth >= stamp.depth)
+  // Capacity options: depths strictly larger than current. No "keep current" — the toggle handles that.
+  const capacityOptions = SIZE_PRESETS.filter(s => s.depth > stamp.depth)
+  const [capacityEnabled, setCapacityEnabled] = useState(false)
   const [capacityIdx, setCapacityIdx] = useState(0)
-  // Duration: index 0 = "Keep current" (no topup). 1..N = DURATION_PRESETS entries.
-  const [durationIdx, setDurationIdx] = useState(1)
+  const [durationEnabled, setDurationEnabled] = useState(false)
+  const [durationIdx, setDurationIdx] = useState(0)
   const [extendError, setExtendError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const { data: chainState } = useChainState()
   const queryClient = useQueryClient()
 
-  const targetDepth = capacityOptions[capacityIdx]?.depth ?? stamp.depth
-  const willDilute = targetDepth > stamp.depth
-  const willTopup = durationIdx > 0
+  const targetDepth = capacityEnabled && capacityOptions[capacityIdx] ? capacityOptions[capacityIdx].depth : stamp.depth
+  const willDilute = capacityEnabled && targetDepth > stamp.depth
+  const willTopup = durationEnabled
   const canSubmit = willDilute || willTopup
-  const targetMonths = willTopup ? DURATION_PRESETS[durationIdx - 1].months : 0
+  const targetMonths = willTopup ? DURATION_PRESETS[durationIdx].months : 0
 
   // Cost is approximate: full price at target depth × target duration. Dilute itself is free.
-  // If duration is "Keep current", cost is 0 (we only dilute).
   const cost = willTopup && chainState ? calcStampCost(targetDepth, targetMonths, chainState.currentPrice) : null
 
   async function doExtend() {
@@ -446,58 +447,66 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
         </div>
 
         <div>
-          <p className="text-xs uppercase tracking-widest mb-2" style={{ color: 'rgb(var(--fg-muted))' }}>
-            Capacity
-          </p>
-          <div className="grid grid-cols-3 gap-2">
-            {capacityOptions.map((s, i) => (
-              <button
-                key={s.label}
-                onClick={() => setCapacityIdx(i)}
-                className="px-3 py-2 rounded-lg border text-sm transition-all"
-                style={{
-                  borderColor: capacityIdx === i ? 'rgb(var(--accent))' : 'rgb(var(--border))',
-                  backgroundColor: capacityIdx === i ? 'rgba(247,104,8,0.08)' : 'transparent',
-                  color: capacityIdx === i ? 'rgb(var(--fg))' : 'rgb(var(--fg-muted))',
-                }}
-              >
-                {s.label}
-              </button>
-            ))}
-          </div>
+          <label className="flex items-center justify-between mb-2 cursor-pointer">
+            <span className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
+              Extend capacity
+            </span>
+            <Switch
+              checked={capacityEnabled}
+              onCheckedChange={setCapacityEnabled}
+              disabled={capacityOptions.length === 0}
+            />
+          </label>
+          {capacityEnabled && capacityOptions.length > 0 && (
+            <div className="grid grid-cols-3 gap-2">
+              {capacityOptions.map((s, i) => (
+                <button
+                  key={s.label}
+                  onClick={() => setCapacityIdx(i)}
+                  className="px-3 py-2 rounded-lg border text-sm transition-all"
+                  style={{
+                    borderColor: capacityIdx === i ? 'rgb(var(--accent))' : 'rgb(var(--border))',
+                    backgroundColor: capacityIdx === i ? 'rgba(247,104,8,0.08)' : 'transparent',
+                    color: capacityIdx === i ? 'rgb(var(--fg))' : 'rgb(var(--fg-muted))',
+                  }}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          )}
+          {capacityOptions.length === 0 && (
+            <p className="text-[11px]" style={{ color: 'rgb(var(--fg-muted))' }}>
+              Drive is already at the maximum size.
+            </p>
+          )}
         </div>
 
         <div>
-          <p className="text-xs uppercase tracking-widest mb-2" style={{ color: 'rgb(var(--fg-muted))' }}>
-            Duration
-          </p>
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              onClick={() => setDurationIdx(0)}
-              className="px-3 py-2 rounded-lg border text-sm transition-all"
-              style={{
-                borderColor: durationIdx === 0 ? 'rgb(var(--accent))' : 'rgb(var(--border))',
-                backgroundColor: durationIdx === 0 ? 'rgba(247,104,8,0.08)' : 'transparent',
-                color: durationIdx === 0 ? 'rgb(var(--fg))' : 'rgb(var(--fg-muted))',
-              }}
-            >
-              Keep current
-            </button>
-            {DURATION_PRESETS.map((d, i) => (
-              <button
-                key={d.label}
-                onClick={() => setDurationIdx(i + 1)}
-                className="px-3 py-2 rounded-lg border text-sm transition-all"
-                style={{
-                  borderColor: durationIdx === i + 1 ? 'rgb(var(--accent))' : 'rgb(var(--border))',
-                  backgroundColor: durationIdx === i + 1 ? 'rgba(247,104,8,0.08)' : 'transparent',
-                  color: durationIdx === i + 1 ? 'rgb(var(--fg))' : 'rgb(var(--fg-muted))',
-                }}
-              >
-                {d.label}
-              </button>
-            ))}
-          </div>
+          <label className="flex items-center justify-between mb-2 cursor-pointer">
+            <span className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
+              Extend duration
+            </span>
+            <Switch checked={durationEnabled} onCheckedChange={setDurationEnabled} />
+          </label>
+          {durationEnabled && (
+            <div className="grid grid-cols-2 gap-2">
+              {DURATION_PRESETS.map((d, i) => (
+                <button
+                  key={d.label}
+                  onClick={() => setDurationIdx(i)}
+                  className="px-3 py-2 rounded-lg border text-sm transition-all"
+                  style={{
+                    borderColor: durationIdx === i ? 'rgb(var(--accent))' : 'rgb(var(--border))',
+                    backgroundColor: durationIdx === i ? 'rgba(247,104,8,0.08)' : 'transparent',
+                    color: durationIdx === i ? 'rgb(var(--fg))' : 'rgb(var(--fg-muted))',
+                  }}
+                >
+                  {d.label}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         <p className="text-sm">
