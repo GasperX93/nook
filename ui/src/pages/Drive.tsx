@@ -1256,8 +1256,8 @@ function DriveCard({
                   e.stopPropagation()
                   onExtend()
                 }}
-                className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors"
-                style={{ backgroundColor: 'rgb(var(--fg))', color: 'rgb(var(--bg))' }}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors border hover:bg-white/[0.04]"
+                style={{ borderColor: 'rgb(var(--border))', color: 'rgb(var(--fg))' }}
               >
                 Extend storage
               </button>
@@ -1996,7 +1996,6 @@ export default function Drive() {
   const [driveTab, setDriveTab] = useState<'mine' | 'shared'>('mine')
   const [addingFile, setAddingFile] = useState(false)
   const [search, setSearch] = useState('')
-  const [searchOpen, setSearchOpen] = useState(false)
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
   const [downloadPct, setDownloadPct] = useState<number | null>(null)
@@ -2086,19 +2085,26 @@ export default function Drive() {
 
           <div className="flex-1" />
 
-          <button
-            onClick={() => setSearchOpen(v => !v)}
-            aria-label="Search files"
-            className="w-8 h-8 flex items-center justify-center rounded-lg transition-colors hover:bg-white/[0.04] shrink-0"
-            style={{ color: searchOpen ? 'rgb(var(--fg))' : 'rgb(var(--fg-muted))' }}
-          >
-            <Search size={16} />
-          </button>
+          <div className="relative w-[280px] shrink-0">
+            <Search
+              size={12}
+              className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
+              style={{ color: 'rgb(var(--fg-muted))' }}
+            />
+            <input
+              type="text"
+              placeholder="Search all files…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="w-full pl-7 pr-3 py-1.5 rounded-lg border text-xs focus:outline-none"
+              style={{ backgroundColor: 'rgb(var(--bg-surface))', color: 'rgb(var(--fg))', borderColor: 'rgb(var(--border))' }}
+            />
+          </div>
 
           {driveTab === 'mine' ? (
             <button
               onClick={() => setShowBuyModal(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0 mr-[52px]"
               style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
             >
               <Plus size={12} />
@@ -2107,7 +2113,7 @@ export default function Drive() {
           ) : (
             <button
               onClick={() => setShowAddSharedModal(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0 mr-[52px]"
               style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
             >
               <Plus size={12} />
@@ -2115,26 +2121,6 @@ export default function Drive() {
             </button>
           )}
         </div>
-
-        {/* Expandable search */}
-        {searchOpen && (
-          <div className="mb-4 relative max-w-[500px]">
-            <Search
-              size={12}
-              className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
-              style={{ color: 'rgb(var(--fg-muted))' }}
-            />
-            <input
-              autoFocus
-              type="text"
-              placeholder="Search all files…"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              className="w-full pl-7 pr-3 py-1.5 rounded-lg border text-xs focus:outline-none"
-              style={{ backgroundColor: 'rgb(var(--bg-surface))', color: 'rgb(var(--fg))' }}
-            />
-          </div>
-        )}
 
         {/* Content */}
         {search ? (
