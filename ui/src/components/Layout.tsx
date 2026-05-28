@@ -19,6 +19,7 @@ import { gnosis } from 'wagmi/chains'
 import { weiToDai } from '../api/bee'
 import { useBeeHealth, usePeers, useStamps, useStatus, useWallet } from '../api/queries'
 import { useInboxPolling } from '../hooks/useInboxPolling'
+import { loadReadCursors, loadThreads, totalUnread } from '../notify/messages'
 import { useRegistryPolling } from '../hooks/useRegistryPolling'
 import { useAppStore } from '../store/app'
 import Onboarding from './Onboarding'
@@ -155,6 +156,18 @@ export default function Layout() {
   // senders who aren't yet in our contact list (see #62/#63).
   useRegistryPolling()
 
+  // Unread-message badge on the Contacts nav item. Polls localStorage every 2s;
+  // also recomputes when the route changes so opening Contacts clears the badge.
+  const [unreadCount, setUnreadCount] = useState(0)
+
+  useEffect(() => {
+    const recompute = () => setUnreadCount(totalUnread(loadThreads(), loadReadCursors()))
+    recompute()
+    const id = setInterval(recompute, 2000)
+
+    return () => clearInterval(id)
+  }, [location.pathname])
+
   // Track whether Bee has connected at least once this session.
   // Before that we show a friendly "starting" indicator instead of an error.
   const hasEverBeenOnline = useRef(false)
@@ -235,7 +248,13 @@ export default function Layout() {
 
           <SidebarSection>
             {youItems.map(({ to, icon, label }) => (
-              <SidebarMenuItem key={to} to={to} icon={icon} label={label} />
+              <SidebarMenuItem
+                key={to}
+                to={to}
+                icon={icon}
+                label={label}
+                badge={to === '/contacts' ? unreadCount : undefined}
+              />
             ))}
           </SidebarSection>
 
