@@ -4,7 +4,7 @@
  * Standalone power-user page for downloading content that isn't part of one
  * of your local drives. Useful for shared references, public content, etc.
  */
-import { Download, RefreshCw } from 'lucide-react'
+import { Download, ExternalLink, RefreshCw } from 'lucide-react'
 import { useState } from 'react'
 
 import { getBeeUrl } from '../api/bee'
@@ -35,18 +35,19 @@ export default function AccessOnSwarm() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  async function retrieve() {
-    const h = hash.trim()
+  const trimmedHash = hash.trim()
+  const previewUrl = trimmedHash ? `${getBeeUrl()}/bzz/${trimmedHash}/` : ''
 
-    if (!h) return
+  async function retrieve() {
+    if (!trimmedHash) return
     setLoading(true)
     setError(null)
     try {
-      const blob = await fetchAny(h)
+      const blob = await fetchAny(trimmedHash)
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = filename.trim() || h.slice(0, 12)
+      a.download = filename.trim() || trimmedHash.slice(0, 12)
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)
@@ -58,6 +59,11 @@ export default function AccessOnSwarm() {
     } finally {
       setLoading(false)
     }
+  }
+
+  function openInBrowser() {
+    if (!previewUrl) return
+    window.open(previewUrl, '_blank', 'noopener,noreferrer')
   }
 
   return (
@@ -97,21 +103,39 @@ export default function AccessOnSwarm() {
           />
         </div>
 
+        {previewUrl && (
+          <div className="rounded-lg px-3 py-2 text-[11px] font-mono break-all" style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg-muted))' }}>
+            <span className="block uppercase tracking-widest mb-1" style={{ fontSize: '9px' }}>Preview URL</span>
+            {previewUrl}
+          </div>
+        )}
+
         {error && (
           <p className="text-xs px-3 py-2 rounded" style={{ backgroundColor: 'rgba(239,68,68,0.1)', color: '#ef4444' }}>
             {error}
           </p>
         )}
 
-        <button
-          onClick={retrieve}
-          disabled={loading || !hash.trim()}
-          className="w-full py-2 rounded-lg text-sm font-semibold disabled:opacity-40 flex items-center justify-center gap-2"
-          style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
-        >
-          {loading ? <RefreshCw size={13} className="animate-spin" /> : <Download size={13} />}
-          {loading ? 'Downloading…' : 'Download'}
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={openInBrowser}
+            disabled={!trimmedHash}
+            className="flex-1 py-2 rounded-lg text-sm font-medium border disabled:opacity-40 flex items-center justify-center gap-2"
+            style={{ borderColor: 'rgb(var(--border))', color: 'rgb(var(--fg))' }}
+          >
+            <ExternalLink size={13} />
+            Open in browser
+          </button>
+          <button
+            onClick={retrieve}
+            disabled={loading || !trimmedHash}
+            className="flex-1 py-2 rounded-lg text-sm font-semibold disabled:opacity-40 flex items-center justify-center gap-2"
+            style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
+          >
+            {loading ? <RefreshCw size={13} className="animate-spin" /> : <Download size={13} />}
+            {loading ? 'Downloading…' : 'Download'}
+          </button>
+        </div>
       </div>
     </div>
   )
