@@ -315,18 +315,10 @@ export default function Contacts() {
           </div>
         ) : showThread ? (
           <>
-            {/* Header — mirrors the left pane's 'Contacts' + actions row */}
+            {/* Header — single-line, mirrors the left pane's 'Contacts' + actions row */}
             <div className="p-5 pb-4 shrink-0">
               <div className="flex items-center justify-between gap-2">
-                <div className="min-w-0">
-                  <h1 className="text-lg font-semibold truncate">{selected.nickname}</h1>
-                  <p
-                    className="text-xs font-mono truncate mt-0.5"
-                    style={{ color: 'rgb(var(--fg-muted))' }}
-                  >
-                    {short(selected.id, 8)}
-                  </p>
-                </div>
+                <h1 className="text-lg font-semibold truncate min-w-0">{selected.nickname}</h1>
                 <div className="flex items-center gap-2 shrink-0">
                   <Button
                     variant="outline"
