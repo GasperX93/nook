@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   Contact,
   Copy,
+  Download,
   Globe,
   HardDrive,
   LogOut,
@@ -38,6 +39,7 @@ const mainNavItems = [
   { to: '/drive', icon: HardDrive, label: 'Drive' },
   { to: '/account', icon: Wallet, label: 'Account' },
   { to: '/contacts', icon: Contact, label: 'Contacts' },
+  { to: '/access', icon: Download, label: 'Access on Swarm' },
 ]
 
 const settingsNavItem = { to: '/settings', icon: Settings, label: 'Settings' }
@@ -133,6 +135,7 @@ export default function Layout() {
     '/drive': 'Drive',
     '/account': 'Account',
     '/contacts': 'Contacts',
+    '/access': 'Access on Swarm',
     '/settings': 'Settings',
     '/dev': 'Dev mode',
     '/apps/messages': 'Messages',

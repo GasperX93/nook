@@ -831,123 +831,6 @@ function UpdateFeedModal({ record, onClose }: { record: UploadRecord; onClose: (
   )
 }
 
-// ─── RetrieveModal ─────────────────────────────────────────────────────────────
-
-function RetrieveModal({ onClose }: { onClose: () => void }) {
-  const [hash, setHash] = useState('')
-  const [filename, setFilename] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  async function retrieve() {
-    const h = hash.trim()
-
-    if (!h) return
-    setLoading(true)
-    setError(null)
-    try {
-      let blob: Blob
-
-      try {
-        blob = await beeApi.downloadFile(h)
-      } catch {
-        // Manifest download failed — try raw bytes fallback
-        blob = await beeApi.downloadBytes(h)
-      }
-
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = filename.trim() || h.slice(0, 12)
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
-      onClose()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Download failed')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  return (
-    <div
-      className="fixed inset-0 flex items-center justify-center z-50"
-      style={{ backgroundColor: 'rgba(0,0,0,0.6)' }}
-      onClick={onClose}
-    >
-      <div
-        className="rounded-xl border p-6 w-96 space-y-5"
-        style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
-        onClick={e => e.stopPropagation()}
-      >
-        <div>
-          <p className="text-sm font-semibold">Retrieve from Swarm</p>
-          <p className="text-xs mt-1" style={{ color: 'rgb(var(--fg-muted))' }}>
-            Enter a Swarm hash to download the file.
-          </p>
-        </div>
-
-        <div className="space-y-3">
-          <div>
-            <label className="text-xs uppercase tracking-widest block mb-1.5" style={{ color: 'rgb(var(--fg-muted))' }}>
-              Swarm hash
-            </label>
-            <input
-              type="text"
-              value={hash}
-              onChange={e => setHash(e.target.value)}
-              onKeyDown={async e => e.key === 'Enter' && retrieve()}
-              placeholder="64-char hex…"
-              className="w-full rounded-lg border px-3 py-2 text-xs font-mono focus:outline-none"
-              style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
-              autoFocus
-            />
-          </div>
-          <div>
-            <label className="text-xs uppercase tracking-widest block mb-1.5" style={{ color: 'rgb(var(--fg-muted))' }}>
-              Save as (optional)
-            </label>
-            <input
-              type="text"
-              value={filename}
-              onChange={e => setFilename(e.target.value)}
-              placeholder="filename.ext"
-              className="w-full rounded-lg border px-3 py-2 text-xs focus:outline-none"
-              style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
-            />
-          </div>
-        </div>
-
-        {error && (
-          <p className="text-xs px-3 py-2 rounded" style={{ backgroundColor: 'rgba(239,68,68,0.1)', color: '#ef4444' }}>
-            {error}
-          </p>
-        )}
-
-        <div className="flex gap-3">
-          <button
-            onClick={onClose}
-            className="flex-1 py-2 rounded-lg text-sm"
-            style={{ color: 'rgb(var(--fg-muted))' }}
-          >
-            Cancel
-          </button>
-          <button
-            onClick={retrieve}
-            disabled={loading || !hash.trim()}
-            className="flex-1 py-2 rounded-lg text-sm font-semibold disabled:opacity-40 flex items-center justify-center gap-2"
-            style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
-          >
-            {loading ? <RefreshCw size={13} className="animate-spin" /> : <Download size={13} />}
-            {loading ? 'Downloading…' : 'Download'}
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
 
 // ─── RecordRow ────────────────────────────────────────────────────────────────
 
@@ -2112,7 +1995,6 @@ export default function Drive() {
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
   const [downloadPct, setDownloadPct] = useState<number | null>(null)
   const [updatingId, setUpdatingId] = useState<string | null>(null)
-  const [retrieveOpen, setRetrieveOpen] = useState(false)
   const [ensRecordId, setEnsRecordId] = useState<string | null>(null)
 
   // Folder UI state
@@ -2400,7 +2282,6 @@ export default function Drive() {
             )
           })()}
         {updatingRecord && <UpdateFeedModal record={updatingRecord} onClose={() => setUpdatingId(null)} />}
-        {retrieveOpen && <RetrieveModal onClose={() => setRetrieveOpen(false)} />}
         {ensRecordId &&
           (() => {
             const rec = records.find(r => r.id === ensRecordId)
@@ -2834,7 +2715,6 @@ export default function Drive() {
       ) : null}
 
       {updatingRecord && <UpdateFeedModal record={updatingRecord} onClose={() => setUpdatingId(null)} />}
-      {retrieveOpen && <RetrieveModal onClose={() => setRetrieveOpen(false)} />}
       {ensRecordId &&
         (() => {
           const rec = records.find(r => r.id === ensRecordId)
