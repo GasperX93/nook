@@ -315,31 +315,45 @@ export default function Contacts() {
           </div>
         ) : showThread ? (
           <>
+            {/* Header — mirrors the left pane's 'Contacts' + actions row */}
+            <div className="p-5 pb-4 shrink-0">
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <h1 className="text-lg font-semibold truncate">{selected.nickname}</h1>
+                  <p
+                    className="text-xs font-mono truncate mt-0.5"
+                    style={{ color: 'rgb(var(--fg-muted))' }}
+                  >
+                    {short(selected.id, 8)}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleShareContact(selected)}
+                    className="inline-flex items-center gap-1.5"
+                  >
+                    <Share2 size={14} />
+                    {copied === 'detail-share' ? 'Copied' : 'Share contact'}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    onClick={() => handleRemoveContact(selected.id)}
+                    aria-label={`Remove ${selected.nickname}`}
+                    className="text-red-500 h-8 w-8"
+                  >
+                    <Trash2 size={14} />
+                  </Button>
+                </div>
+              </div>
+            </div>
             <div
-              className="flex items-center justify-end gap-2 px-4 py-2 border-b shrink-0"
+              className="flex-1 min-h-0 border-t"
               style={{ borderColor: 'rgb(var(--border))' }}
             >
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => handleShareContact(selected)}
-                className="inline-flex items-center gap-1.5"
-              >
-                <Share2 size={14} />
-                {copied === 'detail-share' ? 'Copied' : 'Share contact'}
-              </Button>
-              <Button
-                variant="outline"
-                size="icon"
-                onClick={() => handleRemoveContact(selected.id)}
-                aria-label={`Remove ${selected.nickname}`}
-                className="text-red-500 h-8 w-8"
-              >
-                <Trash2 size={14} />
-              </Button>
-            </div>
-            <div className="flex-1 min-h-0">
-              <Messages key={selected.id} initialContactId={selected.id} hideContactList />
+              <Messages key={selected.id} initialContactId={selected.id} hideContactList hideThreadHeader />
             </div>
           </>
         ) : (
