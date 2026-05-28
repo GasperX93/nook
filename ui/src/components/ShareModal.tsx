@@ -1,7 +1,7 @@
 /**
  * ShareModal — manage grantees for an encrypted drive.
- * Paste a sharing key (Bee publicKey) to grant access.
- * Generate a share link for the grantee to add the drive.
+ * Paste a Nook address or contact link to grant access (raw sharing
+ * key still accepted as a fallback). Generates a drive share link.
  */
 import { Bee } from '@ethersphere/bee-js'
 import { identity, mailbox, registry } from '@swarm-notify/sdk'
@@ -15,6 +15,7 @@ import { useDerivedKey } from '../hooks/useDerivedKey'
 import { GNOSIS_CHAIN_ID, REGISTRY_ADDRESS } from '../notify/constants'
 import { appendSentDriveShare, loadThreads } from '../notify/messages'
 import { createNotifyProvider } from '../notify/provider'
+import { decodeShareLink } from '../notify/share-link'
 import { addContact, loadContacts } from '../notify/storage'
 import { toLibraryContact } from '../notify/types'
 import { buildShareLink } from '../hooks/useSharedDrives'
@@ -198,15 +199,43 @@ export default function ShareModal({
     setError(null)
 
     try {
-      // Accept Nook address as input — resolve via identity feed to bpub.
-      // Saves the user from hunting for the raw sharing key when they only
-      // have the recipient's address (eg first-contact scenario).
-      if (isEthAddress(input)) {
+      // Three accepted input formats:
+      //   1. Contact link (nook://contact/v1?…) — has everything; decode & save contact
+      //   2. Nook address (0x… 40 hex) — resolve via identity feed to bpub
+      //   3. Raw sharing key (66/130 hex) — fallback for legacy / out-of-band keys
+      if (input.startsWith('nook://contact')) {
+        const decoded = decodeShareLink(input)
+
+        if (!decoded.ok) {
+          setError(decoded.error)
+
+          return
+        }
+        const payload = decoded.payload
+        key = payload.beePublicKey
+        const alreadyContact = contacts.some(c => c.id.toLowerCase() === payload.ethAddress.toLowerCase())
+        const isSelf = signer?.getAddress().toLowerCase() === payload.ethAddress.toLowerCase()
+
+        if (!alreadyContact && !isSelf) {
+          try {
+            addContact(contacts, {
+              id: payload.ethAddress.toLowerCase(),
+              nickname: newLabel.trim() || payload.nickname || payload.ethAddress.slice(0, 8),
+              walletPublicKey: payload.walletPublicKey,
+              beePublicKey: payload.beePublicKey,
+              source: 'share-link',
+              addedAt: Date.now(),
+            })
+          } catch {
+            // Race: contact added in another tab — non-fatal
+          }
+        }
+      } else if (isEthAddress(input)) {
         const resolved = await identity.resolve(bee, input)
 
         if (!resolved) {
           setError(
-            `Could not find identity for ${input}. They must publish first, or paste their sharing key directly.`,
+            `Could not find identity for ${input}. They must publish first, or paste their contact link instead.`,
           )
 
           return
@@ -215,8 +244,9 @@ export default function ShareModal({
         // If we resolved an address and have a label, save the contact so
         // the user doesn't repeat this lookup next time.
         const alreadyContact = contacts.some(c => c.id.toLowerCase() === input.toLowerCase())
+        const isSelf = signer?.getAddress().toLowerCase() === input.toLowerCase()
 
-        if (!alreadyContact && newLabel.trim()) {
+        if (!alreadyContact && !isSelf && newLabel.trim()) {
           try {
             // Persists to localStorage; in-memory `contacts` here stays stale
             // until next render, which is fine — only matters for repeat
@@ -234,7 +264,7 @@ export default function ShareModal({
           }
         }
       } else if (!isValidPublicKey(input)) {
-        setError('Paste a Nook address (0x… 42 chars) or a 66/130-char hex sharing key.')
+        setError('Paste a Nook address, a contact link (nook://contact…), or a hex sharing key.')
 
         return
       }
@@ -662,7 +692,7 @@ export default function ShareModal({
               <Input
                 value={newKey}
                 onChange={e => setNewKey(e.target.value)}
-                placeholder="Nook address (0x…) or sharing key"
+                placeholder="Nook address or contact link"
                 className="flex-1 font-mono text-xs"
               />
               <Button onClick={handleGrant} disabled={loading || !newKey.trim()} size="sm">

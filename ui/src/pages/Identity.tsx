@@ -1,6 +1,6 @@
 import { Bee } from '@ethersphere/bee-js'
 import { identity } from '@swarm-notify/sdk'
-import { Check, Copy, Key, X } from 'lucide-react'
+import { Check, Copy, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
 import { useAddresses, useStamps } from '../api/queries'
@@ -32,7 +32,7 @@ export default function Identity() {
   const [publishing, setPublishing] = useState(false)
   const [publishError, setPublishError] = useState<string | null>(null)
   const [publishedTick, setPublishedTick] = useState(0)
-  const [copied, setCopied] = useState<'address' | 'share-link' | 'sharing-key' | null>(null)
+  const [copied, setCopied] = useState<'address' | 'share-link' | null>(null)
   const [hintDismissed, setHintDismissed] = useState(() => isOnboardingDismissed())
 
   const usableStamps = (stamps ?? []).filter(s => s.usable)
@@ -87,7 +87,7 @@ export default function Identity() {
     }
   }
 
-  async function handleCopy(value: string, kind: 'address' | 'share-link' | 'sharing-key') {
+  async function handleCopy(value: string, kind: 'address' | 'share-link') {
     await navigator.clipboard.writeText(value)
     setCopied(kind)
     setTimeout(() => setCopied(null), 1500)
@@ -118,9 +118,9 @@ export default function Identity() {
         </div>
       )}
 
-      <div className="rounded-xl border p-5 space-y-3" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
+      <div className="rounded-xl border p-5 space-y-4" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
         <p className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
-          Your Nook address
+          How others connect with you
         </p>
 
         {!walletConnected && (
@@ -133,95 +133,99 @@ export default function Identity() {
 
         {signer && myAddress && (
           <>
-            <div className="flex items-center gap-2 flex-wrap">
-              <code className="text-sm font-mono break-all">{myAddress}</code>
-              <button
-                onClick={async () => handleCopy(myAddress, 'address')}
-                className="p-1.5 rounded hover:opacity-70 inline-flex items-center gap-1 text-xs"
-                style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg-muted))' }}
-                aria-label="Copy address"
-              >
-                {copied === 'address' ? <Check size={12} /> : <Copy size={12} />}
-                <span>{copied === 'address' ? 'Copied' : 'Copy'}</span>
-              </button>
-            </div>
-
-            <div className="flex items-center gap-3 pt-2 flex-wrap">
-              <span
-                className="inline-flex items-center gap-2 text-xs px-2 py-1 rounded"
-                style={{
-                  backgroundColor: published ? 'rgba(34,197,94,0.12)' : 'rgba(255,255,255,0.06)',
-                  color: published ? 'rgb(74,222,128)' : 'rgb(var(--fg-muted))',
-                }}
-              >
-                <span
-                  className="w-1.5 h-1.5 rounded-full"
-                  style={{ backgroundColor: published ? 'rgb(34,197,94)' : 'rgb(var(--fg-muted))' }}
-                />
-                {published ? 'Published' : 'Not published'}
-              </span>
-              <Button variant="outline" size="sm" onClick={handlePublish} disabled={publishing || !stampId}>
-                {publishing ? 'Publishing…' : published ? 'Republish' : 'Publish to identity feed'}
-              </Button>
-              {myShareLink && (
-                <Button variant="outline" size="sm" onClick={async () => handleCopy(myShareLink, 'share-link')}>
-                  {copied === 'share-link' ? 'Copied' : 'Copy contact link'}
-                </Button>
-              )}
-              {!stampId && (
-                <span className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-                  No stamp — publishing needs a drive
-                </span>
-              )}
-            </div>
-
-            {publishError && (
-              <p className="text-xs" style={{ color: 'rgb(248,113,113)' }}>
-                {publishError}
+            {/* Nook address row */}
+            <div className="space-y-2">
+              <p className="text-xs font-semibold">Nook address</p>
+              <p className="text-xs leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Your unique ID on Nook. Publish it so others can add you as a contact just by typing your address — no
+                link needed.
               </p>
+              <div className="flex items-center gap-2 flex-wrap">
+                <code
+                  className="flex-1 text-xs font-mono px-3 py-2 rounded-lg border truncate"
+                  style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
+                >
+                  {myAddress}
+                </code>
+                <button
+                  onClick={async () => handleCopy(myAddress, 'address')}
+                  className="shrink-0 px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1 border"
+                  style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
+                  aria-label="Copy address"
+                >
+                  {copied === 'address' ? <Check size={11} /> : <Copy size={11} />}
+                  {copied === 'address' ? 'Copied' : 'Copy'}
+                </button>
+              </div>
+
+              <div className="flex items-center gap-3 pt-1 flex-wrap">
+                <span
+                  className="inline-flex items-center gap-2 text-xs px-2 py-1 rounded"
+                  style={{
+                    backgroundColor: published ? 'rgba(34,197,94,0.12)' : 'rgba(255,255,255,0.06)',
+                    color: published ? 'rgb(74,222,128)' : 'rgb(var(--fg-muted))',
+                  }}
+                >
+                  <span
+                    className="w-1.5 h-1.5 rounded-full"
+                    style={{ backgroundColor: published ? 'rgb(34,197,94)' : 'rgb(var(--fg-muted))' }}
+                  />
+                  {published ? 'Published' : 'Not published'}
+                </span>
+                <Button variant="outline" size="sm" onClick={handlePublish} disabled={publishing || !stampId}>
+                  {publishing ? 'Publishing…' : published ? 'Republish' : 'Publish to identity feed'}
+                </Button>
+                {!stampId && (
+                  <span className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                    No stamp — publishing needs a drive
+                  </span>
+                )}
+              </div>
+
+              {publishError && (
+                <p className="text-xs" style={{ color: 'rgb(248,113,113)' }}>
+                  {publishError}
+                </p>
+              )}
+            </div>
+
+            {/* Divider */}
+            {myShareLink && (
+              <div className="h-px" style={{ backgroundColor: 'rgb(var(--border))' }} />
             )}
 
-            <p className="text-xs leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
-              Two ways to be reachable: <strong>publish to the identity feed</strong> (others type your Nook address) or{' '}
-              <strong>send your contact link</strong> (others paste it). Both unlock messaging and drive sharing.
-              Publishing is voluntary — the contact link works without it.
-            </p>
+            {/* Contact link row */}
+            {myShareLink && (
+              <div className="space-y-2">
+                <p className="text-xs font-semibold">Contact link</p>
+                <p className="text-xs leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  Or send the contact link directly — works without publishing and includes everything needed for
+                  messaging and drive sharing.
+                </p>
+                <div className="flex items-center gap-2">
+                  <code
+                    className="flex-1 text-xs font-mono px-3 py-2 rounded-lg border truncate"
+                    style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg-muted))' }}
+                  >
+                    {myShareLink}
+                  </code>
+                  <button
+                    onClick={async () => handleCopy(myShareLink, 'share-link')}
+                    className="shrink-0 px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1"
+                    style={{
+                      backgroundColor: copied === 'share-link' ? 'rgba(74,222,128,0.15)' : 'rgb(var(--accent))',
+                      color: copied === 'share-link' ? '#4ade80' : 'rgb(var(--primary-foreground))',
+                    }}
+                  >
+                    {copied === 'share-link' ? <Check size={11} /> : <Copy size={11} />}
+                    {copied === 'share-link' ? 'Copied' : 'Copy'}
+                  </button>
+                </div>
+              </div>
+            )}
           </>
         )}
       </div>
-
-      {addresses?.publicKey && (
-        <div className="rounded-xl border p-5" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
-          <div className="flex items-center gap-2 mb-2">
-            <Key size={13} style={{ color: 'rgb(var(--fg-muted))' }} />
-            <p className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
-              Sharing key
-            </p>
-          </div>
-          <p className="text-xs mb-3" style={{ color: 'rgb(var(--fg-muted))' }}>
-            Share this key with others so they can grant you access to encrypted drives.
-          </p>
-          <div className="flex items-center gap-2">
-            <code
-              className="flex-1 text-xs font-mono px-3 py-2 rounded-lg border truncate"
-              style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg-muted))' }}
-            >
-              {addresses.publicKey}
-            </code>
-            <button
-              onClick={async () => handleCopy(addresses.publicKey, 'sharing-key')}
-              className="shrink-0 px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1"
-              style={{
-                backgroundColor: copied === 'sharing-key' ? 'rgba(74,222,128,0.15)' : 'rgb(var(--accent))',
-                color: copied === 'sharing-key' ? '#4ade80' : 'rgb(var(--primary-foreground))',
-              }}
-            >
-              {copied === 'sharing-key' ? <Check size={11} /> : <Copy size={11} />}
-              {copied === 'sharing-key' ? 'Copied' : 'Copy'}
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   )
 }
