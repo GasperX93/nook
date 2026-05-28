@@ -7,7 +7,27 @@
 import { Download, RefreshCw } from 'lucide-react'
 import { useState } from 'react'
 
-import { beeApi } from '../api/bee'
+import { getBeeUrl } from '../api/bee'
+
+async function fetchAny(hash: string): Promise<Blob> {
+  // Try paths in order:
+  //  1. /bzz/{hash}/ — manifests with index-document (websites, collections)
+  //  2. /bzz/{hash}  — single-file wrapped manifests
+  //  3. /bytes/{hash} — raw chunk
+  const candidates = [`${getBeeUrl()}/bzz/${hash}/`, `${getBeeUrl()}/bzz/${hash}`, `${getBeeUrl()}/bytes/${hash}`]
+  let lastError = ''
+
+  for (const url of candidates) {
+    try {
+      const r = await fetch(url)
+      if (r.ok) return r.blob()
+      lastError = `${r.status} from ${url.replace(getBeeUrl(), '')}`
+    } catch (e) {
+      lastError = (e as Error).message
+    }
+  }
+  throw new Error(`Could not retrieve from any path. Last error: ${lastError}`)
+}
 
 export default function AccessOnSwarm() {
   const [hash, setHash] = useState('')
@@ -22,14 +42,7 @@ export default function AccessOnSwarm() {
     setLoading(true)
     setError(null)
     try {
-      let blob: Blob
-
-      try {
-        blob = await beeApi.downloadFile(h)
-      } catch {
-        blob = await beeApi.downloadBytes(h)
-      }
-
+      const blob = await fetchAny(h)
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
