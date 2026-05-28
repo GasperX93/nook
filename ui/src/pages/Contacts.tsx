@@ -66,6 +66,7 @@ export default function Contacts() {
   }, [])
 
   const [copied, setCopied] = useState<'detail-address' | 'detail-share' | null>(null)
+  const [copiedRowId, setCopiedRowId] = useState<string | null>(null)
 
   const decoded = useMemo(() => {
     if (!shareLinkInput.trim()) return null
@@ -247,7 +248,7 @@ export default function Contacts() {
             >
               <option value="name">Sort: Name</option>
               <option value="date">Sort: Date added</option>
-              <option value="address">Sort: Address</option>
+              <option value="address">Sort: Nook address</option>
             </select>
           </div>
         </div>
@@ -257,7 +258,7 @@ export default function Contacts() {
             autoFocus
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
-            placeholder="Search by name or address"
+            placeholder="Search by name or Nook address"
           />
         )}
 
@@ -271,22 +272,26 @@ export default function Contacts() {
         ) : (
           <div className="rounded-lg border overflow-hidden" style={{ borderColor: 'rgb(var(--border))' }}>
             <div
-              className="grid grid-cols-[1fr_110px_110px] gap-2 px-3 py-2 text-[10px] uppercase tracking-widest items-center"
+              className="grid grid-cols-[1fr_110px_140px] gap-2 px-3 py-2 text-[10px] uppercase tracking-widest items-center"
               style={{ color: 'rgb(var(--fg-muted))', backgroundColor: 'rgb(var(--bg))' }}
             >
               <div>Name</div>
               <div>Date added</div>
-              <div>Address</div>
+              <div>Nook address</div>
             </div>
             <ul className="divide-y" style={{ borderColor: 'rgb(var(--border))' }}>
               {sortedFilteredContacts.map(c => {
                 const isSelected = selectedId === c.id
+                const isCopied = copiedRowId === c.id
 
                 return (
                   <li key={c.id}>
-                    <button
+                    <div
+                      role="button"
+                      tabIndex={0}
                       onClick={() => setSelectedId(c.id)}
-                      className="grid grid-cols-[1fr_110px_110px] gap-2 px-3 py-2.5 w-full text-left items-center hover:bg-white/5"
+                      onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && setSelectedId(c.id)}
+                      className="grid grid-cols-[1fr_110px_140px] gap-2 px-3 py-2.5 w-full text-left items-center hover:bg-white/5 cursor-pointer"
                       style={{
                         backgroundColor: isSelected ? 'rgba(255,255,255,0.06)' : 'transparent',
                       }}
@@ -295,10 +300,29 @@ export default function Contacts() {
                       <span className="text-xs font-mono" style={{ color: 'rgb(var(--fg-muted))' }}>
                         {formatDate(c.addedAt)}
                       </span>
-                      <span className="text-xs font-mono truncate" style={{ color: 'rgb(var(--fg-muted))' }}>
-                        {short(c.id, 4)}
-                      </span>
-                    </button>
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="text-xs font-mono truncate" style={{ color: 'rgb(var(--fg-muted))' }}>
+                          {short(c.id, 4)}
+                        </span>
+                        <button
+                          onClick={async e => {
+                            e.stopPropagation()
+                            await navigator.clipboard.writeText(c.id)
+                            setCopiedRowId(c.id)
+                            setTimeout(() => setCopiedRowId(curr => (curr === c.id ? null : curr)), 1500)
+                          }}
+                          className="shrink-0 p-1 rounded hover:bg-white/10"
+                          aria-label={`Copy Nook address for ${c.nickname}`}
+                          title="Copy Nook address"
+                        >
+                          {isCopied ? (
+                            <Check size={12} style={{ color: 'rgb(74,222,128)' }} />
+                          ) : (
+                            <Copy size={12} style={{ color: 'rgb(var(--fg-muted))' }} />
+                          )}
+                        </button>
+                      </div>
+                    </div>
                   </li>
                 )
               })}
