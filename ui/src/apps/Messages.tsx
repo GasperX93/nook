@@ -705,7 +705,7 @@ export default function Messages({ initialContactId, hideContactList, hideThread
   )
 }
 
-function ConnectionStatusBadge({ state, contactId }: { state: ConnectionState; contactId: string }) {
+export function ConnectionStatusBadge({ state, contactId }: { state: ConnectionState; contactId: string }) {
   // For invite-sent states, show how long ago we sent it.
   const sentAt = state === 'invite-sent-fresh' || state === 'invite-sent-stale' ? getInviteSentAtMs(contactId) : null
   const hint = sentAt ? formatAge(sentAt) : null
