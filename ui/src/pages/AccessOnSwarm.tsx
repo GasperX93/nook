@@ -20,8 +20,12 @@ async function fetchResolved(hash: string): Promise<{ blob: Blob; suggestedName:
   const bee = new Bee(beeBase)
   const file = await bee.downloadFile(hash)
 
-  const data = file.data.toUint8Array()
-  const blob = new Blob([data], { type: file.contentType || 'application/octet-stream' })
+  // Copy to a fresh ArrayBuffer to satisfy Blob's BlobPart type — bee-js
+  // returns a Uint8Array<ArrayBufferLike> which TS won't accept directly.
+  const src = file.data.toUint8Array()
+  const buf = new ArrayBuffer(src.byteLength)
+  new Uint8Array(buf).set(src)
+  const blob = new Blob([buf], { type: file.contentType || 'application/octet-stream' })
 
   return { blob, suggestedName: file.name ?? null }
 }
@@ -64,7 +68,7 @@ export default function AccessOnSwarm() {
   }
 
   return (
-    <div className="p-6 max-w-2xl mx-auto">
+    <div className="p-6 max-w-2xl">
       <h1 className="text-lg font-semibold mb-1">Access on Swarm</h1>
       <p className="text-sm mb-6" style={{ color: 'rgb(var(--fg-muted))' }}>
         Retrieve any file from the Swarm network using its hash — even if it isn't part of one of your drives.
