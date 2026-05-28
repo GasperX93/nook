@@ -254,7 +254,9 @@ function BuyDriveModal({
     <div
       className="fixed inset-0 flex items-center justify-center z-50"
       style={{ backgroundColor: 'rgba(0,0,0,0.6)' }}
-      onClick={onClose}
+      onClick={() => {
+        if (!buying && !buyDone) onClose()
+      }}
     >
       <div
         className="rounded-xl border p-6 w-96 space-y-5"
@@ -455,7 +457,9 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
     <div
       className="fixed inset-0 flex items-center justify-center z-50"
       style={{ backgroundColor: 'rgba(0,0,0,0.6)' }}
-      onClick={onClose}
+      onClick={() => {
+        if (!submitting) onClose()
+      }}
     >
       <div
         className="rounded-xl border p-6 w-96 space-y-5"
@@ -669,7 +673,9 @@ function UpdateFeedModal({ record, onClose }: { record: UploadRecord; onClose: (
     <div
       className="fixed inset-0 flex items-center justify-center z-50"
       style={{ backgroundColor: 'rgba(0,0,0,0.6)' }}
-      onClick={onClose}
+      onClick={() => {
+        if (phase !== 'updating') onClose()
+      }}
     >
       <div
         className="rounded-xl border p-6 w-96 space-y-5"
