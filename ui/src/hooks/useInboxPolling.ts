@@ -12,9 +12,11 @@ import { Bee } from '@ethersphere/bee-js'
 import { mailbox } from '@swarm-notify/sdk'
 import { useEffect, useMemo } from 'react'
 
+import { playCricketChirp } from '../lib/cricket'
 import { loadThreads, mergeReceived, saveThreads } from '../notify/messages'
 import { loadContacts } from '../notify/storage'
 import { toLibraryContact } from '../notify/types'
+import { useAppStore } from '../store/app'
 import { useDerivedKey } from './useDerivedKey'
 
 const BEE_URL = `${window.location.origin}/bee-api`
@@ -45,13 +47,24 @@ export function useInboxPolling(): void {
         // Merge directly into stored threads so the on-disk view is the
         // source of truth for both Messages and the sidebar badge.
         let threads = loadThreads()
+        let newCount = 0
 
         for (const { contact, messages } of inbox) {
+          const before = threads[contact.ethAddress.toLowerCase()]?.length ?? 0
           threads = mergeReceived(threads, contact.ethAddress, messages)
+          const after = threads[contact.ethAddress.toLowerCase()]?.length ?? 0
+          newCount += Math.max(0, after - before)
         }
         // mergeReceived already persists per call, but call once more here
         // for clarity in case the loop body ever changes.
         saveThreads(threads)
+
+        // Chirp on new arrivals — only if enabled AND user isn't currently
+        // looking at Contacts (which already shows the messages).
+        if (newCount > 0 && useAppStore.getState().notificationSound) {
+          const onContacts = window.location.hash.startsWith('#/contacts')
+          if (document.hidden || !onContacts) playCricketChirp()
+        }
       } catch {
         // Network blips happen; the next tick will retry. Don't spam the UI.
       }

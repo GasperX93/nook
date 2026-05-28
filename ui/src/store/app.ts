@@ -4,6 +4,7 @@ export const DEFAULT_GATEWAY = 'https://gateway.ethswarm.org'
 
 const ONBOARDING_KEY = 'nook:onboarding-completed'
 const THEME_KEY = 'nook:theme'
+const NOTIFICATION_SOUND_KEY = 'nook:notification-sound'
 
 export type Theme = 'dark' | 'light'
 
@@ -28,6 +29,8 @@ interface AppState {
   setOnboardingCompleted: () => void
   theme: Theme
   setTheme: (theme: Theme) => void
+  notificationSound: boolean
+  setNotificationSound: (enabled: boolean) => void
 }
 
 const initialTheme = readInitialTheme()
@@ -50,5 +53,11 @@ export const useAppStore = create<AppState>()(set => ({
     localStorage.setItem(THEME_KEY, theme)
     applyThemeClass(theme)
     set({ theme })
+  },
+  // Default true — chirps when new messages arrive while you're not on /contacts.
+  notificationSound: localStorage.getItem(NOTIFICATION_SOUND_KEY) !== 'false',
+  setNotificationSound: enabled => {
+    localStorage.setItem(NOTIFICATION_SOUND_KEY, String(enabled))
+    set({ notificationSound: enabled })
   },
 }))

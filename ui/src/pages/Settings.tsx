@@ -1,4 +1,4 @@
-import { ExternalLink, Moon, Sun } from 'lucide-react'
+import { Bell, BellOff, ExternalLink, Moon, Sun } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAddresses, useBeeHealth, useConfig, useInfo, usePeers, useTopology, useUpdateConfig } from '../api/queries'
@@ -32,7 +32,7 @@ export default function Settings() {
   const [rpcDraft, setRpcDraft] = useState('')
   const [rpcSaved, setRpcSaved] = useState(false)
 
-  const { devMode, setDevMode, theme, setTheme } = useAppStore()
+  const { devMode, setDevMode, theme, setTheme, notificationSound, setNotificationSound } = useAppStore()
 
   useEffect(() => {
     if (config) {
@@ -141,6 +141,26 @@ export default function Settings() {
                 )
               })}
             </div>
+          </div>
+
+          {/* Notifications */}
+          <div className="rounded-xl border p-5 space-y-3" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
+            <div>
+              <p className="text-sm mb-1" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Notifications
+              </p>
+              <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Play a short chirp when a new message arrives. Stays quiet while you're on the Contacts page.
+              </p>
+            </div>
+            <Button
+              onClick={() => setNotificationSound(!notificationSound)}
+              variant={notificationSound ? 'default' : 'outline'}
+              size="sm"
+            >
+              {notificationSound ? <Bell /> : <BellOff />}
+              {notificationSound ? 'Sound on' : 'Sound off'}
+            </Button>
           </div>
 
           {/* Version info */}
