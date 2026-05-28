@@ -51,9 +51,11 @@ interface MessagesProps {
   initialContactId?: string
   /** When true, suppress the inner conversation list so only the thread + compose render. */
   hideContactList?: boolean
+  /** When true, suppress the in-thread contact-name header. Useful when the parent renders its own. */
+  hideThreadHeader?: boolean
 }
 
-export default function Messages({ initialContactId, hideContactList }: MessagesProps = {}) {
+export default function Messages({ initialContactId, hideContactList, hideThreadHeader }: MessagesProps = {}) {
   const { signer, derive, walletConnected } = useDerivedKey()
   const { data: stamps } = useStamps()
 
@@ -468,20 +470,22 @@ export default function Messages({ initialContactId, hideContactList }: Messages
       <div className="flex-1 flex flex-col min-w-0">
         {selected ? (
           <>
-            <div
-              className="px-6 py-3 border-b flex items-center justify-between gap-3"
-              style={{ borderColor: 'rgb(var(--border))' }}
-            >
-              <div>
-                <h2 className="text-base font-semibold" style={{ color: 'rgb(var(--fg))' }}>
-                  {selected.nickname}
-                </h2>
-                <p className="text-xs font-mono" style={{ color: 'rgb(var(--fg-muted))' }}>
-                  {short(selected.id, 8)}
-                </p>
+            {!hideThreadHeader && (
+              <div
+                className="px-6 py-3 border-b flex items-center justify-between gap-3"
+                style={{ borderColor: 'rgb(var(--border))' }}
+              >
+                <div>
+                  <h2 className="text-base font-semibold" style={{ color: 'rgb(var(--fg))' }}>
+                    {selected.nickname}
+                  </h2>
+                  <p className="text-xs font-mono" style={{ color: 'rgb(var(--fg-muted))' }}>
+                    {short(selected.id, 8)}
+                  </p>
+                </div>
+                <ConnectionStatusBadge state={connectionState} contactId={selected.id} />
               </div>
-              <ConnectionStatusBadge state={connectionState} contactId={selected.id} />
-            </div>
+            )}
             <div ref={scrollRef} className="flex-1 overflow-auto px-6 py-4 flex flex-col gap-3">
               {selectedThread.length === 0 ? (
                 <p className="text-sm m-auto" style={{ color: 'rgb(var(--fg-muted))' }}>
@@ -701,7 +705,7 @@ export default function Messages({ initialContactId, hideContactList }: Messages
   )
 }
 
-function ConnectionStatusBadge({ state, contactId }: { state: ConnectionState; contactId: string }) {
+export function ConnectionStatusBadge({ state, contactId }: { state: ConnectionState; contactId: string }) {
   // For invite-sent states, show how long ago we sent it.
   const sentAt = state === 'invite-sent-fresh' || state === 'invite-sent-stale' ? getInviteSentAtMs(contactId) : null
   const hint = sentAt ? formatAge(sentAt) : null

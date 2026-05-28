@@ -241,6 +241,15 @@ export const beeApi = {
   topupStamp: async (id: string, amount: string) =>
     beeRequest<{ batchID: string }>(`/stamps/topup/${id}/${amount}`, { method: 'PATCH' }),
 
+  /**
+   * Dilute (expand capacity of) a postage batch by increasing its depth.
+   * For every +1 depth, capacity doubles but remaining time is halved — so a
+   * topup typically follows to restore the desired duration. Free at the
+   * protocol level (no BZZ paid for the dilute itself).
+   */
+  diluteStamp: async (id: string, depth: number) =>
+    beeRequest<{ batchID: string }>(`/stamps/dilute/${id}/${depth}`, { method: 'PATCH' }),
+
   uploadFileWithProgress: async (
     file: File,
     stampId: string,

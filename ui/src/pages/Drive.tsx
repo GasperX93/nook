@@ -13,14 +13,18 @@ import {
   Globe,
   HardDrive,
   Lock,
+  MoreVertical,
+  PanelLeft,
   Pencil,
   Plus,
   RefreshCw,
   Rss,
   Search,
+  Share2,
   Trash2,
   Upload,
   Users,
+  X,
 } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import React, { useEffect, useRef, useState } from 'react'
@@ -55,7 +59,9 @@ import {
 import AddSharedDriveModal from '../components/AddSharedDriveModal'
 import ENSModal from '../components/ENSModal'
 import ShareModal from '../components/ShareModal'
+import { Switch } from '../components/ui/switch'
 import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs'
+import { useSidebar } from '../components/ui/sidebar'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -87,9 +93,9 @@ function ttlToDays(seconds: number): string {
 
   if (d <= 0) return '<1d'
 
-  if (d < 30) return `${d}d`
+  if (d < 365) return `${d}d`
 
-  return `${Math.floor(d / 30)}mo`
+  return `${Math.floor(d / 365)}y`
 }
 
 function ttlColor(seconds: number): string {
@@ -374,21 +380,63 @@ function BuyDriveModal({
 // ─── ExtendModal ───────────────────────────────────────────────────────────────
 
 function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) {
-  const [durationIdx, setDurationIdx] = useState(1)
+  // Capacity options: only depths strictly larger than current. Dilute can't shrink
+  // and picking the current size is a no-op, so we don't show either.
+  const capacityOptions = SIZE_PRESETS.filter(s => s.depth > stamp.depth)
+  const [capacityEnabled, setCapacityEnabled] = useState(false)
+  const [capacityIdx, setCapacityIdx] = useState(0)
+  const [durationEnabled, setDurationEnabled] = useState(false)
+  const [durationIdx, setDurationIdx] = useState(0)
   const [extendError, setExtendError] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
   const { data: chainState } = useChainState()
-  const topup = useTopupStamp()
+  const { data: wallet } = useWallet()
   const queryClient = useQueryClient()
 
-  const cost = chainState
-    ? calcStampCost(stamp.depth, DURATION_PRESETS[durationIdx].months, chainState.currentPrice)
-    : null
+  const targetDepth = capacityEnabled && capacityOptions[capacityIdx] ? capacityOptions[capacityIdx].depth : stamp.depth
+  const willDilute = capacityEnabled && targetDepth > stamp.depth
+  const userExtendMonths = durationEnabled ? DURATION_PRESETS[durationIdx].months : 0
+
+  // Compute the topup amount that, combined with the dilute (if any), produces:
+  //   - the user's current remaining TTL (preserved across the dilute halving), plus
+  //   - the additional months the user picked under "Extend duration"
+  //
+  // Math: per Bee protocol, each +1 depth in dilute halves remaining time. To restore
+  // it we need to top up enough to undo that halving. Then we add any user-requested
+  // duration on top.
+  const SECONDS_PER_MONTH = 30 * 86400
+  const SECONDS_PER_BLOCK = 5 // Gnosis chain
+  const depthDelta = targetDepth - stamp.depth
+  const recoverySeconds = depthDelta > 0 ? Math.floor(stamp.batchTTL * (1 - 1 / 2 ** depthDelta)) : 0
+  const extendSeconds = userExtendMonths * SECONDS_PER_MONTH
+  const totalSecondsToBuy = recoverySeconds + extendSeconds
+
+  // Cost = price-per-block × blocks × chunks-at-new-depth. Hidden from the user how it
+  // breaks down between dilute-recovery and user-requested time — they see one number.
+  const cost = (() => {
+    if (totalSecondsToBuy <= 0 || !chainState) return null
+    const blocks = BigInt(Math.floor(totalSecondsToBuy / SECONDS_PER_BLOCK))
+    const amount = BigInt(chainState.currentPrice) * blocks
+    const totalChunks = 1n << BigInt(targetDepth)
+    const totalPlur = amount * totalChunks
+    return { amount: amount.toString(), bzzCost: plurToBzz(totalPlur.toString()) }
+  })()
+
+  const bzzBalance = wallet ? Number(plurToBzz(wallet.bzzBalance)) : null
+  const canAfford = cost && bzzBalance !== null ? bzzBalance >= Number(cost.bzzCost) : true
+  const canSubmit = (willDilute || totalSecondsToBuy > 0) && canAfford
 
   async function doExtend() {
-    if (!cost) return
+    if (!canSubmit) return
     setExtendError(null)
+    setSubmitting(true)
     try {
-      await topup.mutateAsync({ id: stamp.batchID, amount: cost.amount })
+      if (willDilute) {
+        await beeApi.diluteStamp(stamp.batchID, targetDepth)
+      }
+      if (cost) {
+        await beeApi.topupStamp(stamp.batchID, cost.amount)
+      }
       queryClient.refetchQueries({ queryKey: ['bee', 'stamps'] })
       queryClient.refetchQueries({ queryKey: ['bee', 'wallet'] })
       onClose()
@@ -398,6 +446,8 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
           ? 'Insufficient BZZ. Top up your wallet first.'
           : err?.message || 'Failed to extend drive.'
       setExtendError(msg)
+    } finally {
+      setSubmitting(false)
     }
   }
 
@@ -408,7 +458,7 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
       onClick={onClose}
     >
       <div
-        className="rounded-xl border p-6 w-80 space-y-5"
+        className="rounded-xl border p-6 w-96 space-y-5"
         style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
         onClick={e => e.stopPropagation()}
       >
@@ -418,37 +468,85 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
             {stamp.label || `${stamp.batchID.slice(0, 20)}…`}
           </p>
           <p className="text-xs mt-0.5" style={{ color: 'rgb(var(--fg-muted))' }}>
-            {depthToCapacity(stamp.depth)} · {ttlToDays(stamp.batchTTL)} remaining
+            {depthToCapacity(stamp.depth)} · {Math.floor(stamp.batchTTL / 86400)} days remaining
           </p>
         </div>
 
         <div>
-          <p className="text-xs uppercase tracking-widest mb-2" style={{ color: 'rgb(var(--fg-muted))' }}>
-            Extend by
-          </p>
-          <div className="grid grid-cols-2 gap-2">
-            {DURATION_PRESETS.map((d, i) => (
-              <button
-                key={d.label}
-                onClick={() => setDurationIdx(i)}
-                className="px-3 py-2 rounded-lg border text-sm transition-all"
-                style={{
-                  borderColor: durationIdx === i ? 'rgb(var(--accent))' : 'rgb(var(--border))',
-                  backgroundColor: durationIdx === i ? 'rgba(247,104,8,0.08)' : 'transparent',
-                  color: durationIdx === i ? 'rgb(var(--fg))' : 'rgb(var(--fg-muted))',
-                }}
-              >
-                {d.label}
-              </button>
-            ))}
-          </div>
+          <label className="flex items-center justify-between mb-2 cursor-pointer">
+            <span className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
+              Extend capacity
+            </span>
+            <Switch
+              checked={capacityEnabled}
+              onCheckedChange={setCapacityEnabled}
+              disabled={capacityOptions.length === 0}
+            />
+          </label>
+          {capacityEnabled && capacityOptions.length > 0 && (
+            <div className="grid grid-cols-3 gap-2">
+              {capacityOptions.map((s, i) => (
+                <button
+                  key={s.label}
+                  onClick={() => setCapacityIdx(i)}
+                  className="px-3 py-2 rounded-lg border text-sm transition-all"
+                  style={{
+                    borderColor: capacityIdx === i ? 'rgb(var(--accent))' : 'rgb(var(--border))',
+                    backgroundColor: capacityIdx === i ? 'rgba(247,104,8,0.08)' : 'transparent',
+                    color: capacityIdx === i ? 'rgb(var(--fg))' : 'rgb(var(--fg-muted))',
+                  }}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          )}
+          {capacityOptions.length === 0 && (
+            <p className="text-[11px]" style={{ color: 'rgb(var(--fg-muted))' }}>
+              Drive is already at the maximum size.
+            </p>
+          )}
         </div>
 
-        {cost && (
-          <p className="text-sm">
-            <span style={{ color: 'rgb(var(--fg-muted))' }}>Cost: </span>
-            <span className="font-semibold">{cost.bzzCost} BZZ</span>
-          </p>
+        <div>
+          <label className="flex items-center justify-between mb-2 cursor-pointer">
+            <span className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
+              Extend duration
+            </span>
+            <Switch checked={durationEnabled} onCheckedChange={setDurationEnabled} />
+          </label>
+          {durationEnabled && (
+            <div className="grid grid-cols-2 gap-2">
+              {DURATION_PRESETS.map((d, i) => (
+                <button
+                  key={d.label}
+                  onClick={() => setDurationIdx(i)}
+                  className="px-3 py-2 rounded-lg border text-sm transition-all"
+                  style={{
+                    borderColor: durationIdx === i ? 'rgb(var(--accent))' : 'rgb(var(--border))',
+                    backgroundColor: durationIdx === i ? 'rgba(247,104,8,0.08)' : 'transparent',
+                    color: durationIdx === i ? 'rgb(var(--fg))' : 'rgb(var(--fg-muted))',
+                  }}
+                >
+                  {d.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {(willDilute || totalSecondsToBuy > 0) && (
+          <div className="text-sm space-y-1">
+            <p>
+              <span style={{ color: 'rgb(var(--fg-muted))' }}>Cost: </span>
+              <span className="font-semibold">{cost ? `${cost.bzzCost} BZZ` : 'Free'}</span>
+              {cost && !canAfford && (
+                <span className="ml-2 text-xs" style={{ color: '#ef4444' }}>
+                  Insufficient BZZ
+                </span>
+              )}
+            </p>
+          </div>
         )}
 
         {extendError && (
@@ -467,11 +565,11 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
           </button>
           <button
             onClick={doExtend}
-            disabled={topup.isPending || !cost}
+            disabled={submitting || !canSubmit}
             className="flex-1 py-2 rounded-lg text-sm font-semibold disabled:opacity-40"
             style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
           >
-            {topup.isPending ? 'Extending…' : 'Extend drive'}
+            {submitting ? 'Extending…' : 'Extend drive'}
           </button>
         </div>
       </div>
@@ -733,123 +831,6 @@ function UpdateFeedModal({ record, onClose }: { record: UploadRecord; onClose: (
   )
 }
 
-// ─── RetrieveModal ─────────────────────────────────────────────────────────────
-
-function RetrieveModal({ onClose }: { onClose: () => void }) {
-  const [hash, setHash] = useState('')
-  const [filename, setFilename] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  async function retrieve() {
-    const h = hash.trim()
-
-    if (!h) return
-    setLoading(true)
-    setError(null)
-    try {
-      let blob: Blob
-
-      try {
-        blob = await beeApi.downloadFile(h)
-      } catch {
-        // Manifest download failed — try raw bytes fallback
-        blob = await beeApi.downloadBytes(h)
-      }
-
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = filename.trim() || h.slice(0, 12)
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
-      onClose()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Download failed')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  return (
-    <div
-      className="fixed inset-0 flex items-center justify-center z-50"
-      style={{ backgroundColor: 'rgba(0,0,0,0.6)' }}
-      onClick={onClose}
-    >
-      <div
-        className="rounded-xl border p-6 w-96 space-y-5"
-        style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
-        onClick={e => e.stopPropagation()}
-      >
-        <div>
-          <p className="text-sm font-semibold">Retrieve from Swarm</p>
-          <p className="text-xs mt-1" style={{ color: 'rgb(var(--fg-muted))' }}>
-            Enter a Swarm hash to download the file.
-          </p>
-        </div>
-
-        <div className="space-y-3">
-          <div>
-            <label className="text-xs uppercase tracking-widest block mb-1.5" style={{ color: 'rgb(var(--fg-muted))' }}>
-              Swarm hash
-            </label>
-            <input
-              type="text"
-              value={hash}
-              onChange={e => setHash(e.target.value)}
-              onKeyDown={async e => e.key === 'Enter' && retrieve()}
-              placeholder="64-char hex…"
-              className="w-full rounded-lg border px-3 py-2 text-xs font-mono focus:outline-none"
-              style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
-              autoFocus
-            />
-          </div>
-          <div>
-            <label className="text-xs uppercase tracking-widest block mb-1.5" style={{ color: 'rgb(var(--fg-muted))' }}>
-              Save as (optional)
-            </label>
-            <input
-              type="text"
-              value={filename}
-              onChange={e => setFilename(e.target.value)}
-              placeholder="filename.ext"
-              className="w-full rounded-lg border px-3 py-2 text-xs focus:outline-none"
-              style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
-            />
-          </div>
-        </div>
-
-        {error && (
-          <p className="text-xs px-3 py-2 rounded" style={{ backgroundColor: 'rgba(239,68,68,0.1)', color: '#ef4444' }}>
-            {error}
-          </p>
-        )}
-
-        <div className="flex gap-3">
-          <button
-            onClick={onClose}
-            className="flex-1 py-2 rounded-lg text-sm"
-            style={{ color: 'rgb(var(--fg-muted))' }}
-          >
-            Cancel
-          </button>
-          <button
-            onClick={retrieve}
-            disabled={loading || !hash.trim()}
-            className="flex-1 py-2 rounded-lg text-sm font-semibold disabled:opacity-40 flex items-center justify-center gap-2"
-            style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
-          >
-            {loading ? <RefreshCw size={13} className="animate-spin" /> : <Download size={13} />}
-            {loading ? 'Downloading…' : 'Download'}
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
 
 // ─── RecordRow ────────────────────────────────────────────────────────────────
 
@@ -1096,6 +1077,8 @@ function DriveCard({
   const [inlineDragOverFolderId, setInlineDragOverFolderId] = useState<string | null>(null)
   const [renaming, setRenaming] = useState(false)
   const [renameInput, setRenameInput] = useState('')
+  const [kebabOpen, setKebabOpen] = useState(false)
+  const kebabRef = useRef<HTMLDivElement>(null)
   const MAX_TTL = 365 * 24 * 3600
   const ttlPct = Math.min((stamp.batchTTL / MAX_TTL) * 100, 100)
   const color = ttlColor(stamp.batchTTL)
@@ -1103,9 +1086,27 @@ function DriveCard({
   const driveName = customName || stamp.label || `${stamp.batchID.slice(0, 8)}…`
   const capacityBytes = depthToBytes(stamp.depth)
   const usedBytes = records.reduce((s, r) => s + r.size, 0)
+  const usagePct = capacityBytes > 0 ? Math.min((usedBytes / capacityBytes) * 100, 100) : 0
   const maxUtilization = 1 << (stamp.depth - stamp.bucketDepth)
   const utilizationPct = Math.round((stamp.utilization / maxUtilization) * 100)
   const isFull = stamp.utilization >= maxUtilization
+  const ttlDays = stamp.batchTTL / 86400
+  // Critical = days-pill turns red. Matches Figma's 'red at ≤7 days' threshold.
+  const isCriticalTtl = stamp.usable && ttlDays > 0 && ttlDays <= 7
+  // Extend button surfaces earlier so users have time to act before things go red.
+  const needsExtend = stamp.usable && ((ttlDays > 0 && ttlDays <= 30) || isFull)
+  const hasWebsite = records.some(r => r.type === 'website')
+
+  // Close kebab on outside click
+  useEffect(() => {
+    if (!kebabOpen) return
+    const handler = (e: MouseEvent) => {
+      if (kebabRef.current && !kebabRef.current.contains(e.target as Node)) setKebabOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+
+    return () => document.removeEventListener('mousedown', handler)
+  }, [kebabOpen])
   const rootFolders = folders.filter(f => !f.parentFolderId)
   const rootFiles = records.filter(r => !r.folderId)
   const itemSummary = (() => {
@@ -1158,175 +1159,209 @@ function DriveCard({
   return (
     <div className="border-b" style={{ borderColor: 'rgb(var(--border))' }}>
       <div
-        className="flex items-center gap-3 px-4 py-3 hover:bg-[rgb(var(--bg-surface))] transition-colors"
-        style={{ cursor: 'pointer' }}
+        className="px-4 py-3 hover:bg-[rgb(var(--bg-surface))] transition-colors cursor-pointer"
         onClick={() => onOpen()}
       >
-        {encrypted ? (
-          <Lock size={14} className="shrink-0" style={{ color: 'rgb(var(--accent))' }} />
-        ) : (
-          <HardDrive size={14} className="shrink-0" style={{ color: 'rgb(var(--fg-muted))' }} />
-        )}
-
-        {/* Drive name — unnamed drives show a prompt; named drives show pencil on hover */}
-        {renaming ? (
-          <input
-            autoFocus
-            value={renameInput}
-            onChange={e => setRenameInput(e.target.value)}
-            onBlur={() => {
-              const val = renameInput.trim()
-
-              if (val) {
-                onRename(val)
-                setRenaming(false)
-              } else if (hasName) setRenaming(false)
-              // if no name and input empty, keep open
-            }}
-            onKeyDown={e => {
-              if (e.key === 'Enter') {
+        {/* Top line: name + pills + actions */}
+        <div className="flex items-center gap-2">
+          {renaming ? (
+            <input
+              autoFocus
+              value={renameInput}
+              onChange={e => setRenameInput(e.target.value)}
+              onBlur={() => {
                 const val = renameInput.trim()
 
                 if (val) {
                   onRename(val)
                   setRenaming(false)
-                }
-              }
+                } else if (hasName) setRenaming(false)
+              }}
+              onKeyDown={e => {
+                if (e.key === 'Enter') {
+                  const val = renameInput.trim()
 
-              if (e.key === 'Escape' && hasName) setRenaming(false)
-            }}
-            onClick={e => e.stopPropagation()}
-            placeholder="Name this drive…"
-            className="text-sm font-medium bg-transparent border-b outline-none flex-1 min-w-0"
-            style={{ borderColor: 'rgb(var(--accent))', color: 'rgb(var(--fg))' }}
-          />
-        ) : !hasName ? (
-          <button
-            onClick={e => {
-              e.stopPropagation()
-              setRenameInput('')
-              setRenaming(true)
-            }}
-            className="text-sm flex-1 text-left min-w-0"
-            style={{ color: 'rgb(var(--fg-muted))', fontStyle: 'italic' }}
-          >
-            Name this drive…
-          </button>
-        ) : (
-          <span className="text-sm font-medium truncate flex-1 group/name flex items-center gap-1 min-w-0">
-            <span className="truncate">{driveName}</span>
+                  if (val) {
+                    onRename(val)
+                    setRenaming(false)
+                  }
+                }
+
+                if (e.key === 'Escape' && hasName) setRenaming(false)
+              }}
+              onClick={e => e.stopPropagation()}
+              placeholder="Name this drive…"
+              className="text-lg font-medium bg-transparent border-b outline-none flex-1 min-w-0"
+              style={{ borderColor: 'rgb(var(--accent))', color: 'rgb(var(--fg))' }}
+            />
+          ) : !hasName ? (
             <button
               onClick={e => {
                 e.stopPropagation()
-                setRenameInput(driveName)
+                setRenameInput('')
                 setRenaming(true)
               }}
-              className="opacity-0 group-hover/name:opacity-100 transition-opacity shrink-0"
-              style={{ color: 'rgb(var(--fg-muted))' }}
+              className="text-lg font-medium text-left min-w-0 truncate"
+              style={{ color: 'rgb(var(--fg-muted))', fontStyle: 'italic' }}
             >
-              <Pencil size={10} />
+              Name this drive…
             </button>
-          </span>
-        )}
+          ) : (
+            <span className="text-lg font-medium truncate min-w-0">{driveName}</span>
+          )}
 
-        {/* Confirming badge */}
-        {!stamp.usable && (
-          <span
-            className="text-[10px] px-1.5 py-0.5 rounded font-semibold uppercase tracking-widest animate-pulse shrink-0"
-            style={{ backgroundColor: 'rgba(247,104,8,0.1)', color: 'rgb(var(--accent))' }}
-          >
-            Confirming…
-          </span>
-        )}
-
-        {/* Encrypted badge + Share button */}
-        {encrypted && (
-          <>
-            <button
-              onClick={e => {
-                e.stopPropagation()
-
-                if (onShare) onShare()
-              }}
-              className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0"
-              style={{
-                backgroundColor: 'rgba(247,104,8,0.1)',
-                color: 'rgb(var(--accent))',
-                cursor: onShare ? 'pointer' : 'default',
-              }}
+          {/* Encrypted pill */}
+          {encrypted && (
+            <span
+              className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-semibold shrink-0"
+              style={{ backgroundColor: '#3b82f6', color: 'white' }}
             >
-              <Lock size={9} />
+              <Lock size={12} />
               Encrypted{granteeCount && granteeCount > 1 ? ` · ${granteeCount - 1} shared` : ''}
-            </button>
-            {onShare && (
+            </span>
+          )}
+
+          {/* Confirming pill */}
+          {!stamp.usable && (
+            <span
+              className="text-[10px] px-2 py-0.5 rounded-full font-semibold uppercase tracking-widest animate-pulse shrink-0"
+              style={{ backgroundColor: 'rgba(247,104,8,0.1)', color: 'rgb(var(--accent))' }}
+            >
+              Confirming…
+            </span>
+          )}
+
+          {/* Website pill */}
+          {hasWebsite && (
+            <span
+              className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium shrink-0"
+              style={{ backgroundColor: 'rgba(74,222,128,0.1)', color: '#4ade80' }}
+            >
+              <Globe size={11} />
+              Website
+            </span>
+          )}
+
+          {/* Right-side actions */}
+          <div className="ml-auto flex items-center gap-2 shrink-0">
+            {needsExtend && (
               <button
                 onClick={e => {
                   e.stopPropagation()
-                  onShare()
+                  onExtend()
                 }}
-                className="text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0 transition-colors"
-                style={{ color: 'rgb(var(--accent))' }}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors"
+                style={{ backgroundColor: 'rgb(var(--fg))', color: 'rgb(var(--bg))' }}
               >
-                Share
+                Extend storage
               </button>
             )}
-          </>
-        )}
 
-        {/* Website badge */}
-        {records.some(r => r.type === 'website') && (
-          <span
-            className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0"
-            style={{ backgroundColor: 'rgba(74,222,128,0.1)', color: '#4ade80' }}
-          >
-            <Globe size={9} />
-            Website
-          </span>
-        )}
-
-        {/* Item count */}
-        <span className="text-xs shrink-0" style={{ color: 'rgb(var(--fg-muted))' }}>
-          {itemSummary}
-        </span>
-
-        {/* Storage usage + utilization */}
-        <span className="text-xs shrink-0" style={{ color: 'rgb(var(--fg-muted))' }}>
-          {usedBytes > 0 ? `${formatBytes(usedBytes)} / ${formatBytes(capacityBytes)}` : formatBytes(capacityBytes)}
-        </span>
-
-        {isFull && (
-          <span
-            className="text-[10px] font-semibold px-1.5 py-0.5 rounded shrink-0"
-            style={{ backgroundColor: 'rgba(239,68,68,0.15)', color: '#ef4444' }}
-          >
-            Full
-          </span>
-        )}
-
-        {/* TTL bar + label */}
-        <div className="flex items-center gap-1.5 shrink-0" style={{ color }}>
-          <Clock size={10} />
-          <div className="w-16 h-1 rounded-full shrink-0" style={{ backgroundColor: 'rgb(var(--border))' }}>
-            <div className="h-1 rounded-full" style={{ width: `${ttlPct}%`, backgroundColor: color }} />
+            <div ref={kebabRef} className="relative">
+              <button
+                onClick={e => {
+                  e.stopPropagation()
+                  setKebabOpen(v => !v)
+                }}
+                aria-label="Drive actions"
+                className="w-7 h-7 flex items-center justify-center rounded hover:bg-white/10 transition-colors"
+                style={{ color: 'rgb(var(--fg-muted))' }}
+              >
+                <MoreVertical size={16} />
+              </button>
+              {kebabOpen && (
+                <div
+                  className="absolute right-0 top-full mt-1 rounded-lg border py-1 z-40 w-44"
+                  style={{ backgroundColor: 'rgb(var(--bg-surface))', borderColor: 'rgb(var(--border))' }}
+                  onClick={e => e.stopPropagation()}
+                >
+                  <button
+                    onClick={() => {
+                      setKebabOpen(false)
+                      onExtend()
+                    }}
+                    disabled={!stamp.usable}
+                    className="flex items-center gap-2 w-full px-3 py-2 text-xs transition-colors hover:bg-white/5 disabled:opacity-40 disabled:cursor-not-allowed"
+                    style={{ color: 'rgb(var(--fg))' }}
+                  >
+                    <Clock size={13} style={{ color: 'rgb(var(--fg-muted))' }} />
+                    Extend storage
+                  </button>
+                  {encrypted && onShare && (
+                    <button
+                      onClick={() => {
+                        setKebabOpen(false)
+                        onShare()
+                      }}
+                      className="flex items-center gap-2 w-full px-3 py-2 text-xs transition-colors hover:bg-white/5"
+                      style={{ color: 'rgb(var(--fg))' }}
+                    >
+                      <Share2 size={13} style={{ color: 'rgb(var(--fg-muted))' }} />
+                      Share…
+                    </button>
+                  )}
+                  <button
+                    onClick={() => {
+                      setKebabOpen(false)
+                      setRenameInput(hasName ? driveName : '')
+                      setRenaming(true)
+                    }}
+                    className="flex items-center gap-2 w-full px-3 py-2 text-xs transition-colors hover:bg-white/5"
+                    style={{ color: 'rgb(var(--fg))' }}
+                  >
+                    <Pencil size={13} style={{ color: 'rgb(var(--fg-muted))' }} />
+                    Rename
+                  </button>
+                  <button
+                    disabled
+                    title="Coming soon"
+                    className="flex items-center gap-2 w-full px-3 py-2 text-xs opacity-40 cursor-not-allowed"
+                    style={{ color: 'rgb(var(--fg))' }}
+                  >
+                    <X size={13} style={{ color: 'rgb(var(--fg-muted))' }} />
+                    Forget
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
-          <span className="text-[10px] w-10 text-right shrink-0">{ttlToDays(stamp.batchTTL)}</span>
         </div>
 
-        {/* Extend */}
-        <button
-          onClick={e => {
-            e.stopPropagation()
-            onExtend()
-          }}
-          className="text-xs shrink-0 transition-colors"
-          style={{ color: 'rgb(var(--fg-muted))' }}
-          disabled={!stamp.usable}
-        >
-          Extend
-        </button>
+        {/* Bottom line: utilization bar + size + days-left pill + items */}
+        <div className="flex items-center gap-2 mt-2 text-sm">
+          <div
+            className="w-32 h-1 rounded-full shrink-0"
+            style={{ backgroundColor: 'rgb(var(--border))' }}
+            aria-label={`${Math.round(usagePct)}% used`}
+          >
+            <div
+              className="h-1 rounded-full"
+              style={{
+                width: `${usagePct}%`,
+                backgroundColor: isFull ? '#ef4444' : 'rgb(var(--fg))',
+              }}
+            />
+          </div>
+          <span style={{ color: isFull ? '#ef4444' : 'rgb(var(--fg-muted))' }}>
+            {usedBytes > 0 ? `${formatBytes(usedBytes)} / ${formatBytes(capacityBytes)}` : formatBytes(capacityBytes)}
+          </span>
+          {stamp.usable && (
+            <span
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full"
+              style={
+                isCriticalTtl
+                  ? { backgroundColor: 'rgba(239,68,68,0.1)', color: '#ef4444' }
+                  : { backgroundColor: 'rgba(255,255,255,0.05)', color: 'rgb(var(--fg-muted))' }
+              }
+            >
+              <Clock size={11} />
+              {ttlToDays(stamp.batchTTL)}
+            </span>
+          )}
+          <span style={{ color: 'rgb(var(--border))' }}>|</span>
+          <span style={{ color: 'rgb(var(--fg-muted))' }}>{itemSummary}</span>
+        </div>
       </div>
-
-      {/* Inline file preview — only rendered when expanded and there's content */}
     </div>
   )
 }
@@ -1909,6 +1944,7 @@ function SharedDriveCard({
 }
 
 export default function Drive() {
+  const { toggle: toggleSidebar } = useSidebar()
   const { data: stamps } = useStamps()
   const {
     records,
@@ -1954,11 +1990,11 @@ export default function Drive() {
   const [driveTab, setDriveTab] = useState<'mine' | 'shared'>('mine')
   const [addingFile, setAddingFile] = useState(false)
   const [search, setSearch] = useState('')
+  const [searchOpen, setSearchOpen] = useState(false)
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
   const [downloadPct, setDownloadPct] = useState<number | null>(null)
   const [updatingId, setUpdatingId] = useState<string | null>(null)
-  const [retrieveOpen, setRetrieveOpen] = useState(false)
   const [ensRecordId, setEnsRecordId] = useState<string | null>(null)
 
   // Folder UI state
@@ -2024,31 +2060,33 @@ export default function Drive() {
       <div className="p-6">
         {/* Header */}
         <div className="flex items-center gap-3 mb-4">
-          <div className="relative w-full max-w-[500px]">
-            <Search
-              size={11}
-              className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
-              style={{ color: 'rgb(var(--fg-muted))' }}
-            />
-            <input
-              type="text"
-              placeholder="Search all files…"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              className="w-full pl-7 pr-3 py-1.5 rounded-lg border text-xs focus:outline-none"
-              style={{ backgroundColor: 'rgb(var(--bg-surface))', color: 'rgb(var(--fg))' }}
-            />
-          </div>
+          <button
+            onClick={toggleSidebar}
+            aria-label="Toggle sidebar"
+            className="w-8 h-8 flex items-center justify-center rounded-lg transition-colors hover:bg-white/[0.04] shrink-0"
+            style={{ color: 'rgb(var(--fg-muted))' }}
+          >
+            <PanelLeft size={16} />
+          </button>
+
+          <Tabs value={driveTab} onValueChange={v => setDriveTab(v as 'mine' | 'shared')}>
+            <TabsList>
+              <TabsTrigger value="mine">My drives{allStamps.length > 0 ? ` (${allStamps.length})` : ''}</TabsTrigger>
+              <TabsTrigger value="shared">
+                Shared with me{sharedDrives.drives.length > 0 ? ` (${sharedDrives.drives.length})` : ''}
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
 
           <div className="flex-1" />
 
           <button
-            onClick={() => setRetrieveOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium shrink-0 transition-colors"
-            style={{ color: 'rgb(var(--fg-muted))' }}
+            onClick={() => setSearchOpen(v => !v)}
+            aria-label="Search files"
+            className="w-8 h-8 flex items-center justify-center rounded-lg transition-colors hover:bg-white/[0.04] shrink-0"
+            style={{ color: searchOpen ? 'rgb(var(--fg))' : 'rgb(var(--fg-muted))' }}
           >
-            <Download size={12} />
-            Retrieve
+            <Search size={16} />
           </button>
 
           {driveTab === 'mine' ? (
@@ -2072,15 +2110,25 @@ export default function Drive() {
           )}
         </div>
 
-        {/* Tabs */}
-        <Tabs value={driveTab} onValueChange={v => setDriveTab(v as 'mine' | 'shared')} className="mb-4">
-          <TabsList>
-            <TabsTrigger value="mine">My drives{allStamps.length > 0 ? ` (${allStamps.length})` : ''}</TabsTrigger>
-            <TabsTrigger value="shared">
-              Shared with me{sharedDrives.drives.length > 0 ? ` (${sharedDrives.drives.length})` : ''}
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
+        {/* Expandable search */}
+        {searchOpen && (
+          <div className="mb-4 relative max-w-[500px]">
+            <Search
+              size={12}
+              className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
+              style={{ color: 'rgb(var(--fg-muted))' }}
+            />
+            <input
+              autoFocus
+              type="text"
+              placeholder="Search all files…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="w-full pl-7 pr-3 py-1.5 rounded-lg border text-xs focus:outline-none"
+              style={{ backgroundColor: 'rgb(var(--bg-surface))', color: 'rgb(var(--fg))' }}
+            />
+          </div>
+        )}
 
         {/* Content */}
         {search ? (
@@ -2234,7 +2282,6 @@ export default function Drive() {
             )
           })()}
         {updatingRecord && <UpdateFeedModal record={updatingRecord} onClose={() => setUpdatingId(null)} />}
-        {retrieveOpen && <RetrieveModal onClose={() => setRetrieveOpen(false)} />}
         {ensRecordId &&
           (() => {
             const rec = records.find(r => r.id === ensRecordId)
@@ -2668,7 +2715,6 @@ export default function Drive() {
       ) : null}
 
       {updatingRecord && <UpdateFeedModal record={updatingRecord} onClose={() => setUpdatingId(null)} />}
-      {retrieveOpen && <RetrieveModal onClose={() => setRetrieveOpen(false)} />}
       {ensRecordId &&
         (() => {
           const rec = records.find(r => r.id === ensRecordId)

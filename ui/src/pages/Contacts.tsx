@@ -3,7 +3,8 @@ import { identity } from '@swarm-notify/sdk'
 import { Check, Copy, MessageSquare, Plus, Search, Send, Share2, Trash2, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
-import Messages from '../apps/Messages'
+import Messages, { ConnectionStatusBadge } from '../apps/Messages'
+import { deriveConnectionState } from '../notify/contact-state'
 import { loadThreads } from '../notify/messages'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -96,13 +97,14 @@ export default function Contacts() {
   }, [selectedId])
 
   // Show the message thread if the contact already has history OR the user just hit Send message.
-  const hasThread = useMemo(() => {
-    if (!selectedId) return false
-    const t = loadThreads()[selectedId.toLowerCase()]
+  const { hasThread, hasInbound } = useMemo(() => {
+    if (!selectedId) return { hasThread: false, hasInbound: false }
+    const t = loadThreads()[selectedId.toLowerCase()] ?? []
 
-    return Array.isArray(t) && t.length > 0
+    return { hasThread: t.length > 0, hasInbound: t.some(m => m.direction === 'received') }
   }, [selectedId, composeFor])
   const showThread = hasThread || composeFor === selectedId
+  const connectionState = selectedId ? deriveConnectionState(selectedId, hasInbound) : 'not-connected'
 
   function resetAddForm() {
     setRegistryAddr('')
@@ -315,31 +317,40 @@ export default function Contacts() {
           </div>
         ) : showThread ? (
           <>
+            {/* Header — single-line, mirrors the left pane's 'Contacts' + actions row */}
+            <div className="p-5 pb-4 shrink-0">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <h1 className="text-lg font-semibold truncate">{selected.nickname}</h1>
+                  <ConnectionStatusBadge state={connectionState} contactId={selected.id} />
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleShareContact(selected)}
+                    className="inline-flex items-center gap-1.5"
+                  >
+                    <Share2 size={14} />
+                    {copied === 'detail-share' ? 'Copied' : 'Share contact'}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    onClick={() => handleRemoveContact(selected.id)}
+                    aria-label={`Remove ${selected.nickname}`}
+                    className="text-red-500 h-8 w-8"
+                  >
+                    <Trash2 size={14} />
+                  </Button>
+                </div>
+              </div>
+            </div>
             <div
-              className="flex items-center justify-end gap-2 px-4 py-2 border-b shrink-0"
+              className="flex-1 min-h-0 border-t"
               style={{ borderColor: 'rgb(var(--border))' }}
             >
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => handleShareContact(selected)}
-                className="inline-flex items-center gap-1.5"
-              >
-                <Share2 size={14} />
-                {copied === 'detail-share' ? 'Copied' : 'Share contact'}
-              </Button>
-              <Button
-                variant="outline"
-                size="icon"
-                onClick={() => handleRemoveContact(selected.id)}
-                aria-label={`Remove ${selected.nickname}`}
-                className="text-red-500 h-8 w-8"
-              >
-                <Trash2 size={14} />
-              </Button>
-            </div>
-            <div className="flex-1 min-h-0">
-              <Messages key={selected.id} initialContactId={selected.id} hideContactList />
+              <Messages key={selected.id} initialContactId={selected.id} hideContactList hideThreadHeader />
             </div>
           </>
         ) : (

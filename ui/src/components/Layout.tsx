@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   Contact,
   Copy,
+  Download,
   Globe,
   HardDrive,
   LogOut,
@@ -34,8 +35,12 @@ import {
   SidebarTrigger,
 } from './ui/sidebar'
 
-const mainNavItems = [
+const storageNavItems = [
   { to: '/drive', icon: HardDrive, label: 'Drive' },
+  { to: '/access', icon: Download, label: 'Access on Swarm' },
+]
+
+const youNavItems = [
   { to: '/account', icon: Wallet, label: 'Account' },
   { to: '/contacts', icon: Contact, label: 'Contacts' },
 ]
@@ -133,6 +138,7 @@ export default function Layout() {
     '/drive': 'Drive',
     '/account': 'Account',
     '/contacts': 'Contacts',
+    '/access': 'Access on Swarm',
     '/settings': 'Settings',
     '/dev': 'Dev mode',
     '/apps/messages': 'Messages',
@@ -140,7 +146,7 @@ export default function Layout() {
   }
   const pageTitle = pageTitles[location.pathname] ?? ''
 
-  const navItems = devMode ? [...mainNavItems, { to: '/dev', icon: Terminal, label: 'Dev mode' }] : mainNavItems
+  const youItems = devMode ? [...youNavItems, { to: '/dev', icon: Terminal, label: 'Dev mode' }] : youNavItems
 
   // Background inbox polling — keeps unread badge fresh whether or not the
   // Messages page is mounted. Side-effect hook; writes to localStorage threads.
@@ -214,7 +220,7 @@ export default function Layout() {
           <SidebarSeparator />
 
           <SidebarSection>
-            {navItems.map(({ to, icon, label }) => (
+            {storageNavItems.map(({ to, icon, label }) => (
               <SidebarMenuItem
                 key={to}
                 to={to}
@@ -222,6 +228,14 @@ export default function Layout() {
                 label={label}
                 onClick={to === '/drive' ? () => navigate(to, { state: { ts: Date.now() } }) : undefined}
               />
+            ))}
+          </SidebarSection>
+
+          <SidebarSeparator />
+
+          <SidebarSection>
+            {youItems.map(({ to, icon, label }) => (
+              <SidebarMenuItem key={to} to={to} icon={icon} label={label} />
             ))}
           </SidebarSection>
 
