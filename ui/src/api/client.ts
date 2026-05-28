@@ -52,6 +52,8 @@ export interface Status {
   config: Record<string, unknown> | null
   mode: BeeMode
   address?: string
+  /** True when the user intentionally stopped Bee via the tray menu. */
+  userStopped?: boolean
 }
 
 export interface Peers {

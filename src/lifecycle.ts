@@ -3,6 +3,8 @@ interface State {
   running: boolean
   shouldRun: boolean
   abortController: AbortController | null
+  /** Set true the first time Bee starts; lets the UI distinguish "boot" from "user stopped" */
+  wasEverStarted: boolean
 }
 
 const state: State = {
@@ -10,6 +12,7 @@ const state: State = {
   running: false,
   shouldRun: false,
   abortController: null,
+  wasEverStarted: false,
 }
 
 export const BeeManager = {
@@ -17,10 +20,12 @@ export const BeeManager = {
     state.shouldRun = newState
   },
   shouldRestart: () => state.shouldRun,
+  wasEverStarted: () => state.wasEverStarted,
   signalRunning: (abortController: AbortController, process: Promise<number | void>) => {
     state.abortController = abortController
     state.process = process
     state.running = true
+    state.wasEverStarted = true
   },
   signalStopped: () => {
     state.running = false

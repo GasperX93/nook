@@ -6,7 +6,7 @@ import '@upcoming/multichain-widget/styles.css'
 import { MultichainWidget } from '@upcoming/multichain-widget'
 import { weiToDai } from '../api/bee'
 import { api } from '../api/client'
-import { useAddresses, useBeeHealth, useStamps, useStatus, useWallet } from '../api/queries'
+import { useAddresses, useBeeHealth, useRestart, useStamps, useStatus, useWallet } from '../api/queries'
 import { useAppStore } from '../store/app'
 import { WIDGET_THEME } from '../theme'
 
@@ -23,6 +23,7 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
   const { isSuccess: stampsReady } = useStamps()
   const { data: wallet } = useWallet()
   const { data: addresses } = useAddresses()
+  const restart = useRestart()
 
   const [step, setStep] = useState<Step>('starting')
   const [copiedAddr, setCopiedAddr] = useState(false)
@@ -141,8 +142,27 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
           </div>
         )}
 
-        {/* Step 1 — Node starting */}
-        {step === 'starting' && (
+        {/* Step 1 — Node starting (or stopped, if user clicked Stop Bee from the tray) */}
+        {step === 'starting' && status?.userStopped && (
+          <div className="text-center space-y-4">
+            <AlertTriangle size={32} className="mx-auto" style={{ color: 'rgb(var(--accent))' }} />
+            <h2 className="text-lg font-semibold">Bee node is stopped</h2>
+            <p className="text-sm leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
+              You stopped the node from the tray menu. Click below to start it again, or use the tray icon → Start Bee.
+            </p>
+            <button
+              onClick={() => restart.mutate()}
+              disabled={restart.isPending}
+              className="px-5 py-2 rounded-lg text-sm font-semibold disabled:opacity-40 inline-flex items-center gap-2"
+              style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
+            >
+              {restart.isPending && <Loader2 size={13} className="animate-spin" />}
+              {restart.isPending ? 'Starting…' : 'Start Bee'}
+            </button>
+          </div>
+        )}
+
+        {step === 'starting' && !status?.userStopped && (
           <div className="text-center space-y-4">
             <Loader2 size={32} className="animate-spin mx-auto" style={{ color: 'rgb(var(--accent))' }} />
             <h2 className="text-lg font-semibold">Starting your node</h2>
