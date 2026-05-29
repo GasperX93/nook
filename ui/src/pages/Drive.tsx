@@ -433,20 +433,31 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
     setExtendError(null)
     setSubmitting(true)
     try {
+      // Topup BEFORE dilute. Diluting halves the per-chunk balance, so if it
+      // would drop below the postage contract's minimum the on-chain tx emits
+      // no BatchDepthIncrease event and Bee returns "cannot dilute batch".
+      // Pre-topping avoids that.
+      //
+      // Per-chunk math: total BZZ cost is unchanged because Bee multiplies
+      // amount × current-chunk-count. Diluting later halves the per-chunk
+      // balance by 2^delta, so we scale the per-chunk amount up by 2^delta
+      // here to land on the same final balance/chunk.
+      if (cost) {
+        const topupAmount =
+          willDilute && depthDelta > 0 ? (BigInt(cost.amount) << BigInt(depthDelta)).toString() : cost.amount
+        await beeApi.topupStamp(stamp.batchID, topupAmount)
+      }
       if (willDilute) {
         await beeApi.diluteStamp(stamp.batchID, targetDepth)
-      }
-      if (cost) {
-        await beeApi.topupStamp(stamp.batchID, cost.amount)
       }
       queryClient.refetchQueries({ queryKey: ['bee', 'stamps'] })
       queryClient.refetchQueries({ queryKey: ['bee', 'wallet'] })
       onClose()
     } catch (err: any) {
-      const msg =
-        err?.response?.status === 402 || err?.message?.includes('402')
-          ? 'Insufficient BZZ. Top up your wallet first.'
-          : err?.message || 'Failed to extend drive.'
+      const raw = err?.message ?? 'Failed to extend drive.'
+      // Bee errors come back as 'Bee API /…: 500 {"code":500,"message":"…"}'
+      const inner = raw.match(/"message"\s*:\s*"([^"]+)"/)?.[1]
+      const msg = raw.includes('402') ? 'Insufficient BZZ. Top up your wallet first.' : inner ?? raw
       setExtendError(msg)
     } finally {
       setSubmitting(false)
