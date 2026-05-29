@@ -1,0 +1,2327 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Nook docs — v0.4.0</title>
+  <style>
+:root {
+  color-scheme: light dark;
+  --bg: #ffffff;
+  --bg-surface: #f7f7f8;
+  --bg-code: #f3f3f4;
+  --fg: #111418;
+  --fg-muted: #5b6470;
+  --border: #e3e6ea;
+  --accent: #f76808;
+  --link: #1d4ed8;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0c0d10;
+    --bg-surface: #14161a;
+    --bg-code: #16181d;
+    --fg: #e8eaee;
+    --fg-muted: #8b95a3;
+    --border: #20232a;
+    --accent: #f78030;
+    --link: #7da2ff;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); }
+body {
+  font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
+}
+.skip {
+  position: absolute; left: -9999px;
+  padding: 8px 12px; background: var(--accent); color: #fff;
+}
+.skip:focus { left: 8px; top: 8px; z-index: 100; }
+.topbar {
+  position: sticky; top: 0; z-index: 10;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 18px;
+  background: var(--bg); border-bottom: 1px solid var(--border);
+}
+.brand { display: flex; align-items: baseline; gap: 12px; }
+.brand strong { font-size: 15px; letter-spacing: 0.04em; text-transform: uppercase; }
+.brand .version { color: var(--fg-muted); font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.brand .generated { color: var(--fg-muted); font-size: 12px; }
+.nav-toggle {
+  display: none;
+  background: transparent; border: 1px solid var(--border); border-radius: 6px;
+  padding: 4px 10px; font-size: 16px; color: var(--fg); cursor: pointer;
+}
+.layout { display: grid; grid-template-columns: 240px 1fr; min-height: calc(100vh - 49px); }
+.sidebar {
+  border-right: 1px solid var(--border);
+  background: var(--bg-surface);
+  position: sticky; top: 49px;
+  align-self: start;
+  max-height: calc(100vh - 49px);
+  overflow: auto;
+}
+.nav-inner { padding: 18px 14px; display: flex; flex-direction: column; gap: 4px; }
+.nav-group-label {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--fg-muted); margin-top: 16px; margin-bottom: 4px;
+}
+.nav-group-label:first-child { margin-top: 0; }
+.sidebar a {
+  display: block; padding: 6px 10px; border-radius: 6px;
+  color: var(--fg); text-decoration: none; font-size: 14px;
+}
+.sidebar a.topic { font-weight: 600; flex: 1; }
+.sidebar a.standalone { display: block; }
+.sidebar a:hover { background: rgba(127,127,127,0.08); }
+.sidebar a.active {
+  background: rgba(247, 104, 8, 0.10);
+  color: var(--accent); font-weight: 600;
+}
+
+/* Collapsible topic group */
+.topic-group { display: flex; flex-direction: column; }
+.topic-row {
+  display: flex; align-items: center; gap: 2px;
+}
+.topic-toggle {
+  background: transparent; border: 0; padding: 0;
+  width: 22px; height: 26px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; color: var(--fg-muted);
+  border-radius: 4px;
+}
+.topic-toggle:hover { background: rgba(127,127,127,0.08); color: var(--fg); }
+.topic-toggle .chevron {
+  display: inline-block;
+  font-size: 11px;
+  transition: transform 120ms ease;
+  transform: rotate(0deg);
+}
+.topic-toggle[aria-expanded="true"] .chevron { transform: rotate(90deg); }
+
+.sub-nav {
+  list-style: none; margin: 2px 0 6px; padding: 0 0 0 14px;
+  margin-left: 22px;
+  border-left: 1px solid var(--border);
+}
+.sub-nav[hidden] { display: none; }
+.sub-nav li { margin: 0; }
+.sub-nav a {
+  font-size: 13px; padding: 4px 8px; color: var(--fg-muted);
+}
+.sub-nav a:hover { color: var(--fg); }
+.sub-nav a.active {
+  background: rgba(247, 104, 8, 0.08);
+  color: var(--accent);
+}
+.main { padding: 24px 36px 80px; max-width: 920px; }
+@media (max-width: 900px) {
+  .nav-toggle { display: inline-block; }
+  .layout { grid-template-columns: 1fr; }
+  .sidebar { display: none; position: fixed; top: 49px; left: 0; right: 0; max-height: 60vh; z-index: 5; }
+  .sidebar.open { display: block; }
+  .main { padding: 16px 18px 80px; }
+}
+
+.doc { padding-top: 8px; padding-bottom: 32px; border-bottom: 1px dashed var(--border); }
+.doc:last-of-type { border-bottom: 0; }
+h1, h2, h3, h4, h5 {
+  color: var(--fg); line-height: 1.25; font-weight: 700;
+  margin: 1.6em 0 0.5em;
+}
+h1 { font-size: 2em; border-bottom: 1px solid var(--border); padding-bottom: 0.3em; margin-top: 0.4em; }
+h2 { font-size: 1.45em; margin-top: 2em; }
+h3 { font-size: 1.15em; }
+h4 { font-size: 1em; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+p { margin: 0.8em 0; }
+a { color: var(--link); text-decoration: none; }
+a:hover { text-decoration: underline; }
+ul, ol { padding-left: 1.4em; }
+li { margin: 0.25em 0; }
+blockquote {
+  margin: 1em 0; padding: 8px 16px;
+  border-left: 3px solid var(--accent);
+  background: var(--bg-surface);
+  color: var(--fg-muted);
+  border-radius: 0 6px 6px 0;
+}
+blockquote p { margin: 0.3em 0; }
+code, kbd, pre {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 0.9em;
+}
+:not(pre) > code {
+  background: var(--bg-code); padding: 2px 6px; border-radius: 4px;
+  border: 1px solid var(--border);
+}
+pre {
+  background: var(--bg-code); border: 1px solid var(--border);
+  padding: 14px 16px; border-radius: 8px;
+  overflow-x: auto; line-height: 1.5;
+}
+pre code { background: none; padding: 0; border: 0; }
+hr { border: 0; border-top: 1px solid var(--border); margin: 2.4em 0; }
+table {
+  border-collapse: collapse; margin: 1em 0;
+  display: block; overflow-x: auto; white-space: nowrap;
+}
+@media (min-width: 640px) {
+  table { display: table; white-space: normal; width: 100%; }
+}
+th, td {
+  border: 1px solid var(--border);
+  padding: 7px 12px; text-align: left;
+  font-size: 0.95em;
+}
+th { background: var(--bg-surface); font-weight: 600; }
+tr:nth-child(even) td { background: rgba(127,127,127,0.03); }
+
+.docfoot { margin-top: 60px; padding-top: 24px; border-top: 1px solid var(--border); color: var(--fg-muted); font-size: 13px; }
+</style>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="topbar">
+    <div class="brand">
+      <strong>Nook</strong>
+      <span class="version">v0.4.0</span>
+      <span class="generated">docs generated 2026-05-29</span>
+    </div>
+    <button class="nav-toggle" id="nav-toggle" aria-label="Toggle navigation">☰</button>
+  </header>
+  <div class="layout">
+    <nav class="sidebar" id="sidebar" aria-label="Sections">
+      <div class="nav-inner">
+        <div class="nav-group-label">Topics</div>
+        <div class="topic-group" data-topic="architecture">
+          <div class="topic-row">
+            <button class="topic-toggle" type="button" aria-expanded="false" aria-controls="sub-architecture" aria-label="Toggle Architecture sections">
+              <span class="chevron" aria-hidden="true">▸</span>
+            </button>
+            <a href="#architecture" data-target="architecture" class="topic">Architecture</a>
+          </div>
+          <ul class="sub-nav" id="sub-architecture" hidden>
+            <li><a href="#process-model" data-target="process-model">Process model</a></li>
+            <li><a href="#transports" data-target="transports">Transports</a></li>
+            <li><a href="#koa-server-route-taxonomy" data-target="koa-server-route-taxonomy">Koa server — route taxonomy</a></li>
+            <li><a href="#startup-sequence" data-target="startup-sequence">Startup sequence</a></li>
+            <li><a href="#beemanager-lifecycle-state-machine" data-target="beemanager-lifecycle-state-machine">BeeManager — lifecycle state machine</a></li>
+            <li><a href="#funding-monitor-ultra-light-vs-light-mode" data-target="funding-monitor-ultra-light-vs-light-mode">Funding monitor — ultra-light vs light mode</a></li>
+            <li><a href="#data-paths" data-target="data-paths">Data paths</a></li>
+            <li><a href="#api-key" data-target="api-key">API key</a></li>
+            <li><a href="#migrations" data-target="migrations">Migrations</a></li>
+            <li><a href="#auto-updater" data-target="auto-updater">Auto-updater</a></li>
+            <li><a href="#logger" data-target="logger">Logger</a></li>
+            <li><a href="#deep-links-nook" data-target="deep-links-nook">Deep links (nook://)</a></li>
+            <li><a href="#build-packaging" data-target="build-packaging">Build &amp; packaging</a></li>
+            <li><a href="#frontend-organization" data-target="frontend-organization">Frontend organization</a></li>
+            <li><a href="#code-path-quick-reference" data-target="code-path-quick-reference">Code path quick reference</a></li>
+          </ul>
+        </div>
+        <div class="topic-group" data-topic="stamps">
+          <div class="topic-row">
+            <button class="topic-toggle" type="button" aria-expanded="false" aria-controls="sub-stamps" aria-label="Toggle Stamps sections">
+              <span class="chevron" aria-hidden="true">▸</span>
+            </button>
+            <a href="#stamps" data-target="stamps" class="topic">Stamps</a>
+          </div>
+          <ul class="sub-nav" id="sub-stamps" hidden>
+            <li><a href="#mental-model-what-nook-calls-things-vs-swarm" data-target="mental-model-what-nook-calls-things-vs-swarm">Mental model — what Nook calls things vs. Swarm</a></li>
+            <li><a href="#identifiers" data-target="identifiers">Identifiers</a></li>
+            <li><a href="#buying-a-stamp" data-target="buying-a-stamp">Buying a stamp</a></li>
+            <li><a href="#size-presets-and-overbuy" data-target="size-presets-and-overbuy">SIZE_PRESETS and overbuy</a></li>
+            <li><a href="#capacity-display-x-y-mb-used" data-target="capacity-display-x-y-mb-used">Capacity display (&quot;X / Y MB used&quot;)</a></li>
+            <li><a href="#extending-a-drive-capacity-vs-duration" data-target="extending-a-drive-capacity-vs-duration">Extending a drive — capacity vs. duration</a></li>
+            <li><a href="#stamp-purchase-observability" data-target="stamp-purchase-observability">Stamp purchase observability</a></li>
+          </ul>
+        </div>
+        <div class="topic-group" data-topic="identity">
+          <div class="topic-row">
+            <button class="topic-toggle" type="button" aria-expanded="false" aria-controls="sub-identity" aria-label="Toggle Identity sections">
+              <span class="chevron" aria-hidden="true">▸</span>
+            </button>
+            <a href="#identity" data-target="identity" class="topic">Identity</a>
+          </div>
+          <ul class="sub-nav" id="sub-identity" hidden>
+            <li><a href="#mental-model-what-nook-calls-things" data-target="mental-model-what-nook-calls-things">Mental model — what Nook calls things</a></li>
+            <li><a href="#the-four-keys" data-target="the-four-keys">The four keys</a></li>
+            <li><a href="#why-derived-not-metamask-s-own-pubkey" data-target="why-derived-not-metamask-s-own-pubkey">Why derived, not MetaMask&#39;s own pubkey?</a></li>
+            <li><a href="#storage" data-target="storage">Storage</a></li>
+            <li><a href="#lifecycle-on-app-launch" data-target="lifecycle-on-app-launch">Lifecycle on app launch</a></li>
+            <li><a href="#what-other-identifiers-exist-and-aren-t-derived" data-target="what-other-identifiers-exist-and-aren-t-derived">What other identifiers exist (and aren&#39;t derived)</a></li>
+            <li><a href="#how-others-reach-you-two-channels" data-target="how-others-reach-you-two-channels">How others reach you — two channels</a></li>
+            <li><a href="#ecdh-and-message-encryption" data-target="ecdh-and-message-encryption">ECDH and message encryption</a></li>
+            <li><a href="#storage-keys-reference" data-target="storage-keys-reference">Storage keys reference</a></li>
+            <li><a href="#failure-modes-gotchas" data-target="failure-modes-gotchas">Failure modes &amp; gotchas</a></li>
+          </ul>
+        </div>
+        <div class="topic-group" data-topic="encryption">
+          <div class="topic-row">
+            <button class="topic-toggle" type="button" aria-expanded="false" aria-controls="sub-encryption" aria-label="Toggle Encryption & ACT sections">
+              <span class="chevron" aria-hidden="true">▸</span>
+            </button>
+            <a href="#encryption" data-target="encryption" class="topic">Encryption & ACT</a>
+          </div>
+          <ul class="sub-nav" id="sub-encryption" hidden>
+            <li><a href="#mental-model-three-layers-one-act-history-chain" data-target="mental-model-three-layers-one-act-history-chain">Mental model — three layers, one ACT history chain</a></li>
+            <li><a href="#identifiers" data-target="identifiers">Identifiers</a></li>
+            <li><a href="#why-bpub-for-act-and-not-the-wallet-derived-key" data-target="why-bpub-for-act-and-not-the-wallet-derived-key">Why bpub for ACT (and not the wallet-derived key)?</a></li>
+            <li><a href="#file-upload-flow-encrypted-drive" data-target="file-upload-flow-encrypted-drive">File upload flow (encrypted drive)</a></li>
+            <li><a href="#file-download-flow-encrypted-drive" data-target="file-download-flow-encrypted-drive">File download flow (encrypted drive)</a></li>
+            <li><a href="#grantee-management" data-target="grantee-management">Grantee management</a></li>
+            <li><a href="#metadata-feed-nook-s-application-layer" data-target="metadata-feed-nook-s-application-layer">Metadata feed — Nook&#39;s application layer</a></li>
+            <li><a href="#share-links" data-target="share-links">Share links</a></li>
+            <li><a href="#localdrivemetadata-per-drive-state-in-localstorage" data-target="localdrivemetadata-per-drive-state-in-localstorage">LocalDriveMetadata — per-drive state in localStorage</a></li>
+            <li><a href="#failure-modes-gotchas" data-target="failure-modes-gotchas">Failure modes &amp; gotchas</a></li>
+            <li><a href="#code-path-quick-reference" data-target="code-path-quick-reference">Code path quick reference</a></li>
+          </ul>
+        </div>
+        <div class="topic-group" data-topic="messaging">
+          <div class="topic-row">
+            <button class="topic-toggle" type="button" aria-expanded="false" aria-controls="sub-messaging" aria-label="Toggle Messaging sections">
+              <span class="chevron" aria-hidden="true">▸</span>
+            </button>
+            <a href="#messaging" data-target="messaging" class="topic">Messaging</a>
+          </div>
+          <ul class="sub-nav" id="sub-messaging" hidden>
+            <li><a href="#mental-model-three-swappable-rails" data-target="mental-model-three-swappable-rails">Mental model — three swappable rails</a></li>
+            <li><a href="#identifiers-who-is-who" data-target="identifiers-who-is-who">Identifiers — who is who</a></li>
+            <li><a href="#mailbox-per-recipient-feed" data-target="mailbox-per-recipient-feed">Mailbox — per-recipient feed</a></li>
+            <li><a href="#wake-ups-the-on-chain-registry" data-target="wake-ups-the-on-chain-registry">Wake-ups — the on-chain registry</a></li>
+            <li><a href="#local-thread-storage" data-target="local-thread-storage">Local thread storage</a></li>
+            <li><a href="#connection-state-machine" data-target="connection-state-machine">Connection state machine</a></li>
+            <li><a href="#unread-counts-sidebar-badge" data-target="unread-counts-sidebar-badge">Unread counts &amp; sidebar badge</a></li>
+            <li><a href="#cricket-chirp" data-target="cricket-chirp">Cricket chirp</a></li>
+            <li><a href="#drive-share-messages" data-target="drive-share-messages">Drive-share messages</a></li>
+            <li><a href="#failure-modes-gotchas" data-target="failure-modes-gotchas">Failure modes &amp; gotchas</a></li>
+            <li><a href="#code-path-quick-reference" data-target="code-path-quick-reference">Code path quick reference</a></li>
+          </ul>
+        </div>
+        <div class="nav-group-label">Decisions</div>
+        <div class="topic-group" data-topic="adr-001">
+          <div class="topic-row">
+            <button class="topic-toggle" type="button" aria-expanded="false" aria-controls="sub-adr-001" aria-label="Toggle ADR-001: variable overbuy sections">
+              <span class="chevron" aria-hidden="true">▸</span>
+            </button>
+            <a href="#adr-001" data-target="adr-001" class="topic">ADR-001: variable overbuy</a>
+          </div>
+          <ul class="sub-nav" id="sub-adr-001" hidden>
+            <li><a href="#context" data-target="context">Context</a></li>
+            <li><a href="#decision" data-target="decision">Decision</a></li>
+            <li><a href="#considered-alternatives" data-target="considered-alternatives">Considered alternatives</a></li>
+            <li><a href="#consequences" data-target="consequences">Consequences</a></li>
+            <li><a href="#source-of-truth-note" data-target="source-of-truth-note">Source-of-truth note</a></li>
+          </ul>
+        </div>
+      </div>
+    </nav>
+    <main id="main" class="main">
+      <section id="architecture" class="doc">
+<h1 id="architecture">Architecture</h1>
+<p>This doc covers how Nook is wired together at the process and HTTP level — the Electron main process, the embedded Koa server, the Bee subprocess, and the renderer. It&#39;s the map you read first before diving into any topic doc.</p>
+<blockquote>
+<p>One-line summary: Electron spawns Bee as a subprocess and runs an in-process Koa server on a fixed local port. The renderer is a React app served by Koa and talks to two HTTP layers: Koa (auth-required, header-injection proxy for Bee) and Bee directly (chunk uploads/downloads). The whole stack runs on the user&#39;s machine — no remote server.</p>
+</blockquote>
+<hr>
+<h2 id="process-model">Process model</h2>
+<pre><code>┌──────────────────────────────────────────────────────────────┐
+│ Electron app                                                 │
+│                                                              │
+│  ┌─────────────────────────────────┐                         │
+│  │ Main process (src/)             │                         │
+│  │   - Koa server (port 3054)      │                         │
+│  │   - BeeManager (lifecycle)      │                         │
+│  │   - Funding monitor             │                         │
+│  │   - Auto-updater                │                         │
+│  │   - Tray + splash               │                         │
+│  └─────────────────────────────────┘                         │
+│              │                                               │
+│              │ spawn / SIGINT                                │
+│              ▼                                               │
+│  ┌─────────────────────────────────┐                         │
+│  │ Bee subprocess (Go binary)      │                         │
+│  │   - HTTP API on 127.0.0.1:1633  │                         │
+│  │   - P2P over libp2p             │                         │
+│  └─────────────────────────────────┘                         │
+│                                                              │
+│  ┌─────────────────────────────────┐                         │
+│  │ Renderer (BrowserWindow OR      │                         │
+│  │ system browser)                 │                         │
+│  │ Loaded from Koa:                │                         │
+│  │   http://localhost:3054/dashboard│                        │
+│  │   /?v=&lt;api-key&gt;                 │                         │
+│  └─────────────────────────────────┘                         │
+└──────────────────────────────────────────────────────────────┘
+</code></pre>
+<p>Two TypeScript projects:</p>
+<table>
+<thead>
+<tr>
+<th>Project</th>
+<th>Compiled output</th>
+<th>Loads</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>src/</code> (main)</td>
+<td><code>dist/desktop/</code> — CommonJS</td>
+<td>Electron Node.js</td>
+</tr>
+<tr>
+<td><code>ui/</code> (renderer)</td>
+<td><code>dist/ui/</code> — ES modules + bundled assets</td>
+<td>Browser, served by Koa at <code>/dashboard</code></td>
+</tr>
+</tbody></table>
+<p>The renderer never opens directly on <code>file://</code> — it always comes via Koa so that:</p>
+<ol>
+<li>URLs are stable (<code>localhost:3054/dashboard/...</code>)</li>
+<li>The Koa <code>/bee-api/*</code> pass-through proxy is the same origin (no CORS)</li>
+<li>The API key flows in via URL parameter</li>
+</ol>
+<hr>
+<h2 id="transports">Transports</h2>
+<p>The renderer talks to <strong>two HTTP endpoints</strong>, each with a distinct role:</p>
+<table>
+<thead>
+<tr>
+<th>Endpoint</th>
+<th>Origin in renderer</th>
+<th>Auth</th>
+<th>When used</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Bee direct</strong></td>
+<td><code>${origin}/bee-api/*</code> → Koa pass-through → <code>http://127.0.0.1:1633/*</code></td>
+<td>None (Bee runs unrestricted)</td>
+<td>High-throughput / streaming ops: file upload/download, feed read/write, ACT download, stamp list, peers, addresses</td>
+</tr>
+<tr>
+<td><strong>Koa Nook API</strong></td>
+<td><code>${origin}/&lt;route&gt;</code></td>
+<td><code>Authorization: &lt;api-key&gt;</code> (except <code>/info</code>)</td>
+<td>Auth-gated ops + header-injection proxy: <code>/buy-stamp</code>, <code>/grantee</code>, <code>/act/upload-metadata</code>, <code>/act/download</code>, <code>/feed-update</code>, <code>/restart</code>, etc.</td>
+</tr>
+</tbody></table>
+<p>Same origin (<code>localhost:3054</code>) for both → no CORS dance. In dev, Vite&#39;s <code>/bee-api</code> proxy mirrors the Koa pass-through so identical renderer code runs unmodified.</p>
+<h3 id="why-koa-proxies-bee-for-some-routes">Why Koa proxies Bee for some routes</h3>
+<p>Three reasons specific routes go through Koa instead of hitting Bee directly:</p>
+<ol>
+<li><strong>Browser strips custom headers on localhost cross-origin requests.</strong> <code>swarm-act-*</code> headers, <code>immutable: false</code>, etc. disappear before they reach Bee. Koa is same-origin and can re-inject them server-side.</li>
+<li><strong>Bee 2.x sometimes requires <code>Authorization: Bearer &lt;password&gt;</code>.</strong> Koa knows the password (it owns the config); the renderer never sees it.</li>
+<li><strong>Centralize chain interactions.</strong> <code>/redeem</code>, <code>/swap</code>, <code>/withdraw</code> need the wallet&#39;s keystore password to sign. Renderer doesn&#39;t have access. Koa does.</li>
+</ol>
+<p>The <code>/bee-api</code> pass-through middleware (<code>src/server.ts:45</code>) handles everything that doesn&#39;t need any of the above — it&#39;s a thin transparent proxy.</p>
+<hr>
+<h2 id="koa-server-route-taxonomy">Koa server — route taxonomy</h2>
+<p><code>src/server.ts</code>. Registered routes split into three categories by auth requirement:</p>
+<h3 id="open-routes-no-auth">Open routes (no auth)</h3>
+<table>
+<thead>
+<tr>
+<th>Route</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>GET /info</code></td>
+<td>App name + version + auto-update support flag. Used by the renderer to decide what to show in Settings → About.</td>
+</tr>
+<tr>
+<td><code>/bee-api/*</code> (pass-through middleware)</td>
+<td>Transparent proxy to <code>http://127.0.0.1:1633/*</code>. Mirrors the Vite dev proxy.</td>
+</tr>
+<tr>
+<td><code>/dashboard/*</code> (koa-static)</td>
+<td>Serves the built UI from <code>dist/ui/</code>.</td>
+</tr>
+</tbody></table>
+<h3 id="auth-required-routes">Auth-required routes</h3>
+<p>All routes below this middleware require <code>Authorization: &lt;api-key&gt;</code> matching the UUID stored at <code>&lt;data-dir&gt;/api-key.txt</code>. Mismatched/missing → 401.</p>
+<p><strong>Status &amp; config:</strong></p>
+<ul>
+<li><code>GET /status</code> — bee mode, assetsReady, address, config snapshot, <strong>userStopped</strong> flag (see <a href="#beemanager--lifecycle-state-machine">BeeManager</a>)</li>
+<li><code>GET /config</code> / <code>POST /config</code> — read/write Bee <code>config.yaml</code></li>
+<li><code>GET /peers</code> — peer connection count (used by the live/sync indicator)</li>
+<li><code>GET /logs/nook</code> / <code>GET /logs/bee</code> — tail recent log files</li>
+</ul>
+<p><strong>Identity cache</strong> (Electron safeStorage wrappers — see <a href="identity.md">identity.md</a>):</p>
+<ul>
+<li><code>GET /identity-cache</code> → <code>{ available, value }</code></li>
+<li><code>POST /identity-cache</code> → encrypt and persist</li>
+<li><code>DELETE /identity-cache</code> → clear</li>
+</ul>
+<p><strong>Lifecycle:</strong></p>
+<ul>
+<li><code>POST /restart</code> — stop Bee, wait for shutdown, relaunch. Wired to the &quot;Bee is stopped&quot; splash → Start button.</li>
+</ul>
+<p><strong>Wallet operations</strong> (use the Bee node&#39;s wallet keystore):</p>
+<ul>
+<li><code>POST /redeem</code> — apply a gift code to the node wallet</li>
+<li><code>POST /swap</code> — xDAI ↔ xBZZ swap</li>
+<li><code>POST /withdraw</code> — withdraw native or BZZ to an external address</li>
+<li><code>POST /chequebook-withdraw</code> — withdraw chequebook balance</li>
+</ul>
+<p><strong>Stamps:</strong></p>
+<ul>
+<li><code>POST /buy-stamp</code> — proxies to Bee with <code>immutable: &lt;string&gt;</code> header + Bearer auth. The only path that can create a mutable stamp because of the header-stripping issue.</li>
+</ul>
+<p><strong>Feeds:</strong></p>
+<ul>
+<li><code>POST /feed-update</code> — sign + upload a feed update using the Bee node&#39;s wallet (used for community-calls feed and similar)</li>
+<li><code>GET /feed-read</code> — read a feed entry</li>
+</ul>
+<p><strong>ACT (encrypted drives — see <a href="encryption.md">encryption.md</a>):</strong></p>
+<ul>
+<li><code>POST /act/upload-metadata</code> — upload ACT-encrypted JSON, return <code>{ reference, historyRef }</code></li>
+<li><code>GET /act/download/:hash</code> — download via ACT proxy with publisher + history headers</li>
+<li><code>POST /grantee</code> — create grantee list</li>
+<li><code>GET /grantee/:ref</code> — list grantees</li>
+<li><code>PATCH /grantee/:ref</code> — add/revoke grantees</li>
+</ul>
+<p><strong>Misc:</strong></p>
+<ul>
+<li><code>POST /upload-bytes</code> — fire-and-forget upload helper used by some internal flows</li>
+</ul>
+<h3 id="cors">CORS</h3>
+<p>Allows <code>*</code> in development; locks to <code>http://localhost:${port}</code> in production. Both modes allow standard auth headers. Set in the CORS middleware at <code>src/server.ts:101</code>.</p>
+<hr>
+<h2 id="startup-sequence">Startup sequence</h2>
+<p>Implemented in <code>src/index.ts</code>. The order matters — each step&#39;s outputs feed the next.</p>
+<pre><code>0. Module load
+   ├─ runMigrations()                  src/migration.ts
+   ├─ registerNookProtocol()           OS-level nook:// handler
+   └─ Wire up open-url / second-instance for deep links
+
+1. app.whenReady() (implicit via Electron) → main()
+   ├─ Log version + NODE_ENV
+   ├─ initSplash()                     Splash screen window
+   └─ updateElectronApp()              Auto-updater starts checking GitHub releases
+
+2. Asset readiness
+   ├─ Check Nook version (last seen vs PACKAGE_JSON.version)
+   ├─ Check Bee binary version (installed vs EXPECTED_BEE_VERSION)
+   └─ If either changed → runDownloader(force=true)
+        - Downloads bee binary from GitHub release archive
+        - Verifies checksum
+        - Extracts to &lt;data-dir&gt;/bee
+        - writeNookVersionFile() — stamps current version for next-launch check
+
+3. Local services
+   ├─ ensureApiKey()                   Generate/load &lt;data-dir&gt;/api-key.txt (UUID v4)
+   ├─ findFreePort()                   Fail if 3054 is taken (no auto-fallback; clear error)
+   └─ runServer()                      Start Koa on port 3054
+
+4. Bee initialization
+   ├─ If config.yaml missing → initializeBee() — bee init --config=&lt;path&gt;
+   └─ runLauncher()                    Spawn Bee subprocess
+
+5. Background monitors
+   ├─ startMonitorIfNeeded()           Funding monitor (only in ultra-light mode)
+   └─ startChequebookMonitor()         Watches for chequebook initialization in light mode
+
+6. UI surface
+   ├─ runElectronTray()                Tray icon + menu (Stop Bee, Open Web UI, Quit)
+   └─ openDashboardInBrowser() (prod)  Pops the system browser at the dashboard URL
+
+7. Wrap-up
+   ├─ splash.hide()
+   ├─ flushPendingNookUrl()            Replay any deep-link URL queued during startup
+   └─ runKeepAliveLoop()               Start the BeeManager keep-alive poller
+</code></pre>
+<p>Error path: any uncaught exception in <code>main()</code> triggers <code>errorHandler</code>, which hides the splash and shows a system dialog. The app stays open so the user can read logs / quit gracefully.</p>
+<hr>
+<h2 id="beemanager-lifecycle-state-machine">BeeManager — lifecycle state machine</h2>
+<p><code>src/lifecycle.ts</code>. The source of truth for whether Bee should be running.</p>
+<pre><code class="language-ts">interface State {
+  process: Promise&lt;number | void&gt; | null
+  running: boolean
+  shouldRun: boolean
+  abortController: AbortController | null
+  wasEverStarted: boolean
+}
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Set true by</th>
+<th>Set false by</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>shouldRun</code></td>
+<td><code>runLauncher</code> → <code>setUserIntention(true)</code></td>
+<td><code>BeeManager.stop()</code> from tray / <code>/restart</code> / funding-monitor switchover</td>
+<td>User&#39;s <em>intent</em>: should we be running Bee?</td>
+</tr>
+<tr>
+<td><code>running</code></td>
+<td><code>signalRunning</code> (right before <code>await subprocess</code>)</td>
+<td><code>signalStopped</code> (after subprocess resolves)</td>
+<td>Actual process state.</td>
+</tr>
+<tr>
+<td><code>wasEverStarted</code></td>
+<td>First call to <code>signalRunning</code></td>
+<td>(never reset)</td>
+<td>Distinguishes initial boot from a deliberate post-start stop.</td>
+</tr>
+</tbody></table>
+<p><code>isRunning()</code> is the read accessor — true if either <code>running</code> or the abort controller is still active (covers the brief window between <code>signalRunning</code> and the <code>running</code> flag flip).</p>
+<h3 id="keep-alive-loop">Keep-alive loop</h3>
+<p><code>runKeepAliveLoop</code> in <code>src/launcher.ts</code>:</p>
+<pre><code class="language-ts">setInterval(() =&gt; {
+  if (!BeeManager.isRunning() &amp;&amp; BeeManager.shouldRestart()) {
+    runLauncher()
+  }
+}, 10000)
+</code></pre>
+<p>Polls every 10s. Respawns Bee <strong>only if <code>shouldRun = true</code></strong>. This is intentional — the user clicking &quot;Stop Bee&quot; in the tray sets <code>shouldRun = false</code> and Bee stays down. Without the <code>shouldRun</code> check, a deliberate stop would race the loop and immediately restart.</p>
+<h3 id="userstopped-for-the-ui"><code>userStopped</code> for the UI</h3>
+<p><code>/status</code> returns:</p>
+<pre><code class="language-ts">userStopped: BeeManager.wasEverStarted() &amp;&amp; !BeeManager.shouldRestart()
+</code></pre>
+<p>i.e., true only if Bee has started at least once and the user has since stopped it. The <code>wasEverStarted</code> guard avoids false positives during the boot window before <code>runLauncher()</code> flips <code>shouldRun</code> to true.</p>
+<p>The renderer reads this and shows a &quot;Bee node is stopped&quot; splash with a Start button (calling <code>/restart</code>) instead of the misleading &quot;Starting your node…&quot; spinner that would otherwise loop forever.</p>
+<hr>
+<h2 id="funding-monitor-ultra-light-vs-light-mode">Funding monitor — ultra-light vs light mode</h2>
+<p><code>src/funding-monitor.ts</code>. Bee can run in two modes:</p>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>Config flags</th>
+<th>Capabilities</th>
+<th>When used</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Ultra-light</strong></td>
+<td><code>swap-enable: false</code>, no <code>blockchain-rpc-endpoint</code></td>
+<td>Browse Swarm, read public data, no stamps, no uploads needing payment</td>
+<td>First-launch state before user funds wallet</td>
+</tr>
+<tr>
+<td><strong>Light</strong></td>
+<td><code>swap-enable: true</code>, <code>blockchain-rpc-endpoint: https://rpc.gnosischain.com</code></td>
+<td>All of above + stamp purchase, uploads, chequebook</td>
+<td>Once wallet has any xDAI</td>
+</tr>
+</tbody></table>
+<p>The monitor polls the wallet balance via RPC every 15s while in ultra-light mode. When at least <code>MIN_XDAI = 0.001</code> arrives:</p>
+<pre><code>1. stopMonitor() — stop the timer
+2. BeeManager.stop() + waitForSigtermToFinish() — graceful Bee shutdown
+3. writeConfigYaml({ &#39;blockchain-rpc-endpoint&#39;: RPC_ENDPOINT, &#39;swap-enable&#39;: true })
+4. currentMode = &#39;light&#39;
+5. runLauncher() — restart Bee with new config
+6. onLightModeSwitch() — schedule chequebook funding once Bee is ready
+</code></pre>
+<p>The mode switch takes ~2-3 minutes total: Bee shuts down, restarts, fetches the postage snapshot, becomes usable. The renderer shows a funding banner during this window; the dashboard remains operational.</p>
+<h3 id="why-ultra-light-to-start">Why ultra-light to start?</h3>
+<p>Lets the dashboard come up immediately on first run — no waiting for a wallet to be funded before the user can see the UI. The funding banner explains what&#39;s blocked until xDAI arrives.</p>
+<hr>
+<h2 id="data-paths">Data paths</h2>
+<p>Platform paths are resolved via <code>env-paths</code> (<code>src/path.ts</code>):</p>
+<table>
+<thead>
+<tr>
+<th>Platform</th>
+<th>Data</th>
+<th>Logs</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>macOS</td>
+<td><code>~/Library/Application Support/Nook/</code></td>
+<td><code>~/Library/Logs/Nook/</code></td>
+</tr>
+<tr>
+<td>Linux</td>
+<td><code>~/.local/share/Nook/</code></td>
+<td><code>~/.local/state/Nook/</code></td>
+</tr>
+<tr>
+<td>Windows</td>
+<td><code>%LOCALAPPDATA%\Nook\Data\</code></td>
+<td><code>%LOCALAPPDATA%\Nook\Log\</code></td>
+</tr>
+</tbody></table>
+<p>Within <code>&lt;dataDir&gt;</code>:</p>
+<pre><code>&lt;dataDir&gt;/
+├── api-key.txt              # UUID v4, regenerated on data purge
+├── config.yaml              # Bee config (Nook-managed)
+├── nook-version.txt         # last-launched Nook version (asset-version tracking)
+├── identity-cache.bin       # safeStorage-encrypted derived key seed (see identity.md)
+├── bee                      # Bee binary
+└── data-dir/                # Bee&#39;s own data directory
+    ├── keys/
+    │   └── swarm.key        # Bee&#39;s V3 keystore (the &quot;node wallet&quot;)
+    ├── localstore/          # chunk storage
+    └── statestore/          # peer state, postage snapshot, etc.
+</code></pre>
+<p>Within <code>&lt;logDir&gt;</code>:</p>
+<pre><code>&lt;logDir&gt;/
+├── nook.log                 # Koa request log + main-process events
+├── nook&lt;N&gt;.log              # rotated older Nook logs
+├── bee.current.log -&gt; bee.&lt;latest&gt;.log
+└── bee.&lt;N&gt;.log              # one per Bee process spawn; rotated
+</code></pre>
+<p>The Nook keep-alive loop spawning a fresh Bee process triggers a new <code>bee.&lt;N&gt;.log</code> file. <code>bee.current.log</code> is a symlink to the most recent one — what to tail when debugging current behavior.</p>
+<hr>
+<h2 id="api-key">API key</h2>
+<p>A UUID v4 generated on first launch and stored at <code>&lt;dataDir&gt;/api-key.txt</code>. The dashboard URL injects it as a query parameter:</p>
+<pre><code>http://localhost:3054/dashboard/?v=&lt;api-key&gt;
+</code></pre>
+<p>The renderer parses the <code>?v=</code> param at boot, stores it in <code>useAppStore.apiKey</code>, and includes it as the <code>Authorization</code> header on every Koa-bound request. The Koa auth middleware (<code>src/server.ts:124</code>) compares header → key file → 401 on mismatch.</p>
+<h3 id="why-an-api-key-for-localhost">Why an API key for localhost</h3>
+<p>Defends against:</p>
+<ul>
+<li>Other apps on the same machine hitting <code>localhost:3054</code> and triggering wallet operations</li>
+<li>A malicious browser tab fetching <code>localhost:3054/swap</code> and trying to drain funds</li>
+</ul>
+<p>The <code>Authorization</code> header is <code>simple-keyword: &lt;api-key&gt;</code> (not <code>Bearer</code>) because we never wanted the friction of OAuth-style negotiation for a key that&#39;s already authenticated by file access.</p>
+<p><code>/info</code> is the one open route — it has to be open so the dashboard can read the version before authenticating.</p>
+<hr>
+<h2 id="migrations">Migrations</h2>
+<p><code>src/migration.ts</code> runs at module load (before <code>main()</code>). It owns version-by-version config rewrites for users upgrading from an older Nook. Examples that have shipped:</p>
+<ul>
+<li>Migrate <code>xdai.fairdatasociety.org</code> → <code>https://rpc.gnosischain.com</code> (faster postage sync)</li>
+<li>Delete <code>use-postage-snapshot: true</code> from old configs (Bee 2.7.1 removed that flag)</li>
+<li>Set <code>skip-postage-snapshot: false</code> for users on older Nooks</li>
+</ul>
+<p>The pattern: read the config, apply each migration idempotently, write back. Migrations are safe to re-run.</p>
+<p>When changing default Bee config in <code>src/launcher.ts → createConfiguration</code>, write a corresponding migration so existing users get the update — the launcher only runs for <em>new</em> config files.</p>
+<hr>
+<h2 id="auto-updater">Auto-updater</h2>
+<p><code>updateElectronApp()</code> from <code>update-electron-app</code> runs early in <code>main()</code>. It checks GitHub releases for <code>Nook-${version}-${platform}</code> artifacts via Squirrel.</p>
+<table>
+<thead>
+<tr>
+<th>Platform</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>macOS arm64</td>
+<td>Supported (Squirrel.Mac)</td>
+</tr>
+<tr>
+<td>Windows x64</td>
+<td>Supported (Squirrel.Windows)</td>
+</tr>
+<tr>
+<td>Linux</td>
+<td>Not supported (user must download manually)</td>
+</tr>
+</tbody></table>
+<p><code>/info</code> returns <code>autoUpdateEnabled: &lt;platform supported&gt;</code> so the Settings UI can show or hide the version row&#39;s &quot;auto-updates active&quot; badge.</p>
+<hr>
+<h2 id="logger">Logger</h2>
+<p><code>src/logger.ts</code> wraps a file-stream-rotator-backed file logger plus a console transport in dev mode. Two log streams:</p>
+<ul>
+<li><code>nook.log</code> — main process events + Koa request log (every Koa request emits an <code>api access</code> line with <code>method</code>, <code>uri</code>, <code>status</code>, <code>duration</code>, <code>user-agent</code>)</li>
+<li><code>bee.current.log</code> — captured from Bee&#39;s stdout/stderr</li>
+</ul>
+<p>The renderer can pull both via <code>/logs/nook</code> and <code>/logs/bee</code> (auth-required). Logs page renders them.</p>
+<p><code>subscribeLogServerRequests</code> exposes a hook for tests / debug that fires on every Koa request.</p>
+<hr>
+<h2 id="deep-links-nook">Deep links (<code>nook://</code>)</h2>
+<p><code>src/nook-deep-link.ts</code>. Nook registers itself as the OS handler for <code>nook://</code> URLs at module load. Used today for:</p>
+<ul>
+<li><code>nook://contact/v1?addr=…&amp;wpub=…&amp;bpub=…</code> — add a contact (see <a href="identity.md">identity.md</a>)</li>
+</ul>
+<p>On each platform:</p>
+<ul>
+<li><strong>macOS</strong>: OS fires <code>open-url</code> event with the URL</li>
+<li><strong>Windows / Linux</strong>: OS launches a second instance with the URL as <code>argv[1]</code>, caught via <code>second-instance</code></li>
+</ul>
+<p>If the URL arrives during startup, it&#39;s queued and replayed by <code>flushPendingNookUrl()</code> after the dashboard is ready.</p>
+<hr>
+<h2 id="build-packaging">Build &amp; packaging</h2>
+<pre><code>npm run build:desktop      # tsc → dist/desktop/
+npm run build:ui           # rimraf dist + tsc -b + vite build → ui/dist/
+npm run copy:ui            # node devkit.mjs copy:ui → dist/ui/
+npm run build              # all three above
+npm run package            # electron-forge package → out/
+npm run make               # electron-forge make → out/make/ (DMG, EXE, DEB, RPM, ZIP)
+npm run publish:mac:arm64  # build artifacts (GitHub upload disabled by default — manual gh release upload)
+</code></pre>
+<p><code>electron-forge</code> config lives in <code>forge.config.js</code>. Mac builds require a Developer ID for notarization (we don&#39;t notarize yet — issue #9).</p>
+<p>In dev (<code>npm start</code>):</p>
+<ul>
+<li><code>cd ui &amp;&amp; npm start</code> runs Vite on port 3002 (HMR)</li>
+<li>The main process runs from <code>dist/desktop/</code> after a <code>clean &amp;&amp; build</code></li>
+<li>The renderer URL the Electron BrowserWindow loads varies — in production it&#39;s the Koa-served path; in dev some flows still open 3054 (Koa-served stale dist) instead of 3002</li>
+</ul>
+<blockquote>
+<p>See project memory: <strong>always use 3002 when testing dev work</strong> — 3054 serves a stale UI bundle until you rebuild. The two ports also have separate browser origins, so localStorage state (drives, contacts, threads) doesn&#39;t carry between them.</p>
+</blockquote>
+<hr>
+<h2 id="frontend-organization">Frontend organization</h2>
+<p>The renderer is one React 19 app — no SSR, no remote API outside of Koa+Bee.</p>
+<pre><code>ui/src/
+├── App.tsx                # React Router routes
+├── components/
+│   ├── Layout.tsx          # Sidebar + header + outlet
+│   ├── Onboarding.tsx      # Splash / starting / funding / syncing / ready flow
+│   ├── ShareModal.tsx      # Encrypted-drive grantee management
+│   └── ui/                 # Primitives (Button, Sidebar, etc.)
+├── pages/                  # Top-level routed pages
+│   ├── Drive.tsx
+│   ├── Account.tsx
+│   ├── Contacts.tsx
+│   ├── Identity.tsx
+│   ├── Settings.tsx
+│   ├── AccessOnSwarm.tsx
+│   └── Dev.tsx
+├── apps/                   # Embedded features
+│   ├── Messages.tsx        # Chat UI (also embedded inside Contacts)
+│   └── WebsitePublisher.tsx
+├── api/
+│   ├── bee.ts              # Direct-to-Bee client (/bee-api proxy)
+│   ├── server.ts           # Koa client (auth-injected)
+│   ├── queries.ts          # TanStack Query hooks
+│   ├── client.ts           # Shared types (Status, Stamp, etc.)
+│   └── feeds.ts            # Drive metadata feed read/write
+├── hooks/
+│   ├── useDerivedKey.ts    # See identity.md
+│   ├── useInboxPolling.ts  # See messaging.md
+│   ├── useRegistryPolling.ts
+│   ├── useUploadHistory.ts # localStorage upload records + folder tree
+│   ├── useDriveMetadata.ts # Per-drive encrypted-state cache
+│   └── useSharedDrives.ts  # Imported share-link drives
+├── store/
+│   ├── app.ts              # apiKey, theme, devMode, notificationSound
+│   └── identity.ts         # NookSigner + safeStorage hydration (see identity.md)
+├── notify/                 # Swarm Notify integration (see messaging.md)
+├── crypto/
+│   └── signer.ts           # NookSigner (see identity.md)
+├── lib/
+│   ├── utils.ts
+│   └── cricket.ts          # Web Audio chirp (see messaging.md)
+└── utils/                  # Tar building, directory utilities
+</code></pre>
+<h3 id="state-boundaries">State boundaries</h3>
+<ul>
+<li><strong>localStorage</strong> — contacts, threads, drives, upload history, identity-published flags. Per-browser-origin (the 3002/3054 split caveat applies).</li>
+<li><strong>sessionStorage</strong> — derived signature fallback when safeStorage isn&#39;t available.</li>
+<li><strong>Zustand stores</strong> — in-memory app state with localStorage persistence for select fields (theme, notification preference, etc.)</li>
+<li><strong>TanStack Query</strong> — server state (stamps, wallet, status, peers, addresses). Polled at varying intervals, retry: false on Bee endpoints.</li>
+</ul>
+<hr>
+<h2 id="code-path-quick-reference">Code path quick reference</h2>
+<table>
+<thead>
+<tr>
+<th>Concern</th>
+<th>File</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Process orchestration</td>
+<td><code>src/index.ts → main()</code></td>
+</tr>
+<tr>
+<td>Bee subprocess spawn</td>
+<td><code>src/launcher.ts → runLauncher → launchBee → runProcess</code></td>
+</tr>
+<tr>
+<td>Keep-alive loop</td>
+<td><code>src/launcher.ts → runKeepAliveLoop</code></td>
+</tr>
+<tr>
+<td>Bee lifecycle state</td>
+<td><code>src/lifecycle.ts → BeeManager</code></td>
+</tr>
+<tr>
+<td>Bee config write/read</td>
+<td><code>src/config.ts</code></td>
+</tr>
+<tr>
+<td>Funding monitor</td>
+<td><code>src/funding-monitor.ts → startMonitorIfNeeded → switchToLightMode</code></td>
+</tr>
+<tr>
+<td>Chequebook monitor</td>
+<td><code>src/chequebook-monitor.ts</code></td>
+</tr>
+<tr>
+<td>Koa app + routes</td>
+<td><code>src/server.ts → runServer</code></td>
+</tr>
+<tr>
+<td>/bee-api pass-through</td>
+<td><code>src/server.ts:45</code></td>
+</tr>
+<tr>
+<td>Auth middleware</td>
+<td><code>src/server.ts:124</code></td>
+</tr>
+<tr>
+<td>Status endpoint</td>
+<td><code>src/status.ts → getStatus</code></td>
+</tr>
+<tr>
+<td>Identity cache (safeStorage)</td>
+<td><code>src/identity-cache.ts</code></td>
+</tr>
+<tr>
+<td>API key file</td>
+<td><code>src/api-key.ts</code></td>
+</tr>
+<tr>
+<td>Port allocation</td>
+<td><code>src/port.ts</code></td>
+</tr>
+<tr>
+<td>Asset paths (cross-platform)</td>
+<td><code>src/path.ts</code></td>
+</tr>
+<tr>
+<td>Bee downloader</td>
+<td><code>src/downloader.ts</code></td>
+</tr>
+<tr>
+<td>Migrations</td>
+<td><code>src/migration.ts</code></td>
+</tr>
+<tr>
+<td>Tray menu</td>
+<td><code>src/electron.ts</code></td>
+</tr>
+<tr>
+<td>Splash screen</td>
+<td><code>src/splash.ts</code></td>
+</tr>
+<tr>
+<td>Logger + log rotation</td>
+<td><code>src/logger.ts</code></td>
+</tr>
+<tr>
+<td>Deep-link handler</td>
+<td><code>src/nook-deep-link.ts</code></td>
+</tr>
+<tr>
+<td>Wallet operations</td>
+<td><code>src/blockchain.ts</code></td>
+</tr>
+<tr>
+<td>Swap</td>
+<td><code>src/swap.ts</code></td>
+</tr>
+<tr>
+<td>TanStack Query patterns</td>
+<td><code>ui/src/api/queries.ts</code></td>
+</tr>
+<tr>
+<td>Direct Bee client</td>
+<td><code>ui/src/api/bee.ts</code></td>
+</tr>
+<tr>
+<td>Koa client</td>
+<td><code>ui/src/api/server.ts</code></td>
+</tr>
+</tbody></table>
+
+      </section>
+
+      <section id="stamps" class="doc">
+<h1 id="postage-stamps">Postage stamps</h1>
+<p>This doc covers how Nook handles Swarm postage stamps end-to-end: buying, displaying, extending capacity (dilute), extending duration (topup), and the math behind it.</p>
+<blockquote>
+<p>If you&#39;re new to Swarm stamps, the one-line summary: a stamp is a pre-paid right to store data on Swarm. It has a <strong>depth</strong> (how many chunks it can cover) and an <strong>amount</strong> per chunk (how long those chunks stay alive). Stamps don&#39;t store the data — they authorize it.</p>
+</blockquote>
+<hr>
+<h2 id="mental-model-what-nook-calls-things-vs-swarm">Mental model — what Nook calls things vs. Swarm</h2>
+<p>Nook abstracts the Swarm terminology in the UI to feel more like a normal app:</p>
+<table>
+<thead>
+<tr>
+<th>Swarm concept</th>
+<th>Nook UI term</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Postage stamp</td>
+<td>Drive</td>
+</tr>
+<tr>
+<td>Stamp depth × per-chunk amount</td>
+<td>&quot;Size&quot; + &quot;Duration&quot;</td>
+</tr>
+<tr>
+<td>Topup</td>
+<td>Extend duration</td>
+</tr>
+<tr>
+<td>Dilute</td>
+<td>Extend capacity</td>
+</tr>
+<tr>
+<td>Stamp TTL</td>
+<td>&quot;Expires in N days&quot;</td>
+</tr>
+</tbody></table>
+<p>Never use <em>stamp</em>, <em>postage</em>, or <em>topup</em> in user-facing strings. The mapping lives in <code>ui/CLAUDE.md</code> as the canonical glossary.</p>
+<hr>
+<h2 id="identifiers">Identifiers</h2>
+<p>A stamp has a few IDs that matter at different layers:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Source</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>batchID</code></td>
+<td>Bee, returned at purchase</td>
+<td>The canonical 64-char hex ID. Used everywhere (upload headers, ACT grantees, feed updates).</td>
+</tr>
+<tr>
+<td><code>label</code></td>
+<td>Bee, set at purchase</td>
+<td>Human nickname for the stamp. Nook uses this as the default drive name; users can override it.</td>
+</tr>
+<tr>
+<td><code>depth</code></td>
+<td>Bee</td>
+<td>Power-of-2 exponent for the number of chunks the stamp covers.</td>
+</tr>
+<tr>
+<td><code>bucketDepth</code></td>
+<td>Bee</td>
+<td>Fixed at 16. Bee buckets chunks into <code>2^16</code> buckets for fairness.</td>
+</tr>
+<tr>
+<td><code>utilization</code></td>
+<td>Bee</td>
+<td>Worst-case bucket fill — see <em>Capacity display</em> below.</td>
+</tr>
+<tr>
+<td><code>batchTTL</code></td>
+<td>Bee</td>
+<td>Seconds remaining until the stamp expires.</td>
+</tr>
+<tr>
+<td><code>usable</code></td>
+<td>Bee</td>
+<td>Whether the stamp is fully synced and usable for uploads.</td>
+</tr>
+<tr>
+<td><code>immutableFlag</code></td>
+<td>Bee</td>
+<td>Whether chunks may be overwritten. Nook defaults to immutable.</td>
+</tr>
+</tbody></table>
+<p>There&#39;s no app-level stamp ID — <code>batchID</code> is the canonical one across Bee, Koa, and the UI.</p>
+<hr>
+<h2 id="buying-a-stamp">Buying a stamp</h2>
+<h3 id="flow">Flow</h3>
+<ol>
+<li>User opens the <strong>New drive</strong> modal on the Drive page.</li>
+<li>Picks a Size preset and Duration preset, optionally toggles Encrypt.</li>
+<li>UI calls <code>POST /buy-stamp</code> on the Koa backend (<code>src/server.ts</code>).</li>
+<li>Koa proxies to Bee at <code>POST /stamps/{amount}/{depth}</code>, with two important headers:<ul>
+<li><code>Authorization: Bearer &lt;password&gt;</code> — required by Bee 2.x</li>
+<li><code>immutable: &quot;false&quot;</code> or omitted (defaults to immutable)</li>
+</ul>
+</li>
+<li>Bee mines the on-chain <code>CreateBatch</code> transaction. Returns <code>batchID</code> immediately, but <code>usable: false</code> until the transaction confirms and the stamp shows up in the postage contract.</li>
+<li>Nook polls <code>/stamps</code> for the stamp to become <code>usable</code>. While confirming, the UI shows it with a &quot;Confirming…&quot; indicator and disables uploads.</li>
+</ol>
+<h3 id="why-through-koa-not-directly-to-bee-from-the-ui">Why through Koa, not directly to Bee from the UI</h3>
+<p><code>/buy-stamp</code> is one of a few endpoints that <em>must</em> go through Koa because the Electron renderer strips custom headers on localhost requests, so <code>immutable: &quot;false&quot;</code> never reaches Bee from a direct fetch. The Koa proxy injects it server-side.</p>
+<p>(History: this caused weeks of confusion before being tracked down. See <code>src/server.ts</code> <code>/buy-stamp</code> route for the auth + header logic.)</p>
+<h3 id="cost-math">Cost math</h3>
+<p>Cost is per-chunk × number-of-chunks:</p>
+<pre><code>amount per chunk (PLUR) = currentPrice (PLUR/block) × duration (blocks)
+total chunks            = 2^depth
+total cost (PLUR)       = amount per chunk × total chunks
+total cost (BZZ)        = total cost / 10^16
+</code></pre>
+<p>Implemented in <code>ui/src/api/bee.ts → calcStampCost</code>. The UI displays the BZZ-denominated total in the buy modal.</p>
+<p><code>currentPrice</code> comes from Bee&#39;s <code>/chainstate</code> endpoint and updates over time as network demand shifts.</p>
+<hr>
+<h2 id="size-presets-and-overbuy">SIZE_PRESETS and overbuy</h2>
+<p>Nook does not let the user pick a raw depth. Instead, four named presets map size labels to depths:</p>
+<table>
+<thead>
+<tr>
+<th>Label</th>
+<th>Depth</th>
+<th>Bee&#39;s effective capacity at this depth</th>
+<th>Overbuy factor</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>110 MB</td>
+<td>21</td>
+<td>~2.6 GB</td>
+<td>24×</td>
+</tr>
+<tr>
+<td>2.6 GB</td>
+<td>22</td>
+<td>~7.7 GB</td>
+<td>3×</td>
+</tr>
+<tr>
+<td>7.7 GB</td>
+<td>23</td>
+<td>~20 GB</td>
+<td>2.6×</td>
+</tr>
+<tr>
+<td>16 GB</td>
+<td>24</td>
+<td>~47 GB</td>
+<td>3×</td>
+</tr>
+</tbody></table>
+<p><strong>Why overbuy?</strong> Bee&#39;s <code>utilization</code> metric (used for &quot;X% used&quot; displays) is <strong>worst-case bucket fill</strong>, not literal bytes. At low depths (8 chunks per bucket at depth 19) the worst bucket fills wildly faster than average, so a 5 MB upload registers as 25% on a &quot;110 MB&quot; depth-19 stamp. By buying at depth 21+ (32+ chunks per bucket), the worst-bucket metric tracks real fill within ~2×, and the displayed % feels honest.</p>
+<p>Tradeoff: small drives cost more than they would at the theoretical minimum depth. We accept that in exchange for a non-misleading capacity bar.</p>
+<p>Decision detail: see <a href="decisions/001-variable-overbuy.md">ADR-001: variable overbuy</a>.</p>
+<h3 id="legacy-stamps">Legacy stamps</h3>
+<p>Stamps bought before this scheme live at depths 19 / 20. The <code>NOOK_DISPLAY_CAPACITY</code> table in <code>ui/src/api/bee.ts</code> keeps those depths mapped to their original labels (110 MB / 680 MB) so old drives keep displaying correctly. The capacity bar for legacy stamps will look pessimistic at low fill — that&#39;s a known limitation we accept rather than retroactively migrating.</p>
+<hr>
+<h2 id="capacity-display-x-y-mb-used">Capacity display (&quot;X / Y MB used&quot;)</h2>
+<p>Each row in the Drive list shows:</p>
+<ul>
+<li><code>usedBytes / capacityBytes</code> — formatted as &quot;X MB / Y MB&quot;</li>
+<li>A percentage bar</li>
+</ul>
+<p>Both are derived from Bee&#39;s <code>utilization</code>:</p>
+<pre><code>maxUtilization = 1 &lt;&lt; (depth - bucketDepth)
+usagePct       = utilization / maxUtilization
+usedBytes      = capacityBytes × usagePct
+</code></pre>
+<p><code>capacityBytes</code> is read from <code>NOOK_DISPLAY_CAPACITY[depth]</code> — i.e., the <strong>advertised</strong> capacity (matching the label users picked at buy time), not Bee&#39;s larger effective capacity.</p>
+<p>This means:</p>
+<ul>
+<li>The number matches what swarm-cli / Bee Dashboard would show for the same stamp — same source of truth</li>
+<li>External uploads (via swarm-cli, ACT internals, feed-update chunks) move the bar, so the display reflects all uploads, not just Nook&#39;s</li>
+<li>At overbought depths (21+), the worst-bucket math tracks real fill closely enough that the % feels honest</li>
+</ul>
+<p>Implementation: <code>ui/src/pages/Drive.tsx → DriveCard</code> (search for <code>usedBytes</code>).</p>
+<hr>
+<h2 id="extending-a-drive-capacity-vs-duration">Extending a drive — capacity vs. duration</h2>
+<p>A single modal (<code>ExtendModal</code> in <code>Drive.tsx</code>) handles both:</p>
+<ul>
+<li><strong>Extend capacity</strong> — increase the depth (dilute)</li>
+<li><strong>Extend duration</strong> — extend remaining TTL (topup)</li>
+</ul>
+<p>The user can toggle either independently. The modal computes one combined BZZ cost.</p>
+<h3 id="capacity-only-dilute">Capacity-only (dilute)</h3>
+<p>Diluting halves the per-chunk balance every +1 depth. To keep the same remaining TTL after diluting, we have to topup back to the original per-chunk balance:</p>
+<pre><code>recoverySeconds = currentTTL × (1 - 1/2^depthDelta)
+</code></pre>
+<p>That&#39;s the duration we have to topup just to recover what dilute took away. Hidden from the user.</p>
+<h3 id="duration-only-topup">Duration-only (topup)</h3>
+<p>Pure topup — add <code>userExtendMonths × secondsPerMonth</code> worth of price-blocks per chunk.</p>
+<h3 id="both-at-once">Both at once</h3>
+<pre><code>totalSecondsToBuy = recoverySeconds + extendSeconds
+amount per chunk  = currentPrice × (totalSecondsToBuy / SECONDS_PER_BLOCK)
+total cost (PLUR) = amount per chunk × 2^targetDepth
+</code></pre>
+<p>The user sees a single &quot;Cost: X BZZ&quot; number; the recovery math is hidden.</p>
+<h3 id="call-order-topup-before-dilute">Call order — topup before dilute</h3>
+<p>Critical: <strong>topup must be sent before dilute</strong>, with the per-chunk amount scaled by <code>2^depthDelta</code>.</p>
+<p>Why: dilute halves the per-chunk balance. If the post-dilute balance would drop below the postage contract&#39;s minimum, the on-chain tx emits no <code>BatchDepthIncrease</code> event and Bee returns <code>&quot;cannot dilute batch&quot;</code>. Topping up first keeps the per-chunk balance well above the threshold at the moment dilute runs.</p>
+<p>Total BZZ cost is unchanged. Bee charges <code>amount × current_chunk_count</code> for topup, so scaling by <code>2^delta</code> exactly offsets the depth difference.</p>
+<p>Implementation: <code>ExtendModal.doExtend</code> in <code>Drive.tsx</code>.</p>
+<h3 id="why-not-gate-on-immutableflag">Why not gate on <code>immutableFlag</code>?</h3>
+<p>Earlier prototype gated &quot;Extend capacity&quot; off for immutable stamps on the assumption that Bee rejects dilute on immutable. That assumption is wrong: Bee allows dilute on any stamp regardless of immutability (verified against <code>bee@v2.8.0</code> <code>pkg/postage/postagecontract/contract.go</code>). The <code>cannot dilute batch</code> error is about balance/event mismatch, not immutability.</p>
+<hr>
+<h2 id="stamp-purchase-observability">Stamp purchase observability</h2>
+<p>The UI shows pending stamps with &quot;Confirming…&quot; indicators (rather than hiding them) so users see <em>something is happening</em> immediately after clicking Buy. This is intentional — earlier versions hid pending stamps and the UI looked frozen for 30–60 seconds.</p>
+<p>Polling cadence:</p>
+<ul>
+<li><code>/stamps</code> is refetched every few seconds via TanStack Query</li>
+<li><code>retry: false</code> on the Bee query — avoids 3× console spam on RPC blips</li>
+<li>Error state triggers a <code>slowMs</code> refetchInterval so we don&#39;t hammer Bee while it&#39;s recovering</li>
+</ul>
+<p>See <code>ui/src/api/queries.ts</code> for the TanStack patterns.</p>
+
+      </section>
+
+      <section id="identity" class="doc">
+<h1 id="identity">Identity</h1>
+<p>This doc covers how Nook turns a user&#39;s wallet signature into a complete cryptographic identity — the keys, the addresses, the storage, the lifecycle, and the gotchas. It&#39;s the foundation that messaging, encrypted drives, and contact sharing all build on.</p>
+<blockquote>
+<p>One-line summary: the user signs a fixed message in MetaMask once; from that signature Nook derives a 32-byte private key, a secp256k1 pubkey, an Ethereum-style address, and an encryption key. The signature is cached so signing happens at most once per device per wallet.</p>
+</blockquote>
+<hr>
+<h2 id="mental-model-what-nook-calls-things">Mental model — what Nook calls things</h2>
+<table>
+<thead>
+<tr>
+<th>Term in code</th>
+<th>Term in UI</th>
+<th>What it is</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>ethAddress</code> / <code>walletAddress</code></td>
+<td><strong>Nook address</strong></td>
+<td>20-byte hex (<code>0x…</code>). User-facing ID. <em>Not</em> MetaMask&#39;s address — it&#39;s derived.</td>
+</tr>
+<tr>
+<td><code>walletPublicKey</code> / <code>wpub</code></td>
+<td>(rarely surfaced)</td>
+<td>Compressed secp256k1 pubkey from the derived signing key. Used for ECDH + verifying derived-key signatures.</td>
+</tr>
+<tr>
+<td><code>beePublicKey</code> / <code>bpub</code></td>
+<td>&quot;Sharing key&quot; (legacy term)</td>
+<td>The <strong>Bee node&#39;s</strong> pubkey, fetched from <code>/addresses</code>. Used as the grantee ID in ACT. <em>Not</em> derived from the wallet — comes from the Bee binary.</td>
+</tr>
+<tr>
+<td>Contact link</td>
+<td>&quot;Contact link&quot;</td>
+<td><code>nook://contact/v1?addr=…&amp;wpub=…&amp;bpub=…</code> — bundles all three for one-paste import.</td>
+</tr>
+<tr>
+<td>Signer</td>
+<td>(internal)</td>
+<td>The <code>NookSigner</code> interface that wraps the derived private key behind methods (<code>getAddress</code>, <code>getSigningKey</code>, <code>deriveSharedSecret</code>).</td>
+</tr>
+</tbody></table>
+<p><strong>UI rule:</strong> always call the user-facing identifier the <strong>Nook address</strong>. Never &quot;ETH address&quot;, &quot;wallet address&quot;, or &quot;derived address.&quot; History: during hackathon testing a user shared their MetaMask address by mistake; identity resolution failed silently. The label &quot;Nook address&quot; is honest now (it&#39;s not your MetaMask) and future-proof if the identifier ever stops being Ethereum-style.</p>
+<hr>
+<h2 id="the-four-keys">The four keys</h2>
+<p>A single wallet signature produces four distinct pieces of cryptographic material, each with a specific purpose:</p>
+<pre><code>signMessage(&quot;Nook Key Derivation v1&quot;) in MetaMask
+   ↓
+signatureHex (130 hex chars, 65 bytes including v)
+   ↓
+masterSeed = keccak256(signatureHex)
+   ↓
+signingKey    = HMAC-SHA256(masterSeed, &quot;nook:signing&quot;)     ─→ feed signing, address derivation
+encryptionKey = HMAC-SHA256(masterSeed, &quot;nook:encryption&quot;)  ─→ AES-GCM file/mail encryption
+   ↓
+publicKey (compressed)   = secp256k1.getPublicKey(signingKey, true)
+publicKey (uncompressed) = secp256k1.getPublicKey(signingKey, false)
+nookAddress              = &quot;0x&quot; + lowerHex(keccak256(uncompressedPub[1:]).slice(-20))
+</code></pre>
+<p>Implementation: <code>ui/src/crypto/signer.ts → createWalletSigner</code>.</p>
+<p>The HMAC step gives <strong>domain separation</strong>: even though both keys derive from the same seed, an attacker who somehow learns the encryption key can&#39;t compute the signing key (HMAC is a PRF). This lets us reuse one signature for many independent purposes safely.</p>
+<h3 id="the-fixed-message">The fixed message</h3>
+<pre><code class="language-ts">export const SIGN_MESSAGE = &#39;Nook Key Derivation v1&#39;
+</code></pre>
+<p><strong>Never change this string.</strong> Changing it changes every derived key. Every contact link, identity-feed publish, and ACT grantee tied to an old key becomes unreadable. The <code>v1</code> suffix exists so we <em>could</em> migrate to v2 someday — but only with a synchronized rotation flow that re-derives, republishes, and migrates ACT grants.</p>
+<hr>
+<h2 id="why-derived-not-metamask-s-own-pubkey">Why derived, not MetaMask&#39;s own pubkey?</h2>
+<p>Three reasons we accept the upfront sign-and-derive complexity instead of asking MetaMask for <code>eth_getEncryptionPublicKey</code>:</p>
+<ol>
+<li><strong>Cross-device portability.</strong> The wallet signature on <code>SIGN_MESSAGE</code> is deterministic — same wallet, same seed phrase, same Nook address on a new device. MetaMask&#39;s <code>eth_getEncryptionPublicKey</code> is per-account-per-install and isn&#39;t portable.</li>
+<li><strong>No prompt per operation.</strong> Once derived and cached, the signer signs and encrypts in-memory. MetaMask&#39;s RPC methods would prompt on every sign — unusable for messaging.</li>
+<li><strong>Swappable backend.</strong> The <code>NookSigner</code> interface is designed to be replaced later (Swarm ID, hardware wallets, whatever) without touching call sites. The wallet-signature variant is just the current implementation.</li>
+</ol>
+<h3 id="determinism-check">Determinism check</h3>
+<p>Some wallets (cold-storage HSMs, deterministic-but-buggy implementations) produce different signatures for the same message. That would silently corrupt every contact link / encrypted message after a re-sign.</p>
+<p><code>useDerivedKey.derive()</code> defends against this by signing twice and comparing:</p>
+<pre><code class="language-ts">const signature1 = await signMessageAsync({ message: SIGN_MESSAGE })
+const signature2 = await signMessageAsync({ message: SIGN_MESSAGE })
+
+if (signature1 !== signature2) {
+  setError(&#39;Your wallet produced different signatures for the same message. ...&#39;)
+  return null
+}
+</code></pre>
+<p>Yes, this means MetaMask shows the sign-prompt <strong>twice</strong> on first derive. That&#39;s intentional. After the first successful pair, the signature is cached and the user is never prompted again on that device. See <code>ui/src/hooks/useDerivedKey.ts</code>.</p>
+<hr>
+<h2 id="storage">Storage</h2>
+<p>The cached identity is the <code>signatureHex</code> itself (not the derived keys) — re-deriving from a known signature is cheap, and storing only the seed keeps the on-disk format minimal:</p>
+<pre><code class="language-json">{ &quot;signatureHex&quot;: &quot;0x…&quot;, &quot;walletAddress&quot;: &quot;0x…&quot; }
+</code></pre>
+<p><code>walletAddress</code> is stored alongside so we can detect &quot;wrong cache for the connected wallet&quot; and clear it.</p>
+<h3 id="two-tier-backend">Two-tier backend</h3>
+<p><code>ui/src/store/identity.ts</code> tries safeStorage first, falls back to sessionStorage:</p>
+<table>
+<thead>
+<tr>
+<th>Backend</th>
+<th>Survives</th>
+<th>When used</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Electron safeStorage</strong> (OS keychain)</td>
+<td>App restarts, machine reboots</td>
+<td>Production builds, macOS / Windows / Linux with keyring</td>
+</tr>
+<tr>
+<td><strong>sessionStorage</strong></td>
+<td>Page refresh, but <strong>not</strong> app quit or wallet disconnect</td>
+<td>Dev mode, Linux without a keyring, private browsing</td>
+</tr>
+</tbody></table>
+<p>Encrypted blob lives at <code>paths.data/identity-cache.bin</code> when safeStorage is in use. The plaintext signature is never written to disk in any other location.</p>
+<h3 id="koa-endpoints">Koa endpoints</h3>
+<p>The renderer accesses safeStorage via Koa routes (<code>src/identity-cache.ts</code>):</p>
+<table>
+<thead>
+<tr>
+<th>Route</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>GET /identity-cache</code></td>
+<td>Returns <code>{ available, value }</code> — <code>available: false</code> when keychain unsupported</td>
+</tr>
+<tr>
+<td><code>POST /identity-cache</code></td>
+<td>Encrypts and persists <code>{ value }</code></td>
+</tr>
+<tr>
+<td><code>DELETE /identity-cache</code></td>
+<td>Clears the cache (called on wallet disconnect / clear)</td>
+</tr>
+</tbody></table>
+<p>If safeStorage is unavailable, all three endpoints return <code>available: false</code> and the renderer transparently falls back to sessionStorage.</p>
+<h3 id="what-gets-cleared-when">What gets cleared, when</h3>
+<table>
+<thead>
+<tr>
+<th>Trigger</th>
+<th>safeStorage</th>
+<th>sessionStorage</th>
+<th>In-memory signer</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Wallet disconnect (<code>status === &#39;disconnected&#39;</code>)</td>
+<td>✓</td>
+<td>✓</td>
+<td>✓</td>
+</tr>
+<tr>
+<td>Wallet switches to a different address</td>
+<td>✓</td>
+<td>✓</td>
+<td>✓</td>
+</tr>
+<tr>
+<td>Window close</td>
+<td>—</td>
+<td>✓ (browser-managed)</td>
+<td>✓</td>
+</tr>
+<tr>
+<td>App quit</td>
+<td>—</td>
+<td>✓</td>
+<td>✓</td>
+</tr>
+<tr>
+<td>Machine restart</td>
+<td>—</td>
+<td>✓</td>
+<td>✓</td>
+</tr>
+<tr>
+<td>Bee data purge</td>
+<td>—</td>
+<td>—</td>
+<td>—</td>
+</tr>
+</tbody></table>
+<p>Bee data purge is intentionally <strong>not</strong> tied to identity — the wallet identity is independent of the Bee node identity.</p>
+<hr>
+<h2 id="lifecycle-on-app-launch">Lifecycle on app launch</h2>
+<p>The flow on every cold start with a previously-connected wallet:</p>
+<pre><code>1. App boots, Wagmi reconnects → status=&#39;reconnecting&#39;
+2. useDerivedKey hook fires hydrate()
+   - try GET /identity-cache → safeStorage available?
+     - yes, blob present → parse, createWalletSigner(sig), set signer    [STOP, no prompt]
+     - yes, blob missing → mark hydrated, backend=&#39;safe-storage&#39;
+     - no (Linux w/o keyring) → fall through to sessionStorage
+   - sessionStorage has blob? → parse, createWalletSigner(sig), set signer  [STOP, no prompt]
+   - none of the above → signer stays null
+3. Wagmi finishes reconnect → status=&#39;connected&#39;, address=0x…
+4. Auto-derive effect fires (only if !signer &amp;&amp; !deriving &amp;&amp; !declined)
+   - signMessageAsync(SIGN_MESSAGE) twice → check determinism
+   - createWalletSigner(sig), persist via setSigner()
+5. signer is now in memory + persisted; downstream features unblock
+</code></pre>
+<p>If the user rejects the auto-derive prompt, <code>declinedThisSession.current = true</code> and we don&#39;t ping them again on every render — they have to click &quot;Set up Nook identity&quot; on the Identity tab to retry.</p>
+<hr>
+<h2 id="what-other-identifiers-exist-and-aren-t-derived">What other identifiers exist (and aren&#39;t derived)</h2>
+<p><code>bpub</code> (the Bee node&#39;s public key) is <strong>not</strong> part of the wallet-derived chain. It comes from the Bee binary:</p>
+<pre><code>GET /addresses → { publicKey: &quot;&lt;bpub hex&gt;&quot; }
+</code></pre>
+<p>This is fetched via <code>useAddresses</code> in the UI. The bpub is:</p>
+<ul>
+<li>Tied to the specific Bee installation (<code>data-dir/keys/swarm.key</code>)</li>
+<li>Independent of the user&#39;s wallet — same Nook user on two devices = two different bpubs</li>
+<li>Used as the grantee identifier in ACT (see <a href="encryption.md">encryption.md</a>)</li>
+</ul>
+<p>A consequence: granting drive access by <strong>Nook address</strong> requires resolving the identity feed to get the current bpub. If the published feed has a stale bpub (e.g., from before a Bee data purge), the wrong key gets granted and the recipient silently lacks access.</p>
+<hr>
+<h2 id="how-others-reach-you-two-channels">How others reach you — two channels</h2>
+<h3 id="channel-a-published-identity-feed">Channel A: published identity feed</h3>
+<p><code>@swarm-notify/sdk</code> publishes a record at a deterministic feed:</p>
+<pre><code>topic = keccak256(&quot;swarm-identity-&quot; + ethAddress)
+payload = { ethAddress, walletPublicKey, beePublicKey }
+</code></pre>
+<p>Anyone with your Nook address can resolve the feed and get your wpub + bpub. Implementation: <code>identity.publish(bee, signingKey, stampId, payload)</code> in the SDK, called from <code>ui/src/pages/Identity.tsx</code>.</p>
+<p>Requires:</p>
+<ul>
+<li>A usable stamp (the feed update writes a chunk)</li>
+<li>The user clicking <strong>Publish to identity feed</strong> (voluntary)</li>
+</ul>
+<p>Once published, others can type your Nook address into any Swarm-Notify app (Nook, future tools) and resolve everything needed to message or share with you.</p>
+<h3 id="channel-b-contact-link-no-publish-needed">Channel B: contact link (no publish needed)</h3>
+<p>A <code>nook://contact/v1</code> URL bundles everything in the link itself:</p>
+<pre><code>nook://contact/v1?addr=0x…&amp;wpub=03…&amp;bpub=03…[&amp;name=Alice]
+</code></pre>
+<p>Pasted into the <strong>Add contact</strong> input or the <strong>Share drive</strong> input — Nook decodes and saves the contact. Works without any publish. Codec lives in <code>ui/src/notify/share-link.ts</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Required</th>
+<th>Source</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>addr</code></td>
+<td>yes</td>
+<td><code>signer.getAddress()</code></td>
+</tr>
+<tr>
+<td><code>wpub</code></td>
+<td>yes</td>
+<td><code>bytesToHex(signer.getPublicKey())</code></td>
+</tr>
+<tr>
+<td><code>bpub</code></td>
+<td>yes</td>
+<td><code>addresses.publicKey</code> (from Bee <code>/addresses</code>)</td>
+</tr>
+<tr>
+<td><code>name</code></td>
+<td>optional</td>
+<td>nickname the sharer wants the recipient to see</td>
+</tr>
+</tbody></table>
+<p><code>addr</code> is technically derivable from <code>wpub</code> (keccak256-and-truncate). We keep it explicit for debuggability — you can read the link and know whose it is at a glance — and for Swarm-ID future-proofing.</p>
+<h3 id="when-to-use-which">When to use which</h3>
+<ul>
+<li><strong>Identity feed</strong>: best for &quot;type their address&quot; UX, future search/discovery flows, persistent presence on Swarm.</li>
+<li><strong>Contact link</strong>: best for direct invitation (DM the link), works offline, doesn&#39;t burn a feed update on every key change.</li>
+</ul>
+<p>The user picks. Most workflows use both — publish for discoverability, share links for direct invites.</p>
+<hr>
+<h2 id="ecdh-and-message-encryption">ECDH and message encryption</h2>
+<p>Messages between Nook users are encrypted with a shared secret derived via ECDH:</p>
+<pre><code class="language-ts">sharedSecret = keccak256(secp256k1.getSharedSecret(myPrivateKey, theirPublicKey).slice(1))
+</code></pre>
+<p>Where <code>theirPublicKey</code> is the recipient&#39;s <code>wpub</code> (from contact link or identity feed). Implementation: <code>signer.deriveSharedSecret(theirPublicKey)</code> in <code>crypto/signer.ts</code>.</p>
+<p>This is why both correspondents must have each other&#39;s <code>wpub</code>. The <code>bpub</code> is irrelevant to messaging — that&#39;s for ACT/drives. Mixing the two up means messages silently fail to decrypt.</p>
+<hr>
+<h2 id="storage-keys-reference">Storage keys reference</h2>
+<table>
+<thead>
+<tr>
+<th>localStorage key</th>
+<th>Schema</th>
+<th>Owner</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>nook-contacts-v2</code></td>
+<td>JSON array of <code>NookContact</code></td>
+<td><code>ui/src/notify/storage.ts</code></td>
+</tr>
+<tr>
+<td><code>nook-identity-published:&lt;ethAddress&gt;</code></td>
+<td><code>&quot;true&quot;</code> if user has published their identity</td>
+<td><code>ui/src/notify/storage.ts</code></td>
+</tr>
+<tr>
+<td><code>nook-onboarding-publish-dismissed</code></td>
+<td><code>&quot;true&quot;</code> if user dismissed the publish hint</td>
+<td><code>ui/src/notify/storage.ts</code></td>
+</tr>
+</tbody></table>
+<table>
+<thead>
+<tr>
+<th>sessionStorage key</th>
+<th>Schema</th>
+<th>Owner</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>nook.derivedKey.v1</code></td>
+<td><code>{ signatureHex, walletAddress }</code></td>
+<td><code>ui/src/store/identity.ts</code></td>
+</tr>
+</tbody></table>
+<table>
+<thead>
+<tr>
+<th>Disk file</th>
+<th>Schema</th>
+<th>Owner</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>&lt;dataDir&gt;/identity-cache.bin</code></td>
+<td>safeStorage-encrypted JSON <code>{ signatureHex, walletAddress }</code></td>
+<td><code>src/identity-cache.ts</code></td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="failure-modes-gotchas">Failure modes &amp; gotchas</h2>
+<h3 id="stale-published-feed-after-a-bee-data-purge">Stale published feed after a Bee data purge</h3>
+<p>The published identity feed still contains the old <code>bpub</code>. New grants by Nook address resolve the stale bpub → grant goes to a key the recipient no longer holds.</p>
+<p><strong>Mitigation today</strong>: republish from the Identity tab.
+<strong>Possible future fix</strong>: detect bpub mismatch between resolved feed and the recipient&#39;s current bpub at grant-time and surface a &quot;republish needed&quot; prompt.</p>
+<h3 id="self-grant-ambiguity">Self-grant ambiguity</h3>
+<p>If you grant drive access to your own Nook address (common during testing), Nook used to auto-add you as a contact named after yourself. We now skip the auto-save when the granted address matches <code>signer.getAddress()</code>. The grant itself succeeds — only the contact record is skipped.</p>
+<h3 id="two-metamask-popups-on-first-derive">Two MetaMask popups on first derive</h3>
+<p>Confusing but intentional — see <a href="#determinism-check">Determinism check</a>. After successful derive, the signature is cached and subsequent app launches are silent.</p>
+<h3 id="wallet-not-connected-race-during-boot">&quot;Wallet not connected&quot; race during boot</h3>
+<p>Wagmi&#39;s <code>status</code> field passes through <code>&#39;connecting&#39;</code> and <code>&#39;reconnecting&#39;</code> on cold start before settling to <code>&#39;connected&#39;</code>. The auto-derive effect waits for <code>hydrated &amp;&amp; status === &#39;connected&#39;</code> to avoid prompting during a transient <code>disconnected</code> state on page load.</p>
+<h3 id="sessionstorage-and-dev-port-mismatch">sessionStorage and dev port mismatch</h3>
+<p>In dev mode the UI runs on port 3002 (Vite) or 3054 (Koa-served prod build). These are different browser origins → different sessionStorage. If you switch ports mid-session, your in-memory signer survives via sessionStorage on whichever origin you came from, but the other port starts fresh. Recommend sticking to 3002 during dev (see <code>MEMORY.md</code> → project_dev_port_gotchas).</p>
+
+      </section>
+
+      <section id="encryption" class="doc">
+<h1 id="encrypted-drives-act">Encrypted drives &amp; ACT</h1>
+<p>This doc covers how Nook builds encrypted, shareable drives on top of Bee&#39;s Access Control Trie (ACT) primitive. It&#39;s the layer that makes &quot;share a drive with Alice without exposing it to the public network&quot; work.</p>
+<blockquote>
+<p>One-line summary: encrypted drives are normal Nook drives whose files are uploaded with <code>swarm-act: true</code>. ACT lets Bee restrict reads to a list of grantee public keys (<code>bpub</code>s). Nook adds a metadata feed on top so the file list itself is also encrypted and so grantees see drive updates without polling every chunk.</p>
+</blockquote>
+<hr>
+<h2 id="mental-model-three-layers-one-act-history-chain">Mental model — three layers, one ACT history chain</h2>
+<p>An encrypted drive in Nook has three independent layers, all operating on the <strong>same ACT history chain</strong>:</p>
+<pre><code>┌─────────────────────────────────────────────────────────────┐
+│  Layer 3 — Metadata feed (Nook application layer)           │
+│  Public Swarm feed → points to ACT-encrypted JSON           │
+│  describing the file list. Topic: keccak256(batchId +       │
+│  &quot;nook-drive-meta&quot;). Wrapper public; payload encrypted.     │
+└─────────────────────────────────────────────────────────────┘
+                          ↓ references
+┌─────────────────────────────────────────────────────────────┐
+│  Layer 2 — Grantee list (Bee /grantee endpoints)            │
+│  List of bpub identifiers permitted to decrypt. Adding or   │
+│  removing a grantee writes a new ACT history entry.         │
+└─────────────────────────────────────────────────────────────┘
+                          ↓ keyed by
+┌─────────────────────────────────────────────────────────────┐
+│  Layer 1 — Files (Bee /bzz with swarm-act: true)            │
+│  Each chunk encrypted. Each upload writes a new entry into  │
+│  the ACT history chain.                                     │
+└─────────────────────────────────────────────────────────────┘
+</code></pre>
+<p><strong>The critical invariant</strong>: every operation (file upload, grantee add/revoke, metadata update) returns a new <code>Swarm-Act-History-Address</code>. That address must be passed to the <strong>next</strong> operation. Breaking the chain means grantees lose access to everything written after the break — Bee can&#39;t link the new operation to the existing grant list.</p>
+<p>The latest history address lives in <code>LocalDriveMetadata.actHistoryRef</code> (localStorage). After every ACT op, Nook reads the response header <code>Swarm-Act-History-Address</code> and stores it.</p>
+<hr>
+<h2 id="identifiers">Identifiers</h2>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Source</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>batchID</code></td>
+<td>64-char hex</td>
+<td>Bee <code>/stamps</code></td>
+<td>The stamp. Drives a 1:1 mapping — one stamp = one drive.</td>
+</tr>
+<tr>
+<td><code>actPublisher</code></td>
+<td>66-char hex (compressed secp256k1)</td>
+<td>Bee <code>/addresses → publicKey</code></td>
+<td>The Bee node&#39;s pubkey under which content was encrypted. Recipients need it to decrypt.</td>
+</tr>
+<tr>
+<td><code>actHistoryRef</code></td>
+<td>64-char hex</td>
+<td>Response header on every ACT op</td>
+<td>Latest entry in the chain. Threads each op forward.</td>
+</tr>
+<tr>
+<td><code>granteeRef</code></td>
+<td>64-char hex</td>
+<td>Returned by <code>POST /grantee</code></td>
+<td>The current grantee-list reference. Updated by add/revoke.</td>
+</tr>
+<tr>
+<td><code>metadata feed topic</code></td>
+<td>64-char hex</td>
+<td><code>keccak256(batchId + &quot;nook-drive-meta&quot;)</code></td>
+<td>Per-drive deterministic feed where the metadata pointer lives.</td>
+</tr>
+<tr>
+<td><code>metadataRef</code></td>
+<td>64-char hex</td>
+<td>Output of metadata upload</td>
+<td>The ACT-encrypted JSON blob; feed points here.</td>
+</tr>
+<tr>
+<td><code>metadataHistoryRef</code></td>
+<td>64-char hex</td>
+<td>Response header on metadata upload</td>
+<td>ACT history after the metadata write.</td>
+</tr>
+</tbody></table>
+<p><strong>Important: <code>actPublisher</code> is <code>bpub</code>, not <code>wpub</code>.</strong> ACT encrypts content under the Bee node&#39;s key, not the wallet&#39;s. The metadata feed itself is signed by the wallet-derived signing key, but the encryption layer is <code>bpub</code>-rooted.</p>
+<hr>
+<h2 id="why-bpub-for-act-and-not-the-wallet-derived-key">Why <code>bpub</code> for ACT (and not the wallet-derived key)?</h2>
+<p>Bee&#39;s ACT implementation pre-dates Nook&#39;s wallet-derived signer. The Bee node generates and stores its own keypair at <code>&lt;data-dir&gt;/keys/swarm.key</code>; that&#39;s the only key Bee can use to encrypt chunks via ACT today. We feed <code>bpub</code> into the grantee list because Bee will only decrypt for grantees keyed off Bee node keys.</p>
+<p>Consequences:</p>
+<ul>
+<li>A user&#39;s encrypted-drive access is <strong>tied to their specific Bee installation</strong>. Reinstalling = new <code>bpub</code> = lost access to existing grants.</li>
+<li>Two devices for the same user need to be granted separately (each device has its own <code>bpub</code>).</li>
+<li>Cross-device portability needs an upstream Bee change (&quot;external-signer ACT&quot; — see <a href="../.claude/...">project memories</a> — not yet shipped).</li>
+</ul>
+<p>Until that lands, Nook treats the wallet-derived identity (<code>wpub</code>) as the <strong>portable identity</strong> and <code>bpub</code> as the <strong>per-device encryption identity</strong>. The contact link bundles both so newer Nook versions can use <code>bpub</code> today and migrate to <code>wpub</code> later without breaking existing contacts.</p>
+<hr>
+<h2 id="file-upload-flow-encrypted-drive">File upload flow (encrypted drive)</h2>
+<pre><code>1. UI calls beeApi.uploadFileWithACT(file, stampId, historyRef?)
+2. UI POSTs to /bzz on Bee with headers:
+     swarm-postage-batch-id: &lt;stampId&gt;
+     swarm-act: true
+     swarm-act-history-address: &lt;historyRef&gt;   // omitted on first upload
+     (No &quot;/act/upload&quot; Koa proxy needed — uploads go direct to Bee.)
+3. Bee returns:
+     - reference: &lt;chunk hash&gt;
+     - response header Swarm-Act-History-Address: &lt;newHistoryRef&gt;
+4. Nook stores newHistoryRef as actHistoryRef in LocalDriveMetadata.
+5. Nook writes a new metadata feed entry (see &quot;Metadata feed write&quot; below).
+</code></pre>
+<p>Routing: file uploads go <strong>direct to Bee</strong> (port 1633 / <code>/bee-api</code> in dev). The <code>swarm-act-*</code> headers aren&#39;t header-stripping victims like <code>immutable</code> is on <code>/buy-stamp</code> — browsers preserve them on direct fetches.</p>
+<hr>
+<h2 id="file-download-flow-encrypted-drive">File download flow (encrypted drive)</h2>
+<pre><code>1. UI calls beeApi.downloadFileWithACT(reference, actPublisher, historyRef)
+2. UI GETs /act/download/&lt;reference&gt;?publisher=&lt;bpub&gt;&amp;history=&lt;historyRef&gt; on Koa
+3. Koa proxies to Bee at GET /bzz/&lt;reference&gt; with headers:
+     swarm-act: true
+     swarm-act-publisher: &lt;bpub&gt;
+     swarm-act-history-address: &lt;historyRef&gt;
+4. Bee checks: is the requesting Bee node in the grantee list for this history?
+   - Yes → decrypts and streams the file
+   - No → 403
+</code></pre>
+<p>The Koa proxy exists for download because the browser <strong>does</strong> strip <code>swarm-act-*</code> headers on cross-origin fetches in production (the dashboard is served from one port, Bee runs on another). Hence <code>/act/download</code> injects them server-side. See <code>src/server.ts</code> around line 400.</p>
+<hr>
+<h2 id="grantee-management">Grantee management</h2>
+<p>Three Koa routes wrap the Bee <code>/grantee</code> endpoints. They exist because (a) header injection again, and (b) we want a unified place to log/validate.</p>
+<table>
+<thead>
+<tr>
+<th>Route</th>
+<th>Bee underneath</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>POST /grantee</code></td>
+<td><code>POST /grantee</code></td>
+<td>Create the initial grantee list. Returns <code>ref</code> + new <code>historyRef</code>.</td>
+</tr>
+<tr>
+<td><code>PATCH /grantee/:ref</code></td>
+<td><code>PATCH /grantee/:ref</code></td>
+<td>Add or revoke grantees on an existing list. Returns updated <code>ref</code> + new <code>historyRef</code>.</td>
+</tr>
+<tr>
+<td><code>GET /grantee/:ref</code></td>
+<td><code>GET /grantee/:ref</code></td>
+<td>List current grantees (debug + UI display).</td>
+</tr>
+</tbody></table>
+<p>All three preserve the ACT history chain: every mutating call returns a new <code>Swarm-Act-History-Address</code> that must thread into the next op.</p>
+<h3 id="grant-inputs-accepted-by-sharemodal">Grant inputs accepted by ShareModal</h3>
+<p><code>handleGrant</code> in <code>ui/src/components/ShareModal.tsx</code> accepts three input formats — all resolve to a <code>bpub</code> before calling <code>createGrantees</code>/<code>patchGrantees</code>:</p>
+<ol>
+<li><strong>Nook address</strong> (<code>0x… 42 hex</code>) — resolve via <code>identity.resolve(bee, address)</code> → <code>bpub</code> from the published identity feed.</li>
+<li><strong>Contact link</strong> (<code>nook://contact/v1?…</code>) — decode → <code>bpub</code> from the URL payload. Also auto-saves the contact to localStorage.</li>
+<li><strong>Raw bpub</strong> (66 or 130 hex chars) — used directly. Fallback for power users / out-of-band keys.</li>
+</ol>
+<p>Self-grants (address matches <code>signer.getAddress()</code>) skip the contact auto-save step but the grant itself proceeds — Nook users granting their own drive to test sharing is common and intentional.</p>
+<h3 id="revoke">Revoke</h3>
+<p>Same <code>PATCH /grantee/:ref</code> with the bpub in the <code>revoke</code> array. Bee removes the bpub from the list; the next history entry is gated on the smaller list.</p>
+<p><strong>Revoking doesn&#39;t remove existing access</strong> to already-downloaded content. The revoked user can no longer decrypt <strong>future</strong> uploads or new metadata-feed updates. Anything they cached locally before revocation is theirs.</p>
+<hr>
+<h2 id="metadata-feed-nook-s-application-layer">Metadata feed — Nook&#39;s application layer</h2>
+<p>The grantee + ACT layers alone don&#39;t give grantees a way to know <strong>what&#39;s in the drive</strong>. They&#39;d have to know every file reference out-of-band. The metadata feed solves this:</p>
+<pre><code>Drive Owner&#39;s Bee:
+  topic = keccak256(batchId + &quot;nook-drive-meta&quot;)
+  signer = wallet-derived signing key (NookSigner.getSigningKey())
+  feed reader/writer at this topic
+    ↓
+  Latest feed value = reference to ACT-encrypted metadata JSON
+    ↓
+  Decrypted payload (DriveMetadata):
+    { name, encrypted, created, actPublisher, actHistoryRef,
+      granteeRef, granteeCount, files: [{ name, reference, historyRef, size, type, uploadedAt }, …] }
+</code></pre>
+<p>Key properties:</p>
+<ul>
+<li><strong>Topic is public</strong> — anyone can read the feed wrapper, but the payload it points to is ACT-encrypted. Non-grantees can see the drive exists; they can&#39;t decrypt the file list.</li>
+<li><strong>Topic is deterministic per stamp</strong> — no need to share a topic; recipients derive it from <code>batchId</code>.</li>
+<li><strong>Signer is wallet-derived</strong> (not <code>bpub</code>). The feed writer needs the owner&#39;s private key, which Bee&#39;s swarm-key isn&#39;t well-suited for sharing. Using <code>signingKey</code> keeps Bee unaware of who&#39;s writing the feed.</li>
+<li><strong>Metadata payload is full file list</strong> — clients reading the feed get the complete drive state in one ACT-decrypted fetch. No mantaray walking on the client side.</li>
+</ul>
+<p>Implementation: <code>ui/src/api/feeds.ts</code>.</p>
+<h3 id="metadata-write-flow">Metadata write flow</h3>
+<pre><code>1. UI updates DriveMetadata object (adds/removes a file entry, etc.)
+2. POST /act/upload-metadata to Koa with the JSON + current historyRef
+3. Koa POSTs to Bee /bzz with swarm-act headers, returns reference + new historyRef
+4. UI writes the new reference to the metadata feed:
+     bee.makeFeedWriter(topic).uploadReference(stampId, metadataRef)
+5. UI updates LocalDriveMetadata.actHistoryRef to the new historyRef
+</code></pre>
+<p>Feed updates use <code>bee-js</code>&#39;s <code>makeFeedWriter</code> — never reimplement the SOC-signing yourself. (We tried; it fails with <code>400 chunk write error</code>. bee-js handles all the signing/format correctly.)</p>
+<h3 id="metadata-read-flow">Metadata read flow</h3>
+<pre><code>1. UI calls readDriveMetadata(signer, batchId, actPublisher, actHistoryRef)
+2. Compute topic = keccak256(batchId + &quot;nook-drive-meta&quot;)
+3. bee.makeFeedReader(topic, ownerAddress).downloadReference() → metadataRef
+4. GET /bee-api/bzz/&lt;metadataRef&gt; with swarm-act headers (via Koa /act/download)
+5. Decrypted text is JSON → parse as DriveMetadata
+6. If any step fails, return null (drive shows as &quot;no access&quot;)
+</code></pre>
+<p>Non-grantees fail at step 4 with 403. Their UI sees the drive but can&#39;t list the files.</p>
+<hr>
+<h2 id="share-links">Share links</h2>
+<p>Share links transport the <strong>information needed to read a drive</strong>, not access itself. Adding someone as a grantee is a separate, intentional step.</p>
+<h3 id="feed-based-modern">Feed-based (modern)</h3>
+<pre><code>swarm://feed?topic=&lt;hex&gt;&amp;owner=&lt;wpubAddress&gt;&amp;publisher=&lt;bpub&gt;
+</code></pre>
+<p>The recipient&#39;s app:</p>
+<ol>
+<li>Reads the feed at <code>topic</code> owned by <code>owner</code>.</li>
+<li>Gets the metadata reference.</li>
+<li>Attempts ACT-decrypt with <code>publisher</code> (the owner&#39;s <code>bpub</code>).</li>
+<li>If successful → drive renders, file list visible. If 403 → drive listed but un-readable, with a &quot;request access&quot; prompt.</li>
+</ol>
+<p>This is the format the <strong>Share contact link → Add shared drive</strong> flow uses today.</p>
+<h3 id="legacy-snapshot">Legacy snapshot</h3>
+<pre><code>swarm://snapshot?ref=&lt;hex&gt;&amp;publisher=&lt;bpub&gt;
+</code></pre>
+<p>Older format — a fixed metadata snapshot at a specific reference. No auto-updates as the owner adds files. Kept around for backwards compatibility but new share UIs default to the feed form.</p>
+<h3 id="what-share-links-don-t-do">What share links don&#39;t do</h3>
+<ul>
+<li><strong>They don&#39;t grant access.</strong> Pasting a link gives the recipient the <em>coordinates</em> to read; they&#39;re still blocked by ACT until the owner adds their <code>bpub</code> to the grantee list.</li>
+<li><strong>They don&#39;t bundle decryption keys.</strong> Decryption is gated by <code>bpub</code> enrollment on the owner&#39;s side, not by anything in the link.</li>
+<li><strong>They don&#39;t auto-update past a key rotation.</strong> If the owner&#39;s <code>bpub</code> changes (data purge), all previously-shared feed links break.</li>
+</ul>
+<hr>
+<h2 id="localdrivemetadata-per-drive-state-in-localstorage">LocalDriveMetadata — per-drive state in localStorage</h2>
+<pre><code class="language-ts">interface LocalDriveMetadata {
+  encrypted: boolean
+  actPublisher?: string         // bpub at time of drive creation
+  actHistoryRef?: string        // latest ACT history (advanced on every op)
+  granteeRef?: string           // current grantee-list ref
+  granteeCount?: number         // including owner
+  creatorWpub?: string          // for future migration to wpub-based ACT
+}
+</code></pre>
+<p>Persisted in localStorage under <code>nook-drive-metadata</code>. Keyed by <code>batchID</code>.</p>
+<p>Why localStorage instead of always reading the feed:</p>
+<ul>
+<li>Fast lookup at app boot — UI can show &quot;Encrypted&quot; badge without a network call</li>
+<li>Survives temporary Bee unavailability</li>
+<li>The metadata feed is the source of truth; localStorage is a cache</li>
+</ul>
+<p>If the cache disagrees with the feed, the feed wins. The cache is updated after every successful operation.</p>
+<h3 id="creatorwpub-migration-anchor"><code>creatorWpub</code> — migration anchor</h3>
+<p>When/if Swarm ships <strong>portable stamps + external-signer ACT</strong>, drives will migrate from <code>bpub</code> keying to <code>wpub</code> keying. The current Bee-node-bound model is a stopgap. We store <code>creatorWpub</code> on drives created after that field landed so the migration script can re-anchor each drive from <code>bpub</code> to <code>wpub</code> without losing access. Drives created before this field exists will need a manual re-grant during migration.</p>
+<hr>
+<h2 id="failure-modes-gotchas">Failure modes &amp; gotchas</h2>
+<h3 id="broken-history-chain">Broken history chain</h3>
+<p>If a client writes an ACT operation without passing the latest <code>historyRef</code>, Bee can&#39;t link the new entry to the existing grants. Grantees retain access to anything in the chain up to the break, but lose access to everything after.</p>
+<p>Defenses:</p>
+<ul>
+<li><code>LocalDriveMetadata.actHistoryRef</code> is updated after every op (file upload, grantee add/revoke, metadata write).</li>
+<li>Koa endpoints log the request <code>historyRef</code> so we can audit chains.</li>
+<li>TODO: a &quot;repair drive history&quot; tool that walks the feed and re-threads. Not yet built.</li>
+</ul>
+<h3 id="grantee-bpub-stale-due-to-reinstall">Grantee bpub stale due to reinstall</h3>
+<p>User A grants User B by Nook address. The identity feed resolves B&#39;s old <code>bpub</code> (from before B reinstalled). Grant succeeds on Bee&#39;s side, but B&#39;s current Bee node has a different key → B can&#39;t decrypt.</p>
+<p><strong>Symptom</strong>: B sees the drive in &quot;Shared with me&quot; but every download returns 403.</p>
+<p><strong>Fix today</strong>: B republishes their identity feed. A revokes the old <code>bpub</code> grant and adds B&#39;s new <code>bpub</code>. Tedious.</p>
+<p><strong>Possible future fix</strong>: detect during grant when the resolved <code>bpub</code> doesn&#39;t match the recipient&#39;s currently-published <code>bpub</code> and prompt the user to re-resolve.</p>
+<h3 id="metadata-feed-read-by-non-grantee">Metadata feed read by non-grantee</h3>
+<p>By design: the feed itself is readable by anyone, but the metadata payload is ACT-encrypted. <code>readDriveMetadata</code> returns <code>null</code> on a 403 from the metadata download. The UI surfaces this as &quot;Drive imported but you don&#39;t have access — ask the owner to grant your Nook address.&quot;</p>
+<h3 id="two-writers-to-the-same-drive">Two writers to the same drive</h3>
+<p>Each Nook drive has exactly one owner — the wallet that created the stamp. The metadata feed is signed by that owner&#39;s wallet-derived key. If a grantee wanted to add files, they&#39;d need to be issued the owner&#39;s signing key (we don&#39;t support this) or run a separate metadata feed (we don&#39;t support this either).</p>
+<p><strong>Today: encrypted drives are single-writer, multi-reader.</strong> Multi-writer collaboration is out of scope.</p>
+<h3 id="revoke-is-permanent-for-the-chain-but-not-for-cached-content">Revoke is permanent for the chain, but not for cached content</h3>
+<p>Bee&#39;s revoke removes the bpub from the future grantee list. It doesn&#39;t and can&#39;t reach back into anything the revoked user already downloaded. If they cached files locally, those stay theirs.</p>
+<p>If a user really needs to lock out a former grantee from future uploads, revocation is sufficient. If they need to lock the user out of past content, the only path is to create a new drive, re-upload, and not invite them. This is inherent to Swarm&#39;s content-addressed model.</p>
+<hr>
+<h2 id="code-path-quick-reference">Code path quick reference</h2>
+<table>
+<thead>
+<tr>
+<th>Concern</th>
+<th>File</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Encrypted file upload</td>
+<td><code>ui/src/api/bee.ts → uploadFileWithACT</code></td>
+</tr>
+<tr>
+<td>Encrypted file download</td>
+<td><code>ui/src/api/bee.ts → downloadFileWithACT</code> (Koa proxy)</td>
+</tr>
+<tr>
+<td>Metadata read</td>
+<td><code>ui/src/api/feeds.ts → readDriveMetadata</code></td>
+</tr>
+<tr>
+<td>Metadata write</td>
+<td><code>ui/src/api/feeds.ts → writeDriveMetadata</code></td>
+</tr>
+<tr>
+<td>Grantee add/revoke</td>
+<td><code>ui/src/api/server.ts → createGrantees / patchGrantees</code></td>
+</tr>
+<tr>
+<td>Grantee proxy routes</td>
+<td><code>src/server.ts</code> — search &quot;/grantee&quot;</td>
+</tr>
+<tr>
+<td>ACT download proxy</td>
+<td><code>src/server.ts</code> — search &quot;/act/download&quot;</td>
+</tr>
+<tr>
+<td>ACT metadata upload proxy</td>
+<td><code>src/server.ts</code> — search &quot;/act/upload-metadata&quot;</td>
+</tr>
+<tr>
+<td>Per-drive cache</td>
+<td><code>ui/src/hooks/useDriveMetadata.ts</code></td>
+</tr>
+<tr>
+<td>Share-link encode/decode</td>
+<td><code>ui/src/notify/share-link.ts</code></td>
+</tr>
+<tr>
+<td>Grant flow UI</td>
+<td><code>ui/src/components/ShareModal.tsx</code></td>
+</tr>
+<tr>
+<td>Add-shared-drive UI</td>
+<td><code>ui/src/components/AddSharedDriveModal.tsx</code></td>
+</tr>
+</tbody></table>
+
+      </section>
+
+      <section id="messaging" class="doc">
+<h1 id="messaging-swarm-notify">Messaging (Swarm Notify)</h1>
+<p>This doc covers how Nook ships in-app messaging on top of the <code>@swarm-notify/sdk</code> library: how identity, on-chain notifications, and per-mailbox Swarm feeds combine to deliver &quot;Alice can send Bob a message&quot; without a central server.</p>
+<blockquote>
+<p>One-line summary: each user has a per-recipient Swarm feed acting as a mailbox. Senders write ECDH-encrypted messages keyed off the recipient&#39;s <code>wpub</code>; the recipient polls the feed. When Alice is messaging someone who hasn&#39;t added her yet, she also fires a tiny on-chain &quot;wake-up&quot; notification so they see her as a pending invitation.</p>
+</blockquote>
+<hr>
+<h2 id="mental-model-three-swappable-rails">Mental model — three swappable rails</h2>
+<p>Messaging composes three independent transports:</p>
+<table>
+<thead>
+<tr>
+<th>Rail</th>
+<th>What it carries</th>
+<th>Decentralized via</th>
+<th>Cost</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Identity feed</strong></td>
+<td>&quot;Who is <code>0xabc…</code>?&quot; → wpub + bpub</td>
+<td>Swarm feeds</td>
+<td>Stamp chunk</td>
+</tr>
+<tr>
+<td><strong>Mailbox</strong></td>
+<td>Encrypted messages</td>
+<td>Swarm feeds per recipient</td>
+<td>Stamp chunk per send</td>
+</tr>
+<tr>
+<td><strong>Registry</strong></td>
+<td>&quot;Hey, I want to talk to you&quot; wake-up</td>
+<td>Gnosis L2 contract</td>
+<td>~0.001 xDAI gas</td>
+</tr>
+</tbody></table>
+<p>The recipient polls the mailbox feed regardless. The registry is <strong>optional</strong> and used only when the sender knows the recipient hasn&#39;t added them yet (so the recipient&#39;s mailbox poll wouldn&#39;t include the sender&#39;s feed). It surfaces the message as an invitation banner that the recipient can accept → adds the sender as a contact → mailbox poll picks up the real message.</p>
+<p>Recipients with the sender in their contact list don&#39;t need the registry — their mailbox poll already covers that feed.</p>
+<hr>
+<h2 id="identifiers-who-is-who">Identifiers — who is who</h2>
+<p>Same <code>wpub</code> / <code>bpub</code> / Nook address layer as <a href="identity.md">identity.md</a>. For messaging specifically:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Recipient&#39;s <strong>Nook address</strong></td>
+<td>What the sender types / picks from contacts</td>
+</tr>
+<tr>
+<td>Recipient&#39;s <strong><code>wpub</code></strong></td>
+<td>Used to derive the ECDH shared secret that encrypts the message</td>
+</tr>
+<tr>
+<td>Recipient&#39;s <strong><code>bpub</code></strong></td>
+<td>Unused — <code>bpub</code> is for ACT/drives, not messaging</td>
+</tr>
+</tbody></table>
+<p>A common mistake when wiring new features: confusing <code>wpub</code> (messaging) with <code>bpub</code> (drives). The contact link bundles both for exactly this reason — the right key is always at hand.</p>
+<h3 id="nookcontact-schema"><code>NookContact</code> schema</h3>
+<pre><code class="language-ts">interface NookContact {
+  id: string               // Nook address, lowercased
+  nickname: string
+  walletPublicKey: string  // wpub — required
+  beePublicKey: string     // bpub — required
+  ensName?: string
+  source: &#39;identity-feed&#39; | &#39;share-link&#39; | &#39;drive-share&#39;
+  addedAt: number
+}
+</code></pre>
+<p>All three identity fields are required by construction. There&#39;s no &quot;anonymous&quot; contact in Nook — to message someone, you need their wpub. The <code>source</code> field is for UX (badge in the contact list) and future-proofing.</p>
+<p><code>toLibraryContact()</code> in <code>ui/src/notify/types.ts</code> adapts to the swarm-notify SDK&#39;s <code>Contact</code> shape. The Nook-specific extensions (<code>source</code>, <code>addedAt</code>) stay local.</p>
+<hr>
+<h2 id="mailbox-per-recipient-feed">Mailbox — per-recipient feed</h2>
+<p>Each user has <strong>one mailbox per correspondent</strong>. Concretely: when Alice wants to send Bob a message, Alice writes to a Swarm feed whose topic and signer encode &quot;Alice → Bob&quot;. Bob reads the same topic to fetch incoming messages from Alice.</p>
+<p>The SDK handles the feed topic derivation; Nook just calls:</p>
+<pre><code class="language-ts">await mailbox.checkInbox(bee, mySigningKey, myAddress, contacts)
+</code></pre>
+<p>which polls every contact&#39;s outbound feed (contact → me) and returns the decrypted messages. Encryption is ECDH between <code>signingKey</code> and the contact&#39;s <code>wpub</code>, so only the recipient can decrypt.</p>
+<h3 id="what-s-actually-transmitted">What&#39;s actually transmitted</h3>
+<p>The <code>SdkMessage</code> payload:</p>
+<pre><code class="language-ts">{
+  v: 1
+  subject: string
+  body: string
+  ts: number               // unix ms
+  sender: string           // ETH address
+  type?: &#39;message&#39; | &#39;drive-share&#39;
+  attachments?: Attachment[]
+  driveShareLink?: string  // when type === &#39;drive-share&#39;
+  driveName?: string
+  fileCount?: number
+}
+</code></pre>
+<p>Nook treats <code>body</code> as plain text. The optional <code>type === &#39;drive-share&#39;</code> carries an embedded share link so the recipient can one-click import a shared drive (see &quot;Drive-share messages&quot; below).</p>
+<h3 id="send-flow">Send flow</h3>
+<pre><code>1. User types in the Messages thread, clicks Send.
+2. UI calls mailbox.send(bee, mySigningKey, recipient, { body, ts, sender, type? })
+   - SDK encrypts with shared secret derived from mySigningKey + recipient.walletPublicKey
+   - SDK writes to the recipient-specific feed using mySigningKey as signer
+   - Returns when the feed update chunk is uploaded
+3. UI appends the message to local threads via appendSent()
+4. UI optionally fires registry.sendNotification (see Wake-ups below)
+</code></pre>
+<h3 id="receive-flow">Receive flow</h3>
+<p><code>useInboxPolling</code> (<code>ui/src/hooks/useInboxPolling.ts</code>) runs at the Layout level so messages keep arriving even when the Messages page isn&#39;t mounted:</p>
+<pre><code>every 30 seconds:
+  contacts = loadContacts().filter(c =&gt; c.id !== myAddr)
+  if contacts.length === 0: return
+  inbox = await mailbox.checkInbox(bee, mySigningKey, myAddr, contacts)
+  for each { contact, messages } in inbox:
+    threads = mergeReceived(threads, contact.ethAddress, messages)
+  if newCount &gt; 0 &amp;&amp; notificationSound &amp;&amp; !onContactsPage:
+    playCricketChirp()
+</code></pre>
+<p>Self is filtered out — if the user added their own contact link for solo testing, every poll would hit <code>myAddr → myAddr</code> (404) without the filter.</p>
+<p><strong>Polling cadence</strong>: 30 seconds. Trade-off between responsiveness and Bee RPC load. Increase for battery-friendly mode if needed in the future.</p>
+<hr>
+<h2 id="wake-ups-the-on-chain-registry">Wake-ups — the on-chain registry</h2>
+<p>The mailbox polling only checks the feeds of people <strong>already in your contact list</strong>. If Alice sends Bob a message but Bob has never added Alice, his next poll will pass over her feed entirely.</p>
+<p>The registry solves this. It&#39;s a tiny Gnosis L2 contract at <code>0x318aE190B77bA39fbcdFA4e84BB7CFD16b846Fcf</code> (constant in <code>notify/constants.ts</code>). Sending an on-chain event there with the recipient&#39;s encrypted address as payload tells the recipient &quot;someone wants to reach you&quot; — the recipient discovers it on the next registry poll.</p>
+<h3 id="send-a-wake-up">Send a wake-up</h3>
+<p>In <code>ShareModal</code> and <code>Messages</code> &quot;Send invite&quot; flows:</p>
+<pre><code>1. User opts in via the &quot;Also send on-chain wake-up (~0.001 xDAI)&quot; checkbox.
+2. UI signs and submits registry.sendNotification(walletClient, REGISTRY_ADDRESS, recipientAddress)
+   - Encrypted payload on-chain; only the recipient can decrypt it.
+3. UI records the sent timestamp via recordInviteSent(contactId).
+4. tx mines on Gnosis (~5s); event is now in the chain.
+</code></pre>
+<p>The user pays gas (~0.001 xDAI) from their connected wallet (not the Nook-managed Bee wallet). This is the only place Nook uses the user&#39;s wallet for on-chain writes.</p>
+<h3 id="receive-wake-ups">Receive wake-ups</h3>
+<p><code>useRegistryPolling</code> (<code>ui/src/hooks/useRegistryPolling.ts</code>) runs every 2 minutes (slower than the mailbox; RPC calls are heavier):</p>
+<pre><code>every 2 minutes:
+  fromBlock = getRegistryCursor(myAddr)
+  notifications = await registry.pollNotifications(provider, REGISTRY_ADDRESS, myAddr, mySigningKey, fromBlock)
+  for each { payload, blockNumber } in notifications:
+    if knownContacts.has(payload.sender): skip  # mailbox will deliver
+    invitations = addInvitation(invitations, payload.sender, blockNumber)
+  setRegistryCursor(myAddr, highestBlock + 1)
+</code></pre>
+<p>The cursor stays per-identity (<code>nook-registry-cursor:&lt;myAddr&gt;</code>) so each user only re-fetches from where they left off.</p>
+<p>Notifications from known contacts are silently dropped — their messages will arrive via the mailbox poll. The registry is purely for first-contact bootstrapping.</p>
+<h3 id="invitations-storage">Invitations storage</h3>
+<pre><code class="language-ts">interface Invitation {
+  senderAddr: string
+  blockNumber: number
+  ts: number               // first observed locally
+  processed: boolean       // false until user adds them as contact
+}
+</code></pre>
+<p>Persisted at <code>nook-invitations-v1</code>. Once the user accepts (adds the sender as a contact), <code>processed: true</code> and the invitation drops out of the inbox banner. The next mailbox poll picks up the real message.</p>
+<hr>
+<h2 id="local-thread-storage">Local thread storage</h2>
+<p><code>@swarm-notify/sdk</code> reads received messages from the contact&#39;s outgoing feed but doesn&#39;t store anything itself. Nook keeps the local copy for both directions:</p>
+<pre><code>nook-messages-v1      → { [counterparty]: StoredMessage[] }
+nook-messages-read-v1 → { [counterparty]: lastReadTimestamp }
+</code></pre>
+<p><code>StoredMessage</code> schema (<code>ui/src/notify/messages.ts</code>):</p>
+<pre><code class="language-ts">interface StoredMessage {
+  id: string                 // ${ts}-${direction}-${shortBody} for dedupe
+  counterparty: string       // OTHER party, lowercased
+  ts: number                 // unix ms
+  body: string               // plain text
+  direction: &#39;sent&#39; | &#39;received&#39;
+  kind?: &#39;message&#39; | &#39;drive-share&#39;
+  driveShareLink?: string    // when kind === &#39;drive-share&#39;
+  driveName?: string
+  fileCount?: number
+}
+</code></pre>
+<h3 id="why-store-sent-messages-locally">Why store sent messages locally</h3>
+<p>The SDK only reads received messages. Sent messages stay in our local cache until the SDK gains a &quot;read my own outbox&quot; call. If a user wipes their localStorage / switches devices, their <strong>sent</strong> message history is lost — received messages can be re-read from the feed.</p>
+<p>Long-term improvement tracked separately: persist sent messages somewhere reachable (Swarm-side or backend) so cross-device history works.</p>
+<h3 id="merge-semantics">Merge semantics</h3>
+<p><code>mergeReceived(threads, counterparty, received)</code> replaces the <strong>received</strong> slice for that counterparty with fresh SDK data, preserving <strong>sent</strong> messages. This is idempotent — running it on the same SDK output produces the same thread.</p>
+<p>The dedupe key is <code>id = ${ts}-${direction}-${body.slice(0, 32)}</code>. If the SDK returns the same message twice (re-poll, etc.), only one ends up in the thread.</p>
+<hr>
+<h2 id="connection-state-machine">Connection state machine</h2>
+<p>Per-contact connection state is computed at read time from two signals:</p>
+<ul>
+<li><strong>inbound bridge</strong>: do we have at least one received message from them?</li>
+<li><strong>outbound bridge</strong>: have we fired a registry wake-up recently?</li>
+</ul>
+<pre><code>deriveConnectionState(contactId, hasInbound, now) →
+  - &#39;connected&#39;           — hasInbound = true (they&#39;ve replied at least once)
+  - &#39;invite-sent-fresh&#39;   — we sent an invite within 24h, no inbound yet
+  - &#39;invite-sent-stale&#39;   — invite sent &gt; 24h ago, still no inbound
+  - &#39;not-connected&#39;       — no invite, no inbound
+</code></pre>
+<p><code>INVITE_STALE_MS = 24 * 60 * 60 * 1000</code>. The state never gets stored — it&#39;s computed from the timestamp + thread contents every time it&#39;s queried. That way the state can never disagree with reality.</p>
+<h3 id="how-the-ui-uses-it">How the UI uses it</h3>
+<ul>
+<li><strong>ConnectionStatusBadge</strong> (<code>ui/src/apps/Messages.tsx</code>) — green/yellow/gray pill next to the contact name in the embedded thread header</li>
+<li><strong>Send-button label</strong> in compose:<ul>
+<li><code>not-connected</code> → <strong>&quot;Send invite&quot;</strong> (offers on-chain wake-up checkbox)</li>
+<li><code>invite-sent-fresh</code> → <strong>&quot;Resend&quot;</strong> (same modal, just label differs)</li>
+<li><code>invite-sent-stale</code> → <strong>&quot;Resend&quot;</strong> (highlighted; suggests the previous invite likely failed)</li>
+<li><code>connected</code> → <strong>&quot;Send&quot;</strong> (normal message; no wake-up offered)</li>
+</ul>
+</li>
+</ul>
+<p>The &quot;wake-up&quot; checkbox is only shown for non-connected states. Once you&#39;re connected, the recipient&#39;s mailbox poll covers everything.</p>
+<h3 id="recovery-semantics">Recovery semantics</h3>
+<ul>
+<li>When the recipient replies → <code>hasInbound = true</code> → state flips to <code>connected</code>, the invite timestamp is forgotten.</li>
+<li>When you remove a contact → <code>removeInvitationsFor(senderAddr)</code> runs so a future wake-up from them re-surfaces as a fresh invitation instead of being deduped against a ghost row.</li>
+</ul>
+<hr>
+<h2 id="unread-counts-sidebar-badge">Unread counts &amp; sidebar badge</h2>
+<pre><code class="language-ts">unreadCount(thread, cursor) = thread.filter(m =&gt; m.direction === &#39;received&#39; &amp;&amp; m.ts &gt; cursor).length
+totalUnread(threads, cursors) = sum across all counterparties
+</code></pre>
+<p>The cursor is updated by <code>markRead(cursors, counterparty, ts)</code> when the user views a thread — set to <code>Date.now()</code> by default, but parameterizable for test scenarios.</p>
+<p>The sidebar badge in <code>Layout.tsx</code> calls <code>totalUnread()</code> on a 2-second interval and on every route change, then passes the result as <code>badge</code> to the Contacts SidebarMenuItem. Polling is cheap (localStorage read only); the route-change recompute means opening Contacts clears the pill immediately as cursors update.</p>
+<p>The <code>99+</code> cap is rendered by the Sidebar primitive — totals over 99 stay as &quot;99+&quot;.</p>
+<hr>
+<h2 id="cricket-chirp">Cricket chirp</h2>
+<p>Audio notification on new received messages. ~30 lines of Web Audio API synth at <code>ui/src/lib/cricket.ts</code> — no asset, no network.</p>
+<h3 id="gating">Gating</h3>
+<p>A chirp plays only when <strong>all</strong> of:</p>
+<ul>
+<li>New messages were added to a thread in the latest inbox poll</li>
+<li><code>useAppStore.notificationSound === true</code> (toggle in Settings)</li>
+<li><code>document.hidden === true</code> <strong>OR</strong> the current route isn&#39;t <code>#/contacts</code></li>
+</ul>
+<p>Logic lives in <code>useInboxPolling.ts</code> right after <code>mergeReceived</code>. The check <code>window.location.hash.startsWith(&#39;#/contacts&#39;)</code> does the on-Contacts detection — hash routing means we read from <code>location.hash</code> instead of <code>pathname</code>.</p>
+<h3 id="why-hidden-or-not-on-contacts">Why hidden-or-not-on-Contacts</h3>
+<p>Goldilocks zone:</p>
+<ul>
+<li><strong>Hidden-tab only</strong>: too quiet — user can be in Drive and miss messages entirely</li>
+<li><strong>Always</strong>: too loud — every reply in an open thread chirps</li>
+<li><strong>Hidden OR off-Contacts</strong>: silent when the user is looking at the conversation; audible otherwise</li>
+</ul>
+<h3 id="the-autoplay-policy-gotcha">The autoplay-policy gotcha</h3>
+<p>Browsers block AudioContext until the first user gesture. The Settings toggle click counts as that gesture — toggling the chirp on unlocks the context for the rest of the tab session. After that, chirps fire freely.</p>
+<p>If the toggle has never been clicked in the session, the very first chirp might be inaudible until the user interacts with the page. The toggle persists to localStorage (<code>nook:notification-sound</code>) so the <em>preference</em> survives — but the AudioContext unlock is per-session.</p>
+<h3 id="settings-ui">Settings UI</h3>
+<p>Settings → Notifications card, single button: <strong>Sound on</strong> (filled) / <strong>Sound off</strong> (outline). Default: on.</p>
+<hr>
+<h2 id="drive-share-messages">Drive-share messages</h2>
+<p>A drive share doubles as a message. When User A grants User B drive access via the ShareModal and ticks &quot;Send notification to B&quot;, Nook:</p>
+<ol>
+<li>Generates the drive share link.</li>
+<li>Sends a <code>mailbox.send</code> call with <code>type: &#39;drive-share&#39;</code> and the link in <code>driveShareLink</code>.</li>
+<li>Local thread gets a <code>kind: &#39;drive-share&#39;</code> entry via <code>appendSentDriveShare()</code>.</li>
+</ol>
+<p>The recipient&#39;s UI renders these as a card with <strong>Add drive</strong> button instead of plain text. Clicking &quot;Add drive&quot; runs the existing &quot;Add shared drive&quot; flow with the link pre-filled — they get the drive in their <strong>Shared with me</strong> tab.</p>
+<p>Why bundle the share with a message instead of two separate operations: the recipient gets a single notification flow (&quot;Crt 1 shared &#39;HackWeekEncrypted&#39; with you · 1 file&quot;) rather than discovering the share silently in their drive list.</p>
+<hr>
+<h2 id="failure-modes-gotchas">Failure modes &amp; gotchas</h2>
+<h3 id="identity-feed-stale-on-either-side">Identity feed stale on either side</h3>
+<p>Same problem as drives — covered in <a href="identity.md">identity.md</a>. If the sender or recipient&#39;s published identity feed has an old <code>wpub</code>, the ECDH shared secret is wrong and the message can&#39;t be decrypted. The mailbox SDK silently skips messages that fail to decrypt, so the recipient just sees nothing.</p>
+<p><strong>Mitigation</strong>: republishing the identity feed fixes it for future messages. Old messages stay undecryptable.</p>
+<h3 id="registry-rpc-blip">Registry RPC blip</h3>
+<p>The registry-poll hook catches errors silently and retries on the next tick. If the Gnosis RPC is down, wake-ups don&#39;t arrive until it recovers; users with mailbox-connected contacts are unaffected.</p>
+<h3 id="pending-invitation-from-removed-contact">Pending invitation from removed contact</h3>
+<p>If user A removes contact B, then B sends a wake-up, the invitation should resurface. <code>removeInvitationsFor</code> is called on contact removal so the dedupe doesn&#39;t suppress new pings. (Without this, a previously-processed invitation row would cause new wake-ups from the same address to be silently dropped.)</p>
+<h3 id="per-origin-localstorage">Per-origin localStorage</h3>
+<p>Threads, contacts, invitations, cursors — all in localStorage. The dev-mode 3002 vs 3054 port confusion (see project memory <code>project_dev_port_gotchas.md</code>) means users testing on both ports will see different message history. Issue #47 tracks moving this state to backend storage.</p>
+<h3 id="drive-shares-to-non-grantees">Drive shares to non-grantees</h3>
+<p>A drive-share message includes the share link, but the recipient still needs to be on the grantee list to decrypt. If the sender sends the message but forgets to actually add the recipient as a grantee, the recipient sees the share card but can&#39;t read the drive (403 on the metadata fetch). The ShareModal flow does both in one click; if you script grants and messages separately, easy to mess up.</p>
+<hr>
+<h2 id="code-path-quick-reference">Code path quick reference</h2>
+<table>
+<thead>
+<tr>
+<th>Concern</th>
+<th>File</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Local thread store</td>
+<td><code>ui/src/notify/messages.ts</code></td>
+</tr>
+<tr>
+<td>Read cursors / unread counting</td>
+<td><code>ui/src/notify/messages.ts → unreadCount, totalUnread, markRead</code></td>
+</tr>
+<tr>
+<td>Contact storage</td>
+<td><code>ui/src/notify/storage.ts</code></td>
+</tr>
+<tr>
+<td>Contact schema + adapter</td>
+<td><code>ui/src/notify/types.ts</code></td>
+</tr>
+<tr>
+<td>Connection state machine</td>
+<td><code>ui/src/notify/contact-state.ts</code></td>
+</tr>
+<tr>
+<td>Invitations storage</td>
+<td><code>ui/src/notify/invitations.ts</code></td>
+</tr>
+<tr>
+<td>Mailbox polling hook</td>
+<td><code>ui/src/hooks/useInboxPolling.ts</code></td>
+</tr>
+<tr>
+<td>Registry polling hook</td>
+<td><code>ui/src/hooks/useRegistryPolling.ts</code></td>
+</tr>
+<tr>
+<td>Sidebar badge wiring</td>
+<td><code>ui/src/components/Layout.tsx</code> — search <code>unreadCount</code></td>
+</tr>
+<tr>
+<td>Cricket synth</td>
+<td><code>ui/src/lib/cricket.ts</code></td>
+</tr>
+<tr>
+<td>Cricket toggle in Settings</td>
+<td><code>ui/src/pages/Settings.tsx</code></td>
+</tr>
+<tr>
+<td>Notification preference</td>
+<td><code>ui/src/store/app.ts → notificationSound</code></td>
+</tr>
+<tr>
+<td>Registry contract address</td>
+<td><code>ui/src/notify/constants.ts → REGISTRY_ADDRESS</code></td>
+</tr>
+<tr>
+<td>Wallet provider for registry</td>
+<td><code>ui/src/notify/provider.ts → createNotifyProvider</code></td>
+</tr>
+<tr>
+<td>Messages UI</td>
+<td><code>ui/src/apps/Messages.tsx</code></td>
+</tr>
+<tr>
+<td>Embedded Messages in Contacts</td>
+<td><code>ui/src/pages/Contacts.tsx</code></td>
+</tr>
+</tbody></table>
+
+      </section>
+
+      <section id="adr-001" class="doc">
+<h1 id="adr-001-variable-overbuy-size-presets">ADR-001: Variable-overbuy SIZE_PRESETS</h1>
+<p><strong>Status:</strong> Accepted (May 2026)</p>
+<h2 id="context">Context</h2>
+<p>Bee&#39;s <code>utilization</code> field — the source of &quot;X% used&quot; displays across every Swarm tool (swarm-cli, Bee Dashboard, Beeport, Swarm Desktop) — is <strong>worst-case bucket fill</strong>, not literal bytes uploaded. Concretely:</p>
+<pre><code>utilization% = utilization / 2^(depth - bucketDepth)
+</code></pre>
+<p>where <code>bucketDepth = 16</code> always. Chunks hash into <code>2^16</code> buckets. The metric tracks the most-filled bucket, so even a tiny upload can pin one bucket near 100% while every other bucket is empty.</p>
+<p>At low depths the effect is severe. With <code>chunks_per_bucket = 2^(depth - 16)</code>:</p>
+<ul>
+<li>depth 19 → 8 chunks/bucket. A 5 MB upload (~1280 chunks) is likely to drop 2 chunks in some bucket → <strong>25% utilization for 5 MB</strong>.</li>
+<li>depth 21 → 32 chunks/bucket. Same upload → ~9% utilization.</li>
+<li>depth 22 → 64 chunks/bucket. ~5%.</li>
+</ul>
+<p>The displayed % is correct by Bee&#39;s definition but feels wildly wrong to users thinking in bytes.</p>
+<h2 id="decision">Decision</h2>
+<p><code>SIZE_PRESETS</code> overbuys by 1–2 depths beyond what each label theoretically needs. Smaller labels overbuy more aggressively:</p>
+<table>
+<thead>
+<tr>
+<th>Label</th>
+<th>Depth</th>
+<th>Effective</th>
+<th>Overbuy</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>110 MB</td>
+<td>21</td>
+<td>~2.6 GB</td>
+<td>24×</td>
+</tr>
+<tr>
+<td>2.6 GB</td>
+<td>22</td>
+<td>~7.7 GB</td>
+<td>3×</td>
+</tr>
+<tr>
+<td>7.7 GB</td>
+<td>23</td>
+<td>~20 GB</td>
+<td>2.6×</td>
+</tr>
+<tr>
+<td>16 GB</td>
+<td>24</td>
+<td>~47 GB</td>
+<td>3×</td>
+</tr>
+</tbody></table>
+<p><code>NOOK_DISPLAY_CAPACITY</code> keeps each depth mapped to its advertised label so <code>depthToBytes()</code> returns the user-facing capacity (not Bee&#39;s effective table) for both new and legacy stamps.</p>
+<h2 id="considered-alternatives">Considered alternatives</h2>
+<ol>
+<li><strong>Match user-facing label to Bee&#39;s effective capacity (no overbuy)</strong> — what Beeport does, what Nook did originally. At low depths the worst-case-bucket display is misleading; users complain &quot;I uploaded 5 MB, why does it say 25%?&quot;</li>
+<li><strong>Drop small presets entirely (Bee Dashboard&#39;s choice)</strong> — smallest stamp becomes 4 GB. Honest display, but kills the cheap &quot;test drive&quot; use case important for Nook&#39;s beta audience.</li>
+<li><strong>Show only utilization % and hide &quot;X MB used&quot;</strong> — UI-only fix, no cost change. Rejected because percentage alone is harder to reason about than &quot;5 MB used&quot;.</li>
+<li><strong>Show Nook&#39;s local upload-history sum as the &quot;used&quot; number</strong> — accurate for Nook uploads but invisible to external uploads (swarm-cli, ACT chunks). Diverges from swarm-cli&#39;s display, making cross-tool comparison confusing.</li>
+<li><strong>Uniform +2 depth overbuy across all sizes (initial attempt)</strong> — applied evenly, large stamps become 4× more expensive without proportional UX benefit. Rejected after price comparison showed Nook&#39;s &quot;2.6 GB&quot; cost 2× Swarm Desktop&#39;s &quot;4 GB&quot; — clearly broken.</li>
+</ol>
+<h2 id="consequences">Consequences</h2>
+<ul>
+<li>Small drives (110 MB) cost ~6 BZZ/month instead of the theoretical ~1.5 BZZ. Still affordable; comparable to Swarm Desktop&#39;s smallest stamp.</li>
+<li>Capacity bars at small drives now register ~5–10% for a 5 MB upload (was 25%).</li>
+<li>Total cost grows roughly proportionally with advertised capacity, which feels right to users.</li>
+<li>Legacy depth-19 / depth-20 stamps purchased before this change continue to display correctly via <code>NOOK_DISPLAY_CAPACITY</code> legacy entries. Their bar will still look pessimistic at low fill — accepted as a known limitation rather than retroactively migrating.</li>
+</ul>
+<h2 id="source-of-truth-note">Source-of-truth note</h2>
+<p>We use Bee&#39;s <code>utilization</code> (matches swarm-cli, Bee Dashboard, beeport) as the source of truth for &quot;how full is this stamp.&quot; Diverging from that to make small drives look prettier would mean Nook reports different fill than every other Swarm tool — rejected as confusing for power users.</p>
+<p>The overbuy approach lets us keep that single source of truth while making the metric naturally cleaner via deeper buckets.</p>
+
+      </section>
+      <footer class="docfoot">
+        <p>Source: <code>docs/</code> in the Nook repo. Regenerate with <code>node docs/build.mjs</code>.</p>
+      </footer>
+    </main>
+  </div>
+  <script>
+(function () {
+  var sidebar = document.getElementById('sidebar');
+  var toggle = document.getElementById('nav-toggle');
+  var links = sidebar.querySelectorAll('a[data-target]');
+  var sections = Array.prototype.map.call(links, function (l) {
+    return { link: l, el: document.getElementById(l.dataset.target) };
+  });
+
+  toggle && toggle.addEventListener('click', function () {
+    sidebar.classList.toggle('open');
+  });
+
+  // Close sidebar on link click in mobile mode.
+  links.forEach(function (l) {
+    l.addEventListener('click', function () { sidebar.classList.remove('open'); });
+  });
+
+  // Collapsible topic groups — toggle button shows/hides the sub-nav.
+  function setExpanded(toggleBtn, expanded) {
+    toggleBtn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    var subId = toggleBtn.getAttribute('aria-controls');
+    var sub = subId && document.getElementById(subId);
+    if (sub) {
+      if (expanded) sub.removeAttribute('hidden');
+      else sub.setAttribute('hidden', '');
+    }
+  }
+  var toggles = sidebar.querySelectorAll('.topic-toggle');
+  toggles.forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var expanded = btn.getAttribute('aria-expanded') === 'true';
+      setExpanded(btn, !expanded);
+    });
+  });
+
+  // Auto-expand the group whose topic-level link becomes active.
+  function expandActiveGroup(activeLink) {
+    if (!activeLink) return;
+    var group = activeLink.closest('.topic-group');
+    if (!group) {
+      // Active item is a sub-nav link — find its parent group.
+      var li = activeLink.closest('.sub-nav');
+      if (li) {
+        var subId = li.id;
+        var ownerToggle = sidebar.querySelector('.topic-toggle[aria-controls="' + subId + '"]');
+        if (ownerToggle && ownerToggle.getAttribute('aria-expanded') !== 'true') {
+          setExpanded(ownerToggle, true);
+        }
+      }
+      return;
+    }
+    var t = group.querySelector('.topic-toggle');
+    if (t && t.getAttribute('aria-expanded') !== 'true') setExpanded(t, true);
+  }
+
+  // Active section highlighting based on scroll position.
+  function updateActive() {
+    var top = window.scrollY + 90;
+    var current = sections[0];
+    for (var i = 0; i < sections.length; i++) {
+      var s = sections[i];
+      var el = s.el;
+      if (!el) continue;
+      var y = 0, node = el;
+      while (node) { y += node.offsetTop || 0; node = node.offsetParent; }
+      if (y <= top) current = s;
+    }
+    sections.forEach(function (s) { s.link.classList.toggle('active', s === current); });
+    expandActiveGroup(current ? current.link : null);
+  }
+  window.addEventListener('scroll', updateActive, { passive: true });
+  updateActive();
+})();
+</script>
+</body>
+</html>
