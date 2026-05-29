@@ -72,8 +72,18 @@ describe('depthToCapacity', () => {
     expect(depthToCapacity(20)).toBe('656 MB')
   })
 
-  it('returns effective capacity for depth 22 (~7.7 GB)', () => {
-    expect(depthToCapacity(22)).toBe('7.2 GB')
+  it('returns the Nook-advertised "2.6 GB" capacity for depth 22 (overbuy table)', () => {
+    // Under variable overbuy, depth 22 is the new "2.6 GB" preset.
+    // Effective at depth 22 is ~7.7 GB; we advertise less for headroom.
+    expect(depthToCapacity(22)).toBe('2.4 GB')
+  })
+
+  it('returns "7.7 GB" for depth 23', () => {
+    expect(depthToCapacity(23)).toBe('7.2 GB')
+  })
+
+  it('returns "16 GB" for depth 24', () => {
+    expect(depthToCapacity(24)).toBe('14.9 GB')
   })
 
   it('falls back to theoretical for unknown depths', () => {
@@ -127,9 +137,9 @@ describe('SIZE_PRESETS', () => {
     expect(SIZE_PRESETS).toHaveLength(4)
   })
 
-  it('minimum depth is 19 (no depth 17)', () => {
+  it('minimum depth is 21 (variable-overbuy table starts at depth 21)', () => {
     const minDepth = Math.min(...SIZE_PRESETS.map(p => p.depth))
-    expect(minDepth).toBeGreaterThanOrEqual(19)
+    expect(minDepth).toBe(21)
   })
 
   it('depths are in ascending order', () => {

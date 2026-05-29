@@ -130,7 +130,7 @@ export function weiToDai(wei: string): string {
   return `${whole}.${String(frac).padStart(4, '0')}`
 }
 
-// Effective (realistic) capacity per depth — accounts for bucket overflow.
+// Bee's effective (realistic) capacity per depth — accounts for bucket overflow.
 // Values from Beeport / Swarm docs. Theoretical capacity is never fully usable
 // because chunks distribute unevenly across 2^16 buckets.
 const EFFECTIVE_CAPACITY: Record<number, number> = {
@@ -146,12 +146,30 @@ const EFFECTIVE_CAPACITY: Record<number, number> = {
   26: 228_000_000_000, // ~228 GB
 }
 
-/** Effective capacity in bytes for a given stamp depth */
-export function depthToBytes(depth: number): number {
-  return EFFECTIVE_CAPACITY[depth] ?? (1 << depth) * 4096
+// Nook's advertised capacity per depth — what we display to users as the
+// stamp's size. Always ≤ effective capacity at the same depth. The gap is
+// the overbuy margin: smaller depths overbuy aggressively (24× at depth 21)
+// because the worst-case-bucket utilization metric registers very high on
+// small uploads otherwise, then taper to ~3× at larger depths where Bee's
+// metric naturally tracks real fill more closely.
+//
+// Legacy depths 19/20 keep the old "label = effective" values for stamps
+// purchased before this scheme; new Nook buys land at depth 21+.
+const NOOK_DISPLAY_CAPACITY: Record<number, number> = {
+  19: 112_000_000, // legacy "110 MB"
+  20: 688_000_000, // legacy "680 MB"
+  21: 112_000_000, // new "110 MB" (overbought from depth-19 minimum)
+  22: 2_600_000_000, // new "2.6 GB"
+  23: 7_700_000_000, // new "7.7 GB"
+  24: 16_000_000_000, // new "16 GB"
 }
 
-/** Human-readable effective capacity for a given stamp depth */
+/** User-facing (advertised) capacity in bytes for a given stamp depth */
+export function depthToBytes(depth: number): number {
+  return NOOK_DISPLAY_CAPACITY[depth] ?? EFFECTIVE_CAPACITY[depth] ?? (1 << depth) * 4096
+}
+
+/** Human-readable user-facing capacity for a given stamp depth */
 export function depthToCapacity(depth: number): string {
   const bytes = depthToBytes(depth)
 
@@ -194,11 +212,16 @@ export async function topicFromString(name: string): Promise<string> {
 
 // ─── Storage plan presets ─────────────────────────────────────────────────────
 
+// Variable overbuy: small presets are heavily overbought so Bee's worst-case-
+// bucket utilization metric stays close to real fill. Larger presets need
+// little to no overbuy because the bucket math evens out at higher depth.
+// Labels = NOOK_DISPLAY_CAPACITY at the same depth (what users can safely
+// store), not Bee's effective capacity (which is always larger here).
 export const SIZE_PRESETS = [
-  { label: '110 MB', depth: 19 },
-  { label: '680 MB', depth: 20 },
-  { label: '2.6 GB', depth: 21 },
-  { label: '7.7 GB', depth: 22 },
+  { label: '110 MB', depth: 21 }, // 24× overbuy — cheap, accurate small drive
+  { label: '2.6 GB', depth: 22 }, // 3× overbuy
+  { label: '7.7 GB', depth: 23 }, // 2.6× overbuy
+  { label: '16 GB', depth: 24 }, // 3× overbuy
 ] as const
 
 export const DURATION_PRESETS = [

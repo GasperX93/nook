@@ -200,7 +200,7 @@ function BuyDriveModal({
   const { derive } = useDerivedKey()
 
   const [driveName, setDriveName] = useState('')
-  const [sizeIdx, setSizeIdx] = useState(1)
+  const [sizeIdx, setSizeIdx] = useState(0)
   const [durationIdx, setDurationIdx] = useState(1)
   const [isEncrypted, setIsEncrypted] = useState(false)
   const [buying, setBuying] = useState(false)
@@ -382,9 +382,12 @@ function BuyDriveModal({
 // ─── ExtendModal ───────────────────────────────────────────────────────────────
 
 function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) {
-  // Capacity options: only depths strictly larger than current. Dilute can't shrink
-  // and picking the current size is a no-op, so we don't show either.
-  const capacityOptions = SIZE_PRESETS.filter(s => s.depth > stamp.depth)
+  // Capacity options: only depths strictly larger than current AND only when the
+  // user-facing capacity is also larger. With Nook's overbuy, a legacy depth-19
+  // "110 MB" stamp shouldn't see "110 MB (depth 21)" as an extend option — same
+  // displayed capacity, just a more expensive same-label drive.
+  const currentDisplayBytes = depthToBytes(stamp.depth)
+  const capacityOptions = SIZE_PRESETS.filter(s => s.depth > stamp.depth && depthToBytes(s.depth) > currentDisplayBytes)
   const [capacityEnabled, setCapacityEnabled] = useState(false)
   const [capacityIdx, setCapacityIdx] = useState(0)
   const [durationEnabled, setDurationEnabled] = useState(false)
@@ -1102,9 +1105,13 @@ function DriveCard({
   const hasName = Boolean(customName || stamp.label)
   const driveName = customName || stamp.label || `${stamp.batchID.slice(0, 8)}…`
   const capacityBytes = depthToBytes(stamp.depth)
-  const usedBytes = records.reduce((s, r) => s + r.size, 0)
-  const usagePct = capacityBytes > 0 ? Math.min((usedBytes / capacityBytes) * 100, 100) : 0
   const maxUtilization = 1 << (stamp.depth - stamp.bucketDepth)
+  // Use Bee's reported utilization (matches swarm-cli) instead of summing local
+  // upload history — anything uploaded outside Nook (swarm-cli, ACT chunks,
+  // feed updates) wouldn't show up otherwise. Bee's metric is worst-case
+  // bucket-fill, so the byte estimate is conservative.
+  const usedBytes = maxUtilization > 0 ? Math.round(capacityBytes * (stamp.utilization / maxUtilization)) : 0
+  const usagePct = capacityBytes > 0 ? Math.min((usedBytes / capacityBytes) * 100, 100) : 0
   const utilizationPct = Math.round((stamp.utilization / maxUtilization) * 100)
   const isFull = stamp.utilization >= maxUtilization
   const ttlDays = stamp.batchTTL / 86400
