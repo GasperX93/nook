@@ -54,7 +54,14 @@ export function useDerivedKey() {
       return
     }
 
-    if (status === 'connected' && walletAddress && address && walletAddress.toLowerCase() !== address.toLowerCase()) {
+    // Security (D6): wipe a hydrated/foreign identity as soon as a mismatch is
+    // *confirmed* — both the cached walletAddress and the connected address are
+    // known and differ. Not gated on status==='connected', because hydrate()
+    // (which has no access to the wagmi address) can set a signer from a
+    // different wallet's cache during the 'connecting'/'reconnecting' boot
+    // window. We only clear on a confirmed mismatch, never when `address` is
+    // merely not-yet-known.
+    if (walletAddress && address && walletAddress.toLowerCase() !== address.toLowerCase()) {
       void clear()
       declinedThisSession.current = false
     }
@@ -124,9 +131,19 @@ export function useDerivedKey() {
     void derive({ auto: true })
   }, [hydrated, status, address, signer, deriving, derive])
 
+  // Security (D6): only ever expose a signer that matches the currently
+  // connected wallet. hydrate() can momentarily set a signer from a previous
+  // wallet's cache before the clear effect above runs; gating the *returned*
+  // value on an address match guarantees no consumer can perform feed/ACT
+  // operations under a stale identity, independent of effect timing.
+  const signerMatchesWallet = Boolean(
+    signer && walletAddress && address && walletAddress.toLowerCase() === address.toLowerCase(),
+  )
+  const safeSigner = signerMatchesWallet ? signer : null
+
   return {
-    /** The derived signer, or null if not yet derived */
-    signer,
+    /** The derived signer for the connected wallet, or null if not yet derived / mismatched */
+    signer: safeSigner,
 
     /** True while waiting for user to approve signature */
     deriving,
