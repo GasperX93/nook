@@ -68,12 +68,22 @@ export function useDerivedKey() {
     }
   }, [hydrate])
 
-  // Clear signer when wallet disconnects or switches to a different address.
-  // Only treat 'disconnected' as terminal — during 'connecting' / 'reconnecting'
-  // wagmi briefly reports !isConnected on page load.
+  // Clear signer ONLY on a true wallet switch — not on disconnect.
+  //
+  // Keeping the derived signer + its encrypted cache across a disconnect means
+  // reconnecting the SAME wallet needs zero signatures (it rehydrates), instead
+  // of forcing the user to re-sign the 2x determinism check every time. This is
+  // what eliminated the "had to sign 4-5 times" problem: MetaMask frequently
+  // bounces disconnected→connecting→connected, and each bounce previously
+  // wiped the identity and re-triggered derivation.
+  //
+  // While disconnected, `address` is null, so the D6 safeSigner gate returns
+  // null and the active-identity namespace falls back to __none__ — contacts
+  // and messages stay private during the disconnected window even though the
+  // signer lingers in memory. A genuine wallet SWITCH (mismatch branch below)
+  // still wipes the old identity.
   useEffect(() => {
     if (status === 'disconnected') {
-      if (signer) void clear()
       declinedThisSession.current = false
 
       return
@@ -90,7 +100,7 @@ export function useDerivedKey() {
       void clear()
       declinedThisSession.current = false
     }
-  }, [status, address, walletAddress, signer, clear])
+  }, [status, address, walletAddress, clear])
 
   const derive = useCallback(
     async (opts?: { auto?: boolean }) => {
