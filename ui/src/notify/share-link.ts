@@ -21,8 +21,12 @@ const HEX_RE = /^(0x)?[0-9a-fA-F]+$/
  * mirroring `createWalletSigner` in crypto/signer.ts:
  *   address = '0x' + keccak256(uncompressedPubKey[1:])[-20:]
  * Throws if `compressedWpub` is not a valid point on the secp256k1 curve.
+ *
+ * Exported so the drive-share link parser (useSharedDrives.parseShareLink) can
+ * apply the same wpub<->addr binding check when a link bundles sender contact
+ * info — same anti-spoofing guarantee as decodeShareLink.
  */
-function addressFromWalletPubKey(compressedWpub: string): string {
+export function addressFromWalletPubKey(compressedWpub: string): string {
   const uncompressed = secp256k1.ProjectivePoint.fromHex(compressedWpub).toRawBytes(false)
 
   return '0x' + bytesToHex(keccak256(uncompressed.slice(1)).slice(-20))

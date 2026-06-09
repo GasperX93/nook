@@ -4,7 +4,7 @@
  */
 import { useState } from 'react'
 
-import { normalizeHex } from '../notify/share-link'
+import { addressFromWalletPubKey, normalizeHex } from '../notify/share-link'
 
 const STORAGE_KEY = 'nook-shared-drives'
 
@@ -99,7 +99,19 @@ export function parseShareLink(link: string): ParsedShareLink | null {
       const addr = '0x' + normalizeHex(rawAddr, 40, 'addr')
       const walletPublicKey = normalizeHex(rawWpub, 66, 'wpub')
 
-      sender = { addr, walletPublicKey, beePublicKey: actPublisher, name }
+      // Security (D5/D1): only surface bundled sender contact info if the
+      // wallet key cryptographically binds to the address. Otherwise an
+      // attacker who shares a drive with us could bundle a victim's addr with
+      // their own wpub and get a spoofed contact saved on "Add as contact".
+      // On mismatch/malformed key we drop ONLY the sender — the drive itself
+      // (topic/owner/publisher) is independent and ACT-gated, so it still imports.
+      try {
+        if (addressFromWalletPubKey(walletPublicKey) === addr) {
+          sender = { addr, walletPublicKey, beePublicKey: actPublisher, name }
+        }
+      } catch {
+        // malformed wpub — leave sender undefined
+      }
     }
 
     return { feedTopic, feedOwner, actPublisher, sender }
