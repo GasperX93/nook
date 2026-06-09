@@ -489,6 +489,17 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
                   {ensName}.limo
                   <ExternalLink size={10} />
                 </a>
+                <a
+                  href={`https://${ensName}.bzz.link`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 text-xs font-medium transition-colors hover:underline"
+                  style={{ color: 'rgb(var(--accent))' }}
+                >
+                  <Globe size={12} />
+                  {ensName}.bzz.link
+                  <ExternalLink size={10} />
+                </a>
                 {txHash && (
                   <div>
                     <a
