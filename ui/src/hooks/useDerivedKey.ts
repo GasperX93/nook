@@ -41,6 +41,15 @@ export function useDerivedKey() {
   // Track that the user declined the auto-derive popup so we don't loop on it.
   const declinedThisSession = useRef(false)
 
+  // Synchronous in-flight lock. The `deriving` store flag can't prevent
+  // concurrent derive() calls because setDeriving(true) only takes effect on
+  // the next render — during a wallet switch, status/address/signer all change
+  // at once and re-fire the auto-derive effect several times within the same
+  // tick (before any render commits), each passing the stale `deriving` check
+  // and opening its own pair of signature popups (the "5-6 signs" bug). A ref
+  // updates immediately, so the second+ caller bails before signing.
+  const deriveInFlight = useRef(false)
+
   // Hydrate the identity store from safeStorage on first mount. hydrate()
   // returns false on a transient failure (Koa not up yet at boot); retry a
   // bounded number of times so a valid safeStorage cache isn't permanently
@@ -115,6 +124,10 @@ export function useDerivedKey() {
         return null
       }
 
+      // Synchronous guard against overlapping derivations (see ref comment).
+      if (deriveInFlight.current) return null
+      deriveInFlight.current = true
+
       setDeriving(true)
       setError(null)
 
@@ -162,6 +175,7 @@ export function useDerivedKey() {
 
         return null
       } finally {
+        deriveInFlight.current = false
         setDeriving(false)
       }
     },
