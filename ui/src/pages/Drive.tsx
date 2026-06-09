@@ -1780,7 +1780,10 @@ function SharedDriveCard({
     for (const [key, label] of Object.entries(granteeLabels)) {
       const keyClean = key.toLowerCase().replace('0x', '')
 
-      if (pubClean.includes(keyClean) || keyClean.includes(pubClean)) return label
+      // D10: exact match only. The previous bidirectional `includes()` meant an
+      // empty-string key matched every publisher, and any key that was a hex
+      // substring of the publisher (or vice-versa) produced a false label.
+      if (keyClean.length > 0 && keyClean === pubClean) return label
     }
 
     return undefined

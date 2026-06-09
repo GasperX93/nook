@@ -7,6 +7,8 @@
  * Per-origin localStorage like everything else under #47.
  */
 
+import { REGISTRY_DEPLOY_BLOCK } from './constants'
+
 export interface Invitation {
   /** Sender's lowercased ETH address */
   senderAddr: string
@@ -85,11 +87,16 @@ export function pendingInvitations(invs: Invitation[]): Invitation[] {
   return invs.filter(i => !i.processed)
 }
 
-/** Per-identity registry-poll cursor (block number we polled up to). */
+/**
+ * Per-identity registry-poll cursor (block number we polled up to). Floored at
+ * the registry's deploy block (D9): a fresh install has no cursor and must not
+ * scan eth_getLogs from genesis, and Math.max also self-heals any cursor stuck
+ * at 0 from an earlier build (nothing exists before the deploy block anyway).
+ */
 export function getRegistryCursor(myAddr: string): number {
   const raw = localStorage.getItem(CURSOR_PREFIX + myAddr.toLowerCase())
 
-  return raw ? Number(raw) : 0
+  return Math.max(Number(raw) || 0, REGISTRY_DEPLOY_BLOCK)
 }
 
 export function setRegistryCursor(myAddr: string, block: number): void {

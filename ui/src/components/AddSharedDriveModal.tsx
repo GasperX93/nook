@@ -4,7 +4,7 @@
  * them as a contact in the same step.
  */
 import { Check, Copy, Download, RefreshCw, X } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { beeApi } from '../api/bee'
 import { serverApi } from '../api/server'
@@ -52,10 +52,20 @@ export default function AddSharedDriveModal({ myPublicKey, initialLink, onClose,
   }, [sender, existingContacts])
   const showContactImport = Boolean(sender) && !senderAlreadyContact
 
-  // Pre-fill nickname from sender's bundled name (or empty if absent)
+  // Pre-fill nickname from the sender's bundled name — ONCE per sender (D11).
+  // Keying on contactNickname (the old behavior) re-filled the field every time
+  // the user cleared it, making it impossible to blank or retype. Track the
+  // sender we've already pre-filled for instead.
+  const prefilledFor = useRef<string | null>(null)
+
   useEffect(() => {
-    if (sender && !contactNickname) setContactNickname(sender.name ?? '')
-  }, [sender, contactNickname])
+    const senderKey = sender?.addr.toLowerCase() ?? null
+
+    if (senderKey && prefilledFor.current !== senderKey) {
+      prefilledFor.current = senderKey
+      setContactNickname(sender?.name ?? '')
+    }
+  }, [sender])
 
   async function handleAdd() {
     if (!parsed) {

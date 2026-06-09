@@ -59,11 +59,14 @@ export function useInboxPolling(): void {
         // for clarity in case the loop body ever changes.
         saveThreads(threads)
 
-        // Chirp on new arrivals — only if enabled AND user isn't currently
-        // looking at Contacts (which already shows the messages).
+        // Chirp on new arrivals — only if enabled AND the user isn't already
+        // looking at a page that shows the messages. Threads render on both the
+        // Contacts page and the Messages app (#/apps/messages), so suppress on
+        // either (D12) — otherwise it chirps while you're reading the thread.
         if (newCount > 0 && useAppStore.getState().notificationSound) {
-          const onContacts = window.location.hash.startsWith('#/contacts')
-          if (document.hidden || !onContacts) playCricketChirp()
+          const hash = window.location.hash
+          const viewingMessages = hash.startsWith('#/contacts') || hash.startsWith('#/apps/messages')
+          if (document.hidden || !viewingMessages) playCricketChirp()
         }
       } catch {
         // Network blips happen; the next tick will retry. Don't spam the UI.
