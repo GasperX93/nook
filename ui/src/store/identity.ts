@@ -18,6 +18,47 @@ import { createWalletSigner, type NookSigner } from '../crypto/signer'
 
 const SESSION_STORAGE_KEY = 'nook.derivedKey.v1'
 
+/**
+ * Module-level (shared across ALL useDerivedKey instances) synchronous lock
+ * for key derivation. Multiple components mount useDerivedKey at once — Layout's
+ * useInboxPolling + useRegistryPolling, plus the current page (and Contacts
+ * embeds Messages). On a wallet switch each instance independently sees
+ * signer===null and fires its own derive(), so a PER-INSTANCE ref can't stop
+ * the pile-up (each instance's ref is its own). This shared flag means only the
+ * first caller across the whole app actually signs; the rest bail. Synchronous
+ * (plain module var, not React state) so it takes effect before the next render.
+ */
+let deriveInFlight = false
+
+/** Try to acquire the shared derive lock. Returns false if one is already running. */
+export function acquireDeriveLock(): boolean {
+  if (deriveInFlight) return false
+  deriveInFlight = true
+
+  return true
+}
+
+/** Release the shared derive lock. */
+export function releaseDeriveLock(): void {
+  deriveInFlight = false
+}
+
+/**
+ * Shared (cross-instance) "user declined auto-derive this session" flag. Like
+ * the derive lock, this must be shared across all useDerivedKey instances —
+ * otherwise instance A records the decline but instance B (its ref still false)
+ * re-prompts immediately. Reset on disconnect / wallet switch.
+ */
+let autoDeriveDeclined = false
+
+export function setAutoDeriveDeclined(value: boolean): void {
+  autoDeriveDeclined = value
+}
+
+export function getAutoDeriveDeclined(): boolean {
+  return autoDeriveDeclined
+}
+
 interface PersistedShape {
   signatureHex: string
   walletAddress: string

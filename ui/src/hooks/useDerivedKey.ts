@@ -14,12 +14,18 @@
  * Clears on wallet disconnect or wallet switch.
  */
 import { getAccount } from '@wagmi/core'
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect } from 'react'
 import { useAccount, useSignMessage } from 'wagmi'
 
 import { SIGN_MESSAGE } from '../crypto/signer'
 import { setActiveIdentity } from '../notify/active-identity'
-import { useIdentityStore } from '../store/identity'
+import {
+  acquireDeriveLock,
+  getAutoDeriveDeclined,
+  releaseDeriveLock,
+  setAutoDeriveDeclined,
+  useIdentityStore,
+} from '../store/identity'
 import { wagmiConfig } from '../wagmi'
 
 export function useDerivedKey() {
@@ -38,17 +44,6 @@ export function useDerivedKey() {
     hydrate,
   } = useIdentityStore()
 
-  // Track that the user declined the auto-derive popup so we don't loop on it.
-  const declinedThisSession = useRef(false)
-
-  // Synchronous in-flight lock. The `deriving` store flag can't prevent
-  // concurrent derive() calls because setDeriving(true) only takes effect on
-  // the next render — during a wallet switch, status/address/signer all change
-  // at once and re-fire the auto-derive effect several times within the same
-  // tick (before any render commits), each passing the stale `deriving` check
-  // and opening its own pair of signature popups (the "5-6 signs" bug). A ref
-  // updates immediately, so the second+ caller bails before signing.
-  const deriveInFlight = useRef(false)
 
   // Hydrate the identity store from safeStorage on first mount. hydrate()
   // returns false on a transient failure (Koa not up yet at boot); retry a
@@ -93,7 +88,7 @@ export function useDerivedKey() {
   // still wipes the old identity.
   useEffect(() => {
     if (status === 'disconnected') {
-      declinedThisSession.current = false
+      setAutoDeriveDeclined(false)
 
       return
     }
@@ -107,7 +102,7 @@ export function useDerivedKey() {
     // merely not-yet-known.
     if (walletAddress && address && walletAddress.toLowerCase() !== address.toLowerCase()) {
       void clear()
-      declinedThisSession.current = false
+      setAutoDeriveDeclined(false)
     }
   }, [status, address, walletAddress, clear])
 
@@ -124,9 +119,12 @@ export function useDerivedKey() {
         return null
       }
 
-      // Synchronous guard against overlapping derivations (see ref comment).
-      if (deriveInFlight.current) return null
-      deriveInFlight.current = true
+      // Shared synchronous guard against overlapping derivations. Multiple
+      // useDerivedKey instances are mounted at once (Layout's polling hooks +
+      // the current page, which may embed others); on a wallet switch each
+      // independently fires derive(). The lock lives in the store module so it
+      // is shared across ALL instances — only the first caller signs.
+      if (!acquireDeriveLock()) return null
 
       setDeriving(true)
       setError(null)
@@ -166,7 +164,7 @@ export function useDerivedKey() {
         // User rejected the popup — record it so the auto-derive effect
         // doesn't immediately prompt them again on the next render.
         if (opts?.auto) {
-          declinedThisSession.current = true
+          setAutoDeriveDeclined(true)
           // Soft message; the Identity tab CTA is the recovery path.
           setError(null)
         } else {
@@ -175,7 +173,7 @@ export function useDerivedKey() {
 
         return null
       } finally {
-        deriveInFlight.current = false
+        releaseDeriveLock()
         setDeriving(false)
       }
     },
@@ -188,7 +186,7 @@ export function useDerivedKey() {
     if (status !== 'connected' || !address) return
     if (signer) return
     if (deriving) return
-    if (declinedThisSession.current) return
+    if (getAutoDeriveDeclined()) return
     void derive({ auto: true })
   }, [hydrated, status, address, signer, deriving, derive])
 
