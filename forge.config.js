@@ -28,6 +28,12 @@ const config = {
     ],
     asar: true,
     ignore: [
+      // Build output / release artifacts — must never be packaged into the app.
+      // forge does NOT read .gitignore, so these need listing here even though
+      // they're git-ignored. Without this, DMG/ZIP artifacts staged in build/
+      // (or a stale out/) get swallowed into app.asar and 3x the artifact size.
+      /^\/build/,
+      /^\/out/,
       // Frontend build tools — never needed at runtime (saves ~180 MB)
       /^\/ui\/node_modules/,
       /^\/ui\/src/,
