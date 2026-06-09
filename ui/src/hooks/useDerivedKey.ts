@@ -40,9 +40,31 @@ export function useDerivedKey() {
   // Track that the user declined the auto-derive popup so we don't loop on it.
   const declinedThisSession = useRef(false)
 
-  // Hydrate the identity store from safeStorage on first mount (cheap, idempotent).
+  // Hydrate the identity store from safeStorage on first mount. hydrate()
+  // returns false on a transient failure (Koa not up yet at boot); retry a
+  // bounded number of times so a valid safeStorage cache isn't permanently
+  // downgraded to session-storage and the user isn't forced to re-sign (D8).
   useEffect(() => {
-    void hydrate()
+    let cancelled = false
+    let attempts = 0
+    const MAX_ATTEMPTS = 5
+    const RETRY_MS = 1000
+
+    const tryHydrate = async () => {
+      if (cancelled) return
+      attempts += 1
+      const ok = await hydrate()
+
+      if (!ok && !cancelled && attempts < MAX_ATTEMPTS) {
+        setTimeout(() => void tryHydrate(), RETRY_MS)
+      }
+    }
+
+    void tryHydrate()
+
+    return () => {
+      cancelled = true
+    }
   }, [hydrate])
 
   // Clear signer when wallet disconnects or switches to a different address.

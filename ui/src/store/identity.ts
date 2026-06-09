@@ -74,8 +74,13 @@ interface IdentityState {
   deriving: boolean
   error: string | null
 
-  /** Async-load any previously persisted signer. Idempotent — only runs once. */
-  hydrate: () => Promise<void>
+  /**
+   * Async-load any previously persisted signer. Idempotent once it succeeds
+   * (sets `hydrated`). Returns `true` if the backend was reachable (cache
+   * loaded OR confirmed empty) and `false` on a transient error (e.g. Koa not
+   * yet up), so the caller can retry without the `hydrated` guard latching.
+   */
+  hydrate: () => Promise<boolean>
   /** Persist the signature and rebuild the in-memory signer. */
   setSigner: (signatureHex: string, walletAddress: string) => Promise<void>
   setDeriving: (deriving: boolean) => void
@@ -93,10 +98,20 @@ export const useIdentityStore = create<IdentityState>()((set, get) => ({
   error: null,
 
   hydrate: async () => {
-    if (get().hydrated) return
-    // Try safeStorage first
+    if (get().hydrated) return true
+
+    // Try safeStorage first. A THROW here means the backend (Koa) is not
+    // reachable yet — a transient condition at boot. We must NOT latch
+    // `hydrated` in that case (D8), or a user with a valid safeStorage cache
+    // gets permanently downgraded to session-storage and forced to re-sign.
+    // `available: false` (a successful response) means safeStorage genuinely
+    // isn't supported (e.g. Linux without a keyring) → fall through to session.
+    let backendReachable = false
+
     try {
       const { available, value } = await serverApi.readIdentityCache()
+      backendReachable = true
+
       if (available) {
         const parsed = parsePersisted(value)
         if (parsed) {
@@ -109,7 +124,7 @@ export const useIdentityStore = create<IdentityState>()((set, get) => ({
               backend: 'safe-storage',
             })
 
-            return
+            return true
           } catch {
             // Corrupt cache; clear and continue
             await serverApi.clearIdentityCache().catch(() => undefined)
@@ -117,12 +132,14 @@ export const useIdentityStore = create<IdentityState>()((set, get) => ({
         }
         set({ hydrated: true, backend: 'safe-storage' })
 
-        return
+        return true
       }
     } catch {
-      // backend unreachable — fall through to session storage
+      // backend unreachable — transient; signal the caller to retry.
+      return false
     }
-    // Fallback: sessionStorage
+
+    // safeStorage genuinely unavailable → fall back to sessionStorage.
     const persisted = readSession()
     if (persisted) {
       try {
@@ -134,12 +151,14 @@ export const useIdentityStore = create<IdentityState>()((set, get) => ({
           backend: 'session-storage',
         })
 
-        return
+        return true
       } catch {
         clearSession()
       }
     }
     set({ hydrated: true, backend: 'session-storage' })
+
+    return backendReachable
   },
 
   setSigner: async (signatureHex, walletAddress) => {
