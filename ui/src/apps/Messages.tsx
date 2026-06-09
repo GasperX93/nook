@@ -76,7 +76,6 @@ export default function Messages({ initialContactId, hideContactList, hideThread
   // before the recipient commits to adding the contact.
   type InvitePreview = {
     loading: boolean
-    senderName?: string
     firstSubject?: string
     firstBody?: string
     error?: string
@@ -185,19 +184,18 @@ export default function Messages({ initialContactId, hideContactList, hideThread
 
         if (cancelled) return
         const first = messages[messages.length - 1] ?? messages[0]
-        // Extract sender name from "Name shared "X" with you" pattern.
-        const match = first?.subject?.match(/^(.+?)\s+shared\s+"/)
-        const extractedName = match?.[1]?.trim()
 
+        // Security (D4): do NOT derive a display name from the sender-controlled
+        // subject, and do NOT auto-fill the nickname from it. An arbitrary
+        // on-chain address can set their subject to "YourBank shared …" and
+        // spoof a trusted-looking identity before the user has accepted them.
+        // The subject/body are shown below only as message *content*; the user
+        // names the contact themselves.
         setInvitePreview({
           loading: false,
-          senderName: extractedName,
           firstSubject: first?.subject,
           firstBody: first?.body,
         })
-
-        // Pre-fill nickname suggestion if we have one and the user hasn't typed.
-        if (extractedName && !inviteNickname) setInviteNickname(extractedName)
       } catch (e) {
         if (cancelled) return
         setInvitePreview({ loading: false, error: (e as Error).message ?? 'Could not preview' })
@@ -207,8 +205,6 @@ export default function Messages({ initialContactId, hideContactList, hideThread
     return () => {
       cancelled = true
     }
-    // inviteNickname intentionally omitted — only auto-fill once on first load
-    // eslint-disable-next-line
   }, [selectedInvite, signer, bee])
 
   // Inbox + invitation polling lives at the Layout level. We just re-read
@@ -614,9 +610,7 @@ export default function Messages({ initialContactId, hideContactList, hideThread
             <div className="flex items-center gap-2">
               <Mail size={18} style={{ color: '#60a5fa' }} />
               <h2 className="text-base font-semibold" style={{ color: 'rgb(var(--fg))' }}>
-                {invitePreview.senderName
-                  ? `${invitePreview.senderName} wants to reach you`
-                  : 'Someone wants to reach you'}
+                Someone wants to reach you
               </h2>
             </div>
             <div
