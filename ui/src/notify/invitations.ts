@@ -7,6 +7,7 @@
  * Per-origin localStorage like everything else under #47.
  */
 
+import { nsKey } from './active-identity'
 import { REGISTRY_DEPLOY_BLOCK } from './constants'
 
 export interface Invitation {
@@ -21,6 +22,8 @@ export interface Invitation {
 }
 
 const INVITATIONS_KEY = 'nook-invitations-v1'
+// CURSOR_PREFIX is already explicitly scoped by myAddr at its call sites, so it
+// is NOT run through nsKey (that would double-namespace it).
 const CURSOR_PREFIX = 'nook-registry-cursor:'
 
 function load<T>(key: string, fallback: T): T {
@@ -34,11 +37,11 @@ function load<T>(key: string, fallback: T): T {
 }
 
 export function loadInvitations(): Invitation[] {
-  return load<Invitation[]>(INVITATIONS_KEY, [])
+  return load<Invitation[]>(nsKey(INVITATIONS_KEY), [])
 }
 
 export function saveInvitations(invs: Invitation[]): void {
-  localStorage.setItem(INVITATIONS_KEY, JSON.stringify(invs))
+  localStorage.setItem(nsKey(INVITATIONS_KEY), JSON.stringify(invs))
 }
 
 /**

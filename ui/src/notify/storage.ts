@@ -1,12 +1,17 @@
+import { nsKey } from './active-identity'
 import type { NookContact } from './types'
 
 /**
  * localStorage-backed persistence for swarm-notify state.
  *
  * Keys:
- *   nook-contacts-v2                       → JSON array of NookContact
+ *   nook-contacts-v2:<derivedAddr>         → JSON array of NookContact (per-identity)
  *   nook-identity-published:<ethAddress>   → "true" if user has published their identity
  *   nook-onboarding-publish-dismissed      → "true" if user dismissed the publish hint
+ *
+ * Contacts are namespaced by the active derived identity (nsKey) so different
+ * wallets don't share a contact list. identity-published is already per-address
+ * and onboarding-dismissed is global UI state, so neither is namespaced.
  *
  * NOTE: per-origin. When #47 (port-independent persistence) lands, swap this
  * implementation but keep the same exported surface so call sites don't change.
@@ -21,7 +26,7 @@ const ONBOARDING_DISMISSED_KEY = 'nook-onboarding-publish-dismissed'
 
 export function loadContacts(): NookContact[] {
   try {
-    const raw = localStorage.getItem(CONTACTS_KEY)
+    const raw = localStorage.getItem(nsKey(CONTACTS_KEY))
 
     if (!raw) return []
     const data = JSON.parse(raw) as NookContact[]
@@ -34,7 +39,7 @@ export function loadContacts(): NookContact[] {
 }
 
 export function saveContacts(contacts: NookContact[]): void {
-  localStorage.setItem(CONTACTS_KEY, JSON.stringify(contacts))
+  localStorage.setItem(nsKey(CONTACTS_KEY), JSON.stringify(contacts))
 }
 
 /** Add a contact. Throws if a contact with the same id already exists. */

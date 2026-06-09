@@ -18,6 +18,7 @@ import { useCallback, useEffect, useRef } from 'react'
 import { useAccount, useSignMessage } from 'wagmi'
 
 import { SIGN_MESSAGE } from '../crypto/signer'
+import { setActiveIdentity } from '../notify/active-identity'
 import { useIdentityStore } from '../store/identity'
 import { wagmiConfig } from '../wagmi'
 
@@ -176,6 +177,17 @@ export function useDerivedKey() {
     signer && walletAddress && address && walletAddress.toLowerCase() === address.toLowerCase(),
   )
   const safeSigner = signerMatchesWallet ? signer : null
+
+  // Phase 4: keep the per-identity storage namespace in sync with the derived
+  // identity. Contacts/messages/invitations/display-name are keyed by this
+  // address, so different wallets see different data. null when no safe signer
+  // (disconnected / mismatched / mid-boot) → reads/writes hit the isolated
+  // ':__none__' bucket and no wallet's data leaks across the gap.
+  const safeAddress = safeSigner ? safeSigner.getAddress() : null
+
+  useEffect(() => {
+    setActiveIdentity(safeAddress)
+  }, [safeAddress])
 
   return {
     /** The derived signer for the connected wallet, or null if not yet derived / mismatched */

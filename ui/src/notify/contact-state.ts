@@ -19,6 +19,8 @@
  * store.
  */
 
+import { nsKey } from './active-identity'
+
 const INVITES_KEY = 'nook-invitations-sent-v1'
 const MY_NAME_KEY = 'nook-my-display-name-v1'
 
@@ -30,7 +32,7 @@ type InviteMap = Record<string, InviteRecord>
 
 function loadAll(): InviteMap {
   try {
-    return JSON.parse(localStorage.getItem(INVITES_KEY) ?? '{}') as InviteMap
+    return JSON.parse(localStorage.getItem(nsKey(INVITES_KEY)) ?? '{}') as InviteMap
   } catch {
     return {}
   }
@@ -38,7 +40,7 @@ function loadAll(): InviteMap {
 
 function saveAll(map: InviteMap): void {
   try {
-    localStorage.setItem(INVITES_KEY, JSON.stringify(map))
+    localStorage.setItem(nsKey(INVITES_KEY), JSON.stringify(map))
   } catch {
     // quota / private-mode — ignore
   }
@@ -62,7 +64,7 @@ export function clearInviteSent(contactId: string): void {
 
 export function getMyDisplayName(): string {
   try {
-    return localStorage.getItem(MY_NAME_KEY)?.trim() ?? ''
+    return localStorage.getItem(nsKey(MY_NAME_KEY))?.trim() ?? ''
   } catch {
     return ''
   }
@@ -71,7 +73,7 @@ export function getMyDisplayName(): string {
 export function setMyDisplayName(name: string): void {
   const trimmed = name.trim()
   try {
-    if (trimmed) localStorage.setItem(MY_NAME_KEY, trimmed)
+    if (trimmed) localStorage.setItem(nsKey(MY_NAME_KEY), trimmed)
   } catch {
     // ignore
   }

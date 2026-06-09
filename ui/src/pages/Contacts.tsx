@@ -4,6 +4,7 @@ import { Check, Copy, MessageSquare, Plus, Search, Send, Share2, Trash2, X } fro
 import { useEffect, useMemo, useState } from 'react'
 
 import Messages, { ConnectionStatusBadge } from '../apps/Messages'
+import { useDerivedKey } from '../hooks/useDerivedKey'
 import { deriveConnectionState } from '../notify/contact-state'
 import { loadThreads } from '../notify/messages'
 import { Button } from '../components/ui/button'
@@ -29,7 +30,18 @@ type SortMode = 'name' | 'date' | 'address'
 
 export default function Contacts() {
   const bee = useMemo(() => new Bee(BEE_URL), [])
+  const { signer } = useDerivedKey()
   const [contacts, setContacts] = useState<NookContact[]>(() => loadContacts())
+
+  // Phase 4: contacts are namespaced per derived identity. When the identity
+  // changes (wallet switch/disconnect) the storage namespace flips, so re-read
+  // the list — otherwise the page would show the previous wallet's contacts
+  // until navigated away. Keyed on the derived address.
+  const myAddress = signer ? signer.getAddress() : null
+
+  useEffect(() => {
+    setContacts(loadContacts())
+  }, [myAddress])
 
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [composeFor, setComposeFor] = useState<string | null>(null)

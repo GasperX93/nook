@@ -1,5 +1,7 @@
 import type { Message as SdkMessage } from '@swarm-notify/sdk'
 
+import { nsKey } from './active-identity'
+
 /**
  * Local persistence for message threads.
  *
@@ -53,19 +55,19 @@ function load<T>(key: string, fallback: T): T {
 }
 
 export function loadThreads(): ThreadMap {
-  return load<ThreadMap>(MESSAGES_KEY, {})
+  return load<ThreadMap>(nsKey(MESSAGES_KEY), {})
 }
 
 export function saveThreads(threads: ThreadMap): void {
-  localStorage.setItem(MESSAGES_KEY, JSON.stringify(threads))
+  localStorage.setItem(nsKey(MESSAGES_KEY), JSON.stringify(threads))
 }
 
 export function loadReadCursors(): ReadCursorMap {
-  return load<ReadCursorMap>(READ_CURSOR_KEY, {})
+  return load<ReadCursorMap>(nsKey(READ_CURSOR_KEY), {})
 }
 
 export function saveReadCursors(cursors: ReadCursorMap): void {
-  localStorage.setItem(READ_CURSOR_KEY, JSON.stringify(cursors))
+  localStorage.setItem(nsKey(READ_CURSOR_KEY), JSON.stringify(cursors))
 }
 
 function makeId(ts: number, direction: StoredMessage['direction'], body: string): string {
