@@ -13,11 +13,13 @@
  *
  * Clears on wallet disconnect or wallet switch.
  */
+import { getAccount } from '@wagmi/core'
 import { useCallback, useEffect, useRef } from 'react'
 import { useAccount, useSignMessage } from 'wagmi'
 
 import { SIGN_MESSAGE } from '../crypto/signer'
 import { useIdentityStore } from '../store/identity'
+import { wagmiConfig } from '../wagmi'
 
 export function useDerivedKey() {
   const { address, isConnected, status } = useAccount()
@@ -94,6 +96,18 @@ export function useDerivedKey() {
               'Try using MetaMask or another software wallet.',
           )
 
+          return null
+        }
+
+        // Security (D7): the user can switch wallets in MetaMask while the
+        // signature popups are pending. `address` is captured from the closure
+        // at call time, so persisting against it would bind a signature from
+        // the NEW wallet to the OLD address. Re-read the live connected address
+        // and bail if it changed — the switch effect will derive for the new
+        // wallet on its own.
+        const currentAddress = getAccount(wagmiConfig).address
+
+        if (!currentAddress || currentAddress.toLowerCase() !== address.toLowerCase()) {
           return null
         }
 
