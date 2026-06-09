@@ -12,6 +12,8 @@ import { keccak256 } from 'ethereum-cryptography/keccak'
 import { hmac } from '@noble/hashes/hmac'
 import { sha256 } from '@noble/hashes/sha256'
 
+import { bytesToHex, hexToBytes } from '../lib/hex'
+
 /** Message the user signs in MetaMask. NEVER change this — different message = lost data. */
 export const SIGN_MESSAGE = 'Nook Key Derivation v1'
 
@@ -72,16 +74,4 @@ export async function checkDeterministic(signFn: (message: string) => Promise<st
   const sig2 = await signFn(SIGN_MESSAGE)
 
   return sig1 === sig2
-}
-
-function hexToBytes(hex: string): Uint8Array {
-  const clean = hex.startsWith('0x') ? hex.slice(2) : hex
-
-  return new Uint8Array(clean.match(/.{2}/g)!.map(byte => parseInt(byte, 16)))
-}
-
-function bytesToHex(bytes: Uint8Array): string {
-  return Array.from(bytes)
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('')
 }

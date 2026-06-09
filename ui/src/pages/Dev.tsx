@@ -4,12 +4,7 @@ import { useBeeLogs, useConfig, useNookLogs, useUpdateConfig } from '../api/quer
 import { SwarmNotifyTest } from '../components/SwarmNotifyTest'
 import { useAppStore } from '../store/app'
 import { useDerivedKey } from '../hooks/useDerivedKey'
-
-function bytesToHex(bytes: Uint8Array): string {
-  return Array.from(bytes)
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('')
-}
+import { bytesToHex } from '../lib/hex'
 
 function KeyDerivationTest() {
   const { signer, deriving, error, walletConnected, derive, clear } = useDerivedKey()

@@ -11,6 +11,7 @@ import { useWalletClient } from 'wagmi'
 
 import { topicFromString } from '../api/bee'
 import { serverApi } from '../api/server'
+import { bytesToHex, hexToBytes } from '../lib/hex'
 import { useDerivedKey } from '../hooks/useDerivedKey'
 import { GNOSIS_CHAIN_ID, REGISTRY_ADDRESS } from '../notify/constants'
 import { appendSentDriveShare, loadThreads } from '../notify/messages'
@@ -23,18 +24,6 @@ import { Button } from './ui/button'
 import { Input } from './ui/input'
 
 const BEE_URL = `${window.location.origin}/bee-api`
-
-function hexToBytes(hex: string): Uint8Array {
-  const clean = hex.startsWith('0x') ? hex.slice(2) : hex
-
-  return new Uint8Array(clean.match(/.{2}/g)!.map(b => parseInt(b, 16)))
-}
-
-function bytesToHex(bytes: Uint8Array): string {
-  return Array.from(bytes)
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('')
-}
 
 interface ShareFileEntry {
   name: string

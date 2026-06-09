@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useAddresses, useStamps } from '../api/queries'
 import { Button } from '../components/ui/button'
 import { useDerivedKey } from '../hooks/useDerivedKey'
+import { bytesToHex } from '../lib/hex'
 import { encodeShareLink } from '../notify/share-link'
 import {
   isIdentityPublished,
@@ -15,12 +16,6 @@ import {
 } from '../notify/storage'
 
 const BEE_URL = `${window.location.origin}/bee-api`
-
-function bytesToHex(bytes: Uint8Array): string {
-  return Array.from(bytes)
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('')
-}
 
 export default function Identity() {
   const { signer, derive, walletConnected } = useDerivedKey()

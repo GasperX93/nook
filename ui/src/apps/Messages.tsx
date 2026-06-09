@@ -11,6 +11,7 @@ import { Input } from '../components/ui/input'
 import { Textarea } from '../components/ui/textarea'
 import { useSharedDrives } from '../hooks/useSharedDrives'
 import { useDerivedKey } from '../hooks/useDerivedKey'
+import { hexToBytes } from '../lib/hex'
 import { GNOSIS_CHAIN_ID, REGISTRY_ADDRESS } from '../notify/constants'
 import {
   defaultInviteMessage,
@@ -30,12 +31,6 @@ const BEE_URL = `${window.location.origin}/bee-api`
 
 function short(s: string, n = 6): string {
   return s.length <= n * 2 + 3 ? s : `${s.slice(0, n)}…${s.slice(-n)}`
-}
-
-function hexToBytes(hex: string): Uint8Array {
-  const clean = hex.startsWith('0x') ? hex.slice(2) : hex
-
-  return new Uint8Array(clean.match(/.{2}/g)!.map(b => parseInt(b, 16)))
 }
 
 function formatTime(ts: number): string {

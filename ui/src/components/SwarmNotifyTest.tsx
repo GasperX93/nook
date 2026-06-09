@@ -5,24 +5,13 @@ import { useWalletClient } from 'wagmi'
 
 import { useAddresses, useStamps } from '../api/queries'
 import { useDerivedKey } from '../hooks/useDerivedKey'
+import { bytesToHex, hexToBytes } from '../lib/hex'
 import { GNOSIS_CHAIN_ID, REGISTRY_ADDRESS } from '../notify/constants'
 import { createNotifyProvider } from '../notify/provider'
 
 // Vite proxies /bee-api → http://localhost:1633 in dev. This dev panel only ships in dev mode,
 // so the prod Koa server doesn't need to proxy /bee-api (would 404 there).
 const BEE_URL = `${window.location.origin}/bee-api`
-
-function bytesToHex(bytes: Uint8Array): string {
-  return Array.from(bytes)
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('')
-}
-
-function hexToBytes(hex: string): Uint8Array {
-  const clean = hex.startsWith('0x') ? hex.slice(2) : hex
-
-  return new Uint8Array(clean.match(/.{2}/g)!.map(byte => parseInt(byte, 16)))
-}
 
 function short(s: string, n = 10): string {
   return s.length <= n * 2 + 3 ? s : `${s.slice(0, n)}…${s.slice(-n)}`
