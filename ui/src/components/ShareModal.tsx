@@ -7,6 +7,7 @@ import { Bee } from '@ethersphere/bee-js'
 import { identity, mailbox, registry } from '@swarm-notify/sdk'
 import { Bell, Copy, Check, Lock, RefreshCw, Trash2, Users, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
+import { getWalletClient, switchChain } from '@wagmi/core'
 import { useWalletClient } from 'wagmi'
 
 import { topicFromString } from '../api/bee'
@@ -20,6 +21,7 @@ import { decodeShareLink } from '../notify/share-link'
 import { addContact, loadContacts } from '../notify/storage'
 import { toLibraryContact } from '../notify/types'
 import { buildShareLink } from '../hooks/useSharedDrives'
+import { wagmiConfig } from '../wagmi'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 
@@ -403,18 +405,13 @@ export default function ShareModal({
 
     if (pendingNotify.length === 0) return
 
-    if (sendOnChain) {
-      if (!walletClient) {
-        setError('Connect a wallet to send on-chain wake-up notifications.')
+    // On-chain wake-up needs the wallet on Gnosis, but we don't force Gnosis
+    // globally (that fights top-up/ENS) — just require a wallet here and switch
+    // just-in-time before sending (below).
+    if (sendOnChain && !walletClient) {
+      setError('Connect a wallet to send on-chain wake-up notifications.')
 
-        return
-      }
-
-      if (walletClient.chain?.id !== GNOSIS_CHAIN_ID) {
-        setError(`Switch wallet to Gnosis Chain (id ${GNOSIS_CHAIN_ID}) for on-chain wake-up.`)
-
-        return
-      }
+      return
     }
     setNotifying(true)
     setError(null)
@@ -440,7 +437,19 @@ export default function ShareModal({
       ? `${senderName.trim()} shared "${driveName}" with you`
       : `"${driveName}" shared with you`
     const body = `Drive shared. Open in Nook to add it.`
-    const provider = sendOnChain && walletClient ? createNotifyProvider(walletClient) : null
+
+    // For the on-chain wake-up, switch to Gnosis just-in-time and re-fetch the
+    // wallet client (stale across a chain switch — same pattern as ENSModal).
+    let provider = null
+
+    if (sendOnChain && walletClient) {
+      if (walletClient.chain?.id !== GNOSIS_CHAIN_ID) {
+        await switchChain(wagmiConfig, { chainId: GNOSIS_CHAIN_ID })
+      }
+      const gnosisClient = await getWalletClient(wagmiConfig, { chainId: GNOSIS_CHAIN_ID })
+
+      provider = createNotifyProvider(gnosisClient)
+    }
 
     let lastFailMsg: string | null = null
 

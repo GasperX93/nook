@@ -14,8 +14,7 @@ import {
 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
-import { useAccount, useDisconnect, useSwitchChain } from 'wagmi'
-import { gnosis } from 'wagmi/chains'
+import { useDisconnect } from 'wagmi'
 import { weiToDai } from '../api/bee'
 import { useBeeHealth, usePeers, useStamps, useStatus, useWallet } from '../api/queries'
 import { useInboxPolling } from '../hooks/useInboxPolling'
@@ -125,16 +124,11 @@ export default function Layout() {
   const { devMode, onboardingCompleted, setOnboardingCompleted } = useAppStore()
   const navigate = useNavigate()
   const location = useLocation()
-  const { chain } = useAccount()
-  const { switchChain } = useSwitchChain()
-
-  // Auto-switch to Gnosis Chain — Nook only operates on Gnosis
-  useEffect(() => {
-    if (chain && chain.id !== gnosis.id && switchChain) {
-      switchChain({ chainId: gnosis.id })
-    }
-  }, [chain, switchChain])
-
+  // NOTE: Nook does NOT force the wallet to Gnosis globally. Only on-chain
+  // notifications (registry.sendNotification) require Gnosis, and those call
+  // sites switch just-in-time. Forcing Gnosis here fought the top-up multichain
+  // widget (which moves the wallet to other chains for cross-swaps) and the ENS
+  // flow (which needs mainnet) — see M10.
   const pageTitles: Record<string, string> = {
     '/drive': 'Drive',
     '/account': 'Account',

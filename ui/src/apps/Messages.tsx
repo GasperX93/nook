@@ -2,6 +2,7 @@ import { Bee } from '@ethersphere/bee-js'
 import { identity, mailbox, registry } from '@swarm-notify/sdk'
 import { FileText, Mail, Send } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { getWalletClient, switchChain } from '@wagmi/core'
 import { useWalletClient } from 'wagmi'
 
 import { useStamps } from '../api/queries'
@@ -26,6 +27,7 @@ import { appendSent, loadReadCursors, loadThreads, markRead, unreadCount } from 
 import { createNotifyProvider } from '../notify/provider'
 import { addContact, loadContacts } from '../notify/storage'
 import { toLibraryContact, type NookContact } from '../notify/types'
+import { wagmiConfig } from '../wagmi'
 
 const BEE_URL = `${window.location.origin}/bee-api`
 
@@ -281,19 +283,14 @@ export default function Messages({ initialContactId, hideContactList, hideThread
 
     if (!body) return
 
-    // On-chain wake-up is only fired in invite states. Validate prerequisites early.
-    if (isInviteState) {
-      if (!walletClient) {
-        setError('Connect your wallet to send an invite (an on-chain ping is required).')
+    // On-chain wake-up is only fired in invite states. It needs the wallet on
+    // Gnosis — but we DON'T force Gnosis globally (that fights top-up/ENS), so
+    // just require a connected wallet here and switch to Gnosis just-in-time
+    // right before sending (below).
+    if (isInviteState && !walletClient) {
+      setError('Connect your wallet to send an invite (an on-chain ping is required).')
 
-        return
-      }
-
-      if (walletClient.chain?.id !== GNOSIS_CHAIN_ID) {
-        setError(`Switch wallet to Gnosis Chain (id ${GNOSIS_CHAIN_ID}) to send an invite.`)
-
-        return
-      }
+      return
     }
 
     setSending(true)
@@ -312,9 +309,16 @@ export default function Messages({ initialContactId, hideContactList, hideThread
       )
 
       // Fire the on-chain wake-up so the recipient discovers this message
-      // even if they haven't added us as a contact yet.
+      // even if they haven't added us as a contact yet. Switch to Gnosis
+      // just-in-time (the registry lives there); the wallet shows its own
+      // approve-switch prompt. Re-fetch the client after switching — the hook
+      // value is stale across a chain change (same pattern as ENSModal).
       if (isInviteState && walletClient) {
-        const provider = createNotifyProvider(walletClient)
+        if (walletClient.chain?.id !== GNOSIS_CHAIN_ID) {
+          await switchChain(wagmiConfig, { chainId: GNOSIS_CHAIN_ID })
+        }
+        const gnosisClient = await getWalletClient(wagmiConfig, { chainId: GNOSIS_CHAIN_ID })
+        const provider = createNotifyProvider(gnosisClient)
         const recipientPubKey = hexToBytes(selected.walletPublicKey)
         await registry.sendNotification(provider, REGISTRY_ADDRESS, recipientPubKey, selected.id, { sender: myAddr })
         recordInviteSent(selected.id)
