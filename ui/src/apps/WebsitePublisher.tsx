@@ -594,16 +594,6 @@ export default function WebsitePublisher() {
                   <ExternalLink size={12} />
                   Open on gateway
                 </a>
-                <a
-                  href={`https://${result.feedManifestAddress}.bzz.link/`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium"
-                  style={{ color: 'rgb(var(--fg-muted))' }}
-                >
-                  <ExternalLink size={12} />
-                  Open on bzz.link
-                </a>
               </div>
             </div>
           )}
@@ -649,16 +639,6 @@ export default function WebsitePublisher() {
                 >
                   <ExternalLink size={12} />
                   Open on gateway
-                </a>
-                <a
-                  href={`https://${result.hash}.bzz.link/`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium"
-                  style={{ color: 'rgb(var(--fg-muted))' }}
-                >
-                  <ExternalLink size={12} />
-                  Open on bzz.link
                 </a>
               </div>
             )}
