@@ -22,6 +22,7 @@ import {
   setMyDisplayName,
   type ConnectionState,
 } from '../notify/contact-state'
+import { sendInviteAck } from '../notify/invite-ack'
 import { loadInvitations, markInvitationProcessed, pendingInvitations, type Invitation } from '../notify/invitations'
 import { appendSent, loadReadCursors, loadThreads, markRead, unreadCount } from '../notify/messages'
 import { createNotifyProvider } from '../notify/provider'
@@ -148,19 +149,24 @@ export default function Messages({ initialContactId, hideContactList, hideThread
         return
       }
 
-      const next = addContact(contacts, {
+      const senderContact = {
         id: selectedInvite.senderAddr,
         nickname: inviteNickname.trim(),
         walletPublicKey: resolved.walletPublicKey,
         beePublicKey: resolved.beePublicKey,
-        source: 'identity-feed',
+        source: 'identity-feed' as const,
         addedAt: Date.now(),
-      })
+      }
+      const next = addContact(contacts, senderContact)
 
       setContacts(next)
       setInvitations(prev => markInvitationProcessed(prev, selectedInvite.senderAddr))
       setSelectedId(selectedInvite.senderAddr) // switch into the new conversation
       setInviteNickname('')
+
+      // Tell the sender we accepted — flips their side from "waiting" to
+      // "connected" (best-effort; no on-chain cost, we're mutual contacts now).
+      if (signer) void sendInviteAck(bee, signer, stampId, senderContact, myDisplayName)
     } catch (e) {
       setError((e as Error).message ?? 'Failed to add contact')
     } finally {
@@ -345,13 +351,9 @@ export default function Messages({ initialContactId, hideContactList, hideThread
         // reverts or never mines would otherwise look "sent" while the
         // recipient gets no wake-up. Wait for the receipt and verify it
         // actually mined before treating the invite as delivered.
-        const notifyTx = await registry.sendNotification(
-          provider,
-          REGISTRY_ADDRESS,
-          recipientPubKey,
-          selected.id,
-          { sender: myAddr },
-        )
+        const notifyTx = await registry.sendNotification(provider, REGISTRY_ADDRESS, recipientPubKey, selected.id, {
+          sender: myAddr,
+        })
         const receipt = await waitForTransactionReceipt(wagmiConfig, {
           hash: notifyTx as `0x${string}`,
           chainId: GNOSIS_CHAIN_ID,

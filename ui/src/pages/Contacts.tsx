@@ -4,8 +4,10 @@ import { Check, Copy, Mail, MessageSquare, Plus, Search, Send, Share2, Trash2, X
 import { useEffect, useMemo, useState } from 'react'
 
 import Messages, { ConnectionStatusBadge } from '../apps/Messages'
+import { useStamps } from '../api/queries'
 import { useDerivedKey } from '../hooks/useDerivedKey'
-import { deriveConnectionState } from '../notify/contact-state'
+import { deriveConnectionState, getMyDisplayName } from '../notify/contact-state'
+import { sendInviteAck } from '../notify/invite-ack'
 import { loadThreads } from '../notify/messages'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -37,6 +39,7 @@ type SortMode = 'name' | 'date' | 'address'
 export default function Contacts() {
   const bee = useMemo(() => new Bee(BEE_URL), [])
   const { signer } = useDerivedKey()
+  const { data: stamps } = useStamps()
   const [contacts, setContacts] = useState<NookContact[]>(() => loadContacts())
 
   // Phase 4: contacts are namespaced per derived identity. When the identity
@@ -174,20 +177,27 @@ export default function Contacts() {
 
         return
       }
-      const updated = addContact(contacts, {
+      const senderContact: NookContact = {
         id: selectedInvite.senderAddr,
         nickname: inviteNickname.trim(),
         walletPublicKey: resolved.walletPublicKey,
         beePublicKey: resolved.beePublicKey,
         source: 'identity-feed',
         addedAt: Date.now(),
-      })
+      }
+      const updated = addContact(contacts, senderContact)
 
       setContacts(updated)
       const nextInvs = markInvitationProcessed(loadInvitations(), selectedInvite.senderAddr)
 
       setInvitations(nextInvs)
       selectContact(selectedInvite.senderAddr) // drop into the new conversation
+
+      // Tell the sender we accepted — flips their side from "waiting" to
+      // "connected" (best-effort; no on-chain cost, we're mutual contacts now).
+      const stampId = (stamps ?? []).find(s => s.usable)?.batchID ?? ''
+
+      if (signer) void sendInviteAck(bee, signer, stampId, senderContact, getMyDisplayName())
     } catch (e) {
       setInviteError((e as Error).message ?? 'Failed to add contact')
     } finally {
