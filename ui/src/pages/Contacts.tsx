@@ -264,6 +264,7 @@ export default function Contacts() {
       setContacts(updated)
       resetAddForm()
       setAddOpen(false)
+      selectContact(next.id) // land on their card so the connection status + Connect CTA show
     } catch (e) {
       setAddError((e as Error).message)
     } finally {
@@ -302,6 +303,7 @@ export default function Contacts() {
       setContacts(updated)
       resetAddForm()
       setAddOpen(false)
+      selectContact(next.id) // land on their card so the connection status + Connect CTA show
     } catch (e) {
       setAddError((e as Error).message)
     }
@@ -603,6 +605,9 @@ export default function Contacts() {
               />
               <div className="text-center space-y-2">
                 <p className="text-xl font-semibold">{selected.nickname}</p>
+                <div className="flex justify-center">
+                  <ConnectionStatusBadge state={connectionState} contactId={selected.id} />
+                </div>
                 <div className="flex items-center justify-center gap-2">
                   <code className="text-xs font-mono break-all" style={{ color: 'rgb(var(--fg-muted))' }}>
                     {selected.id}
@@ -622,13 +627,16 @@ export default function Contacts() {
               </div>
               <div className="flex items-center justify-center gap-2 pt-2">
                 <Button
-                  variant="outline"
                   size="sm"
                   onClick={() => setComposeFor(selected.id)}
                   className="inline-flex items-center gap-1.5"
                 >
                   <MessageSquare size={14} />
-                  Send message
+                  {connectionState === 'connected'
+                    ? 'Send message'
+                    : connectionState === 'not-connected'
+                      ? 'Connect'
+                      : 'Resend invite'}
                 </Button>
                 <Button
                   variant="outline"
