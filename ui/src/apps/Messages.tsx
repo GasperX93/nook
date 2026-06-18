@@ -24,7 +24,7 @@ import {
 } from '../notify/contact-state'
 import { sendInviteAck } from '../notify/invite-ack'
 import { loadInvitations, markInvitationProcessed, pendingInvitations, type Invitation } from '../notify/invitations'
-import { appendSent, loadReadCursors, loadThreads, markRead, unreadCount } from '../notify/messages'
+import { appendSent, loadReadCursors, loadThreads, markRead, saveThreads, unreadCount } from '../notify/messages'
 import { createNotifyProvider } from '../notify/provider'
 import { publishIdentity } from '../notify/publish-identity'
 import { addContact, isIdentityPublished, loadContacts } from '../notify/storage'
@@ -343,6 +343,18 @@ export default function Messages({ initialContactId, hideContactList, hideThread
     setError(null)
     setNeedsPublish(false)
     setSendStatus(isInviteState ? 'Sending invite…' : null)
+
+    // Optimistic UI for regular messages: show the bubble + clear the input
+    // instantly, then write to Swarm in the background. Rolled back only if the
+    // send fails. Invites are NOT optimistic — they need wallet/on-chain
+    // confirmation first, so they append after success (with progress feedback).
+    const optimisticTs = Date.now()
+
+    if (!isInviteState) {
+      setThreads(prev => appendSent(prev, selected.id, body, optimisticTs))
+      setDraft('')
+    }
+
     try {
       const myAddr = signer.getAddress()
 
@@ -399,10 +411,30 @@ export default function Messages({ initialContactId, hideContactList, hideThread
         setPendingNicknameInput('')
       }
 
-      setThreads(prev => appendSent(prev, selected.id, body))
-      setDraft('')
+      // Invite states append after success (not optimistic). Regular messages
+      // were already shown optimistically above.
+      if (isInviteState) {
+        setThreads(prev => appendSent(prev, selected.id, body))
+        setDraft('')
+      }
     } catch (e) {
       setError(friendlyError(e))
+
+      // Roll back the optimistic bubble for a failed regular message, and put
+      // the text back in the input so it isn't lost (only if they haven't
+      // started typing something else).
+      if (!isInviteState) {
+        const key = selected.id.toLowerCase()
+
+        setThreads(prev => {
+          const next = { ...prev, [key]: (prev[key] ?? []).filter(m => m.ts !== optimisticTs) }
+
+          saveThreads(next)
+
+          return next
+        })
+        setDraft(curr => (curr ? curr : body))
+      }
     } finally {
       setSending(false)
       setSendStatus(null)
