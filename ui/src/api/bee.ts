@@ -247,6 +247,9 @@ export interface ChequebookBalance {
 export const beeApi = {
   getChequebookBalance: async () => beeRequest<ChequebookBalance>('/chequebook/balance'),
   health: async () => beeRequest<{ status: string; version?: string }>('/health'),
+  // /readiness is 'ready' only once the node has warmed up and can push/retrieve
+  // chunks — stricter than /health (which is 'ok' as soon as the API is up).
+  readiness: async () => beeRequest<{ status: string }>('/readiness'),
   getWallet: async () => beeRequest<WalletInfo>('/wallet'),
   getAddresses: async () => beeRequest<NodeAddresses>('/addresses'),
   getStamps: async () => beeRequest<{ stamps: Stamp[] }>('/stamps'),

@@ -35,6 +35,7 @@ import {
   unreadCount,
 } from '../notify/messages'
 import { confirmSentGrew, readSentArray } from '../notify/mailbox-verify'
+import { waitForBeeReady } from '../notify/bee-ready'
 import { createNotifyProvider } from '../notify/provider'
 import { publishIdentity } from '../notify/publish-identity'
 import { addContact, isIdentityPublished, loadContacts } from '../notify/storage'
@@ -310,6 +311,10 @@ export default function Messages({ initialContactId, hideContactList, hideThread
 
     try {
       await enqueueSend(contact.id, async () => {
+        // Don't send until the node can actually push — a send during warmup
+        // gets a local ✓ but never propagates to the recipient.
+        if (!(await waitForBeeReady())) throw new Error('Node not ready yet')
+
         const before = (await readSentArray(bee, s, contact.id, contact.walletPublicKey)).length
 
         await mailbox.send(
@@ -412,16 +417,26 @@ export default function Messages({ initialContactId, hideContactList, hideThread
     setSending(true)
     setError(null)
     setNeedsPublish(false)
-    setSendStatus('Sending invite…')
+    setSendStatus('Waiting for node…')
     try {
       const myAddr = signer.getAddress()
 
-      await enqueueSend(selected.id, async () =>
-        mailbox.send(bee, signer.getSigningKey(), stampId, signer.getSigningKey(), myAddr, toLibraryContact(selected), {
-          subject: '',
-          body,
-        }),
-      )
+      await enqueueSend(selected.id, async () => {
+        // Hold until the node can push — avoids a warmup-window send that
+        // gets a local ✓ but never reaches the recipient.
+        if (!(await waitForBeeReady())) throw new Error('Node not ready — try again in a moment.')
+        setSendStatus('Sending invite…')
+
+        return mailbox.send(
+          bee,
+          signer.getSigningKey(),
+          stampId,
+          signer.getSigningKey(),
+          myAddr,
+          toLibraryContact(selected),
+          { subject: '', body },
+        )
+      })
 
       // Fire the on-chain wake-up so the recipient discovers this invite even
       // if they haven't added us yet. Switch to Gnosis just-in-time; re-fetch
