@@ -43,7 +43,7 @@ import {
   type Stamp,
 } from '../api/bee'
 import { serverApi } from '../api/server'
-import { useAddresses, useBuyStamp, useChainState, useStamps, useTopupStamp, useWallet } from '../api/queries'
+import { useAddresses, useBuyStamp, useChainState, useStamps, useWallet } from '../api/queries'
 import { useAppStore } from '../store/app'
 import { useDerivedKey } from '../hooks/useDerivedKey'
 import { useDriveMetadata } from '../hooks/useDriveMetadata'
@@ -424,6 +424,7 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
     const amount = BigInt(chainState.currentPrice) * blocks
     const totalChunks = 1n << BigInt(targetDepth)
     const totalPlur = amount * totalChunks
+
     return { amount: amount.toString(), bzzCost: plurToBzz(totalPlur.toString()) }
   })()
 
@@ -450,6 +451,7 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
           willDilute && depthDelta > 0 ? (BigInt(cost.amount) << BigInt(depthDelta)).toString() : cost.amount
         await beeApi.topupStamp(stamp.batchID, topupAmount)
       }
+
       if (willDilute) {
         await beeApi.diluteStamp(stamp.batchID, targetDepth)
       }
@@ -460,7 +462,7 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
       const raw = err?.message ?? 'Failed to extend drive.'
       // Bee errors come back as 'Bee API /…: 500 {"code":500,"message":"…"}'
       const inner = raw.match(/"message"\s*:\s*"([^"]+)"/)?.[1]
-      const msg = raw.includes('402') ? 'Insufficient BZZ. Top up your wallet first.' : inner ?? raw
+      const msg = raw.includes('402') ? 'Insufficient BZZ. Top up your wallet first.' : (inner ?? raw)
       setExtendError(msg)
     } finally {
       setSubmitting(false)
@@ -851,7 +853,6 @@ function UpdateFeedModal({ record, onClose }: { record: UploadRecord; onClose: (
   )
 }
 
-
 // ─── RecordRow ────────────────────────────────────────────────────────────────
 
 interface RecordRowProps {
@@ -1059,6 +1060,9 @@ interface DriveCardProps {
   customName?: string
   encrypted?: boolean
   granteeCount?: number
+  /** Creator's Nook address when this encrypted drive was made with a DIFFERENT
+   *  identity than the one currently connected — undefined when openable. */
+  lockedForCreator?: string
   onOpen: (folderId?: string) => void
   onExtend: () => void
   onShare?: () => void
@@ -1090,6 +1094,7 @@ function DriveCard({
   onSetENS,
   encrypted,
   granteeCount,
+  lockedForCreator,
   onShare,
   onMoveToFolder,
 }: DriveCardProps) {
@@ -1242,6 +1247,19 @@ function DriveCard({
             >
               <Lock size={12} />
               Encrypted{granteeCount && granteeCount > 1 ? ` · ${granteeCount - 1} shared` : ''}
+            </span>
+          )}
+
+          {/* Locked for a different identity — this drive's encrypted metadata was
+              created with another wallet, so the current identity can't open it. */}
+          {lockedForCreator && (
+            <span
+              className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-semibold shrink-0"
+              style={{ backgroundColor: 'rgba(247,104,8,0.12)', color: 'rgb(var(--accent))' }}
+              title={`Created with a different Nook identity (${lockedForCreator}). Connect that wallet to open this drive.`}
+            >
+              <Lock size={12} />
+              Connect {`${lockedForCreator.slice(0, 6)}…${lockedForCreator.slice(-4)}`} to open
             </span>
           )}
 
@@ -2118,7 +2136,11 @@ export default function Drive() {
               value={search}
               onChange={e => setSearch(e.target.value)}
               className="w-full pl-7 pr-3 py-1.5 rounded-lg border text-xs focus:outline-none"
-              style={{ backgroundColor: 'rgb(var(--bg-surface))', color: 'rgb(var(--fg))', borderColor: 'rgb(var(--border))' }}
+              style={{
+                backgroundColor: 'rgb(var(--bg-surface))',
+                color: 'rgb(var(--fg))',
+                borderColor: 'rgb(var(--border))',
+              }}
             />
           </div>
 
@@ -2227,6 +2249,14 @@ export default function Drive() {
                 customName={customDriveLabels[stamp.batchID]}
                 encrypted={driveMetadata.isEncrypted(stamp.batchID)}
                 granteeCount={driveMetadata.get(stamp.batchID)?.granteeCount}
+                lockedForCreator={(() => {
+                  const cw = driveMetadata.get(stamp.batchID)?.creatorWpub
+                  const me = signer?.getAddress()
+
+                  // Only flag when we KNOW the creator and it differs from the
+                  // connected identity (older drives without creatorWpub are left alone).
+                  return cw && me && cw.toLowerCase() !== me.toLowerCase() ? cw : undefined
+                })()}
                 onOpen={folderId => {
                   setActiveDriveId(stamp.batchID)
 
