@@ -2,7 +2,7 @@ import { Bee } from '@ethersphere/bee-js'
 import { identity, mailbox, registry } from '@swarm-notify/sdk'
 import { FileText, Mail, Send } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { getWalletClient, switchChain } from '@wagmi/core'
+import { getWalletClient, switchChain, waitForTransactionReceipt } from '@wagmi/core'
 import { useWalletClient } from 'wagmi'
 
 import { useStamps } from '../api/queries'
@@ -341,7 +341,25 @@ export default function Messages({ initialContactId, hideContactList, hideThread
         const gnosisClient = await getWalletClient(wagmiConfig, { chainId: GNOSIS_CHAIN_ID })
         const provider = createNotifyProvider(gnosisClient)
         const recipientPubKey = hexToBytes(selected.walletPublicKey)
-        await registry.sendNotification(provider, REGISTRY_ADDRESS, recipientPubKey, selected.id, { sender: myAddr })
+        // sendNotification resolves on BROADCAST, not mining — a tx that
+        // reverts or never mines would otherwise look "sent" while the
+        // recipient gets no wake-up. Wait for the receipt and verify it
+        // actually mined before treating the invite as delivered.
+        const notifyTx = await registry.sendNotification(
+          provider,
+          REGISTRY_ADDRESS,
+          recipientPubKey,
+          selected.id,
+          { sender: myAddr },
+        )
+        const receipt = await waitForTransactionReceipt(wagmiConfig, {
+          hash: notifyTx as `0x${string}`,
+          chainId: GNOSIS_CHAIN_ID,
+        })
+
+        if (receipt.status !== 'success') {
+          throw new Error(`On-chain invite failed to confirm (tx ${notifyTx}). The recipient was not notified.`)
+        }
         recordInviteSent(selected.id)
       }
 
