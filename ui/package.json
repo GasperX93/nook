@@ -1,6 +1,6 @@
 {
   "name": "nook-ui",
-  "version": "0.4.7-test",
+  "version": "0.4.8-test",
   "private": true,
   "scripts": {
     "start": "vite --port 3002",
