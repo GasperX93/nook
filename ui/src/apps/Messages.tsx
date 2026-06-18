@@ -26,7 +26,7 @@ import { sendInviteAck } from '../notify/invite-ack'
 import { loadInvitations, markInvitationProcessed, pendingInvitations, type Invitation } from '../notify/invitations'
 import { appendSent, loadReadCursors, loadThreads, markRead, unreadCount } from '../notify/messages'
 import { createNotifyProvider } from '../notify/provider'
-import { addContact, loadContacts } from '../notify/storage'
+import { addContact, isIdentityPublished, loadContacts } from '../notify/storage'
 import { toLibraryContact, type NookContact } from '../notify/types'
 import { wagmiConfig } from '../wagmi'
 
@@ -316,6 +316,15 @@ export default function Messages({ initialContactId, hideContactList, hideThread
     // right before sending (below).
     if (isInviteState && !walletClient) {
       setError('Connect your wallet to send an invite (an on-chain ping is required).')
+
+      return
+    }
+
+    // The recipient resolves us via our published identity feed to accept the
+    // invite. If we haven't published, they'd get "could not resolve sender" and
+    // can't connect — so require publishing first.
+    if (isInviteState && !isIdentityPublished(signer.getAddress())) {
+      setError('Publish your Nook identity first (Account → Identity → Publish) so they can connect to you.')
 
       return
     }

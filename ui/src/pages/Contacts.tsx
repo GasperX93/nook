@@ -53,16 +53,22 @@ export default function Contacts() {
   // live here on the Contacts page. Re-read on identity change + a short
   // interval (the registry poll that writes them runs in Layout).
   const [invitations, setInvitations] = useState<Invitation[]>(() => loadInvitations())
+  // Threads as state so the connection badge reflects messages arriving via the
+  // 30s inbox poll — without this it was a one-time snapshot and the status sat
+  // on "NOT YET CONNECTED" until a manual refresh.
+  const [threads, setThreads] = useState(() => loadThreads())
 
   useEffect(() => {
     setContacts(loadContacts())
     setInvitations(loadInvitations())
+    setThreads(loadThreads())
   }, [myAddress])
 
   useEffect(() => {
     const id = setInterval(() => {
       setContacts(loadContacts())
       setInvitations(loadInvitations())
+      setThreads(loadThreads())
     }, 3_000)
 
     return () => clearInterval(id)
@@ -219,10 +225,10 @@ export default function Contacts() {
   // Show the message thread if the contact already has history OR the user just hit Send message.
   const { hasThread, hasInbound } = useMemo(() => {
     if (!selectedId) return { hasThread: false, hasInbound: false }
-    const t = loadThreads()[selectedId.toLowerCase()] ?? []
+    const t = threads[selectedId.toLowerCase()] ?? []
 
     return { hasThread: t.length > 0, hasInbound: t.some(m => m.direction === 'received') }
-  }, [selectedId, composeFor])
+  }, [selectedId, threads, composeFor])
   const showThread = hasThread || composeFor === selectedId
   const connectionState = selectedId ? deriveConnectionState(selectedId, hasInbound) : 'not-connected'
 
