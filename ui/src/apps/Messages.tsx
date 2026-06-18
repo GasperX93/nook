@@ -308,37 +308,46 @@ export default function Messages({ initialContactId, hideContactList, hideThread
       return
     }
     const stamp = stampId
+    const myAddr = s.getAddress()
+    const MAX_ATTEMPTS = 3
 
-    try {
-      await enqueueSend(contact.id, async () => {
-        // Don't send until the node can actually push — a send during warmup
-        // gets a local ✓ but never propagates to the recipient.
-        if (!(await waitForBeeReady())) throw new Error('Node not ready yet')
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        await enqueueSend(contact.id, async () => {
+          // Don't send until the node can actually push — a send during warmup
+          // gets a local ✓ but never propagates to the recipient.
+          if (!(await waitForBeeReady())) throw new Error('Node not ready yet')
 
-        const before = (await readSentArray(bee, s, contact.id, contact.walletPublicKey)).length
+          const arr = await readSentArray(bee, s, contact.id, contact.walletPublicKey)
 
-        await mailbox.send(
-          bee,
-          s.getSigningKey(),
-          stamp,
-          s.getSigningKey(),
-          s.getAddress(),
-          toLibraryContact(contact),
-          {
+          // Dedup: if a previous (retried) attempt already wrote this exact
+          // message, don't write it again — avoids a duplicate when an earlier
+          // send actually landed but its confirm read missed it.
+          if (arr.some(m => m.body === body && (m.sender ?? '').toLowerCase() === myAddr.toLowerCase())) return
+
+          await mailbox.send(bee, s.getSigningKey(), stamp, s.getSigningKey(), myAddr, toLibraryContact(contact), {
             subject: '',
             body,
-          },
-        )
+          })
 
-        // Gate the next send: wait until our message is actually retrievable in
-        // the feed, so the next read-modify-write sees it and won't overwrite.
-        const confirmed = await confirmSentGrew(bee, s, contact.id, contact.walletPublicKey, before)
+          // Gate the next send: wait until our message is actually retrievable in
+          // the feed, so the next read-modify-write sees it and won't overwrite.
+          const confirmed = await confirmSentGrew(bee, s, contact.id, contact.walletPublicKey, arr.length)
 
-        if (!confirmed) throw new Error('Message could not be confirmed on Swarm.')
-      })
-      setThreads(prev => setMessageStatus(prev, contact.id, ts, 'sent'))
-    } catch {
-      setThreads(prev => setMessageStatus(prev, contact.id, ts, 'failed'))
+          if (!confirmed) throw new Error('Message could not be confirmed on Swarm.')
+        })
+        setThreads(prev => setMessageStatus(prev, contact.id, ts, 'sent'))
+
+        return
+      } catch {
+        // Auto-retry a couple of times with backoff before surfacing the manual
+        // ⚠ retry — handles transient first-of-a-burst write failures silently.
+        if (attempt < MAX_ATTEMPTS) {
+          await new Promise(resolve => setTimeout(resolve, 2_000 * attempt))
+          continue
+        }
+        setThreads(prev => setMessageStatus(prev, contact.id, ts, 'failed'))
+      }
     }
   }
 

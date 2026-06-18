@@ -21,13 +21,20 @@ import { crypto, mailbox } from '@swarm-notify/sdk'
 import { NookSigner } from '../crypto/signer'
 import { hexToBytes } from '../lib/hex'
 
+/** One entry in a mailbox feed array (the fields we care about). */
+export interface SentMsg {
+  body?: string
+  sender?: string
+  ts?: number
+}
+
 /** Read the current message array on MY→recipient feed. [] if missing/unreadable. */
 export async function readSentArray(
   bee: Bee,
   signer: NookSigner,
   recipientEthAddr: string,
   recipientWalletPubKeyHex: string,
-): Promise<unknown[]> {
+): Promise<SentMsg[]> {
   try {
     const topic = mailbox.feedTopic(signer.getAddress(), recipientEthAddr)
     const sharedSecret = crypto.deriveSharedSecret(signer.getSigningKey(), hexToBytes(recipientWalletPubKeyHex))
@@ -37,7 +44,7 @@ export async function readSentArray(
     const decrypted = await crypto.decrypt({ ciphertext: enc.slice(12), nonce: enc.slice(0, 12) }, sharedSecret)
     const arr = JSON.parse(new TextDecoder().decode(decrypted))
 
-    return Array.isArray(arr) ? arr : []
+    return Array.isArray(arr) ? (arr as SentMsg[]) : []
   } catch {
     return []
   }
