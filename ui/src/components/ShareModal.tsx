@@ -19,7 +19,7 @@ import { appendSentDriveShare, loadThreads } from '../notify/messages'
 import { createNotifyProvider } from '../notify/provider'
 import { decodeShareLink } from '../notify/share-link'
 import { addContact, loadContacts } from '../notify/storage'
-import { toLibraryContact } from '../notify/types'
+import { type NookContact, toLibraryContact } from '../notify/types'
 import { buildShareLink } from '../hooks/useSharedDrives'
 import { wagmiConfig } from '../wagmi'
 import { Button } from './ui/button'
@@ -75,7 +75,9 @@ export default function ShareModal({
 }: ShareModalProps) {
   const { signer } = useDerivedKey()
   const { data: walletClient } = useWalletClient()
-  const contacts = useMemo(() => loadContacts(), [])
+  // State (not useMemo) so it refreshes after a grant adds a new contact —
+  // otherwise the just-granted person isn't matched as notifiable.
+  const [contacts, setContacts] = useState(() => loadContacts())
   const bee = useMemo(() => new Bee(BEE_URL), [])
 
   const [newKey, setNewKey] = useState('')
@@ -90,6 +92,8 @@ export default function ShareModal({
   // Optional on-chain wake-up — fires a Gnosis registry event so recipients
   // who haven't added you yet still get a "someone wants to reach you" signal.
   const [sendOnChain, setSendOnChain] = useState(false)
+  // Notify the recipient in Messages as part of granting (one-step share).
+  const [notifyOnGrant, setNotifyOnGrant] = useState(true)
   const [onChainStatus, setOnChainStatus] = useState<Record<string, NotifyStatus>>({})
   // Legacy: older grantees were saved with manual labels before contacts existed.
   // Read-only fallback for displaying their names; new grants pull from contacts.
@@ -185,6 +189,9 @@ export default function ShareModal({
   async function handleGrant() {
     const input = newKey.trim()
     let key = input
+    // The recipient we can notify (needs a wallet public key for ECDH). Captured
+    // across all three input paths so we can notify inline when the box is checked.
+    let grantedContact: NookContact | null = null
 
     setLoading(true)
     setError(null)
@@ -206,6 +213,17 @@ export default function ShareModal({
         key = payload.beePublicKey
         const alreadyContact = contacts.some(c => c.id.toLowerCase() === payload.ethAddress.toLowerCase())
         const isSelf = signer?.getAddress().toLowerCase() === payload.ethAddress.toLowerCase()
+
+        if (!isSelf) {
+          grantedContact = {
+            id: payload.ethAddress.toLowerCase(),
+            nickname: newLabel.trim() || payload.nickname || payload.ethAddress.slice(0, 8),
+            walletPublicKey: payload.walletPublicKey,
+            beePublicKey: payload.beePublicKey,
+            source: 'share-link',
+            addedAt: Date.now(),
+          }
+        }
 
         if (!alreadyContact && !isSelf) {
           try {
@@ -236,6 +254,18 @@ export default function ShareModal({
         // the user doesn't repeat this lookup next time.
         const alreadyContact = contacts.some(c => c.id.toLowerCase() === input.toLowerCase())
         const isSelf = signer?.getAddress().toLowerCase() === input.toLowerCase()
+        const existing = contacts.find(c => c.id.toLowerCase() === input.toLowerCase())
+
+        if (!isSelf) {
+          grantedContact = {
+            id: input.toLowerCase(),
+            nickname: newLabel.trim() || existing?.nickname || input.slice(0, 8),
+            walletPublicKey: resolved.walletPublicKey,
+            beePublicKey: resolved.beePublicKey,
+            source: 'identity-feed',
+            addedAt: Date.now(),
+          }
+        }
 
         if (!alreadyContact && !isSelf && newLabel.trim()) {
           try {
@@ -285,6 +315,24 @@ export default function ShareModal({
         historyRef: result.historyRef,
         granteeCount: grantees.length + 1,
       })
+
+      // Refresh from localStorage so a newly-added contact is matched for the
+      // grantee list + the post-grant "Send notification" button.
+      setContacts(loadContacts())
+
+      // One-step share: notify the recipient in Messages right after granting.
+      // A notify failure must NOT read as a grant failure — the grant succeeded.
+      const notifyTarget = grantedContact ?? contactForGrantee(key) ?? null
+
+      if (notifyOnGrant && notifyTarget?.walletPublicKey) {
+        try {
+          const fail = await notifyContacts([notifyTarget], sendOnChain)
+
+          if (fail) setError(`Access granted, but notification failed: ${fail}`)
+        } catch (e) {
+          setError(`Access granted, but notification failed: ${(e as Error).message}`)
+        }
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to grant access')
     } finally {
@@ -390,47 +438,18 @@ export default function ShareModal({
 
   const pendingNotify = notifiableGrantees.filter(g => notifyStatus[g.contact.id] !== 'sent')
 
-  async function handleNotifyAll() {
-    if (!signer) {
-      setError('No Nook identity — set it up on the Account → Identity tab.')
-
-      return
-    }
-
-    if (!files?.length) {
-      setError('Drive has no files to share yet.')
-
-      return
-    }
-
-    if (pendingNotify.length === 0) return
-
-    // On-chain wake-up needs the wallet on Gnosis, but we don't force Gnosis
-    // globally (that fights top-up/ENS) — just require a wallet here and switch
-    // just-in-time before sending (below).
-    if (sendOnChain && !walletClient) {
-      setError('Connect a wallet to send on-chain wake-up notifications.')
-
-      return
-    }
-    setNotifying(true)
-    setError(null)
-
-    let link: string
-
-    try {
-      // Refresh the feed once before notifying — recipients all read the same
-      // metadata, so we don't pay this per-recipient.
-      link = await refreshAndBuildLink()
-    } catch (e) {
-      setError((e as Error).message || 'Failed to prepare drive link')
-      setNotifying(false)
-
-      return
-    }
-
+  /**
+   * Send the drive-share to an explicit set of contacts (each must carry a
+   * walletPublicKey for ECDH). Refreshes the feed once, then per-recipient
+   * sends the mailbox message and, if doOnChain, fires the Gnosis wake-up.
+   * Takes contacts explicitly so callers (grant-time + the bulk button) don't
+   * depend on stale derived state. Returns the last error message, or null.
+   */
+  async function notifyContacts(targets: NookContact[], doOnChain: boolean): Promise<string | null> {
+    if (!signer || targets.length === 0) return null
+    const link = await refreshAndBuildLink()
     const myAddr = signer.getAddress()
-    const fileCount = files.length
+    const fileCount = files?.length ?? 0
     // Subject leads with sender name so a recipient peeking at the feed (eg
     // from an on-chain invitation, before adding us as contact) sees who.
     const subject = senderName.trim()
@@ -442,7 +461,7 @@ export default function ShareModal({
     // wallet client (stale across a chain switch — same pattern as ENSModal).
     let provider = null
 
-    if (sendOnChain && walletClient) {
+    if (doOnChain && walletClient) {
       if (walletClient.chain?.id !== GNOSIS_CHAIN_ID) {
         await switchChain(wagmiConfig, { chainId: GNOSIS_CHAIN_ID })
       }
@@ -453,7 +472,7 @@ export default function ShareModal({
 
     let lastFailMsg: string | null = null
 
-    for (const { contact } of pendingNotify) {
+    for (const contact of targets) {
       setNotifyStatus(prev => ({ ...prev, [contact.id]: 'sending' }))
       try {
         await mailbox.send(
@@ -463,19 +482,10 @@ export default function ShareModal({
           signer.getSigningKey(),
           myAddr,
           toLibraryContact(contact),
-          {
-            subject,
-            body,
-            type: 'drive-share',
-            driveShareLink: link,
-            driveName,
-            fileCount,
-          },
+          { subject, body, type: 'drive-share', driveShareLink: link, driveName, fileCount },
         )
         // Save locally so the sender sees the message in their own thread
-        const threads = loadThreads()
-
-        appendSentDriveShare(threads, contact.id, { driveShareLink: link, driveName, fileCount })
+        appendSentDriveShare(loadThreads(), contact.id, { driveShareLink: link, driveName, fileCount })
         setNotifyStatus(prev => ({ ...prev, [contact.id]: 'sent' }))
       } catch (e) {
         // eslint-disable-next-line no-console
@@ -506,8 +516,45 @@ export default function ShareModal({
       }
     }
 
-    if (lastFailMsg) setError(`Notification send failed: ${lastFailMsg}`)
-    setNotifying(false)
+    return lastFailMsg
+  }
+
+  async function handleNotifyAll() {
+    if (!signer) {
+      setError('No Nook identity — set it up on the Account → Identity tab.')
+
+      return
+    }
+
+    if (!files?.length) {
+      setError('Drive has no files to share yet.')
+
+      return
+    }
+
+    if (pendingNotify.length === 0) return
+
+    // On-chain wake-up needs the wallet on Gnosis, but we don't force Gnosis
+    // globally (that fights top-up/ENS) — just require a wallet here.
+    if (sendOnChain && !walletClient) {
+      setError('Connect a wallet to send on-chain wake-up notifications.')
+
+      return
+    }
+    setNotifying(true)
+    setError(null)
+    try {
+      const fail = await notifyContacts(
+        pendingNotify.map(p => p.contact),
+        sendOnChain,
+      )
+
+      if (fail) setError(`Notification send failed: ${fail}`)
+    } catch (e) {
+      setError((e as Error).message || 'Failed to prepare drive link')
+    } finally {
+      setNotifying(false)
+    }
   }
 
   return (
@@ -698,6 +745,37 @@ export default function ShareModal({
                 Grant
               </Button>
             </div>
+
+            {/* One-step share: notify the recipient in Messages as part of granting. */}
+            <label
+              className="flex items-start gap-2 text-[11px] cursor-pointer pt-1"
+              style={{ color: 'rgb(var(--fg-muted))' }}
+            >
+              <input
+                type="checkbox"
+                checked={notifyOnGrant}
+                onChange={e => setNotifyOnGrant(e.target.checked)}
+                className="mt-0.5"
+              />
+              <span>Notify them in Messages with the drive link when granting.</span>
+            </label>
+            {notifyOnGrant && (
+              <label
+                className="flex items-start gap-2 text-[11px] cursor-pointer"
+                style={{ color: 'rgb(var(--fg-muted))' }}
+              >
+                <input
+                  type="checkbox"
+                  checked={sendOnChain}
+                  onChange={e => setSendOnChain(e.target.checked)}
+                  className="mt-0.5"
+                />
+                <span>
+                  Also send on-chain wake-up (~0.001 xDAI) — for recipients who haven&apos;t added you back yet.
+                  Requires wallet on Gnosis Chain.
+                </span>
+              </label>
+            )}
           </div>
         </div>
 
