@@ -18,6 +18,7 @@ import { useDisconnect } from 'wagmi'
 import { weiToDai } from '../api/bee'
 import { useBeeHealth, usePeers, useStamps, useStatus, useWallet } from '../api/queries'
 import { useInboxPolling } from '../hooks/useInboxPolling'
+import { primeCricketAudio } from '../lib/cricket'
 import { loadReadCursors, loadThreads, totalUnread } from '../notify/messages'
 import { loadInvitations, pendingInvitations } from '../notify/invitations'
 import { loadContacts } from '../notify/storage'
@@ -151,6 +152,12 @@ export default function Layout() {
   // Background on-chain notification polling — surfaces wake-up pings from
   // senders who aren't yet in our contact list (see #62/#63).
   useRegistryPolling()
+
+  // Unlock notification audio on the first user gesture so a background chirp
+  // (e.g. an incoming invitation) isn't silently blocked by autoplay policy.
+  useEffect(() => {
+    primeCricketAudio()
+  }, [])
 
   // Unread-message badge on the Contacts nav item. Polls localStorage every 2s;
   // also recomputes when the route changes so opening Contacts clears the badge.
