@@ -95,6 +95,9 @@ export default function Messages({ initialContactId, hideContactList, hideThread
   // drives an inline "Publish & send" so the user needn't leave for the Identity tab.
   const [needsPublish, setNeedsPublish] = useState(false)
   const [publishing, setPublishing] = useState(false)
+  // Phase label shown while an invite is in flight — the publish + mailbox
+  // writes happen before the wallet popup, so without this the gap looks stuck.
+  const [sendStatus, setSendStatus] = useState<string | null>(null)
   // Pre-filled share link when the user clicks "Add drive" on a drive-share card
   const [importingLink, setImportingLink] = useState<string | null>(null)
   // Invitation acceptance state — nickname input + in-flight flag
@@ -339,6 +342,7 @@ export default function Messages({ initialContactId, hideContactList, hideThread
     setSending(true)
     setError(null)
     setNeedsPublish(false)
+    setSendStatus(isInviteState ? 'Sending invite…' : null)
     try {
       const myAddr = signer.getAddress()
 
@@ -358,6 +362,8 @@ export default function Messages({ initialContactId, hideContactList, hideThread
       // approve-switch prompt. Re-fetch the client after switching — the hook
       // value is stale across a chain change (same pattern as ENSModal).
       if (isInviteState && walletClient) {
+        setSendStatus('Confirm in your wallet…')
+
         if (walletClient.chain?.id !== GNOSIS_CHAIN_ID) {
           await switchChain(wagmiConfig, { chainId: GNOSIS_CHAIN_ID })
         }
@@ -374,6 +380,7 @@ export default function Messages({ initialContactId, hideContactList, hideThread
           sender: myAddr,
           name,
         } as Parameters<typeof registry.sendNotification>[4])
+        setSendStatus('Confirming on-chain…')
         const receipt = await waitForTransactionReceipt(wagmiConfig, {
           hash: notifyTx as `0x${string}`,
           chainId: GNOSIS_CHAIN_ID,
@@ -398,6 +405,7 @@ export default function Messages({ initialContactId, hideContactList, hideThread
       setError(friendlyError(e))
     } finally {
       setSending(false)
+      setSendStatus(null)
     }
   }
 
@@ -419,12 +427,14 @@ export default function Messages({ initialContactId, hideContactList, hideThread
     }
     setPublishing(true)
     setError(null)
+    setSendStatus('Publishing your identity…')
     try {
       await publishIdentity(bee, signer, stampId, addresses.publicKey)
       setNeedsPublish(false)
       await handleSend()
     } catch (e) {
       setError(friendlyError(e))
+      setSendStatus(null)
     } finally {
       setPublishing(false)
     }
@@ -651,6 +661,16 @@ export default function Messages({ initialContactId, hideContactList, hideThread
                 <Button onClick={handlePublishAndSend} disabled={publishing} size="sm" className="mb-2">
                   {publishing ? 'Publishing…' : 'Publish identity & send'}
                 </Button>
+              )}
+
+              {sendStatus && (
+                <p
+                  className="text-xs mb-2 flex items-center gap-1.5 animate-pulse"
+                  style={{ color: 'rgb(var(--accent))' }}
+                >
+                  <Send size={12} />
+                  {sendStatus}
+                </p>
               )}
 
               {needsNickname && (
