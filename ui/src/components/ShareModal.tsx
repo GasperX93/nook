@@ -18,7 +18,7 @@ import { GNOSIS_CHAIN_ID, REGISTRY_ADDRESS } from '../notify/constants'
 import { appendSentDriveShare, loadThreads } from '../notify/messages'
 import { createNotifyProvider } from '../notify/provider'
 import { decodeShareLink } from '../notify/share-link'
-import { addContact, loadContacts } from '../notify/storage'
+import { addContact, isIdentityPublished, loadContacts } from '../notify/storage'
 import { type NookContact, toLibraryContact } from '../notify/types'
 import { buildShareLink } from '../hooks/useSharedDrives'
 import { wagmiConfig } from '../wagmi'
@@ -447,6 +447,12 @@ export default function ShareModal({
    */
   async function notifyContacts(targets: NookContact[], doOnChain: boolean): Promise<string | null> {
     if (!signer || targets.length === 0) return null
+
+    // The recipient resolves us via our published identity feed to add us back.
+    // Without publishing, the share message arrives but they can't connect to us.
+    if (!isIdentityPublished(signer.getAddress())) {
+      return 'Publish your Nook identity first (Account → Identity → Publish) so they can add you back.'
+    }
     const link = await refreshAndBuildLink()
     const myAddr = signer.getAddress()
     const fileCount = files?.length ?? 0
