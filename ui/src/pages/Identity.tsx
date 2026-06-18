@@ -18,7 +18,7 @@ import {
 const BEE_URL = `${window.location.origin}/bee-api`
 
 export default function Identity() {
-  const { signer, derive, walletConnected } = useDerivedKey()
+  const { signer, derive, deriving, walletConnected } = useDerivedKey()
   const { data: addresses } = useAddresses()
   const { data: stamps } = useStamps()
 
@@ -124,7 +124,11 @@ export default function Identity() {
           </p>
         )}
 
-        {walletConnected && !signer && <Button onClick={derive}>Set up Nook identity</Button>}
+        {walletConnected && !signer && (
+          <Button onClick={async () => derive()} disabled={deriving}>
+            {deriving ? 'Setting up… (check your wallet)' : 'Set up Nook identity'}
+          </Button>
+        )}
 
         {signer && myAddress && (
           <>
@@ -185,9 +189,7 @@ export default function Identity() {
             </div>
 
             {/* Divider */}
-            {myShareLink && (
-              <div className="h-px" style={{ backgroundColor: 'rgb(var(--border))' }} />
-            )}
+            {myShareLink && <div className="h-px" style={{ backgroundColor: 'rgb(var(--border))' }} />}
 
             {/* Contact link row */}
             {myShareLink && (

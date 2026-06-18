@@ -74,7 +74,7 @@ interface MessagesProps {
 }
 
 export default function Messages({ initialContactId, hideContactList, hideThreadHeader }: MessagesProps = {}) {
-  const { signer, derive, walletConnected } = useDerivedKey()
+  const { signer, derive, deriving, walletConnected } = useDerivedKey()
   const { data: stamps } = useStamps()
 
   const bee = useMemo(() => new Bee(BEE_URL), [])
@@ -416,10 +416,12 @@ export default function Messages({ initialContactId, hideContactList, hideThread
       <div className="flex flex-col p-6 gap-4 max-w-3xl">
         <h2 className="text-2xl font-semibold">Messages</h2>
         <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
-          Set up your Nook identity to start messaging.
+          {deriving
+            ? 'Check your wallet — approve the signature requests to finish setting up your Nook identity.'
+            : 'Set up your Nook identity to start messaging.'}
         </p>
-        <Button onClick={derive} className="self-start uppercase tracking-widest">
-          Set up Nook identity
+        <Button onClick={async () => derive()} disabled={deriving} className="self-start uppercase tracking-widest">
+          {deriving ? 'Setting up…' : 'Set up Nook identity'}
         </Button>
       </div>
     )
