@@ -8,7 +8,7 @@ import { useStamps } from '../api/queries'
 import { useDerivedKey } from '../hooks/useDerivedKey'
 import { deriveConnectionState, getMyDisplayName } from '../notify/contact-state'
 import { sendInviteAck } from '../notify/invite-ack'
-import { loadThreads } from '../notify/messages'
+import { loadReadCursors, loadThreads, unreadCount } from '../notify/messages'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Textarea } from '../components/ui/textarea'
@@ -57,11 +57,13 @@ export default function Contacts() {
   // 30s inbox poll — without this it was a one-time snapshot and the status sat
   // on "NOT YET CONNECTED" until a manual refresh.
   const [threads, setThreads] = useState(() => loadThreads())
+  const [cursors, setCursors] = useState(() => loadReadCursors())
 
   useEffect(() => {
     setContacts(loadContacts())
     setInvitations(loadInvitations())
     setThreads(loadThreads())
+    setCursors(loadReadCursors())
   }, [myAddress])
 
   useEffect(() => {
@@ -69,6 +71,7 @@ export default function Contacts() {
       setContacts(loadContacts())
       setInvitations(loadInvitations())
       setThreads(loadThreads())
+      setCursors(loadReadCursors())
     }, 3_000)
 
     return () => clearInterval(id)
@@ -451,6 +454,7 @@ export default function Contacts() {
               {sortedFilteredContacts.map(c => {
                 const isSelected = selectedId === c.id
                 const isCopied = copiedRowId === c.id
+                const unread = unreadCount(threads[c.id.toLowerCase()], cursors[c.id.toLowerCase()])
 
                 return (
                   <li key={c.id}>
@@ -464,7 +468,18 @@ export default function Contacts() {
                         backgroundColor: isSelected ? 'rgba(255,255,255,0.06)' : 'transparent',
                       }}
                     >
-                      <span className="text-sm font-medium truncate">{c.nickname}</span>
+                      <span className="flex items-center gap-2 min-w-0">
+                        <span className="text-sm font-medium truncate">{c.nickname}</span>
+                        {unread > 0 && (
+                          <span
+                            className="shrink-0 inline-flex items-center justify-center text-[10px] font-semibold rounded-full px-1.5 min-w-[18px] h-[18px]"
+                            style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+                            aria-label={`${unread} unread`}
+                          >
+                            {unread}
+                          </span>
+                        )}
+                      </span>
                       <span className="text-xs font-mono" style={{ color: 'rgb(var(--fg-muted))' }}>
                         {formatDate(c.addedAt)}
                       </span>
