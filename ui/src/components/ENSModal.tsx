@@ -94,7 +94,10 @@ interface ENSModalProps {
 
 export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, currentDomain, onLinked }: ENSModalProps) {
   const { address, isConnected, chainId } = useAccount()
-  const publicClient = usePublicClient()
+  // ENS lives on Ethereum mainnet — pin reads to mainnet's RPC so lookups work
+  // regardless of which chain the wallet is connected to (e.g. Gnosis). The wallet
+  // is only switched to mainnet at write time, in linkDomain().
+  const publicClient = usePublicClient({ chainId: mainnet.id })
   const { data: walletClient } = useWalletClient()
   const { switchChainAsync } = useSwitchChain()
 
