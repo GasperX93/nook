@@ -17,6 +17,7 @@ import { useDerivedKey } from '../hooks/useDerivedKey'
 import { GNOSIS_CHAIN_ID, REGISTRY_ADDRESS } from '../notify/constants'
 import { appendSentDriveShare, loadThreads } from '../notify/messages'
 import { createNotifyProvider } from '../notify/provider'
+import { enqueueSend } from '../notify/send-queue'
 import { decodeShareLink } from '../notify/share-link'
 import { addContact, isIdentityPublished, loadContacts } from '../notify/storage'
 import { type NookContact, toLibraryContact } from '../notify/types'
@@ -481,14 +482,25 @@ export default function ShareModal({
     for (const contact of targets) {
       setNotifyStatus(prev => ({ ...prev, [contact.id]: 'sending' }))
       try {
-        await mailbox.send(
-          bee,
-          signer.getSigningKey(),
-          stampId,
-          signer.getSigningKey(),
-          myAddr,
-          toLibraryContact(contact),
-          { subject, body, type: 'drive-share', driveShareLink: link, driveName, fileCount },
+        // Serialize per recipient — avoids racing the feed read-modify-write
+        // with a concurrent message/ack to the same contact.
+        await enqueueSend(contact.id, async () =>
+          mailbox.send(
+            bee,
+            signer.getSigningKey(),
+            stampId,
+            signer.getSigningKey(),
+            myAddr,
+            toLibraryContact(contact),
+            {
+              subject,
+              body,
+              type: 'drive-share',
+              driveShareLink: link,
+              driveName,
+              fileCount,
+            },
+          ),
         )
         // Save locally so the sender sees the message in their own thread
         appendSentDriveShare(loadThreads(), contact.id, { driveShareLink: link, driveName, fileCount })

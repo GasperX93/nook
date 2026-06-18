@@ -16,6 +16,7 @@ import { mailbox } from '@swarm-notify/sdk'
 
 import { NookSigner } from '../crypto/signer'
 import { appendSent, loadThreads } from './messages'
+import { enqueueSend } from './send-queue'
 import { type NookContact, toLibraryContact } from './types'
 
 export async function sendInviteAck(
@@ -30,14 +31,19 @@ export async function sendInviteAck(
   const body = `${name} accepted your invitation`
 
   try {
-    await mailbox.send(
-      bee,
-      signer.getSigningKey(),
-      stampId,
-      signer.getSigningKey(),
-      signer.getAddress(),
-      toLibraryContact(sender),
-      { subject: '', body },
+    await enqueueSend(sender.id, async () =>
+      mailbox.send(
+        bee,
+        signer.getSigningKey(),
+        stampId,
+        signer.getSigningKey(),
+        signer.getAddress(),
+        toLibraryContact(sender),
+        {
+          subject: '',
+          body,
+        },
+      ),
     )
     // Mirror it into our own thread so the conversation isn't empty.
     appendSent(loadThreads(), sender.id, body)

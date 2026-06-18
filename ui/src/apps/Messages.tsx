@@ -23,6 +23,7 @@ import {
   type ConnectionState,
 } from '../notify/contact-state'
 import { sendInviteAck } from '../notify/invite-ack'
+import { enqueueSend } from '../notify/send-queue'
 import { loadInvitations, markInvitationProcessed, pendingInvitations, type Invitation } from '../notify/invitations'
 import { appendSent, loadReadCursors, loadThreads, markRead, saveThreads, unreadCount } from '../notify/messages'
 import { createNotifyProvider } from '../notify/provider'
@@ -358,14 +359,13 @@ export default function Messages({ initialContactId, hideContactList, hideThread
     try {
       const myAddr = signer.getAddress()
 
-      await mailbox.send(
-        bee,
-        signer.getSigningKey(),
-        stampId,
-        signer.getSigningKey(),
-        myAddr,
-        toLibraryContact(selected),
-        { subject: '', body },
+      // Serialize per recipient — rapid sends otherwise race the feed's
+      // read-modify-write and overwrite each other (lost messages).
+      await enqueueSend(selected.id, async () =>
+        mailbox.send(bee, signer.getSigningKey(), stampId, signer.getSigningKey(), myAddr, toLibraryContact(selected), {
+          subject: '',
+          body,
+        }),
       )
 
       // Fire the on-chain wake-up so the recipient discovers this message
