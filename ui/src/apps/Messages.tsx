@@ -35,6 +35,26 @@ function short(s: string, n = 6): string {
   return s.length <= n * 2 + 3 ? s : `${s.slice(0, n)}…${s.slice(-n)}`
 }
 
+// Turn a raw wallet/viem error into a one-line, user-facing message. Without
+// this, the full viem dump (chain/from/to/data/Version) leaks into the UI.
+function friendlyError(e: unknown): string {
+  const raw = (e as Error)?.message ?? ''
+
+  if (/user rejected|user denied|rejected the request|denied transaction/i.test(raw)) {
+    return 'Invite cancelled — you declined the wallet prompt.'
+  }
+
+  if (/insufficient funds|exceeds the balance|gas required exceeds|cannot estimate gas/i.test(raw)) {
+    return 'Not enough xDAI to send the on-chain invite. Top up in Account → Wallet.'
+  }
+  // viem BaseError exposes a clean one-liner; fall back to the first line.
+  const short = (e as { shortMessage?: string })?.shortMessage
+
+  if (typeof short === 'string' && short) return short
+
+  return raw.split('\n')[0].slice(0, 200) || 'Something went wrong. Please try again.'
+}
+
 function formatTime(ts: number): string {
   const d = new Date(ts)
   const today = new Date()
@@ -263,10 +283,13 @@ export default function Messages({ initialContactId, hideContactList, hideThread
       return
     }
 
-    // Lock in a display name on first invite, then reuse forever.
+    // Determine the display name for this invite. Persist it only AFTER the
+    // invite fully succeeds (below). Persisting up front meant a failed/rejected
+    // send still saved the name, making the name field vanish on the next try.
     let name = myDisplayName
+    const nameIsNew = isInviteState && !name
 
-    if (isInviteState && !name) {
+    if (nameIsNew) {
       const candidate = pendingNicknameInput.trim()
 
       if (!candidate) {
@@ -275,8 +298,6 @@ export default function Messages({ initialContactId, hideContactList, hideThread
         return
       }
       name = candidate
-      setMyDisplayName(candidate)
-      setMyDisplayNameState(candidate)
     }
 
     const body = trimmed || (isInviteState && name ? defaultInviteMessage(name) : '')
@@ -324,10 +345,17 @@ export default function Messages({ initialContactId, hideContactList, hideThread
         recordInviteSent(selected.id)
       }
 
+      // Invite fully succeeded — now lock in the display name for future invites.
+      if (nameIsNew) {
+        setMyDisplayName(name)
+        setMyDisplayNameState(name)
+        setPendingNicknameInput('')
+      }
+
       setThreads(prev => appendSent(prev, selected.id, body))
       setDraft('')
     } catch (e) {
-      setError((e as Error).message)
+      setError(friendlyError(e))
     } finally {
       setSending(false)
     }
