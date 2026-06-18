@@ -1060,9 +1060,6 @@ interface DriveCardProps {
   customName?: string
   encrypted?: boolean
   granteeCount?: number
-  /** Creator's Nook address when this encrypted drive was made with a DIFFERENT
-   *  identity than the one currently connected — undefined when openable. */
-  lockedForCreator?: string
   onOpen: (folderId?: string) => void
   onExtend: () => void
   onShare?: () => void
@@ -1094,7 +1091,6 @@ function DriveCard({
   onSetENS,
   encrypted,
   granteeCount,
-  lockedForCreator,
   onShare,
   onMoveToFolder,
 }: DriveCardProps) {
@@ -1247,19 +1243,6 @@ function DriveCard({
             >
               <Lock size={12} />
               Encrypted{granteeCount && granteeCount > 1 ? ` · ${granteeCount - 1} shared` : ''}
-            </span>
-          )}
-
-          {/* Locked for a different identity — this drive's encrypted metadata was
-              created with another wallet, so the current identity can't open it. */}
-          {lockedForCreator && (
-            <span
-              className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-semibold shrink-0"
-              style={{ backgroundColor: 'rgba(247,104,8,0.12)', color: 'rgb(var(--accent))' }}
-              title={`Created with a different Nook identity (${lockedForCreator}). Connect that wallet to open this drive.`}
-            >
-              <Lock size={12} />
-              Connect {`${lockedForCreator.slice(0, 6)}…${lockedForCreator.slice(-4)}`} to open
             </span>
           )}
 
@@ -2249,14 +2232,6 @@ export default function Drive() {
                 customName={customDriveLabels[stamp.batchID]}
                 encrypted={driveMetadata.isEncrypted(stamp.batchID)}
                 granteeCount={driveMetadata.get(stamp.batchID)?.granteeCount}
-                lockedForCreator={(() => {
-                  const cw = driveMetadata.get(stamp.batchID)?.creatorWpub
-                  const me = signer?.getAddress()
-
-                  // Only flag when we KNOW the creator and it differs from the
-                  // connected identity (older drives without creatorWpub are left alone).
-                  return cw && me && cw.toLowerCase() !== me.toLowerCase() ? cw : undefined
-                })()}
                 onOpen={folderId => {
                   setActiveDriveId(stamp.batchID)
 
