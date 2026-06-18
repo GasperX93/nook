@@ -1,5 +1,4 @@
 import { Bee } from '@ethersphere/bee-js'
-import { identity } from '@swarm-notify/sdk'
 import { Check, Copy, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
@@ -7,13 +6,9 @@ import { useAddresses, useStamps } from '../api/queries'
 import { Button } from '../components/ui/button'
 import { useDerivedKey } from '../hooks/useDerivedKey'
 import { bytesToHex } from '../lib/hex'
+import { publishIdentity } from '../notify/publish-identity'
 import { encodeShareLink } from '../notify/share-link'
-import {
-  isIdentityPublished,
-  isOnboardingDismissed,
-  markIdentityPublished,
-  markOnboardingDismissed,
-} from '../notify/storage'
+import { isIdentityPublished, isOnboardingDismissed, markOnboardingDismissed } from '../notify/storage'
 
 const BEE_URL = `${window.location.origin}/bee-api`
 
@@ -59,19 +54,7 @@ export default function Identity() {
     setPublishing(true)
     setPublishError(null)
     try {
-      await identity.publish(bee, signer.getSigningKey(), stampId, {
-        walletPublicKey: bytesToHex(signer.getPublicKey()),
-        beePublicKey: addresses.publicKey,
-        ethAddress: signer.getAddress(),
-      })
-      const readback = await identity.resolve(bee, signer.getAddress())
-
-      if (!readback) {
-        setPublishError('Published but could not verify — try again')
-
-        return
-      }
-      markIdentityPublished(signer.getAddress())
+      await publishIdentity(bee, signer, stampId, addresses.publicKey)
       setPublishedTick(t => t + 1)
       markOnboardingDismissed()
       setHintDismissed(true)

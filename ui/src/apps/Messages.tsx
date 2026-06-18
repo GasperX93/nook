@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { getWalletClient, switchChain, waitForTransactionReceipt } from '@wagmi/core'
 import { useWalletClient } from 'wagmi'
 
-import { useStamps } from '../api/queries'
+import { useAddresses, useStamps } from '../api/queries'
 import AddSharedDriveModal from '../components/AddSharedDriveModal'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -26,6 +26,7 @@ import { sendInviteAck } from '../notify/invite-ack'
 import { loadInvitations, markInvitationProcessed, pendingInvitations, type Invitation } from '../notify/invitations'
 import { appendSent, loadReadCursors, loadThreads, markRead, unreadCount } from '../notify/messages'
 import { createNotifyProvider } from '../notify/provider'
+import { publishIdentity } from '../notify/publish-identity'
 import { addContact, isIdentityPublished, loadContacts } from '../notify/storage'
 import { toLibraryContact, type NookContact } from '../notify/types'
 import { wagmiConfig } from '../wagmi'
@@ -76,6 +77,7 @@ interface MessagesProps {
 export default function Messages({ initialContactId, hideContactList, hideThreadHeader }: MessagesProps = {}) {
   const { signer, derive, deriving, walletConnected } = useDerivedKey()
   const { data: stamps } = useStamps()
+  const { data: addresses } = useAddresses()
 
   const bee = useMemo(() => new Bee(BEE_URL), [])
   // Re-read each render cycle so newly-added contacts (eg via accepting an
@@ -89,6 +91,10 @@ export default function Messages({ initialContactId, hideContactList, hideThread
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Set when an invite is blocked because our identity isn't published yet —
+  // drives an inline "Publish & send" so the user needn't leave for the Identity tab.
+  const [needsPublish, setNeedsPublish] = useState(false)
+  const [publishing, setPublishing] = useState(false)
   // Pre-filled share link when the user clicks "Add drive" on a drive-share card
   const [importingLink, setImportingLink] = useState<string | null>(null)
   // Invitation acceptance state — nickname input + in-flight flag
@@ -322,15 +328,17 @@ export default function Messages({ initialContactId, hideContactList, hideThread
 
     // The recipient resolves us via our published identity feed to accept the
     // invite. If we haven't published, they'd get "could not resolve sender" and
-    // can't connect — so require publishing first.
+    // can't connect — surface an inline "Publish & send" instead of failing.
     if (isInviteState && !isIdentityPublished(signer.getAddress())) {
-      setError('Publish your Nook identity first (Account → Identity → Publish) so they can connect to you.')
+      setNeedsPublish(true)
+      setError('Publish your Nook identity so they can connect to you.')
 
       return
     }
 
     setSending(true)
     setError(null)
+    setNeedsPublish(false)
     try {
       const myAddr = signer.getAddress()
 
@@ -390,6 +398,35 @@ export default function Messages({ initialContactId, hideContactList, hideThread
       setError(friendlyError(e))
     } finally {
       setSending(false)
+    }
+  }
+
+  // Inline recovery for the "publish your identity first" guard: publish, then
+  // retry the send — no trip to the Identity tab.
+  async function handlePublishAndSend() {
+    if (!signer) return
+
+    if (!addresses) {
+      setError('Bee node not reachable — try again in a moment.')
+
+      return
+    }
+
+    if (!stampId) {
+      setError('No usable stamp — buy a drive in Account → My Storage to publish.')
+
+      return
+    }
+    setPublishing(true)
+    setError(null)
+    try {
+      await publishIdentity(bee, signer, stampId, addresses.publicKey)
+      setNeedsPublish(false)
+      await handleSend()
+    } catch (e) {
+      setError(friendlyError(e))
+    } finally {
+      setPublishing(false)
     }
   }
 
@@ -605,9 +642,15 @@ export default function Messages({ initialContactId, hideContactList, hideThread
             </div>
             <div className="border-t p-4 space-y-2" style={{ borderColor: 'rgb(var(--border))' }}>
               {error && (
-                <p className="text-xs mb-2" style={{ color: '#ef4444' }}>
+                <p className="text-xs mb-2" style={{ color: needsPublish ? 'rgb(var(--fg-muted))' : '#ef4444' }}>
                   {error}
                 </p>
+              )}
+
+              {needsPublish && (
+                <Button onClick={handlePublishAndSend} disabled={publishing} size="sm" className="mb-2">
+                  {publishing ? 'Publishing…' : 'Publish identity & send'}
+                </Button>
               )}
 
               {needsNickname && (
