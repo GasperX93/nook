@@ -19,6 +19,8 @@ import { weiToDai } from '../api/bee'
 import { useBeeHealth, usePeers, useStamps, useStatus, useWallet } from '../api/queries'
 import { useInboxPolling } from '../hooks/useInboxPolling'
 import { loadReadCursors, loadThreads, totalUnread } from '../notify/messages'
+import { loadInvitations, pendingInvitations } from '../notify/invitations'
+import { loadContacts } from '../notify/storage'
 import { useRegistryPolling } from '../hooks/useRegistryPolling'
 import { useAppStore } from '../store/app'
 import Onboarding from './Onboarding'
@@ -155,7 +157,15 @@ export default function Layout() {
   const [unreadCount, setUnreadCount] = useState(0)
 
   useEffect(() => {
-    const recompute = () => setUnreadCount(totalUnread(loadThreads(), loadReadCursors()))
+    const recompute = () => {
+      // Badge = unread thread messages + pending invitations from senders not
+      // yet in contacts. Without the invitation count, a first-contact invite
+      // gives no signal anywhere and looks like it "never arrived."
+      const known = new Set(loadContacts().map(c => c.id.toLowerCase()))
+      const inviteCount = pendingInvitations(loadInvitations()).filter(i => !known.has(i.senderAddr)).length
+
+      setUnreadCount(totalUnread(loadThreads(), loadReadCursors()) + inviteCount)
+    }
     recompute()
     const id = setInterval(recompute, 2000)
 

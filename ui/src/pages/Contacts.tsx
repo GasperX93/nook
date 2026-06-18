@@ -1,6 +1,6 @@
 import { Bee } from '@ethersphere/bee-js'
 import { identity } from '@swarm-notify/sdk'
-import { Check, Copy, MessageSquare, Plus, Search, Send, Share2, Trash2, X } from 'lucide-react'
+import { Check, Copy, Mail, MessageSquare, Plus, Search, Send, Share2, Trash2, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
 import Messages, { ConnectionStatusBadge } from '../apps/Messages'
@@ -10,7 +10,13 @@ import { loadThreads } from '../notify/messages'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Textarea } from '../components/ui/textarea'
-import { loadInvitations, removeInvitationsFor } from '../notify/invitations'
+import {
+  type Invitation,
+  loadInvitations,
+  markInvitationProcessed,
+  pendingInvitations,
+  removeInvitationsFor,
+} from '../notify/invitations'
 import { decodeShareLink, encodeShareLink } from '../notify/share-link'
 import { addContact, loadContacts, removeContact, saveContacts } from '../notify/storage'
 import type { NookContact } from '../notify/types'
@@ -39,11 +45,31 @@ export default function Contacts() {
   // until navigated away. Keyed on the derived address.
   const myAddress = signer ? signer.getAddress() : null
 
+  // Pending invitations — on-chain wake-up pings from senders not yet in
+  // contacts. These are the ONLY surface for first-contact invites, so they
+  // live here on the Contacts page. Re-read on identity change + a short
+  // interval (the registry poll that writes them runs in Layout).
+  const [invitations, setInvitations] = useState<Invitation[]>(() => loadInvitations())
+
   useEffect(() => {
     setContacts(loadContacts())
+    setInvitations(loadInvitations())
   }, [myAddress])
 
+  useEffect(() => {
+    const id = setInterval(() => {
+      setContacts(loadContacts())
+      setInvitations(loadInvitations())
+    }, 3_000)
+
+    return () => clearInterval(id)
+  }, [])
+
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedInviteId, setSelectedInviteId] = useState<string | null>(null)
+  const [inviteNickname, setInviteNickname] = useState('')
+  const [acceptingInvite, setAcceptingInvite] = useState(false)
+  const [inviteError, setInviteError] = useState<string | null>(null)
   const [composeFor, setComposeFor] = useState<string | null>(null)
   const [addOpen, setAddOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
@@ -104,10 +130,77 @@ export default function Contacts() {
 
   const selected = useMemo(() => contacts.find(c => c.id === selectedId) ?? null, [contacts, selectedId])
 
+  // Pending invitations from senders not already in contacts (a contact's
+  // messages arrive via the mailbox, so a stale invite row would just shadow
+  // the real thread).
+  const pending = useMemo(() => {
+    const known = new Set(contacts.map(c => c.id.toLowerCase()))
+
+    return pendingInvitations(invitations).filter(i => !known.has(i.senderAddr))
+  }, [invitations, contacts])
+  const selectedInvite = useMemo(
+    () => (selectedInviteId ? (pending.find(i => i.senderAddr === selectedInviteId) ?? null) : null),
+    [pending, selectedInviteId],
+  )
+
+  // Selecting a contact and selecting an invitation are mutually exclusive.
+  function selectContact(id: string) {
+    setSelectedId(id)
+    setSelectedInviteId(null)
+  }
+
+  function selectInvite(senderAddr: string) {
+    setSelectedInviteId(senderAddr)
+    setSelectedId(null)
+    setInviteNickname('')
+    setInviteError(null)
+  }
+
   // Reset compose mode when selection changes
   useEffect(() => {
     setComposeFor(null)
   }, [selectedId])
+
+  async function handleAcceptInvite() {
+    if (!selectedInvite || !inviteNickname.trim()) return
+    setAcceptingInvite(true)
+    setInviteError(null)
+    try {
+      // Resolve the sender's identity feed to get their wallet + bee public keys.
+      const resolved = await identity.resolve(bee, selectedInvite.senderAddr)
+
+      if (!resolved) {
+        setInviteError('Could not resolve sender identity. They may have unpublished.')
+
+        return
+      }
+      const updated = addContact(contacts, {
+        id: selectedInvite.senderAddr,
+        nickname: inviteNickname.trim(),
+        walletPublicKey: resolved.walletPublicKey,
+        beePublicKey: resolved.beePublicKey,
+        source: 'identity-feed',
+        addedAt: Date.now(),
+      })
+
+      setContacts(updated)
+      const nextInvs = markInvitationProcessed(loadInvitations(), selectedInvite.senderAddr)
+
+      setInvitations(nextInvs)
+      selectContact(selectedInvite.senderAddr) // drop into the new conversation
+    } catch (e) {
+      setInviteError((e as Error).message ?? 'Failed to add contact')
+    } finally {
+      setAcceptingInvite(false)
+    }
+  }
+
+  function handleDismissInvite(senderAddr: string) {
+    // removeInvitationsFor persists internally.
+    setInvitations(removeInvitationsFor(loadInvitations(), senderAddr))
+
+    if (selectedInviteId === senderAddr) setSelectedInviteId(null)
+  }
 
   // Show the message thread if the contact already has history OR the user just hit Send message.
   const { hasThread, hasInbound } = useMemo(() => {
@@ -274,6 +367,43 @@ export default function Contacts() {
           />
         )}
 
+        {/* Pending invitations — first-contact wake-ups from people not yet
+            in contacts. Shown here because there's no separate Messages nav. */}
+        {pending.length > 0 && (
+          <div className="rounded-lg border overflow-hidden" style={{ borderColor: 'rgb(74,222,128,0.4)' }}>
+            <div
+              className="px-3 py-2 text-[10px] uppercase tracking-widest flex items-center gap-1.5"
+              style={{ color: 'rgb(74,222,128)', backgroundColor: 'rgba(74,222,128,0.08)' }}
+            >
+              <Mail size={12} />
+              {pending.length === 1 ? 'New invitation' : `${pending.length} new invitations`}
+            </div>
+            <ul className="divide-y" style={{ borderColor: 'rgb(var(--border))' }}>
+              {pending.map(inv => {
+                const isSelected = selectedInviteId === inv.senderAddr
+
+                return (
+                  <li key={inv.senderAddr}>
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => selectInvite(inv.senderAddr)}
+                      onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && selectInvite(inv.senderAddr)}
+                      className="px-3 py-2.5 w-full text-left hover:bg-white/5 cursor-pointer flex flex-col gap-0.5"
+                      style={{ backgroundColor: isSelected ? 'rgba(74,222,128,0.1)' : 'transparent' }}
+                    >
+                      <span className="text-sm font-medium">Someone wants to reach you</span>
+                      <span className="text-xs font-mono truncate" style={{ color: 'rgb(var(--fg-muted))' }}>
+                        {short(inv.senderAddr, 6)}
+                      </span>
+                    </div>
+                  </li>
+                )
+              })}
+            </ul>
+          </div>
+        )}
+
         {/* Table */}
         {sortedFilteredContacts.length === 0 ? (
           <p className="text-xs px-2 py-6 text-center" style={{ color: 'rgb(var(--fg-muted))' }}>
@@ -301,8 +431,8 @@ export default function Contacts() {
                     <div
                       role="button"
                       tabIndex={0}
-                      onClick={() => setSelectedId(c.id)}
-                      onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && setSelectedId(c.id)}
+                      onClick={() => selectContact(c.id)}
+                      onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && selectContact(c.id)}
                       className="grid grid-cols-[1fr_110px_140px] gap-2 px-3 py-2.5 w-full text-left items-center hover:bg-white/5 cursor-pointer"
                       style={{
                         backgroundColor: isSelected ? 'rgba(255,255,255,0.06)' : 'transparent',
@@ -345,7 +475,62 @@ export default function Contacts() {
 
       {/* RIGHT PANE (50%) */}
       <div className="flex-1 basis-1/2 flex flex-col min-w-0 overflow-hidden">
-        {!selected ? (
+        {selectedInvite ? (
+          <div className="flex-1 flex items-center justify-center p-8 overflow-y-auto">
+            <div className="w-full max-w-md space-y-5">
+              <div className="text-center space-y-2">
+                <div
+                  className="w-12 h-12 rounded-full flex items-center justify-center mx-auto"
+                  style={{ backgroundColor: 'rgba(74,222,128,0.15)' }}
+                >
+                  <Mail size={22} style={{ color: 'rgb(74,222,128)' }} />
+                </div>
+                <p className="text-lg font-semibold">Someone wants to reach you</p>
+                {/* Security (D4): show the address, never a sender-supplied name,
+                    until the user accepts and we resolve the published identity. */}
+                <code className="text-xs font-mono break-all block" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  {selectedInvite.senderAddr}
+                </code>
+                <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  Accept to add them as a contact and open the conversation. Give them a nickname:
+                </p>
+              </div>
+              <Input
+                autoFocus
+                value={inviteNickname}
+                onChange={e => setInviteNickname(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && void handleAcceptInvite()}
+                placeholder="Nickname"
+                disabled={acceptingInvite}
+              />
+              {inviteError && (
+                <p className="text-xs" style={{ color: 'rgb(248,113,113)' }}>
+                  {inviteError}
+                </p>
+              )}
+              <div className="flex items-center justify-center gap-2">
+                <Button
+                  onClick={handleAcceptInvite}
+                  disabled={acceptingInvite || !inviteNickname.trim()}
+                  className="inline-flex items-center gap-1.5"
+                >
+                  <Check size={14} />
+                  {acceptingInvite ? 'Accepting…' : 'Accept invitation'}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleDismissInvite(selectedInvite.senderAddr)}
+                  disabled={acceptingInvite}
+                  className="inline-flex items-center gap-1.5 text-red-500"
+                >
+                  <Trash2 size={14} />
+                  Dismiss
+                </Button>
+              </div>
+            </div>
+          </div>
+        ) : !selected ? (
           <div className="flex-1 flex items-center justify-center p-8">
             <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
               Select a contact to see their details
@@ -382,10 +567,7 @@ export default function Contacts() {
                 </div>
               </div>
             </div>
-            <div
-              className="flex-1 min-h-0 border-t"
-              style={{ borderColor: 'rgb(var(--border))' }}
-            >
+            <div className="flex-1 min-h-0 border-t" style={{ borderColor: 'rgb(var(--border))' }}>
               <Messages key={selected.id} initialContactId={selected.id} hideContactList hideThreadHeader />
             </div>
           </>

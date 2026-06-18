@@ -13,6 +13,8 @@ import { addInvitation, getRegistryCursor, loadInvitations, setRegistryCursor } 
 import { REGISTRY_ADDRESS } from '../notify/constants'
 import { createNotifyProvider } from '../notify/provider'
 import { loadContacts } from '../notify/storage'
+import { playCricketChirp } from '../lib/cricket'
+import { useAppStore } from '../store/app'
 import { useDerivedKey } from './useDerivedKey'
 
 const POLL_INTERVAL_MS = 2 * 60_000 // 2 minutes
@@ -43,6 +45,7 @@ export function useRegistryPolling(): void {
         const contacts = loadContacts()
         const knownAddrs = new Set(contacts.map(c => c.id.toLowerCase()))
         let invitations = loadInvitations()
+        const beforeCount = invitations.length
         let highestBlock = fromBlock
 
         for (const { payload, blockNumber } of notifications) {
@@ -57,6 +60,17 @@ export function useRegistryPolling(): void {
 
         // Advance cursor past the latest block we processed so next poll is incremental
         if (highestBlock > fromBlock) setRegistryCursor(myAddr, highestBlock + 1)
+
+        // Chirp on a genuinely new invitation — this is the only signal that a
+        // first-contact ping arrived (they surface on the Contacts page). Mirror
+        // the mailbox chirp (D12): skip when the user is already on Contacts/
+        // Messages, where the invitation is visible.
+        if (invitations.length > beforeCount && useAppStore.getState().notificationSound) {
+          const hash = window.location.hash
+          const viewing = hash.startsWith('#/contacts') || hash.startsWith('#/apps/messages')
+
+          if (document.hidden || !viewing) playCricketChirp()
+        }
       } catch {
         // Spam decryption-fails are silently ignored by the SDK; other errors
         // (RPC blip, etc) we just retry on next tick.
