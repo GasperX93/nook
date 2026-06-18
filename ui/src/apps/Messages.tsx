@@ -351,9 +351,12 @@ export default function Messages({ initialContactId, hideContactList, hideThread
         // reverts or never mines would otherwise look "sent" while the
         // recipient gets no wake-up. Wait for the receipt and verify it
         // actually mined before treating the invite as delivered.
+        // Include our display name so the recipient's invitation shows who's
+        // reaching out (payload is ECIES-encrypted to them — not public on-chain).
         const notifyTx = await registry.sendNotification(provider, REGISTRY_ADDRESS, recipientPubKey, selected.id, {
           sender: myAddr,
-        })
+          name,
+        } as Parameters<typeof registry.sendNotification>[4])
         const receipt = await waitForTransactionReceipt(wagmiConfig, {
           hash: notifyTx as `0x${string}`,
           chainId: GNOSIS_CHAIN_ID,
@@ -450,7 +453,7 @@ export default function Messages({ initialContactId, hideContactList, hideThread
                   key={inv.senderAddr}
                   onClick={() => {
                     setSelectedId(inv.senderAddr)
-                    setInviteNickname('')
+                    setInviteNickname(inv.senderName?.trim() ?? '')
                   }}
                   className="w-full text-left px-4 py-3 border-b flex flex-col gap-1 transition-colors"
                   style={{
@@ -460,12 +463,12 @@ export default function Messages({ initialContactId, hideContactList, hideThread
                 >
                   <div className="flex items-center gap-2">
                     <Mail size={12} style={{ color: '#60a5fa' }} />
-                    <span className="font-medium text-sm truncate font-mono" style={{ color: 'rgb(var(--fg))' }}>
-                      {short(inv.senderAddr, 8)}
+                    <span className="font-medium text-sm truncate" style={{ color: 'rgb(var(--fg))' }}>
+                      {inv.senderName?.trim() || short(inv.senderAddr, 8)}
                     </span>
                   </div>
-                  <span className="text-xs truncate" style={{ color: 'rgb(var(--fg-muted))' }}>
-                    Wants to reach you
+                  <span className="text-xs truncate font-mono" style={{ color: 'rgb(var(--fg-muted))' }}>
+                    {inv.senderName?.trim() ? short(inv.senderAddr, 8) : 'Wants to reach you'}
                   </span>
                 </button>
               )
@@ -662,7 +665,9 @@ export default function Messages({ initialContactId, hideContactList, hideThread
             <div className="flex items-center gap-2">
               <Mail size={18} style={{ color: '#60a5fa' }} />
               <h2 className="text-base font-semibold" style={{ color: 'rgb(var(--fg))' }}>
-                Someone wants to reach you
+                {selectedInvite.senderName?.trim()
+                  ? `${selectedInvite.senderName.trim()} wants to connect`
+                  : 'Someone wants to reach you'}
               </h2>
             </div>
             <div

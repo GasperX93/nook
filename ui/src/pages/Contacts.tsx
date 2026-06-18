@@ -155,7 +155,11 @@ export default function Contacts() {
   function selectInvite(senderAddr: string) {
     setSelectedInviteId(senderAddr)
     setSelectedId(null)
-    setInviteNickname('')
+    // Pre-fill the nickname with the sender's claimed name (editable) so the
+    // common case is one click. Unverified — the address is shown too.
+    const inv = pending.find(i => i.senderAddr === senderAddr)
+
+    setInviteNickname(inv?.senderName?.trim() ?? '')
     setInviteError(null)
   }
 
@@ -402,7 +406,11 @@ export default function Contacts() {
                       className="px-3 py-2.5 w-full text-left hover:bg-white/5 cursor-pointer flex flex-col gap-0.5"
                       style={{ backgroundColor: isSelected ? 'rgba(74,222,128,0.1)' : 'transparent' }}
                     >
-                      <span className="text-sm font-medium">Someone wants to reach you</span>
+                      <span className="text-sm font-medium">
+                        {inv.senderName?.trim()
+                          ? `${inv.senderName.trim()} wants to connect`
+                          : 'Someone wants to reach you'}
+                      </span>
                       <span className="text-xs font-mono truncate" style={{ color: 'rgb(var(--fg-muted))' }}>
                         {short(inv.senderAddr, 6)}
                       </span>
@@ -495,9 +503,13 @@ export default function Contacts() {
                 >
                   <Mail size={22} style={{ color: 'rgb(74,222,128)' }} />
                 </div>
-                <p className="text-lg font-semibold">Someone wants to reach you</p>
-                {/* Security (D4): show the address, never a sender-supplied name,
-                    until the user accepts and we resolve the published identity. */}
+                <p className="text-lg font-semibold">
+                  {selectedInvite.senderName?.trim()
+                    ? `${selectedInvite.senderName.trim()} wants to connect`
+                    : 'Someone wants to reach you'}
+                </p>
+                {/* The name is self-claimed (unverified) — always show the Nook
+                    address too so the recipient can confirm who it really is. */}
                 <code className="text-xs font-mono break-all block" style={{ color: 'rgb(var(--fg-muted))' }}>
                   {selectedInvite.senderAddr}
                 </code>

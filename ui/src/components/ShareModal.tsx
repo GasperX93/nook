@@ -500,9 +500,12 @@ export default function ShareModal({
         setOnChainStatus(prev => ({ ...prev, [contact.id]: 'sending' }))
         try {
           const recipientPubKey = hexToBytes(contact.walletPublicKey)
+          // Include our display name so the recipient's invitation shows who's
+          // reaching out (payload is ECIES-encrypted to them — not public).
           const txHash = await registry.sendNotification(provider, REGISTRY_ADDRESS, recipientPubKey, contact.id, {
             sender: myAddr,
-          })
+            name: senderName.trim() || undefined,
+          } as Parameters<typeof registry.sendNotification>[4])
 
           // eslint-disable-next-line no-console
           console.log(`On-chain wake-up to ${contact.nickname}: tx ${txHash}`)

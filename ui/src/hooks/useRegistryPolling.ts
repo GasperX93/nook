@@ -55,7 +55,10 @@ export function useRegistryPolling(): void {
 
           // Skip: already a contact (mailbox poll will deliver their messages)
           if (knownAddrs.has(senderId)) continue
-          invitations = addInvitation(invitations, senderId, blockNumber)
+          // Sender's self-claimed name rides in the (encrypted) payload — only
+          // the intended recipient can read it; not public on-chain.
+          const senderName = (payload as { name?: string }).name
+          invitations = addInvitation(invitations, senderId, blockNumber, senderName)
         }
 
         // Advance cursor past the latest block we processed so next poll is incremental

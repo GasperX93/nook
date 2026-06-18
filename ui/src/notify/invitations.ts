@@ -19,6 +19,9 @@ export interface Invitation {
   ts: number
   /** True after user adds the sender as a contact */
   processed: boolean
+  /** Sender's self-claimed display name, from the (encrypted) ping payload.
+   *  Unverified — shown alongside the address so the recipient knows who. */
+  senderName?: string
 }
 
 const INVITATIONS_KEY = 'nook-invitations-v1'
@@ -48,12 +51,17 @@ export function saveInvitations(invs: Invitation[]): void {
  * Insert an invitation if not already present (deduped by senderAddr).
  * Keeps the OLDEST blockNumber when the same sender pings multiple times.
  */
-export function addInvitation(invs: Invitation[], senderAddr: string, blockNumber: number): Invitation[] {
+export function addInvitation(
+  invs: Invitation[],
+  senderAddr: string,
+  blockNumber: number,
+  senderName?: string,
+): Invitation[] {
   const id = senderAddr.toLowerCase()
   const existing = invs.find(i => i.senderAddr === id)
 
   if (existing) return invs
-  const next: Invitation = { senderAddr: id, blockNumber, ts: Date.now(), processed: false }
+  const next: Invitation = { senderAddr: id, blockNumber, ts: Date.now(), processed: false, senderName }
   const updated = [...invs, next]
 
   saveInvitations(updated)
