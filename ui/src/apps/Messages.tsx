@@ -1,6 +1,6 @@
 import { Bee } from '@ethersphere/bee-js'
 import { identity, mailbox, registry } from '@swarm-notify/sdk'
-import { FileText, Mail, Send } from 'lucide-react'
+import { AlertTriangle, Check, FileText, Mail, Send } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { getWalletClient, switchChain, waitForTransactionReceipt } from '@wagmi/core'
 import { useWalletClient } from 'wagmi'
@@ -25,7 +25,16 @@ import {
 import { sendInviteAck } from '../notify/invite-ack'
 import { enqueueSend } from '../notify/send-queue'
 import { loadInvitations, markInvitationProcessed, pendingInvitations, type Invitation } from '../notify/invitations'
-import { appendSent, loadReadCursors, loadThreads, markRead, saveThreads, unreadCount } from '../notify/messages'
+import {
+  appendSent,
+  loadReadCursors,
+  loadThreads,
+  markRead,
+  setMessageStatus,
+  type StoredMessage,
+  unreadCount,
+} from '../notify/messages'
+import { confirmSentGrew, readSentArray } from '../notify/mailbox-verify'
 import { createNotifyProvider } from '../notify/provider'
 import { publishIdentity } from '../notify/publish-identity'
 import { addContact, isIdentityPublished, loadContacts } from '../notify/storage'
@@ -283,6 +292,56 @@ export default function Messages({ initialContactId, hideContactList, hideThread
     }
   }, [selected, selectedThread, cursors])
 
+  // Deliver a regular message in the background: write to the feed, then
+  // read-back-confirm it actually landed before marking 'sent'. The per-recipient
+  // send queue + this confirmation prevent the read-modify-write overwrite that
+  // silently drops rapid messages (only the last survived before this).
+  async function deliverMessage(contact: NookContact, body: string, ts: number) {
+    const s = signer
+
+    if (!s || !stampId) {
+      setThreads(prev => setMessageStatus(prev, contact.id, ts, 'failed'))
+
+      if (!stampId) setError('No usable stamp — buy one in Account → My Storage')
+
+      return
+    }
+    const stamp = stampId
+
+    try {
+      await enqueueSend(contact.id, async () => {
+        const before = (await readSentArray(bee, s, contact.id, contact.walletPublicKey)).length
+
+        await mailbox.send(
+          bee,
+          s.getSigningKey(),
+          stamp,
+          s.getSigningKey(),
+          s.getAddress(),
+          toLibraryContact(contact),
+          {
+            subject: '',
+            body,
+          },
+        )
+
+        // Gate the next send: wait until our message is actually retrievable in
+        // the feed, so the next read-modify-write sees it and won't overwrite.
+        const confirmed = await confirmSentGrew(bee, s, contact.id, contact.walletPublicKey, before)
+
+        if (!confirmed) throw new Error('Message could not be confirmed on Swarm.')
+      })
+      setThreads(prev => setMessageStatus(prev, contact.id, ts, 'sent'))
+    } catch {
+      setThreads(prev => setMessageStatus(prev, contact.id, ts, 'failed'))
+    }
+  }
+
+  function handleRetry(contact: NookContact, msg: StoredMessage) {
+    setThreads(prev => setMessageStatus(prev, contact.id, msg.ts, 'sending'))
+    void deliverMessage(contact, msg.body, msg.ts)
+  }
+
   async function handleSend() {
     if (!signer || !selected) return
 
@@ -320,20 +379,30 @@ export default function Messages({ initialContactId, hideContactList, hideThread
 
     if (!body) return
 
-    // On-chain wake-up is only fired in invite states. It needs the wallet on
-    // Gnosis — but we DON'T force Gnosis globally (that fights top-up/ENS), so
-    // just require a connected wallet here and switch to Gnosis just-in-time
-    // right before sending (below).
-    if (isInviteState && !walletClient) {
+    // ── Regular message (connected): optimistic + background confirmed delivery ──
+    // Show the bubble instantly with a 'sending' status; deliverMessage writes +
+    // read-back-confirms in the background, flipping the status to sent / failed.
+    if (!isInviteState) {
+      const ts = Date.now()
+
+      setError(null)
+      setThreads(prev => appendSent(prev, selected.id, body, ts, 'sending'))
+      setDraft('')
+      void deliverMessage(selected, body, ts)
+
+      return
+    }
+
+    // ── Invite: needs a connected wallet + published identity + on-chain ping ──
+    if (!walletClient) {
       setError('Connect your wallet to send an invite (an on-chain ping is required).')
 
       return
     }
 
     // The recipient resolves us via our published identity feed to accept the
-    // invite. If we haven't published, they'd get "could not resolve sender" and
-    // can't connect — surface an inline "Publish & send" instead of failing.
-    if (isInviteState && !isIdentityPublished(signer.getAddress())) {
+    // invite. If we haven't published, surface an inline "Publish & send".
+    if (!isIdentityPublished(signer.getAddress())) {
       setNeedsPublish(true)
       setError('Publish your Nook identity so they can connect to you.')
 
@@ -343,24 +412,10 @@ export default function Messages({ initialContactId, hideContactList, hideThread
     setSending(true)
     setError(null)
     setNeedsPublish(false)
-    setSendStatus(isInviteState ? 'Sending invite…' : null)
-
-    // Optimistic UI for regular messages: show the bubble + clear the input
-    // instantly, then write to Swarm in the background. Rolled back only if the
-    // send fails. Invites are NOT optimistic — they need wallet/on-chain
-    // confirmation first, so they append after success (with progress feedback).
-    const optimisticTs = Date.now()
-
-    if (!isInviteState) {
-      setThreads(prev => appendSent(prev, selected.id, body, optimisticTs))
-      setDraft('')
-    }
-
+    setSendStatus('Sending invite…')
     try {
       const myAddr = signer.getAddress()
 
-      // Serialize per recipient — rapid sends otherwise race the feed's
-      // read-modify-write and overwrite each other (lost messages).
       await enqueueSend(selected.id, async () =>
         mailbox.send(bee, signer.getSigningKey(), stampId, signer.getSigningKey(), myAddr, toLibraryContact(selected), {
           subject: '',
@@ -368,73 +423,47 @@ export default function Messages({ initialContactId, hideContactList, hideThread
         }),
       )
 
-      // Fire the on-chain wake-up so the recipient discovers this message
-      // even if they haven't added us as a contact yet. Switch to Gnosis
-      // just-in-time (the registry lives there); the wallet shows its own
-      // approve-switch prompt. Re-fetch the client after switching — the hook
-      // value is stale across a chain change (same pattern as ENSModal).
-      if (isInviteState && walletClient) {
-        setSendStatus('Confirm in your wallet…')
+      // Fire the on-chain wake-up so the recipient discovers this invite even
+      // if they haven't added us yet. Switch to Gnosis just-in-time; re-fetch
+      // the client after (stale across a chain change — same as ENSModal).
+      setSendStatus('Confirm in your wallet…')
 
-        if (walletClient.chain?.id !== GNOSIS_CHAIN_ID) {
-          await switchChain(wagmiConfig, { chainId: GNOSIS_CHAIN_ID })
-        }
-        const gnosisClient = await getWalletClient(wagmiConfig, { chainId: GNOSIS_CHAIN_ID })
-        const provider = createNotifyProvider(gnosisClient)
-        const recipientPubKey = hexToBytes(selected.walletPublicKey)
-        // sendNotification resolves on BROADCAST, not mining — a tx that
-        // reverts or never mines would otherwise look "sent" while the
-        // recipient gets no wake-up. Wait for the receipt and verify it
-        // actually mined before treating the invite as delivered.
-        // Include our display name so the recipient's invitation shows who's
-        // reaching out (payload is ECIES-encrypted to them — not public on-chain).
-        const notifyTx = await registry.sendNotification(provider, REGISTRY_ADDRESS, recipientPubKey, selected.id, {
-          sender: myAddr,
-          name,
-        } as Parameters<typeof registry.sendNotification>[4])
-        setSendStatus('Confirming on-chain…')
-        const receipt = await waitForTransactionReceipt(wagmiConfig, {
-          hash: notifyTx as `0x${string}`,
-          chainId: GNOSIS_CHAIN_ID,
-        })
-
-        if (receipt.status !== 'success') {
-          throw new Error(`On-chain invite failed to confirm (tx ${notifyTx}). The recipient was not notified.`)
-        }
-        recordInviteSent(selected.id)
+      if (walletClient.chain?.id !== GNOSIS_CHAIN_ID) {
+        await switchChain(wagmiConfig, { chainId: GNOSIS_CHAIN_ID })
       }
+      const gnosisClient = await getWalletClient(wagmiConfig, { chainId: GNOSIS_CHAIN_ID })
+      const provider = createNotifyProvider(gnosisClient)
+      const recipientPubKey = hexToBytes(selected.walletPublicKey)
+      // Include our display name so the recipient's invitation shows who's
+      // reaching out (payload is ECIES-encrypted to them — not public on-chain).
+      const notifyTx = await registry.sendNotification(provider, REGISTRY_ADDRESS, recipientPubKey, selected.id, {
+        sender: myAddr,
+        name,
+      } as Parameters<typeof registry.sendNotification>[4])
+      setSendStatus('Confirming on-chain…')
+      // sendNotification resolves on BROADCAST, not mining — wait for the
+      // receipt so "sent" means it actually confirmed.
+      const receipt = await waitForTransactionReceipt(wagmiConfig, {
+        hash: notifyTx as `0x${string}`,
+        chainId: GNOSIS_CHAIN_ID,
+      })
 
-      // Invite fully succeeded — now lock in the display name for future invites.
+      if (receipt.status !== 'success') {
+        throw new Error(`On-chain invite failed to confirm (tx ${notifyTx}). The recipient was not notified.`)
+      }
+      recordInviteSent(selected.id)
+
+      // Invite fully succeeded — lock in the display name for future invites.
       if (nameIsNew) {
         setMyDisplayName(name)
         setMyDisplayNameState(name)
         setPendingNicknameInput('')
       }
 
-      // Invite states append after success (not optimistic). Regular messages
-      // were already shown optimistically above.
-      if (isInviteState) {
-        setThreads(prev => appendSent(prev, selected.id, body))
-        setDraft('')
-      }
+      setThreads(prev => appendSent(prev, selected.id, body))
+      setDraft('')
     } catch (e) {
       setError(friendlyError(e))
-
-      // Roll back the optimistic bubble for a failed regular message, and put
-      // the text back in the input so it isn't lost (only if they haven't
-      // started typing something else).
-      if (!isInviteState) {
-        const key = selected.id.toLowerCase()
-
-        setThreads(prev => {
-          const next = { ...prev, [key]: (prev[key] ?? []).filter(m => m.ts !== optimisticTs) }
-
-          saveThreads(next)
-
-          return next
-        })
-        setDraft(curr => (curr ? curr : body))
-      }
     } finally {
       setSending(false)
       setSendStatus(null)
@@ -674,8 +703,23 @@ export default function Messages({ initialContactId, hideContactList, hideThread
                       }`}
                     >
                       <p className="text-sm whitespace-pre-wrap break-words text-foreground">{m.body}</p>
-                      <p className="text-[10px] mt-1 text-right text-muted-foreground">
+                      <p className="text-[10px] mt-1 text-right text-muted-foreground flex items-center justify-end gap-1">
                         {m.direction === 'sent' ? 'You' : selected.nickname} | {formatTime(m.ts)}
+                        {m.direction === 'sent' && m.status === 'sending' && <span title="Sending…">· sending…</span>}
+                        {m.direction === 'sent' && m.status === 'sent' && (
+                          <Check size={11} className="inline" aria-label="Sent" />
+                        )}
+                        {m.direction === 'sent' && m.status === 'failed' && (
+                          <button
+                            type="button"
+                            onClick={() => handleRetry(selected, m)}
+                            className="inline-flex items-center gap-0.5 font-medium"
+                            style={{ color: '#ef4444' }}
+                            title="Not delivered — tap to retry"
+                          >
+                            <AlertTriangle size={11} /> retry
+                          </button>
+                        )}
                       </p>
                     </div>
                   )
