@@ -1,6 +1,6 @@
 import { Bee } from '@ethersphere/bee-js'
 import { identity, mailbox, registry } from '@swarm-notify/sdk'
-import { AlertTriangle, Check, FileText, Mail, Send } from 'lucide-react'
+import { FileText, Mail, Send } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { getWalletClient, switchChain, waitForTransactionReceipt } from '@wagmi/core'
 import { useWalletClient } from 'wagmi'
@@ -25,16 +25,7 @@ import {
 import { sendInviteAck } from '../notify/invite-ack'
 import { enqueueSend } from '../notify/send-queue'
 import { loadInvitations, markInvitationProcessed, pendingInvitations, type Invitation } from '../notify/invitations'
-import {
-  appendSent,
-  loadReadCursors,
-  loadThreads,
-  markRead,
-  setMessageStatus,
-  type StoredMessage,
-  unreadCount,
-} from '../notify/messages'
-import { confirmSentGrew, readSentArray } from '../notify/mailbox-verify'
+import { appendSent, loadReadCursors, loadThreads, markRead, unreadCount } from '../notify/messages'
 import { waitForBeeReady } from '../notify/bee-ready'
 import { createNotifyProvider } from '../notify/provider'
 import { publishIdentity } from '../notify/publish-identity'
@@ -293,67 +284,44 @@ export default function Messages({ initialContactId, hideContactList, hideThread
     }
   }, [selected, selectedThread, cursors])
 
-  // Deliver a regular message in the background: write to the feed, then
-  // read-back-confirm it actually landed before marking 'sent'. The per-recipient
-  // send queue + this confirmation prevent the read-modify-write overwrite that
-  // silently drops rapid messages (only the last survived before this).
-  async function deliverMessage(contact: NookContact, body: string, ts: number) {
+  // Deliver a regular message in the background: serialize per recipient and
+  // hold until the node is ready to push. NOTE: there's no reliable sender-side
+  // delivery confirmation today — sender feed read-back diverges from what
+  // actually propagated — so we don't show a sent/failed status. True delivery
+  // status needs recipient read receipts (swarm-notify#55) + the append-only
+  // feed that removes the overwrite class entirely.
+  async function deliverMessage(contact: NookContact, body: string) {
     const s = signer
 
     if (!s || !stampId) {
-      setThreads(prev => setMessageStatus(prev, contact.id, ts, 'failed'))
-
       if (!stampId) setError('No usable stamp — buy one in Account → My Storage')
 
       return
     }
     const stamp = stampId
-    const myAddr = s.getAddress()
-    const MAX_ATTEMPTS = 3
 
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-      try {
-        await enqueueSend(contact.id, async () => {
-          // Don't send until the node can actually push — a send during warmup
-          // gets a local ✓ but never propagates to the recipient.
-          if (!(await waitForBeeReady())) throw new Error('Node not ready yet')
+    try {
+      await enqueueSend(contact.id, async () => {
+        // Don't send during warmup — a send before the node can push never
+        // propagates to the recipient.
+        if (!(await waitForBeeReady())) throw new Error('Node not ready yet')
 
-          const arr = await readSentArray(bee, s, contact.id, contact.walletPublicKey)
-
-          // Dedup: if a previous (retried) attempt already wrote this exact
-          // message, don't write it again — avoids a duplicate when an earlier
-          // send actually landed but its confirm read missed it.
-          if (arr.some(m => m.body === body && (m.sender ?? '').toLowerCase() === myAddr.toLowerCase())) return
-
-          await mailbox.send(bee, s.getSigningKey(), stamp, s.getSigningKey(), myAddr, toLibraryContact(contact), {
+        return mailbox.send(
+          bee,
+          s.getSigningKey(),
+          stamp,
+          s.getSigningKey(),
+          s.getAddress(),
+          toLibraryContact(contact),
+          {
             subject: '',
             body,
-          })
-
-          // Gate the next send: wait until our message is actually retrievable in
-          // the feed, so the next read-modify-write sees it and won't overwrite.
-          const confirmed = await confirmSentGrew(bee, s, contact.id, contact.walletPublicKey, arr.length)
-
-          if (!confirmed) throw new Error('Message could not be confirmed on Swarm.')
-        })
-        setThreads(prev => setMessageStatus(prev, contact.id, ts, 'sent'))
-
-        return
-      } catch {
-        // Auto-retry a couple of times with backoff before surfacing the manual
-        // ⚠ retry — handles transient first-of-a-burst write failures silently.
-        if (attempt < MAX_ATTEMPTS) {
-          await new Promise(resolve => setTimeout(resolve, 2_000 * attempt))
-          continue
-        }
-        setThreads(prev => setMessageStatus(prev, contact.id, ts, 'failed'))
-      }
+          },
+        )
+      })
+    } catch {
+      setError('Message may not have sent — try again.')
     }
-  }
-
-  function handleRetry(contact: NookContact, msg: StoredMessage) {
-    setThreads(prev => setMessageStatus(prev, contact.id, msg.ts, 'sending'))
-    void deliverMessage(contact, msg.body, msg.ts)
   }
 
   async function handleSend() {
@@ -394,15 +362,13 @@ export default function Messages({ initialContactId, hideContactList, hideThread
     if (!body) return
 
     // ── Regular message (connected): optimistic + background confirmed delivery ──
-    // Show the bubble instantly with a 'sending' status; deliverMessage writes +
-    // read-back-confirms in the background, flipping the status to sent / failed.
+    // Show the bubble instantly; deliverMessage sends in the background
+    // (serialized per recipient, held until the node is ready).
     if (!isInviteState) {
-      const ts = Date.now()
-
       setError(null)
-      setThreads(prev => appendSent(prev, selected.id, body, ts, 'sending'))
+      setThreads(prev => appendSent(prev, selected.id, body))
       setDraft('')
-      void deliverMessage(selected, body, ts)
+      void deliverMessage(selected, body)
 
       return
     }
@@ -727,23 +693,8 @@ export default function Messages({ initialContactId, hideContactList, hideThread
                       }`}
                     >
                       <p className="text-sm whitespace-pre-wrap break-words text-foreground">{m.body}</p>
-                      <p className="text-[10px] mt-1 text-right text-muted-foreground flex items-center justify-end gap-1">
+                      <p className="text-[10px] mt-1 text-right text-muted-foreground">
                         {m.direction === 'sent' ? 'You' : selected.nickname} | {formatTime(m.ts)}
-                        {m.direction === 'sent' && m.status === 'sending' && <span title="Sending…">· sending…</span>}
-                        {m.direction === 'sent' && m.status === 'sent' && (
-                          <Check size={11} className="inline" aria-label="Sent" />
-                        )}
-                        {m.direction === 'sent' && m.status === 'failed' && (
-                          <button
-                            type="button"
-                            onClick={() => handleRetry(selected, m)}
-                            className="inline-flex items-center gap-0.5 font-medium"
-                            style={{ color: '#ef4444' }}
-                            title="Not delivered — tap to retry"
-                          >
-                            <AlertTriangle size={11} /> retry
-                          </button>
-                        )}
                       </p>
                     </div>
                   )

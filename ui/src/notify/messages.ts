@@ -30,10 +30,6 @@ export interface StoredMessage {
   driveShareLink?: string
   driveName?: string
   fileCount?: number
-  /** Delivery status for SENT messages: sending (in flight) → sent (confirmed
-   *  in the feed) → failed (write/confirm failed; offer retry). Undefined =
-   *  legacy/received. */
-  status?: 'sending' | 'sent' | 'failed'
 }
 
 export interface DriveShareExtras {
@@ -79,13 +75,7 @@ function makeId(ts: number, direction: StoredMessage['direction'], body: string)
 }
 
 /** Append a sent text message to a thread. */
-export function appendSent(
-  threads: ThreadMap,
-  counterparty: string,
-  body: string,
-  ts = Date.now(),
-  status?: StoredMessage['status'],
-): ThreadMap {
+export function appendSent(threads: ThreadMap, counterparty: string, body: string, ts = Date.now()): ThreadMap {
   const key = counterparty.toLowerCase()
   const msg: StoredMessage = {
     id: makeId(ts, 'sent', body),
@@ -94,27 +84,8 @@ export function appendSent(
     body,
     direction: 'sent',
     kind: 'message',
-    status,
   }
   const updated: ThreadMap = { ...threads, [key]: [...(threads[key] ?? []), msg] }
-
-  saveThreads(updated)
-
-  return updated
-}
-
-/** Update the delivery status of a sent message (matched by counterparty + ts). */
-export function setMessageStatus(
-  threads: ThreadMap,
-  counterparty: string,
-  ts: number,
-  status: StoredMessage['status'],
-): ThreadMap {
-  const key = counterparty.toLowerCase()
-  const updated: ThreadMap = {
-    ...threads,
-    [key]: (threads[key] ?? []).map(m => (m.ts === ts && m.direction === 'sent' ? { ...m, status } : m)),
-  }
 
   saveThreads(updated)
 
