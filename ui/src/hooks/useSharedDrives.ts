@@ -147,21 +147,33 @@ export function useSharedDrives() {
   const [drives, setDrives] = useState<SharedDrive[]>(load)
 
   function add(drive: Omit<SharedDrive, 'id' | 'addedAt'>) {
-    const newDrive: SharedDrive = {
-      ...drive,
-      id: crypto.randomUUID(),
-      addedAt: Date.now(),
-    }
+    // A drive's identity is its feed (topic + owner) — the same for every re-share.
+    // De-dupe on that so importing the same drive again UPDATES the existing
+    // "Shared with me" entry (refreshes name/history/publisher/files, keeps the
+    // original id + addedAt) instead of creating a duplicate row.
+    const current = load()
+    // Only feed-based drives have a stable identity (topic + owner); match on
+    // those. Legacy snapshot drives (no feed) skip dedup so we don't collapse
+    // unrelated entries that both lack a feed.
+    const existing =
+      drive.feedTopic && drive.feedOwner
+        ? current.find(
+            d =>
+              d.feedTopic?.toLowerCase() === drive.feedTopic?.toLowerCase() &&
+              d.feedOwner?.toLowerCase() === drive.feedOwner?.toLowerCase(),
+          )
+        : undefined
 
-    setDrives(prev => {
-      const next = [...prev, newDrive]
+    const saved: SharedDrive = existing
+      ? { ...existing, ...drive }
+      : { ...drive, id: crypto.randomUUID(), addedAt: Date.now() }
 
-      persist(next)
+    const next = existing ? current.map(d => (d.id === existing.id ? saved : d)) : [...current, saved]
 
-      return next
-    })
+    persist(next)
+    setDrives(next)
 
-    return newDrive
+    return saved
   }
 
   function remove(id: string) {
