@@ -2014,6 +2014,8 @@ export default function Drive() {
   const [showBuyModal, setShowBuyModal] = useState(false)
   const [showExtendModal, setShowExtendModal] = useState<string | null>(null) // batchID
   const [showShareModal, setShowShareModal] = useState<string | null>(null) // batchID
+  // After adding a file to a drive that's shared with others, prompt to notify them.
+  const [updatedSharedDrive, setUpdatedSharedDrive] = useState(false)
   const [showAddSharedModal, setShowAddSharedModal] = useState(false)
   const [driveTab, setDriveTab] = useState<'mine' | 'shared'>('mine')
   const [addingFile, setAddingFile] = useState(false)
@@ -2041,6 +2043,11 @@ export default function Drive() {
     setOpenFolderId(null)
     // eslint-disable-next-line
   }, [location.key])
+
+  // Clear the "notify recipients" prompt when switching drives.
+  useEffect(() => {
+    setUpdatedSharedDrive(false)
+  }, [activeDriveId])
 
   const allStamps = stamps ?? []
 
@@ -2570,6 +2577,38 @@ export default function Drive() {
         </div>
       )}
 
+      {/* Notify recipients after updating a shared drive */}
+      {updatedSharedDrive && activeDriveId && (
+        <div
+          className="rounded-lg border px-4 py-2.5 flex items-center justify-between gap-3 mb-3"
+          style={{ backgroundColor: 'rgb(var(--bg-surface))', borderColor: 'rgb(var(--accent))' }}
+        >
+          <p className="text-xs" style={{ color: 'rgb(var(--fg))' }}>
+            Drive updated — let the people you&apos;ve shared it with know.
+          </p>
+          <div className="flex items-center gap-3 shrink-0">
+            <button
+              onClick={() => {
+                setShowShareModal(activeDriveId)
+                setUpdatedSharedDrive(false)
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium"
+              style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+            >
+              <Share2 size={12} />
+              Notify recipients
+            </button>
+            <button
+              onClick={() => setUpdatedSharedDrive(false)}
+              className="text-xs"
+              style={{ color: 'rgb(var(--fg-muted))' }}
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Inline upload panel */}
       {addingFile && (
         <AddFilePanel
@@ -2579,6 +2618,9 @@ export default function Drive() {
           onDone={() => setAddingFile(false)}
           onAdd={record => {
             addRecord({ ...record, folderId: openFolderId ?? undefined })
+
+            // Drive shared with others? Offer to notify them of the new content.
+            if ((driveMetadata.get(activeDriveId)?.granteeCount ?? 0) > 1) setUpdatedSharedDrive(true)
           }}
           onActHistoryUpdate={historyRef => {
             driveMetadata.update(activeDriveId, { actHistoryRef: historyRef })

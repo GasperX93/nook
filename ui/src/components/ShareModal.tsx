@@ -292,6 +292,26 @@ export default function ShareModal({
         return
       }
 
+      // Already has access — don't re-grant (avoids a redundant ACT op and a
+      // duplicate row in the list). Just (re)notify with the current history.
+      if (grantees.some(g => stripKeyPrefix(g) === stripKeyPrefix(key))) {
+        setNewKey('')
+        setNewLabel('')
+        const existingTarget = grantedContact ?? contactForGrantee(key) ?? null
+
+        if (notifyOnGrant && existingTarget?.walletPublicKey) {
+          try {
+            const fail = await notifyContacts([existingTarget], sendOnChain)
+
+            if (fail) setError(`Already has access — but the notification failed: ${fail}`)
+          } catch (e) {
+            setError(`Already has access — but the notification failed: ${(e as Error).message}`)
+          }
+        }
+
+        return
+      }
+
       let result
 
       if (granteeRef && actHistoryRef) {
