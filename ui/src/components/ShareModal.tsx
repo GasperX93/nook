@@ -328,7 +328,9 @@ export default function ShareModal({
 
       if (notifyOnGrant && notifyTarget?.walletPublicKey) {
         try {
-          const fail = await notifyContacts([notifyTarget], sendOnChain)
+          // Pass the grant's fresh historyRef so the shared metadata is encrypted
+          // against the chain that includes this grantee (the prop is still stale).
+          const fail = await notifyContacts([notifyTarget], sendOnChain, result.historyRef)
 
           if (fail) setError(`Access granted, but notification failed: ${fail}`)
         } catch (e) {
@@ -369,8 +371,15 @@ export default function ShareModal({
    * Both Copy link and Send notification need to do this — extracted so the
    * recipient never gets a stale link pointing at metadata they can't decrypt.
    */
-  async function refreshAndBuildLink(): Promise<string> {
-    if (!actPublisher || !actHistoryRef || !beeAddress || !files?.length) {
+  async function refreshAndBuildLink(historyOverride?: string): Promise<string> {
+    // After a grant, the new ACT history ref isn't on the `actHistoryRef` prop
+    // yet (the parent's onUpdate state hasn't flowed back this tick). Callers in
+    // the grant→notify path pass the grant's fresh historyRef so the metadata is
+    // encrypted against the chain that INCLUDES the new grantee — otherwise the
+    // recipient reads metadata from the pre-grant history and gets a 403.
+    const history = historyOverride ?? actHistoryRef
+
+    if (!actPublisher || !history || !beeAddress || !files?.length) {
       throw new Error('Drive is not ready to share yet')
     }
 
@@ -381,7 +390,7 @@ export default function ShareModal({
     const metadata = JSON.stringify({
       files: files.map(f => ({ name: f.name, reference: f.reference, historyRef: f.historyRef, size: f.size })),
     })
-    const uploaded = await serverApi.uploadACTMetadata(stampId, metadata, actHistoryRef)
+    const uploaded = await serverApi.uploadACTMetadata(stampId, metadata, history)
     const wrapper = JSON.stringify({ ref: uploaded.reference, history: uploaded.historyRef })
     const wrapperResult = await serverApi.uploadRawBytes(stampId, wrapper)
 
@@ -447,7 +456,11 @@ export default function ShareModal({
    * Takes contacts explicitly so callers (grant-time + the bulk button) don't
    * depend on stale derived state. Returns the last error message, or null.
    */
-  async function notifyContacts(targets: NookContact[], doOnChain: boolean): Promise<string | null> {
+  async function notifyContacts(
+    targets: NookContact[],
+    doOnChain: boolean,
+    historyOverride?: string,
+  ): Promise<string | null> {
     if (!signer || targets.length === 0) return null
 
     // The recipient resolves us via our published identity feed to add us back.
@@ -455,7 +468,7 @@ export default function ShareModal({
     if (!isIdentityPublished(signer.getAddress())) {
       return 'Publish your Nook identity first (Account → Identity → Publish) so they can add you back.'
     }
-    const link = await refreshAndBuildLink()
+    const link = await refreshAndBuildLink(historyOverride)
     const myAddr = signer.getAddress()
     const fileCount = files?.length ?? 0
     // Subject leads with sender name so a recipient peeking at the feed (eg
