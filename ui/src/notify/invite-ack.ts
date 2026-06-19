@@ -12,10 +12,10 @@
  * failure here must never block the accept itself.
  */
 import { Bee } from '@ethersphere/bee-js'
-import { mailbox } from '@swarm-notify/sdk'
 
 import { NookSigner } from '../crypto/signer'
 import { appendSent, loadThreads } from './messages'
+import { sendMailboxMessage } from './send-message'
 import { enqueueSend } from './send-queue'
 import { type NookContact, toLibraryContact } from './types'
 
@@ -32,18 +32,10 @@ export async function sendInviteAck(
 
   try {
     await enqueueSend(sender.id, async () =>
-      mailbox.send(
-        bee,
-        signer.getSigningKey(),
-        stampId,
-        signer.getSigningKey(),
-        signer.getAddress(),
-        toLibraryContact(sender),
-        {
-          subject: '',
-          body,
-        },
-      ),
+      sendMailboxMessage(bee, signer.getSigningKey(), stampId, signer.getAddress(), toLibraryContact(sender), {
+        subject: '',
+        body,
+      }),
     )
     // Mirror it into our own thread so the conversation isn't empty.
     appendSent(loadThreads(), sender.id, body)

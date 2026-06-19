@@ -4,7 +4,7 @@
  * key still accepted as a fallback). Generates a drive share link.
  */
 import { Bee } from '@ethersphere/bee-js'
-import { identity, mailbox, registry } from '@swarm-notify/sdk'
+import { identity, registry } from '@swarm-notify/sdk'
 import { Bell, Copy, Check, Lock, RefreshCw, Trash2, Users, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { getWalletClient, switchChain } from '@wagmi/core'
@@ -17,6 +17,7 @@ import { useDerivedKey } from '../hooks/useDerivedKey'
 import { GNOSIS_CHAIN_ID, REGISTRY_ADDRESS } from '../notify/constants'
 import { appendSentDriveShare, loadThreads } from '../notify/messages'
 import { createNotifyProvider } from '../notify/provider'
+import { sendMailboxMessage } from '../notify/send-message'
 import { enqueueSend } from '../notify/send-queue'
 import { decodeShareLink } from '../notify/share-link'
 import { addContact, isIdentityPublished, loadContacts } from '../notify/storage'
@@ -482,25 +483,18 @@ export default function ShareModal({
     for (const contact of targets) {
       setNotifyStatus(prev => ({ ...prev, [contact.id]: 'sending' }))
       try {
-        // Serialize per recipient — avoids racing the feed read-modify-write
-        // with a concurrent message/ack to the same contact.
+        // Serialize per recipient and write to the next append-only feed index
+        // via the persisted send cursor — no overwrite of a concurrent
+        // message/ack to the same contact.
         await enqueueSend(contact.id, async () =>
-          mailbox.send(
-            bee,
-            signer.getSigningKey(),
-            stampId,
-            signer.getSigningKey(),
-            myAddr,
-            toLibraryContact(contact),
-            {
-              subject,
-              body,
-              type: 'drive-share',
-              driveShareLink: link,
-              driveName,
-              fileCount,
-            },
-          ),
+          sendMailboxMessage(bee, signer.getSigningKey(), stampId, myAddr, toLibraryContact(contact), {
+            subject,
+            body,
+            type: 'drive-share',
+            driveShareLink: link,
+            driveName,
+            fileCount,
+          }),
         )
         // Save locally so the sender sees the message in their own thread
         appendSentDriveShare(loadThreads(), contact.id, { driveShareLink: link, driveName, fileCount })

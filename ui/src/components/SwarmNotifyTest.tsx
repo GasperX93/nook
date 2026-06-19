@@ -8,6 +8,7 @@ import { useDerivedKey } from '../hooks/useDerivedKey'
 import { bytesToHex, hexToBytes } from '../lib/hex'
 import { GNOSIS_CHAIN_ID, REGISTRY_ADDRESS } from '../notify/constants'
 import { createNotifyProvider } from '../notify/provider'
+import { sendMailboxMessage } from '../notify/send-message'
 
 // Vite proxies /bee-api → http://localhost:1633 in dev. This dev panel only ships in dev mode,
 // so the prod Koa server doesn't need to proxy /bee-api (would 404 there).
@@ -181,7 +182,7 @@ export function SwarmNotifyTest() {
       addLog(`  subject: ${sendSubject}`)
       addLog(`  body length: ${sendBody.length} chars`)
       const t0 = Date.now()
-      await mailbox.send(bee, signer.getSigningKey(), stampId, signer.getSigningKey(), myAddr, recipient, {
+      await sendMailboxMessage(bee, signer.getSigningKey(), stampId, myAddr, recipient, {
         subject: sendSubject,
         body: sendBody,
       })

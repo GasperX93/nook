@@ -26,6 +26,7 @@ import { sendInviteAck } from '../notify/invite-ack'
 import { enqueueSend } from '../notify/send-queue'
 import { loadInvitations, markInvitationProcessed, pendingInvitations, type Invitation } from '../notify/invitations'
 import { appendSent, loadReadCursors, loadThreads, markRead, unreadCount } from '../notify/messages'
+import { sendMailboxMessage } from '../notify/send-message'
 import { waitForBeeReady } from '../notify/bee-ready'
 import { createNotifyProvider } from '../notify/provider'
 import { publishIdentity } from '../notify/publish-identity'
@@ -284,12 +285,13 @@ export default function Messages({ initialContactId, hideContactList, hideThread
     }
   }, [selected, selectedThread, cursors])
 
-  // Deliver a regular message in the background: serialize per recipient and
-  // hold until the node is ready to push. NOTE: there's no reliable sender-side
-  // delivery confirmation today — sender feed read-back diverges from what
-  // actually propagated — so we don't show a sent/failed status. True delivery
-  // status needs recipient read receipts (swarm-notify#55) + the append-only
-  // feed that removes the overwrite class entirely.
+  // Deliver a regular message in the background: serialize per recipient, hold
+  // until the node is ready to push, and write to the next append-only feed
+  // index via the persisted send cursor (so it can't overwrite a prior message).
+  // NOTE: there's still no reliable sender-side delivery confirmation — sender
+  // feed read-back diverges from what actually propagated — so we show no
+  // sent/failed status. A truthful "delivered" needs recipient read receipts
+  // (swarm-notify#56).
   async function deliverMessage(contact: NookContact, body: string) {
     const s = signer
 
@@ -306,18 +308,10 @@ export default function Messages({ initialContactId, hideContactList, hideThread
         // propagates to the recipient.
         if (!(await waitForBeeReady())) throw new Error('Node not ready yet')
 
-        return mailbox.send(
-          bee,
-          s.getSigningKey(),
-          stamp,
-          s.getSigningKey(),
-          s.getAddress(),
-          toLibraryContact(contact),
-          {
-            subject: '',
-            body,
-          },
-        )
+        return sendMailboxMessage(bee, s.getSigningKey(), stamp, s.getAddress(), toLibraryContact(contact), {
+          subject: '',
+          body,
+        })
       })
     } catch {
       setError('Message may not have sent — try again.')
@@ -402,15 +396,10 @@ export default function Messages({ initialContactId, hideContactList, hideThread
         if (!(await waitForBeeReady())) throw new Error('Node not ready — try again in a moment.')
         setSendStatus('Sending invite…')
 
-        return mailbox.send(
-          bee,
-          signer.getSigningKey(),
-          stampId,
-          signer.getSigningKey(),
-          myAddr,
-          toLibraryContact(selected),
-          { subject: '', body },
-        )
+        return sendMailboxMessage(bee, signer.getSigningKey(), stampId, myAddr, toLibraryContact(selected), {
+          subject: '',
+          body,
+        })
       })
 
       // Fire the on-chain wake-up so the recipient discovers this invite even

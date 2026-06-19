@@ -40,9 +40,15 @@ export interface DriveShareExtras {
 
 const MESSAGES_KEY = 'nook-messages-v1'
 const READ_CURSOR_KEY = 'nook-messages-read-v1'
+/** Per-recipient SEND cursor: counterparty → the NEXT append-only feed index to write. */
+const SEND_CURSOR_KEY = 'nook-messages-send-v1'
+/** Marks which mailbox feed format the local store was last reconciled with. */
+const FORMAT_VERSION_KEY = 'nook-messages-format'
+const CURRENT_FORMAT = 'v2-append-only'
 
 type ThreadMap = Record<string, StoredMessage[]>
 type ReadCursorMap = Record<string, number>
+type SendCursorMap = Record<string, number>
 
 function load<T>(key: string, fallback: T): T {
   try {
@@ -68,6 +74,54 @@ export function loadReadCursors(): ReadCursorMap {
 
 export function saveReadCursors(cursors: ReadCursorMap): void {
   localStorage.setItem(nsKey(READ_CURSOR_KEY), JSON.stringify(cursors))
+}
+
+/**
+ * Per-recipient SEND cursor — the NEXT append-only feed index to write.
+ *
+ * The append-only mailbox writes each message to its own immutable index. We
+ * persist that index per recipient and pass it to `mailbox.send`, so a send
+ * never depends on a network read-latest (unreliable right after node warmup)
+ * and can never overwrite a prior message. Reads/writes hit localStorage fresh
+ * and are individually synchronous, so concurrent advances to *different*
+ * recipients don't lose updates; same-recipient sends are serialized upstream
+ * by the send queue.
+ */
+export function getSendCursor(counterparty: string): number | undefined {
+  return load<SendCursorMap>(nsKey(SEND_CURSOR_KEY), {})[counterparty.toLowerCase()]
+}
+
+/** Advance the send cursor for a recipient past the index we just wrote (monotonic). */
+export function advanceSendCursor(counterparty: string, writtenIndex: number): void {
+  const cursors = load<SendCursorMap>(nsKey(SEND_CURSOR_KEY), {})
+  const key = counterparty.toLowerCase()
+  const next = writtenIndex + 1
+
+  if (cursors[key] === undefined || next > cursors[key]) {
+    cursors[key] = next
+    localStorage.setItem(nsKey(SEND_CURSOR_KEY), JSON.stringify(cursors))
+  }
+}
+
+/**
+ * One-time clean break for the v2 append-only mailbox.
+ *
+ * The swarm-notify feed topic was bumped to `swarm-notify/v2`, abandoning the
+ * old single-slot v1 feeds entirely. Locally-stored v1 threads (and their
+ * cursors) are therefore stale — wipe them once per identity so the UI starts
+ * fresh on the new format. Old messages were test data; nothing to preserve.
+ * Idempotent and namespaced: safe to call on every identity activation.
+ */
+export function migrateMessagesToV2(): void {
+  try {
+    if (localStorage.getItem(nsKey(FORMAT_VERSION_KEY)) === CURRENT_FORMAT) return
+    localStorage.removeItem(nsKey(MESSAGES_KEY))
+    localStorage.removeItem(nsKey(READ_CURSOR_KEY))
+    localStorage.removeItem(nsKey(SEND_CURSOR_KEY))
+    localStorage.setItem(nsKey(FORMAT_VERSION_KEY), CURRENT_FORMAT)
+  } catch {
+    // localStorage unavailable — nothing to migrate.
+  }
 }
 
 function makeId(ts: number, direction: StoredMessage['direction'], body: string): string {

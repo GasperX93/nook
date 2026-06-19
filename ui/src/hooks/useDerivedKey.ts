@@ -19,6 +19,7 @@ import { useAccount, useSignMessage } from 'wagmi'
 
 import { SIGN_MESSAGE } from '../crypto/signer'
 import { setActiveIdentity } from '../notify/active-identity'
+import { migrateMessagesToV2 } from '../notify/messages'
 import {
   acquireDeriveLock,
   getAutoDeriveDeclined,
@@ -209,6 +210,9 @@ export function useDerivedKey() {
 
   useEffect(() => {
     setActiveIdentity(safeAddress)
+    // Once the identity namespace is active, run the one-time v2 clean break
+    // (drops stale single-slot v1 threads — see migrateMessagesToV2). Idempotent.
+    if (safeAddress) migrateMessagesToV2()
   }, [safeAddress])
 
   return {
