@@ -619,7 +619,7 @@ export default function ShareModal({
           >
             {grantees.length === 0 ? (
               <p className="text-xs p-3" style={{ color: 'rgb(var(--fg-muted))' }}>
-                No one else has access yet.
+                Only you can open this drive. Add someone below to share it.
               </p>
             ) : (
               grantees.map(key => {
@@ -630,23 +630,10 @@ export default function ShareModal({
 
                 return (
                   <div key={key} className="flex items-center justify-between px-3 py-2">
-                    <span className="text-xs truncate flex-1" style={{ color: 'rgb(var(--fg-muted))' }}>
-                      {label && (
-                        <span className="font-medium mr-2" style={{ color: 'rgb(var(--fg))' }}>
-                          {label}
-                        </span>
-                      )}
-                      <span className="font-mono">
-                        {key.slice(0, 12)}…{key.slice(-8)}
+                    <span className="text-sm truncate flex-1" style={{ color: 'rgb(var(--fg-muted))' }}>
+                      <span className="font-medium mr-2" style={{ color: 'rgb(var(--fg))' }}>
+                        {isMe ? 'You' : label || `${key.slice(0, 6)}…${key.slice(-4)}`}
                       </span>
-                      {isMe && (
-                        <span
-                          className="ml-2 text-[10px] font-sans font-medium px-1.5 py-0.5 rounded"
-                          style={{ backgroundColor: 'rgba(74,222,128,0.12)', color: '#4ade80' }}
-                        >
-                          you
-                        </span>
-                      )}
                       {!isMe && status === 'sent' && (
                         <span
                           className="ml-2 text-[10px] font-sans font-medium px-1.5 py-0.5 rounded"
@@ -719,7 +706,7 @@ export default function ShareModal({
         {/* Add grantee */}
         <div>
           <p className="text-xs uppercase tracking-widest mb-2" style={{ color: 'rgb(var(--fg-muted))' }}>
-            Add someone
+            Share with someone
           </p>
           <div className="space-y-2">
             <div className="relative">
@@ -731,7 +718,7 @@ export default function ShareModal({
                 }}
                 onFocus={() => setShowSuggestions(true)}
                 onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
-                placeholder="Name or select from contacts"
+                placeholder="Type a name, or pick a contact"
                 className="text-xs"
               />
               {showSuggestions && contactSuggestions.length > 0 && (
@@ -765,12 +752,12 @@ export default function ShareModal({
               <Input
                 value={newKey}
                 onChange={e => setNewKey(e.target.value)}
-                placeholder="Nook address or contact link"
+                placeholder="…or paste a Nook address / invite link"
                 className="flex-1 font-mono text-xs"
               />
               <Button onClick={handleGrant} disabled={loading || !newKey.trim()} size="sm">
                 {loading ? <RefreshCw className="animate-spin" /> : null}
-                Grant
+                Share
               </Button>
             </div>
 
@@ -785,7 +772,7 @@ export default function ShareModal({
                 onChange={e => setNotifyOnGrant(e.target.checked)}
                 className="mt-0.5"
               />
-              <span>Notify them in Messages with the drive link when granting.</span>
+              <span>Send them the drive in Messages</span>
             </label>
             {notifyOnGrant && (
               <label
@@ -799,8 +786,8 @@ export default function ShareModal({
                   className="mt-0.5"
                 />
                 <span>
-                  Also send on-chain wake-up (~0.001 xDAI) — for recipients who haven&apos;t added you back yet.
-                  Requires wallet on Gnosis Chain.
+                  Also send a quick on-chain heads-up (~$0.001) — so they&apos;re notified even if they haven&apos;t
+                  added you yet.
                 </span>
               </label>
             )}
@@ -813,13 +800,12 @@ export default function ShareModal({
           </p>
         )}
 
-        {/* Share drive link + warning */}
+        {/* Share by link (secondary) + revoke note */}
         <div className="border-t pt-4 space-y-3" style={{ borderColor: 'rgb(var(--border))' }}>
           {actPublisher && beeAddress && grantees.length > 0 && (
             <div className="space-y-2">
               <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-                After granting access, send them the drive link. The link also bundles your contact info so they can add
-                you in one click.
+                Prefer to send it yourself? Copy a link — it bundles your contact info so they can add you in one tap.
               </p>
               <Input
                 value={senderName}
@@ -830,70 +816,31 @@ export default function ShareModal({
               <Button
                 onClick={copyShareLink}
                 disabled={loading}
-                variant={copiedLink ? 'secondary' : 'default'}
+                variant={copiedLink ? 'secondary' : 'outline'}
                 className="w-full"
               >
                 {loading ? <RefreshCw className="animate-spin" /> : copiedLink ? <Check /> : <Copy />}
                 {loading ? 'Generating…' : copiedLink ? 'Link copied!' : 'Copy drive link'}
               </Button>
 
-              {/* Notify in Messages — sends a typed drive-share message to each
-                  contact-grantee. Skips grantees not in the contact list. */}
-              {notifiableGrantees.length > 0 &&
+              {/* Resend in Messages — only when someone granted hasn't been notified this session. */}
+              {pendingNotify.length > 0 &&
                 (() => {
                   const names = pendingNotify.map(p => p.contact.nickname)
-                  let recipients: string
-
-                  if (names.length === 0) recipients = ''
-                  else if (names.length <= 2) recipients = names.join(', ')
-                  else recipients = `${names.length} contacts`
+                  const recipients = names.length <= 2 ? names.join(', ') : `${names.length} contacts`
 
                   return (
-                    <>
-                      <Button
-                        onClick={handleNotifyAll}
-                        disabled={notifying || pendingNotify.length === 0}
-                        variant="outline"
-                        className="w-full"
-                        title={
-                          pendingNotify.length === 0
-                            ? 'All eligible grantees already notified in this session'
-                            : `Send a Messages notification to ${recipients}`
-                        }
-                      >
-                        {notifying ? <RefreshCw className="animate-spin" /> : <Bell />}
-                        {notifying
-                          ? 'Sending…'
-                          : pendingNotify.length === 0
-                            ? 'All notified'
-                            : `Send notification to ${recipients}`}
-                      </Button>
-
-                      {/* On-chain wake-up toggle — useful when recipient hasn't
-                          added you back yet, so mailbox poll wouldn't pick it up. */}
-                      <label
-                        className="flex items-start gap-2 text-[11px] cursor-pointer pt-1"
-                        style={{ color: 'rgb(var(--fg-muted))' }}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={sendOnChain}
-                          onChange={e => setSendOnChain(e.target.checked)}
-                          className="mt-0.5"
-                        />
-                        <span>
-                          Also send on-chain wake-up (~0.001 xDAI) — for recipients who haven&apos;t added you back yet.
-                          Requires wallet on Gnosis Chain.
-                        </span>
-                      </label>
-                    </>
+                    <Button onClick={handleNotifyAll} disabled={notifying} variant="ghost" className="w-full">
+                      {notifying ? <RefreshCw className="animate-spin" /> : <Bell />}
+                      {notifying ? 'Sending…' : `Resend in Messages to ${recipients}`}
+                    </Button>
                   )
                 })()}
             </div>
           )}
 
           <p className="text-[10px]" style={{ color: 'rgb(var(--fg-muted))' }}>
-            Revoking access prevents future reads but doesn't remove previously downloaded content.
+            Revoking stops future access, but anything already downloaded can&apos;t be unsent.
           </p>
         </div>
       </div>
