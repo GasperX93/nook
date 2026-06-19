@@ -407,7 +407,11 @@ export const beeApi = {
   ): Promise<ACTUploadResult> => {
     const headers: Record<string, string> = {
       'swarm-postage-batch-id': stampId,
-      'swarm-deferred-upload': 'true',
+      // Direct (non-deferred) upload: push chunks to the network's storer nodes
+      // synchronously. A deferred upload stays on this (light) node's local
+      // store, so a grantee on another node can't retrieve it → 404. Shared
+      // content MUST be pushed to the network. Slower, but correct.
+      'swarm-deferred-upload': 'false',
       'swarm-act': 'true',
       'Content-Type': file.type || 'application/octet-stream',
       'Content-Disposition': `inline; filename="${encodeURIComponent(file.name)}"`,
@@ -431,7 +435,8 @@ export const beeApi = {
     const tar = await createTar(entries)
     const headers: Record<string, string> = {
       'swarm-postage-batch-id': stampId,
-      'swarm-deferred-upload': 'true',
+      // Direct upload so shared chunks reach the network's storers (see uploadFileWithACT).
+      'swarm-deferred-upload': 'false',
       'swarm-collection': 'true',
       'swarm-act': 'true',
       'Content-Type': 'application/x-tar',

@@ -361,7 +361,9 @@ export function runServer() {
       const beePassword = readConfigYaml().password as string | undefined
       const headers: Record<string, string> = {
         'swarm-postage-batch-id': stampId,
-        'swarm-deferred-upload': 'true',
+        // Direct upload so the shared metadata is pushed to the network's storers
+        // and a grantee on another node can retrieve it (deferred = local-only).
+        'swarm-deferred-upload': 'false',
         'swarm-act': 'true',
         'Content-Type': 'application/octet-stream',
       }
