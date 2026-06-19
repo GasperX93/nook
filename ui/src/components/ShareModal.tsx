@@ -802,10 +802,11 @@ export default function ShareModal({
 
         {/* Share by link (secondary) + revoke note */}
         <div className="border-t pt-4 space-y-3" style={{ borderColor: 'rgb(var(--border))' }}>
-          {actPublisher && beeAddress && grantees.length > 0 && (
+          {actPublisher && beeAddress && grantees.some(key => !isMyKey(key)) && (
             <div className="space-y-2">
               <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-                Prefer to send it yourself? Copy a link — it bundles your contact info so they can add you in one tap.
+                Already shared above? You can also copy a link to send it another way — it includes your contact info so
+                they can add you back. They still need access granted above to open it.
               </p>
               <Input
                 value={senderName}
