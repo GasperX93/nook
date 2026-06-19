@@ -183,7 +183,7 @@ const SidebarMenuItem = React.forwardRef<HTMLAnchorElement, SidebarMenuItemProps
         <span className="relative shrink-0 flex items-center justify-center">
           <Icon size={20} />
           {badge !== undefined && badge > 0 && (
-            <span className="absolute -top-1 -right-2 text-[8px] font-bold leading-none px-1 py-0.5 rounded-full min-w-[14px] text-center bg-primary text-primary-foreground">
+            <span className="absolute -top-1.5 -right-2 text-[10px] font-bold leading-none px-1.5 py-0.5 rounded-full min-w-[16px] text-center bg-red-500 text-white shadow-sm">
               {badge > 99 ? '99+' : badge}
             </span>
           )}
