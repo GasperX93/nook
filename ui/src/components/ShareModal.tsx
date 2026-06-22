@@ -50,6 +50,14 @@ interface ShareModalProps {
   files?: ShareFileEntry[]
   onClose: () => void
   onUpdate: (data: { granteeRef: string; historyRef: string; granteeCount: number; keyRotated?: boolean }) => void
+  /** True when a revoke rotated the key — existing files need re-publishing. */
+  keyRotated?: boolean
+  /** Re-publish in progress (owned by the Drive page). */
+  republishing?: boolean
+  /** Re-publish progress/result message (owned by the Drive page). */
+  republishMsg?: string | null
+  /** Re-encrypt + re-upload this drive's files under the current key. */
+  onRepublish?: () => void
 }
 
 function isValidPublicKey(key: string): boolean {
@@ -74,6 +82,10 @@ export default function ShareModal({
   files,
   onClose,
   onUpdate,
+  keyRotated,
+  republishing,
+  republishMsg,
+  onRepublish,
 }: ShareModalProps) {
   const { signer } = useDerivedKey()
   const { data: walletClient } = useWalletClient()
@@ -696,6 +708,26 @@ export default function ShareModal({
             )}
           </div>
         </div>
+
+        {/* Re-publish prompt — a revoke rotated the key, so existing files must be
+            re-encrypted before (re-)granted people can open them. */}
+        {(keyRotated || republishMsg) && onRepublish && (
+          <div
+            className="rounded-lg border px-3 py-2.5 space-y-2"
+            style={{ backgroundColor: 'rgba(96,165,250,0.08)', borderColor: 'rgb(var(--accent))' }}
+          >
+            <p className="text-xs" style={{ color: 'rgb(var(--fg))' }}>
+              {republishMsg ??
+                'A grantee was revoked, so this drive’s key changed. Re-publish so people you (re-)grant can open the existing files.'}
+            </p>
+            {keyRotated && (
+              <Button onClick={onRepublish} disabled={republishing} size="sm" className="w-full">
+                <RefreshCw className={republishing ? 'animate-spin' : ''} />
+                {republishing ? 'Re-publishing…' : 'Re-publish drive'}
+              </Button>
+            )}
+          </div>
+        )}
 
         {/* Add grantee */}
         <div>

@@ -2345,6 +2345,10 @@ export default function Drive() {
                     ...(keyRotated ? { keyRotated: true } : {}),
                   })
                 }}
+                keyRotated={driveMetadata.get(showShareModal)?.keyRotated}
+                republishing={republishing}
+                republishMsg={republishMsg}
+                onRepublish={() => void handleRepublish(showShareModal)}
               />
             )
           })()}
@@ -2900,6 +2904,10 @@ export default function Drive() {
                   ...(keyRotated ? { keyRotated: true } : {}),
                 })
               }}
+              keyRotated={driveMetadata.get(showShareModal)?.keyRotated}
+              republishing={republishing}
+              republishMsg={republishMsg}
+              onRepublish={() => void handleRepublish(showShareModal)}
             />
           )
         })()}
