@@ -90,7 +90,6 @@ export default function ShareModal({
   // Per-grantee notification status keyed by lowercased contact id (Nook addr)
   type NotifyStatus = 'idle' | 'sending' | 'sent' | 'failed'
   const [notifyStatus, setNotifyStatus] = useState<Record<string, NotifyStatus>>({})
-  const [notifying, setNotifying] = useState(false)
   // Optional on-chain wake-up — fires a Gnosis registry event so recipients
   // who haven't added you yet still get a "someone wants to reach you" signal.
   const [sendOnChain, setSendOnChain] = useState(false)
@@ -452,24 +451,6 @@ export default function ShareModal({
   }
 
   /**
-   * Grantees that can be notified — they're in the contact list (so we have
-   * their wpub for ECDH) and not us. Excludes already-sent recipients in the
-   * current session so re-clicks don't re-fire.
-   */
-  const notifiableGrantees = useMemo(
-    () =>
-      grantees
-        .filter(key => !isMyKey(key))
-        .map(key => ({ granteeKey: key, contact: contactForGrantee(key) }))
-        .filter((g): g is { granteeKey: string; contact: NonNullable<ReturnType<typeof contactForGrantee>> } =>
-          Boolean(g.contact),
-        ),
-    [grantees, contacts],
-  )
-
-  const pendingNotify = notifiableGrantees.filter(g => notifyStatus[g.contact.id] !== 'sent')
-
-  /**
    * Send the drive-share to an explicit set of contacts (each must carry a
    * walletPublicKey for ECDH). Refreshes the feed once, then per-recipient
    * sends the mailbox message and, if doOnChain, fires the Gnosis wake-up.
@@ -565,44 +546,6 @@ export default function ShareModal({
     }
 
     return lastFailMsg
-  }
-
-  async function handleNotifyAll() {
-    if (!signer) {
-      setError('No Nook identity — set it up on the Account → Identity tab.')
-
-      return
-    }
-
-    if (!files?.length) {
-      setError('Drive has no files to share yet.')
-
-      return
-    }
-
-    if (pendingNotify.length === 0) return
-
-    // On-chain wake-up needs the wallet on Gnosis, but we don't force Gnosis
-    // globally (that fights top-up/ENS) — just require a wallet here.
-    if (sendOnChain && !walletClient) {
-      setError('Connect a wallet to send on-chain wake-up notifications.')
-
-      return
-    }
-    setNotifying(true)
-    setError(null)
-    try {
-      const fail = await notifyContacts(
-        pendingNotify.map(p => p.contact),
-        sendOnChain,
-      )
-
-      if (fail) setError(`Notification send failed: ${fail}`)
-    } catch (e) {
-      setError((e as Error).message || 'Failed to prepare drive link')
-    } finally {
-      setNotifying(false)
-    }
   }
 
   return (
@@ -705,16 +648,38 @@ export default function ShareModal({
                       )}
                     </span>
                     {!isMe && (
-                      <Button
-                        onClick={async () => handleRevoke(key)}
-                        disabled={loading}
-                        variant="ghost"
-                        size="icon"
-                        className="shrink-0 ml-2 h-7 w-7 hover:text-red-400"
-                        title="Revoke access"
-                      >
-                        <Trash2 size={12} />
-                      </Button>
+                      <div className="flex items-center shrink-0 gap-1 ml-2">
+                        {contact?.walletPublicKey && (
+                          <Button
+                            onClick={async () => {
+                              const fail = await notifyContacts([contact], sendOnChain)
+
+                              if (fail) setError(`Couldn't resend to ${contact.nickname}: ${fail}`)
+                            }}
+                            disabled={status === 'sending'}
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7"
+                            title="Resend the drive to this person in Messages"
+                          >
+                            {status === 'sending' ? (
+                              <RefreshCw className="animate-spin" size={12} />
+                            ) : (
+                              <Bell size={12} />
+                            )}
+                          </Button>
+                        )}
+                        <Button
+                          onClick={async () => handleRevoke(key)}
+                          disabled={loading}
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 hover:text-red-400"
+                          title="Revoke access"
+                        >
+                          <Trash2 size={12} />
+                        </Button>
+                      </div>
                     )}
                   </div>
                 )
@@ -843,20 +808,6 @@ export default function ShareModal({
                 {loading ? <RefreshCw className="animate-spin" /> : copiedLink ? <Check /> : <Copy />}
                 {loading ? 'Generating…' : copiedLink ? 'Link copied!' : 'Copy drive link'}
               </Button>
-
-              {/* Resend in Messages — only when someone granted hasn't been notified this session. */}
-              {pendingNotify.length > 0 &&
-                (() => {
-                  const names = pendingNotify.map(p => p.contact.nickname)
-                  const recipients = names.length <= 2 ? names.join(', ') : `${names.length} contacts`
-
-                  return (
-                    <Button onClick={handleNotifyAll} disabled={notifying} variant="ghost" className="w-full">
-                      {notifying ? <RefreshCw className="animate-spin" /> : <Bell />}
-                      {notifying ? 'Sending…' : `Resend in Messages to ${recipients}`}
-                    </Button>
-                  )
-                })()}
             </div>
           )}
 
