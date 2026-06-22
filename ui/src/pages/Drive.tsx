@@ -49,6 +49,7 @@ import { useDerivedKey } from '../hooks/useDerivedKey'
 import { useDriveMetadata } from '../hooks/useDriveMetadata'
 import { useSharedDrives } from '../hooks/useSharedDrives'
 import { useUploadHistory, type DriveFolder, type UploadRecord } from '../hooks/useUploadHistory'
+import { republishDrive } from '../lib/republish'
 import {
   detectIndexDocument,
   fileListToEntries,
@@ -2016,6 +2017,9 @@ export default function Drive() {
   const [showShareModal, setShowShareModal] = useState<string | null>(null) // batchID
   // After adding a file to a drive that's shared with others, prompt to notify them.
   const [updatedSharedDrive, setUpdatedSharedDrive] = useState(false)
+  // Re-publish (re-encrypt under current ACT) progress, keyed nowhere — only one runs at a time.
+  const [republishing, setRepublishing] = useState(false)
+  const [republishMsg, setRepublishMsg] = useState<string | null>(null)
   const [showAddSharedModal, setShowAddSharedModal] = useState(false)
   const [driveTab, setDriveTab] = useState<'mine' | 'shared'>('mine')
   const [addingFile, setAddingFile] = useState(false)
@@ -2044,10 +2048,43 @@ export default function Drive() {
     // eslint-disable-next-line
   }, [location.key])
 
-  // Clear the "notify recipients" prompt when switching drives.
+  // Clear the per-drive prompts when switching drives.
   useEffect(() => {
     setUpdatedSharedDrive(false)
+    setRepublishMsg(null)
   }, [activeDriveId])
+
+  // Re-encrypt + re-upload a drive's files under its current ACT, then refresh
+  // the shared metadata feed. Fixes access after a revoke rotated the key, and
+  // pushes any deferred-only content onto the network. Clears the keyRotated flag.
+  async function handleRepublish(driveId: string) {
+    const meta = driveMetadata.get(driveId)
+
+    if (!meta?.actPublisher || !meta?.actHistoryRef) {
+      setRepublishMsg('This drive isn’t ready to re-publish yet.')
+
+      return
+    }
+    setRepublishing(true)
+    setRepublishMsg('Starting…')
+    try {
+      await republishDrive({
+        driveId,
+        records: records.filter(r => r.driveId === driveId),
+        actPublisher: meta.actPublisher,
+        currentHistoryRef: meta.actHistoryRef,
+        onProgress: setRepublishMsg,
+        onRecordUpdate: (id, changes) => updateRecord(id, changes),
+        onHistoryUpdate: historyRef => driveMetadata.update(driveId, { actHistoryRef: historyRef }),
+      })
+      driveMetadata.update(driveId, { keyRotated: false })
+      setRepublishMsg('Re-published — recipients can refresh to get the latest.')
+    } catch (e) {
+      setRepublishMsg(`Re-publish failed: ${(e as Error).message}`)
+    } finally {
+      setRepublishing(false)
+    }
+  }
 
   const allStamps = stamps ?? []
 
@@ -2300,8 +2337,13 @@ export default function Drive() {
                   .filter(r => r.actHistoryRef && r.actPublisher)
                   .map(r => ({ name: r.name, reference: r.hash, historyRef: r.actHistoryRef!, size: r.size }))}
                 onClose={() => setShowShareModal(null)}
-                onUpdate={({ granteeRef, historyRef, granteeCount }) => {
-                  driveMetadata.update(showShareModal, { granteeRef, actHistoryRef: historyRef, granteeCount })
+                onUpdate={({ granteeRef, historyRef, granteeCount, keyRotated }) => {
+                  driveMetadata.update(showShareModal, {
+                    granteeRef,
+                    actHistoryRef: historyRef,
+                    granteeCount,
+                    ...(keyRotated ? { keyRotated: true } : {}),
+                  })
                 }}
               />
             )
@@ -2565,13 +2607,48 @@ export default function Drive() {
             Folder
           </button>
           {driveMetadata.isEncrypted(activeDriveId) && (
+            <>
+              <button
+                onClick={() => setShowShareModal(activeDriveId)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium shrink-0"
+                style={{ color: 'rgb(var(--accent))' }}
+              >
+                <Lock size={12} />
+                Share
+              </button>
+              <button
+                onClick={() => void handleRepublish(activeDriveId)}
+                disabled={republishing}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium shrink-0 disabled:opacity-50"
+                style={{ color: 'rgb(var(--fg-muted))' }}
+                title="Re-encrypt & re-upload this drive's files under the current key — fixes access after a revoke, or content that never reached the network"
+              >
+                {republishing ? <RefreshCw size={12} className="animate-spin" /> : <Upload size={12} />}
+                Re-publish
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Re-publish prompt / progress (encrypted drives) */}
+      {activeDriveId && (driveMetadata.get(activeDriveId)?.keyRotated || republishMsg) && (
+        <div
+          className="rounded-lg border px-4 py-2.5 flex items-center justify-between gap-3 mb-3"
+          style={{ backgroundColor: 'rgb(var(--bg-surface))', borderColor: 'rgb(var(--accent))' }}
+        >
+          <p className="text-xs" style={{ color: 'rgb(var(--fg))' }}>
+            {republishMsg ??
+              'A grantee was revoked, so this drive’s key changed. Re-publish so people you grant can open the existing files.'}
+          </p>
+          {!republishing && driveMetadata.get(activeDriveId)?.keyRotated && (
             <button
-              onClick={() => setShowShareModal(activeDriveId)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium shrink-0"
-              style={{ color: 'rgb(var(--accent))' }}
+              onClick={() => void handleRepublish(activeDriveId)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium shrink-0"
+              style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
             >
-              <Lock size={12} />
-              Share
+              <Upload size={12} />
+              Re-publish now
             </button>
           )}
         </div>
@@ -2815,8 +2892,13 @@ export default function Drive() {
                 .filter(r => r.actHistoryRef && r.actPublisher)
                 .map(r => ({ name: r.name, reference: r.hash, historyRef: r.actHistoryRef!, size: r.size }))}
               onClose={() => setShowShareModal(null)}
-              onUpdate={({ granteeRef, historyRef, granteeCount }) => {
-                driveMetadata.update(showShareModal, { granteeRef, actHistoryRef: historyRef, granteeCount })
+              onUpdate={({ granteeRef, historyRef, granteeCount, keyRotated }) => {
+                driveMetadata.update(showShareModal, {
+                  granteeRef,
+                  actHistoryRef: historyRef,
+                  granteeCount,
+                  ...(keyRotated ? { keyRotated: true } : {}),
+                })
               }}
             />
           )

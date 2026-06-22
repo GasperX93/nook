@@ -49,7 +49,7 @@ interface ShareModalProps {
   /** Files in the drive — used to build the encrypted metadata for sharing */
   files?: ShareFileEntry[]
   onClose: () => void
-  onUpdate: (data: { granteeRef: string; historyRef: string; granteeCount: number }) => void
+  onUpdate: (data: { granteeRef: string; historyRef: string; granteeCount: number; keyRotated?: boolean }) => void
 }
 
 function isValidPublicKey(key: string): boolean {
@@ -371,10 +371,14 @@ export default function ShareModal({
     try {
       const result = await serverApi.patchGrantees(granteeRef, stampId, actHistoryRef, undefined, [key])
       setGrantees(prev => prev.filter(g => g !== key))
+      // Revoke rotates the ACT key in Bee, so existing files are now locked under
+      // the old key. Flag the drive so the UI prompts a re-publish — re-granting
+      // anyone later can't restore access to existing files without re-uploading.
       onUpdate({
         granteeRef: result.ref,
         historyRef: result.historyRef,
         granteeCount: grantees.length - 1,
+        keyRotated: true,
       })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to revoke access')
@@ -660,7 +664,7 @@ export default function ShareModal({
                             variant="ghost"
                             size="icon"
                             className="h-7 w-7"
-                            title="Resend the drive to this person in Messages"
+                            title="Notify of an update — re-send the drive in Messages"
                           >
                             {status === 'sending' ? (
                               <RefreshCw className="animate-spin" size={12} />
