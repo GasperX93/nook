@@ -1,14 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useBeeLogs, useConfig, useNookLogs, useUpdateConfig } from '../api/queries'
+import { SwarmNotifyTest } from '../components/SwarmNotifyTest'
 import { useAppStore } from '../store/app'
 import { useDerivedKey } from '../hooks/useDerivedKey'
-
-function bytesToHex(bytes: Uint8Array): string {
-  return Array.from(bytes)
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('')
-}
+import { bytesToHex } from '../lib/hex'
 
 function KeyDerivationTest() {
   const { signer, deriving, error, walletConnected, derive, clear } = useDerivedKey()
@@ -50,7 +46,7 @@ function KeyDerivationTest() {
   const btnClass =
     'px-3 py-1.5 rounded text-xs font-semibold uppercase tracking-widest transition-opacity disabled:opacity-40'
   const btnStyle = { backgroundColor: 'rgb(var(--bg))', border: '1px solid rgb(var(--border))' }
-  const accentStyle = { backgroundColor: 'rgb(var(--accent))', color: '#fff' }
+  const accentStyle = { backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }
 
   return (
     <div className="rounded-xl border p-5 space-y-4 shrink-0" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
@@ -153,7 +149,7 @@ export default function Dev() {
                 className="px-3 py-1.5 rounded text-xs font-semibold uppercase tracking-widest transition-colors"
                 style={
                   logTab === t
-                    ? { backgroundColor: 'rgb(var(--accent))', color: '#fff' }
+                    ? { backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }
                     : { color: 'rgb(var(--fg-muted))' }
                 }
               >
@@ -206,7 +202,7 @@ export default function Dev() {
                 onClick={save}
                 disabled={updateConfig.isPending}
                 className="px-3 py-1.5 rounded text-xs font-semibold uppercase tracking-widest disabled:opacity-40"
-                style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+                style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
               >
                 {updateConfig.isPending ? 'Saving…' : 'Save'}
               </button>
@@ -242,6 +238,9 @@ export default function Dev() {
 
       {/* Key Derivation Test */}
       <KeyDerivationTest />
+
+      {/* Swarm Notify smoke test */}
+      <SwarmNotifyTest />
     </div>
   )
 }

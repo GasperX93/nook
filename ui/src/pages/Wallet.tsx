@@ -8,7 +8,6 @@ import {
   Copy,
   Gift,
   Info,
-  Key,
   Wallet as WalletIcon,
 } from 'lucide-react'
 import { useState } from 'react'
@@ -22,7 +21,6 @@ const WEI_PER_DAI = 10n ** 18n
 import { api } from '../api/client'
 import { serverApi } from '../api/server'
 import { useAddresses, useBeeHealth, useChequebookBalance, useWallet } from '../api/queries'
-import type { NodeAddresses } from '../api/bee'
 import { useAppStore } from '../store/app'
 import { WIDGET_THEME } from '../theme'
 
@@ -181,7 +179,7 @@ export default function Wallet() {
         {/* Address — full width slim row */}
         <div className="flex items-center gap-3 px-1">
           <span className="text-xs uppercase tracking-widest shrink-0" style={{ color: 'rgb(var(--fg-muted))' }}>
-            Address
+            Node wallet address
           </span>
           {address ? (
             <div className="flex items-center gap-1 min-w-0">
@@ -297,9 +295,6 @@ export default function Wallet() {
           </div>
         </div>
 
-        {/* Sharing key */}
-        <SharingKey addresses={addresses} />
-
         {/* Top up widget (collapsible) */}
         <div className="rounded-xl border" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
           <button
@@ -377,7 +372,7 @@ export default function Wallet() {
               className="px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-40 transition-opacity shrink-0"
               style={{
                 backgroundColor: redeemDone ? 'rgba(74,222,128,0.15)' : 'rgb(var(--accent))',
-                color: redeemDone ? '#4ade80' : '#fff',
+                color: redeemDone ? '#4ade80' : 'rgb(var(--primary-foreground))',
               }}
             >
               {redeeming ? 'Redeeming…' : redeemDone ? 'Done' : 'Redeem'}
@@ -490,53 +485,6 @@ export default function Wallet() {
           </div>
         </div>
       )}
-    </div>
-  )
-}
-
-function SharingKey({ addresses }: { addresses?: NodeAddresses }) {
-  const [copied, setCopied] = useState(false)
-  const publicKey = addresses?.publicKey
-
-  if (!publicKey) return null
-
-  function handleCopy() {
-    if (!publicKey) return
-    navigator.clipboard.writeText(publicKey)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
-  }
-
-  return (
-    <div className="rounded-xl border p-5" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
-      <div className="flex items-center gap-2 mb-2">
-        <Key size={13} style={{ color: 'rgb(var(--fg-muted))' }} />
-        <p className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
-          Sharing key
-        </p>
-      </div>
-      <p className="text-xs mb-3" style={{ color: 'rgb(var(--fg-muted))' }}>
-        Share this key with others so they can grant you access to encrypted drives.
-      </p>
-      <div className="flex items-center gap-2">
-        <code
-          className="flex-1 text-xs font-mono px-3 py-2 rounded-lg border truncate"
-          style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg-muted))' }}
-        >
-          {publicKey}
-        </code>
-        <button
-          onClick={handleCopy}
-          className="shrink-0 px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1"
-          style={{
-            backgroundColor: copied ? 'rgba(74,222,128,0.15)' : 'rgb(var(--accent))',
-            color: copied ? '#4ade80' : '#fff',
-          }}
-        >
-          {copied ? <Check size={11} /> : <Copy size={11} />}
-          {copied ? 'Copied' : 'Copy'}
-        </button>
-      </div>
     </div>
   )
 }

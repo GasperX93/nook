@@ -20,6 +20,20 @@ export interface LocalDriveMetadata {
   granteeRef?: string
   /** Number of grantees (including owner) */
   granteeCount?: number
+  /**
+   * Set when a grantee was revoked. Revoke rotates the ACT key in Bee, so the
+   * drive's existing files are now encrypted under the old key — anyone granted
+   * (or re-granted) afterwards can't open them until the drive is re-published
+   * (re-uploaded under the current key). Cleared after a successful re-publish.
+   */
+  keyRotated?: boolean
+  /**
+   * Wallet-derived Nook address of the user who created this drive. Optional
+   * for back-compat with drives created before this field landed. Used as the
+   * migration anchor when Swarm ships portable stamps + ACT-with-external-
+   * signer: the drive can be re-anchored from bpub to this wpub.
+   */
+  creatorWpub?: string
 }
 
 function load(): Record<string, LocalDriveMetadata> {

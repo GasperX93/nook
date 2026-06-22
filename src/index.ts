@@ -5,12 +5,13 @@ import PACKAGE_JSON from '../package.json'
 import { ensureApiKey } from './api-key'
 import { openDashboardInBrowser } from './browser'
 import { getNookVersionFromFile, writeNookVersionFile } from './config'
-import { runDownloader } from './downloader'
+import { EXPECTED_BEE_VERSION, getInstalledBeeVersion, runDownloader } from './downloader'
 import { runElectronTray } from './electron'
 import { startChequebookMonitor } from './chequebook-monitor'
 import { startMonitorIfNeeded } from './funding-monitor'
 import { initializeBee, runKeepAliveLoop, runLauncher } from './launcher'
 import { logger } from './logger'
+import { extractNookUrl, flushPendingNookUrl, handleNookUrl, registerNookProtocol } from './nook-deep-link'
 import { findFreePort } from './port'
 import { runServer } from './server'
 import { getStatus } from './status'
@@ -27,6 +28,25 @@ runMigrations()
 if (squirrelInstallingExecution) {
   app.quit()
 }
+
+// Register nook:// protocol handler. Doing this at module load so it runs
+// before the app's `ready` event, which is required for OS handoff to work.
+registerNookProtocol()
+
+// macOS: OS delivers nook:// URLs via the open-url event
+app.on('open-url', (event, url) => {
+  if (url.startsWith('nook://')) {
+    event.preventDefault()
+    handleNookUrl(url)
+  }
+})
+
+// Windows / Linux: OS launches a second instance with the URL in argv
+app.on('second-instance', (_event, argv) => {
+  const url = extractNookUrl(argv)
+
+  if (url) handleNookUrl(url)
+})
 
 function errorHandler(e: Error | string) {
   if (splash) {
@@ -60,21 +80,31 @@ async function main() {
 
   // check if the assets and the bee binary matches the desktop version
   const desktopFileVersion = getNookVersionFromFile()
-  const force = desktopFileVersion !== PACKAGE_JSON.version
+  const desktopVersionChanged = desktopFileVersion !== PACKAGE_JSON.version
+  const installedBeeVersion = getInstalledBeeVersion()
+  const beeVersionMismatch = installedBeeVersion !== null && installedBeeVersion !== EXPECTED_BEE_VERSION
+  const force = desktopVersionChanged || beeVersionMismatch
 
   logger.info(
-    `Desktop version: ${PACKAGE_JSON.version}, desktop file version: ${desktopFileVersion}, downloading assets: ${force}`,
+    `Desktop version: ${PACKAGE_JSON.version}, desktop file version: ${desktopFileVersion}, ` +
+      `installed Bee: ${installedBeeVersion ?? 'none'}, expected Bee: ${EXPECTED_BEE_VERSION}, downloading assets: ${force}`,
   )
 
   if (force) {
     splash.setMessage('Downloading Bee')
     await runDownloader(true)
-    writeNookVersionFile()
+
+    if (desktopVersionChanged) writeNookVersionFile()
   }
 
   ensureApiKey()
   await findFreePort()
   runServer()
+
+  // Check argv for a nook:// URL handed in at launch time (Win/Linux)
+  const initialNookUrl = extractNookUrl(process.argv)
+
+  if (initialNookUrl) handleNookUrl(initialNookUrl)
 
   if (!getStatus().config) {
     logger.info('No Bee config found, initializing Bee')
@@ -90,6 +120,9 @@ async function main() {
   if (process.env.NODE_ENV !== 'development') openDashboardInBrowser()
   splash.hide()
   splash = undefined
+
+  // Now that the dashboard URL works, replay any nook:// URL that arrived during startup
+  flushPendingNookUrl()
 
   runKeepAliveLoop()
 }

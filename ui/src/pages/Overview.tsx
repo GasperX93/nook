@@ -39,7 +39,7 @@ export default function Overview() {
           onClick={() => restart.mutate()}
           disabled={restart.isPending}
           className="px-3 py-1.5 rounded text-xs font-semibold uppercase tracking-widest transition-opacity disabled:opacity-40"
-          style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+          style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
         >
           {restart.isPending ? 'Restarting…' : 'Restart'}
         </button>

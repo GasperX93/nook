@@ -419,7 +419,7 @@ export default function WebsitePublisher() {
               <button
                 onClick={() => navigate('/account')}
                 className="shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold"
-                style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+                style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
               >
                 Go to Wallet
               </button>
@@ -495,7 +495,7 @@ export default function WebsitePublisher() {
               onClick={publish}
               disabled={!canAfford || !cost}
               className="flex-1 px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-40"
-              style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
+              style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
             >
               Publish
             </button>
@@ -646,10 +646,12 @@ export default function WebsitePublisher() {
 
           {linkedDomain && (
             <div
-              className="flex items-center gap-2 rounded-lg p-3"
+              className="flex items-center gap-3 rounded-lg p-3"
               style={{ backgroundColor: 'rgba(74,222,128,0.08)' }}
             >
               <Globe size={13} style={{ color: '#4ade80' }} />
+              {/* eth.limo and bzz.link are both ENS gateways — they resolve the
+                  ENS name (not a raw hash), so both take `${linkedDomain}`. */}
               <a
                 href={`https://${linkedDomain}.limo`}
                 target="_blank"
@@ -658,6 +660,15 @@ export default function WebsitePublisher() {
                 style={{ color: '#4ade80' }}
               >
                 {linkedDomain}.limo
+              </a>
+              <a
+                href={`https://${linkedDomain}.bzz.link`}
+                target="_blank"
+                rel="noreferrer"
+                className="text-xs font-medium transition-opacity hover:opacity-80"
+                style={{ color: '#4ade80' }}
+              >
+                {linkedDomain}.bzz.link
               </a>
             </div>
           )}

@@ -1,17 +1,24 @@
 /**
- * AddSharedDriveModal — paste a share link to add a drive shared by someone else.
- * Supports both feed-based (live) and snapshot (legacy) share links.
+ * AddSharedDriveModal — paste a `nook://drive-share` link to add a drive shared
+ * by someone else. If the link bundles the sender's contact info, offer to add
+ * them as a contact in the same step.
  */
 import { Check, Copy, Download, RefreshCw, X } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { beeApi } from '../api/bee'
 import { serverApi } from '../api/server'
-import { parseShareLink } from '../hooks/useSharedDrives'
-import type { SharedFile } from '../hooks/useSharedDrives'
+import { parseShareLink, type SenderContactInfo, type SharedFile } from '../hooks/useSharedDrives'
+import { addContact, loadContacts } from '../notify/storage'
+import type { NookContact } from '../notify/types'
+import { Button } from './ui/button'
+import { Input } from './ui/input'
+import { Textarea } from './ui/textarea'
 
 interface AddSharedDriveModalProps {
   myPublicKey?: string
+  /** Pre-fill the share-link textarea (e.g. when opened from a Messages drive-share card) */
+  initialLink?: string
   onClose: () => void
   onAdd: (drive: {
     name: string
@@ -24,18 +31,51 @@ interface AddSharedDriveModalProps {
   }) => void
 }
 
-export default function AddSharedDriveModal({ myPublicKey, onClose, onAdd }: AddSharedDriveModalProps) {
-  const [link, setLink] = useState('')
+export default function AddSharedDriveModal({ myPublicKey, initialLink, onClose, onAdd }: AddSharedDriveModalProps) {
+  const [link, setLink] = useState(initialLink ?? '')
   const [name, setName] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [copiedKey, setCopiedKey] = useState(false)
 
-  async function handleAdd() {
-    const parsed = parseShareLink(link)
+  // Sender contact import
+  const existingContacts = useMemo<NookContact[]>(() => loadContacts(), [])
+  const [addAsContact, setAddAsContact] = useState(true)
+  const [contactNickname, setContactNickname] = useState('')
 
+  const parsed = useMemo(() => (link.trim() ? parseShareLink(link) : null), [link])
+  const sender: SenderContactInfo | undefined = parsed?.sender
+  const senderAlreadyContact = useMemo(() => {
+    if (!sender) return false
+
+    return existingContacts.some(c => c.id.toLowerCase() === sender.addr.toLowerCase())
+  }, [sender, existingContacts])
+  const showContactImport = Boolean(sender) && !senderAlreadyContact
+
+  // Pre-fill nickname from the sender's bundled name — ONCE per sender (D11).
+  // Keying on contactNickname (the old behavior) re-filled the field every time
+  // the user cleared it, making it impossible to blank or retype. Track the
+  // sender we've already pre-filled for instead.
+  const prefilledFor = useRef<string | null>(null)
+
+  useEffect(() => {
+    const senderKey = sender?.addr.toLowerCase() ?? null
+
+    if (senderKey && prefilledFor.current !== senderKey) {
+      prefilledFor.current = senderKey
+      setContactNickname(sender?.name ?? '')
+    }
+  }, [sender])
+
+  async function handleAdd() {
     if (!parsed) {
       setError('Invalid share link.')
+
+      return
+    }
+
+    if (showContactImport && addAsContact && !contactNickname.trim()) {
+      setError('Type a nickname for the new contact, or uncheck "Add as contact".')
 
       return
     }
@@ -44,53 +84,44 @@ export default function AddSharedDriveModal({ myPublicKey, onClose, onAdd }: Add
     setError(null)
 
     try {
-      let driveName = name.trim() || 'Shared drive'
-      let files: SharedFile[] | undefined
-      let reference = ''
-      let actHistoryRef = ''
+      // Drive: read feed → get wrapper → ACT download metadata
+      const wrapperText = await serverApi.readFeed(parsed.feedTopic, parsed.feedOwner)
+      const wrapper = JSON.parse(wrapperText) as { ref: string; history: string }
 
-      if (parsed.type === 'feed' && parsed.feedTopic && parsed.feedOwner) {
-        // Feed-based: read feed → get wrapper → ACT download metadata
-        const wrapperText = await serverApi.readFeed(parsed.feedTopic, parsed.feedOwner)
-        const wrapper = JSON.parse(wrapperText) as { ref: string; history: string }
+      const blob = await beeApi.downloadFileWithACT(wrapper.ref, parsed.actPublisher, wrapper.history)
+      const metadataText = await blob.text()
+      const metadata = JSON.parse(metadataText)
 
-        const blob = await beeApi.downloadFileWithACT(wrapper.ref, parsed.actPublisher, wrapper.history)
-        const metadataText = await blob.text()
-        const metadata = JSON.parse(metadataText)
+      const driveName = name.trim() || metadata.name || 'Shared drive'
+      const files: SharedFile[] | undefined = metadata.files?.length ? metadata.files : undefined
 
-        if (metadata.files?.length) files = metadata.files
-
-        driveName = name.trim() || metadata.name || 'Shared drive'
-        reference = wrapper.ref
-        actHistoryRef = wrapper.history
-      } else if (parsed.type === 'snapshot' && parsed.reference && parsed.actHistoryRef) {
-        // Legacy snapshot: direct ACT download
-        const blob = await beeApi.downloadFileWithACT(parsed.reference, parsed.actPublisher, parsed.actHistoryRef)
-        const text = await blob.text()
-
-        try {
-          const metadata = JSON.parse(text)
-
-          if (metadata.name) driveName = name.trim() || metadata.name
-
-          if (metadata.files?.length) files = metadata.files
-        } catch {
-          // Not JSON — single file
-        }
-
-        reference = parsed.reference
-        actHistoryRef = parsed.actHistoryRef
-      }
-
+      // Add the drive
       onAdd({
         name: driveName,
-        reference,
+        reference: wrapper.ref,
         actPublisher: parsed.actPublisher,
-        actHistoryRef,
+        actHistoryRef: wrapper.history,
         files,
-        feedTopic: parsed.type === 'feed' ? parsed.feedTopic : undefined,
-        feedOwner: parsed.type === 'feed' ? parsed.feedOwner : undefined,
+        feedTopic: parsed.feedTopic,
+        feedOwner: parsed.feedOwner,
       })
+
+      // Optionally add the sender as contact
+      if (showContactImport && addAsContact && sender) {
+        try {
+          addContact(existingContacts, {
+            id: sender.addr.toLowerCase(),
+            nickname: contactNickname.trim(),
+            walletPublicKey: sender.walletPublicKey,
+            beePublicKey: sender.beePublicKey,
+            source: 'drive-share',
+            addedAt: Date.now(),
+          })
+        } catch {
+          // Race with another tab adding the same contact — non-fatal
+        }
+      }
+
       onClose()
     } catch {
       setError('Could not access this drive. Make sure the owner has granted you access using your sharing key.')
@@ -115,38 +146,66 @@ export default function AddSharedDriveModal({ myPublicKey, onClose, onAdd }: Add
             <Download size={14} style={{ color: 'rgb(var(--accent))' }} />
             <p className="text-sm font-semibold">Add shared drive</p>
           </div>
-          <button onClick={onClose} style={{ color: 'rgb(var(--fg-muted))' }}>
+          <Button onClick={onClose} variant="ghost" size="icon" className="h-8 w-8">
             <X size={16} />
-          </button>
+          </Button>
         </div>
 
         <div>
           <p className="text-xs uppercase tracking-widest mb-2" style={{ color: 'rgb(var(--fg-muted))' }}>
             Drive name
           </p>
-          <input
-            type="text"
-            value={name}
-            onChange={e => setName(e.target.value)}
-            placeholder="e.g. Alice's documents"
-            className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-none"
-            style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
-            autoFocus
-          />
+          <Input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Alice's documents" autoFocus />
         </div>
 
         <div>
           <p className="text-xs uppercase tracking-widest mb-2" style={{ color: 'rgb(var(--fg-muted))' }}>
             Share link
           </p>
-          <textarea
+          <Textarea
             value={link}
             onChange={e => setLink(e.target.value)}
-            placeholder="swarm://feed?topic=...&owner=...&publisher=..."
-            className="w-full rounded-lg border px-3 py-2 text-xs font-mono focus:outline-none resize-none h-20"
-            style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
+            placeholder="nook://drive-share?topic=...&owner=...&publisher=...&addr=...&wpub=...&bpub=..."
+            className="font-mono text-xs h-20 resize-none"
           />
         </div>
+
+        {/* Sender contact import — only when link includes contact info AND not already a contact */}
+        {showContactImport && sender && (
+          <div
+            className="rounded-lg border p-3 space-y-2"
+            style={{ backgroundColor: 'rgb(var(--bg))', borderColor: 'rgb(var(--border))' }}
+          >
+            <label className="flex items-start gap-2 text-xs cursor-pointer">
+              <input
+                type="checkbox"
+                checked={addAsContact}
+                onChange={e => setAddAsContact(e.target.checked)}
+                className="mt-0.5"
+              />
+              <span style={{ color: 'rgb(var(--fg))' }}>
+                Also add sender as contact{' '}
+                <span className="font-mono" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  ({sender.addr.slice(0, 8)}…{sender.addr.slice(-4)})
+                </span>
+              </span>
+            </label>
+            {addAsContact && (
+              <Input
+                value={contactNickname}
+                onChange={e => setContactNickname(e.target.value)}
+                placeholder="Nickname for this contact"
+                className="text-xs"
+              />
+            )}
+          </div>
+        )}
+
+        {sender && senderAlreadyContact && (
+          <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+            Sender is already in your contacts.
+          </p>
+        )}
 
         {error && (
           <div className="space-y-2">
@@ -165,18 +224,19 @@ export default function AddSharedDriveModal({ myPublicKey, onClose, onAdd }: Add
                   <code className="text-xs font-mono truncate flex-1" style={{ color: 'rgb(var(--fg-muted))' }}>
                     {myPublicKey}
                   </code>
-                  <button
+                  <Button
                     onClick={() => {
                       navigator.clipboard.writeText(myPublicKey)
                       setCopiedKey(true)
                       setTimeout(() => setCopiedKey(false), 2000)
                     }}
-                    className="shrink-0 flex items-center gap-1 text-xs font-medium"
-                    style={{ color: copiedKey ? '#4ade80' : 'rgb(var(--accent))' }}
+                    variant="link"
+                    size="sm"
+                    className="shrink-0 h-auto p-0"
                   >
                     {copiedKey ? <Check size={10} /> : <Copy size={10} />}
                     {copiedKey ? 'Copied' : 'Copy'}
-                  </button>
+                  </Button>
                 </div>
               </div>
             )}
@@ -184,22 +244,13 @@ export default function AddSharedDriveModal({ myPublicKey, onClose, onAdd }: Add
         )}
 
         <div className="flex gap-3">
-          <button
-            onClick={onClose}
-            className="flex-1 py-2 rounded-lg text-sm"
-            style={{ color: 'rgb(var(--fg-muted))' }}
-          >
+          <Button onClick={onClose} variant="ghost" className="flex-1">
             Cancel
-          </button>
-          <button
-            onClick={handleAdd}
-            disabled={loading || !link.trim()}
-            className="flex-1 py-2 rounded-lg text-sm font-semibold disabled:opacity-40 flex items-center justify-center gap-2"
-            style={{ backgroundColor: 'rgb(var(--accent))', color: '#fff' }}
-          >
-            {loading && <RefreshCw size={13} className="animate-spin" />}
+          </Button>
+          <Button onClick={handleAdd} disabled={loading || !link.trim()} className="flex-1">
+            {loading && <RefreshCw className="animate-spin" />}
             {loading ? 'Verifying…' : 'Add drive'}
-          </button>
+          </Button>
         </div>
       </div>
     </div>

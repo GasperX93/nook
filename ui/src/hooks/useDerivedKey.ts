@@ -1,81 +1,217 @@
 /**
- * useDerivedKey — on-demand wallet key derivation hook.
+ * useDerivedKey — wallet-derived identity, auto-set up on connect.
  *
- * Does NOT derive on wallet connect (users connect for multichain top-up too).
- * Only derives when `derive()` is called (e.g., when user enables encryption).
- * Caches the signer in the identity store for the session.
+ * On first wallet connect (or app launch with a connected wallet), we
+ * hydrate from the persistent identity cache (Electron safeStorage). If
+ * nothing is cached for the connected wallet, we prompt the user once via
+ * signMessage and persist. Subsequent launches with the same wallet skip
+ * the prompt entirely.
+ *
+ * If the user rejects the auto-sign prompt, we stay in an "auto-derive
+ * declined" state for this session so we don't pester them — they can
+ * manually call derive() from the Identity UI to retry.
+ *
  * Clears on wallet disconnect or wallet switch.
  */
+import { getAccount } from '@wagmi/core'
 import { useCallback, useEffect } from 'react'
 import { useAccount, useSignMessage } from 'wagmi'
 
-import { createWalletSigner, SIGN_MESSAGE } from '../crypto/signer'
-import { useIdentityStore } from '../store/identity'
+import { SIGN_MESSAGE } from '../crypto/signer'
+import { setActiveIdentity } from '../notify/active-identity'
+import { migrateMessagesToV2 } from '../notify/messages'
+import {
+  acquireDeriveLock,
+  getAutoDeriveDeclined,
+  releaseDeriveLock,
+  setAutoDeriveDeclined,
+  useIdentityStore,
+} from '../store/identity'
+import { wagmiConfig } from '../wagmi'
 
 export function useDerivedKey() {
-  const { address, isConnected } = useAccount()
+  const { address, isConnected, status } = useAccount()
   const { signMessageAsync } = useSignMessage()
-  const { signer, deriving, error, walletAddress, setSigner, setDeriving, setError, clear } = useIdentityStore()
+  const { signer, deriving, error, walletAddress, hydrated, setSigner, setDeriving, setError, clear, hydrate } =
+    useIdentityStore()
 
-  // Clear signer when wallet disconnects or switches to a different address
+  // Hydrate the identity store from safeStorage on first mount. hydrate()
+  // returns false on a transient failure (Koa not up yet at boot); retry a
+  // bounded number of times so a valid safeStorage cache isn't permanently
+  // downgraded to session-storage and the user isn't forced to re-sign (D8).
   useEffect(() => {
-    if (!isConnected) {
-      if (signer) clear()
+    let cancelled = false
+    let attempts = 0
+    const MAX_ATTEMPTS = 5
+    const RETRY_MS = 1000
+
+    const tryHydrate = async () => {
+      if (cancelled) return
+      attempts += 1
+      const ok = await hydrate()
+
+      if (!ok && !cancelled && attempts < MAX_ATTEMPTS) {
+        setTimeout(() => void tryHydrate(), RETRY_MS)
+      }
+    }
+
+    void tryHydrate()
+
+    return () => {
+      cancelled = true
+    }
+  }, [hydrate])
+
+  // Clear signer ONLY on a true wallet switch — not on disconnect.
+  //
+  // Keeping the derived signer + its encrypted cache across a disconnect means
+  // reconnecting the SAME wallet needs zero signatures (it rehydrates), instead
+  // of forcing the user to re-sign the 2x determinism check every time. This is
+  // what eliminated the "had to sign 4-5 times" problem: MetaMask frequently
+  // bounces disconnected→connecting→connected, and each bounce previously
+  // wiped the identity and re-triggered derivation.
+  //
+  // While disconnected, `address` is null, so the D6 safeSigner gate returns
+  // null and the active-identity namespace falls back to __none__ — contacts
+  // and messages stay private during the disconnected window even though the
+  // signer lingers in memory. A genuine wallet SWITCH (mismatch branch below)
+  // still wipes the old identity.
+  useEffect(() => {
+    if (status === 'disconnected') {
+      setAutoDeriveDeclined(false)
 
       return
     }
 
+    // Security (D6): wipe a hydrated/foreign identity as soon as a mismatch is
+    // *confirmed* — both the cached walletAddress and the connected address are
+    // known and differ. Not gated on status==='connected', because hydrate()
+    // (which has no access to the wagmi address) can set a signer from a
+    // different wallet's cache during the 'connecting'/'reconnecting' boot
+    // window. We only clear on a confirmed mismatch, never when `address` is
+    // merely not-yet-known.
     if (walletAddress && address && walletAddress.toLowerCase() !== address.toLowerCase()) {
-      clear()
+      void clear()
+      setAutoDeriveDeclined(false)
     }
-  }, [isConnected, address, walletAddress, signer, clear])
+  }, [status, address, walletAddress, clear])
 
-  const derive = useCallback(async () => {
-    // Already derived for this wallet
-    if (signer && walletAddress?.toLowerCase() === address?.toLowerCase()) {
-      return signer
-    }
+  const derive = useCallback(
+    async (opts?: { auto?: boolean }) => {
+      // Already derived for this wallet
+      if (signer && walletAddress?.toLowerCase() === address?.toLowerCase()) {
+        return signer
+      }
 
-    if (!isConnected || !address) {
-      setError('Wallet not connected')
-
-      return null
-    }
-
-    setDeriving(true)
-    setError(null)
-
-    try {
-      const signature1 = await signMessageAsync({ message: SIGN_MESSAGE })
-      const signature2 = await signMessageAsync({ message: SIGN_MESSAGE })
-
-      if (signature1 !== signature2) {
-        setError(
-          'Your wallet produced different signatures for the same message. ' +
-            'Encryption features cannot work reliably with this wallet. ' +
-            'Try using MetaMask or another software wallet.',
-        )
+      if (!isConnected || !address) {
+        if (!opts?.auto) setError('Wallet not connected')
 
         return null
       }
 
-      const newSigner = createWalletSigner(signature1)
+      // Shared synchronous guard against overlapping derivations. Multiple
+      // useDerivedKey instances are mounted at once (Layout's polling hooks +
+      // the current page, which may embed others); on a wallet switch each
+      // independently fires derive(). The lock lives in the store module so it
+      // is shared across ALL instances — only the first caller signs.
+      if (!acquireDeriveLock()) return null
 
-      setSigner(newSigner, address)
+      setDeriving(true)
+      setError(null)
 
-      return newSigner
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : 'Signature rejected'
+      try {
+        const signature1 = await signMessageAsync({ message: SIGN_MESSAGE })
+        const signature2 = await signMessageAsync({ message: SIGN_MESSAGE })
 
-      setError(msg)
+        if (signature1 !== signature2) {
+          setError(
+            'Your wallet produced different signatures for the same message. ' +
+              'Encryption features cannot work reliably with this wallet. ' +
+              'Try using MetaMask or another software wallet.',
+          )
 
-      return null
-    }
-  }, [signer, walletAddress, address, isConnected, signMessageAsync, setSigner, setDeriving, setError])
+          return null
+        }
+
+        // Security (D7): the user can switch wallets in MetaMask while the
+        // signature popups are pending. `address` is captured from the closure
+        // at call time, so persisting against it would bind a signature from
+        // the NEW wallet to the OLD address. Re-read the live connected address
+        // and bail if it changed — the switch effect will derive for the new
+        // wallet on its own.
+        const currentAddress = getAccount(wagmiConfig).address
+
+        if (!currentAddress || currentAddress.toLowerCase() !== address.toLowerCase()) {
+          return null
+        }
+
+        await setSigner(signature1, address)
+
+        return useIdentityStore.getState().signer
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : 'Signature rejected'
+
+        // User rejected the popup — record it so the auto-derive effect
+        // doesn't immediately prompt them again on the next render.
+        if (opts?.auto) {
+          setAutoDeriveDeclined(true)
+          // Soft message; the Identity tab CTA is the recovery path.
+          setError(null)
+        } else {
+          setError(msg)
+        }
+
+        return null
+      } finally {
+        releaseDeriveLock()
+        setDeriving(false)
+      }
+    },
+    [signer, walletAddress, address, isConnected, signMessageAsync, setSigner, setDeriving, setError],
+  )
+
+  // Auto-derive on wallet connect if we don't already have a signer cached.
+  useEffect(() => {
+    if (!hydrated) return
+
+    if (status !== 'connected' || !address) return
+
+    if (signer) return
+
+    if (deriving) return
+
+    if (getAutoDeriveDeclined()) return
+    void derive({ auto: true })
+  }, [hydrated, status, address, signer, deriving, derive])
+
+  // Security (D6): only ever expose a signer that matches the currently
+  // connected wallet. hydrate() can momentarily set a signer from a previous
+  // wallet's cache before the clear effect above runs; gating the *returned*
+  // value on an address match guarantees no consumer can perform feed/ACT
+  // operations under a stale identity, independent of effect timing.
+  const signerMatchesWallet = Boolean(
+    signer && walletAddress && address && walletAddress.toLowerCase() === address.toLowerCase(),
+  )
+  const safeSigner = signerMatchesWallet ? signer : null
+
+  // Phase 4: keep the per-identity storage namespace in sync with the derived
+  // identity. Contacts/messages/invitations/display-name are keyed by this
+  // address, so different wallets see different data. null when no safe signer
+  // (disconnected / mismatched / mid-boot) → reads/writes hit the isolated
+  // ':__none__' bucket and no wallet's data leaks across the gap.
+  const safeAddress = safeSigner ? safeSigner.getAddress() : null
+
+  useEffect(() => {
+    setActiveIdentity(safeAddress)
+
+    // Once the identity namespace is active, run the one-time v2 clean break
+    // (drops stale single-slot v1 threads — see migrateMessagesToV2). Idempotent.
+    if (safeAddress) migrateMessagesToV2()
+  }, [safeAddress])
 
   return {
-    /** The derived signer, or null if not yet derived */
-    signer,
+    /** The derived signer for the connected wallet, or null if not yet derived / mismatched */
+    signer: safeSigner,
 
     /** True while waiting for user to approve signature */
     deriving,
@@ -86,8 +222,8 @@ export function useDerivedKey() {
     /** Whether a wallet is connected (prerequisite for derivation) */
     walletConnected: isConnected,
 
-    /** Call this to trigger key derivation (shows MetaMask sign prompt) */
-    derive,
+    /** Manually trigger the signMessage popup (used by the Identity CTA after a user-declined auto-derive). */
+    derive: async () => derive(),
 
     /** Clear the derived key manually */
     clear,

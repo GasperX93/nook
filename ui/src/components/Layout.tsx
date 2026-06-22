@@ -1,32 +1,56 @@
 import { ConnectButton } from '@rainbow-me/rainbowkit'
 import {
   AlertTriangle,
+  Contact,
   Copy,
+  Download,
   Globe,
   HardDrive,
   LogOut,
   RefreshCw,
   Settings,
   Terminal,
-  User,
   Wallet,
 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
+import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useDisconnect } from 'wagmi'
 import { weiToDai } from '../api/bee'
 import { useBeeHealth, usePeers, useStamps, useStatus, useWallet } from '../api/queries'
+import { useInboxPolling } from '../hooks/useInboxPolling'
+import { primeCricketAudio } from '../lib/cricket'
+import { loadReadCursors, loadThreads, totalUnread } from '../notify/messages'
+import { loadInvitations, pendingInvitations } from '../notify/invitations'
+import { loadContacts } from '../notify/storage'
+import { useRegistryPolling } from '../hooks/useRegistryPolling'
 import { useAppStore } from '../store/app'
 import Onboarding from './Onboarding'
+import {
+  Sidebar,
+  SidebarFooter,
+  SidebarHeader,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarSection,
+  SidebarSectionLabel,
+  SidebarSeparator,
+  SidebarSpacer,
+  SidebarTrigger,
+} from './ui/sidebar'
 
-const mainNavItems = [
+const storageNavItems = [
   { to: '/drive', icon: HardDrive, label: 'Drive' },
-  { to: '/account', icon: User, label: 'Account' },
+  { to: '/access', icon: Download, label: 'Access on Swarm' },
+]
+
+const youNavItems = [
+  { to: '/account', icon: Wallet, label: 'Account' },
+  { to: '/contacts', icon: Contact, label: 'Contacts' },
 ]
 
 const settingsNavItem = { to: '/settings', icon: Settings, label: 'Settings' }
 
-const appNavItems = [{ to: '/apps/website-publisher', icon: Globe, label: 'Publish', sublabel: 'website' }]
+const appNavItems = [{ to: '/apps/website-publisher', icon: Globe, label: 'Publish website' }]
 
 function WalletDropdown({ displayName, address, avatar }: { displayName: string; address: string; avatar?: string }) {
   const [open, setOpen] = useState(false)
@@ -103,17 +127,57 @@ export default function Layout() {
   const { devMode, onboardingCompleted, setOnboardingCompleted } = useAppStore()
   const navigate = useNavigate()
   const location = useLocation()
-
+  // NOTE: Nook does NOT force the wallet to Gnosis globally. Only on-chain
+  // notifications (registry.sendNotification) require Gnosis, and those call
+  // sites switch just-in-time. Forcing Gnosis here fought the top-up multichain
+  // widget (which moves the wallet to other chains for cross-swaps) and the ENS
+  // flow (which needs mainnet) — see M10.
   const pageTitles: Record<string, string> = {
     '/drive': 'Drive',
     '/account': 'Account',
+    '/contacts': 'Contacts',
+    '/access': 'Access on Swarm',
     '/settings': 'Settings',
     '/dev': 'Dev mode',
+    '/apps/messages': 'Messages',
     '/apps/website-publisher': 'Publish website',
   }
   const pageTitle = pageTitles[location.pathname] ?? ''
 
-  const navItems = devMode ? [...mainNavItems, { to: '/dev', icon: Terminal, label: 'Dev mode' }] : mainNavItems
+  const youItems = devMode ? [...youNavItems, { to: '/dev', icon: Terminal, label: 'Dev mode' }] : youNavItems
+
+  // Background inbox polling — keeps unread badge fresh whether or not the
+  // Messages page is mounted. Side-effect hook; writes to localStorage threads.
+  useInboxPolling()
+  // Background on-chain notification polling — surfaces wake-up pings from
+  // senders who aren't yet in our contact list (see #62/#63).
+  useRegistryPolling()
+
+  // Unlock notification audio on the first user gesture so a background chirp
+  // (e.g. an incoming invitation) isn't silently blocked by autoplay policy.
+  useEffect(() => {
+    primeCricketAudio()
+  }, [])
+
+  // Unread-message badge on the Contacts nav item. Polls localStorage every 2s;
+  // also recomputes when the route changes so opening Contacts clears the badge.
+  const [unreadCount, setUnreadCount] = useState(0)
+
+  useEffect(() => {
+    const recompute = () => {
+      // Badge = unread thread messages + pending invitations from senders not
+      // yet in contacts. Without the invitation count, a first-contact invite
+      // gives no signal anywhere and looks like it "never arrived."
+      const known = new Set(loadContacts().map(c => c.id.toLowerCase()))
+      const inviteCount = pendingInvitations(loadInvitations()).filter(i => !known.has(i.senderAddr)).length
+
+      setUnreadCount(totalUnread(loadThreads(), loadReadCursors()) + inviteCount)
+    }
+    recompute()
+    const id = setInterval(recompute, 2000)
+
+    return () => clearInterval(id)
+  }, [location.pathname])
 
   // Track whether Bee has connected at least once this session.
   // Before that we show a friendly "starting" indicator instead of an error.
@@ -156,185 +220,161 @@ export default function Layout() {
   const dotLabel = beeChecking ? '···' : isSyncing ? 'sync' : beeOnline ? 'live' : 'off'
 
   return (
-    <div className="flex h-screen overflow-hidden" style={{ backgroundColor: 'rgb(var(--bg))' }}>
-      {/* Sidebar */}
-      <aside
-        className="w-16 flex flex-col items-center pt-5 pb-4 shrink-0 border-r gap-1"
-        style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
-      >
-        {/* Wordmark */}
-        <span className="text-[10px] font-bold uppercase tracking-widest mb-2" style={{ color: 'rgb(var(--fg))' }}>
-          Nook
-        </span>
-
-        {/* Node status dot */}
-        <div
-          className="flex flex-col items-center gap-1 mb-3"
-          title={`Bee node: ${dotLabel}${beeOnline ? ` · ${peerCount} peers` : ''}`}
-        >
-          <div
-            className="w-2 h-2 rounded-full transition-colors"
-            style={{ backgroundColor: dotColor, boxShadow: beeOnline ? `0 0 6px ${dotColor}` : 'none' }}
-          />
-          <span className="text-[8px] uppercase tracking-widest font-semibold" style={{ color: dotColor }}>
-            {dotLabel}
-          </span>
-        </div>
-
-        <div className="w-10 mb-2" style={{ borderTop: '1px solid rgba(255,255,255,0.25)' }} />
-
-        {/* Main nav — Drive + Account */}
-        <nav className="flex flex-col gap-0.5 w-full px-2">
-          {navItems.map(({ to, icon: Icon, label }) => (
-            <NavLink
-              key={to}
-              to={to}
-              onClick={to === '/drive' ? () => navigate(to, { state: { ts: Date.now() } }) : undefined}
-              className={({ isActive }) =>
-                [
-                  'flex flex-col items-center gap-0.5 py-2 rounded-lg transition-colors w-full',
-                  isActive ? 'text-white' : 'text-[rgb(var(--fg-muted))] hover:text-[rgb(var(--fg))]',
-                ].join(' ')
-              }
-              style={({ isActive }) => (isActive ? { backgroundColor: 'rgba(247,104,8,0.65)' } : {})}
+    <SidebarProvider>
+      <div className="flex h-screen overflow-hidden" style={{ backgroundColor: 'rgb(var(--bg))' }}>
+        {/* Sidebar */}
+        <Sidebar>
+          <SidebarHeader>
+            <span className="text-[10px] font-bold uppercase tracking-widest mb-2 text-sidebar-foreground">Nook</span>
+            {/* Node status dot */}
+            <div
+              className="flex flex-col items-center gap-1 mb-3"
+              title={`Bee node: ${dotLabel}${beeOnline ? ` · ${peerCount} peers` : ''}`}
             >
-              <Icon size={15} />
-              <span className="text-[9px] font-medium leading-none">{label}</span>
-            </NavLink>
-          ))}
-        </nav>
-
-        {/* Apps section */}
-        <div className="w-10 my-3" style={{ borderTop: '1px solid rgba(255,255,255,0.25)' }} />
-        <span
-          className="text-[8px] font-bold uppercase tracking-widest mb-1.5 w-full text-center"
-          style={{ color: 'rgb(var(--fg-muted))' }}
-        >
-          Apps
-        </span>
-        <nav className="flex flex-col gap-0.5 w-full px-2">
-          {appNavItems.map(({ to, icon: Icon, label, sublabel }) => (
-            <NavLink
-              key={to}
-              to={to}
-              onClick={() => navigate(to, { state: { ts: Date.now() } })}
-              className={({ isActive }) =>
-                [
-                  'flex flex-col items-center gap-0.5 py-2 rounded-lg transition-colors w-full',
-                  isActive ? 'text-white' : 'text-[rgb(var(--fg-muted))] hover:text-[rgb(var(--fg))]',
-                ].join(' ')
-              }
-              style={({ isActive }) => (isActive ? { backgroundColor: 'rgba(247,104,8,0.65)' } : {})}
-            >
-              <Icon size={15} />
-              <span className="text-[9px] font-medium leading-tight text-center">
-                {label}
-                <br />
-                {sublabel}
+              <div
+                className="w-2 h-2 rounded-full transition-colors"
+                style={{ backgroundColor: dotColor, boxShadow: beeOnline ? `0 0 6px ${dotColor}` : 'none' }}
+              />
+              <span className="text-[8px] uppercase tracking-widest font-semibold" style={{ color: dotColor }}>
+                {dotLabel}
               </span>
-            </NavLink>
-          ))}
-        </nav>
+            </div>
+          </SidebarHeader>
 
-        {/* Settings pinned to bottom */}
-        <div className="flex-1" />
-        <div className="w-10 mb-2" style={{ borderTop: '1px solid rgba(255,255,255,0.25)' }} />
-        <nav className="w-full px-2">
-          <NavLink
-            to={settingsNavItem.to}
-            className={({ isActive }) =>
-              [
-                'flex flex-col items-center gap-0.5 py-2 rounded-lg transition-colors w-full',
-                isActive ? 'text-white' : 'text-[rgb(var(--fg-muted))] hover:text-[rgb(var(--fg))]',
-              ].join(' ')
-            }
-            style={({ isActive }) => (isActive ? { backgroundColor: 'rgba(247,104,8,0.65)' } : {})}
-          >
-            <settingsNavItem.icon size={15} />
-            <span className="text-[9px] font-medium leading-none">{settingsNavItem.label}</span>
-          </NavLink>
-        </nav>
-      </aside>
+          <SidebarSeparator />
 
-      {/* Main content */}
-      <main className="flex-1 overflow-auto flex flex-col">
-        {/* Top bar — page title + wallet connect */}
-        <div className="flex items-center justify-between px-6 shrink-0 relative" style={{ height: 52 }}>
-          <h1 className="text-sm font-semibold uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
-            {pageTitle}
-          </h1>
-          <ConnectButton.Custom>
-            {({ account, chain, openConnectModal, mounted }) => {
-              if (!mounted) return null
+          <SidebarSection>
+            {storageNavItems.map(({ to, icon, label }) => (
+              <SidebarMenuItem
+                key={to}
+                to={to}
+                icon={icon}
+                label={label}
+                onClick={to === '/drive' ? () => navigate(to, { state: { ts: Date.now() } }) : undefined}
+              />
+            ))}
+          </SidebarSection>
 
-              if (!account || !chain) {
+          <SidebarSeparator />
+
+          <SidebarSection>
+            {youItems.map(({ to, icon, label }) => (
+              <SidebarMenuItem
+                key={to}
+                to={to}
+                icon={icon}
+                label={label}
+                badge={to === '/contacts' ? unreadCount : undefined}
+              />
+            ))}
+          </SidebarSection>
+
+          <SidebarSeparator />
+          <SidebarSectionLabel>Apps</SidebarSectionLabel>
+          <SidebarSection>
+            {appNavItems.map(({ to, icon, label }) => (
+              <SidebarMenuItem
+                key={to}
+                to={to}
+                icon={icon}
+                label={label}
+                onClick={() => navigate(to, { state: { ts: Date.now() } })}
+              />
+            ))}
+          </SidebarSection>
+
+          <SidebarSpacer />
+          <SidebarSeparator />
+          <SidebarFooter>
+            <SidebarSection>
+              <SidebarMenuItem to={settingsNavItem.to} icon={settingsNavItem.icon} label={settingsNavItem.label} />
+            </SidebarSection>
+            <div className="pt-2">
+              <SidebarTrigger />
+            </div>
+          </SidebarFooter>
+        </Sidebar>
+
+        {/* Main content */}
+        <main className="flex-1 overflow-auto flex flex-col">
+          {/* Top bar — page title + wallet connect */}
+          <div className="flex items-center justify-between px-6 shrink-0 relative" style={{ height: 52 }}>
+            <h1 className="text-sm font-semibold uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
+              {pageTitle}
+            </h1>
+            <ConnectButton.Custom>
+              {({ account, chain, openConnectModal, mounted }) => {
+                if (!mounted) return null
+
+                if (!account || !chain) {
+                  return (
+                    <button
+                      onClick={openConnectModal}
+                      className="nook-wallet-btn flex items-center gap-2 px-3 py-1.5 rounded-full text-xs transition-colors border"
+                    >
+                      Connect Wallet
+                    </button>
+                  )
+                }
+
                 return (
-                  <button
-                    onClick={openConnectModal}
-                    className="nook-wallet-btn flex items-center gap-2 px-3 py-1.5 rounded-full text-xs transition-colors border"
-                  >
-                    Connect Wallet
-                  </button>
+                  <WalletDropdown
+                    displayName={account.displayName}
+                    address={account.address}
+                    avatar={account.ensAvatar}
+                  />
                 )
-              }
-
-              return (
-                <WalletDropdown
-                  displayName={account.displayName}
-                  address={account.address}
-                  avatar={account.ensAvatar}
-                />
-              )
-            }}
-          </ConnectButton.Custom>
-        </div>
-
-        {/* Starting up — friendly indicator */}
-        {showStarting && !showOnboarding && (
-          <div
-            className="flex items-center gap-2.5 px-4 py-2.5 text-xs shrink-0"
-            style={{ backgroundColor: 'rgba(247,104,8,0.08)', borderBottom: '1px solid rgba(247,104,8,0.15)' }}
-          >
-            <RefreshCw size={12} className="animate-spin shrink-0" style={{ color: 'rgb(var(--accent))' }} />
-            <span style={{ color: 'rgb(var(--accent))' }}>Starting Bee node and connecting to the network…</span>
+              }}
+            </ConnectButton.Custom>
           </div>
-        )}
 
-        {/* Bee down — only shown after it was previously online */}
-        {showDown && !showOnboarding && (
-          <div
-            className="flex items-center gap-2 px-4 py-2.5 text-xs shrink-0"
-            style={{ backgroundColor: 'rgba(239,68,68,0.1)', borderBottom: '1px solid rgba(239,68,68,0.2)' }}
-          >
-            <AlertTriangle size={13} className="shrink-0" style={{ color: '#ef4444' }} />
-            <span style={{ color: '#ef4444' }}>Bee node is not running. Check the Logs tab for details.</span>
+          {/* Starting up — friendly indicator */}
+          {showStarting && !showOnboarding && (
+            <div
+              className="flex items-center gap-2.5 px-4 py-2.5 text-xs shrink-0"
+              style={{ backgroundColor: 'rgba(247,104,8,0.08)', borderBottom: '1px solid rgba(247,104,8,0.15)' }}
+            >
+              <RefreshCw size={12} className="animate-spin shrink-0" style={{ color: 'rgb(var(--accent))' }} />
+              <span style={{ color: 'rgb(var(--accent))' }}>Starting Bee node and connecting to the network…</span>
+            </div>
+          )}
+
+          {/* Bee down — only shown after it was previously online */}
+          {showDown && !showOnboarding && (
+            <div
+              className="flex items-center gap-2 px-4 py-2.5 text-xs shrink-0"
+              style={{ backgroundColor: 'rgba(239,68,68,0.1)', borderBottom: '1px solid rgba(239,68,68,0.2)' }}
+            >
+              <AlertTriangle size={13} className="shrink-0" style={{ color: '#ef4444' }} />
+              <span style={{ color: '#ef4444' }}>Bee node is not running. Check the Logs tab for details.</span>
+            </div>
+          )}
+
+          {/* Needs funding — shown when Bee exits because wallet has no xDAI */}
+          {showFundingWarning && !showOnboarding && (
+            <div
+              className="flex items-center gap-2.5 px-4 py-2.5 text-xs shrink-0"
+              style={{ backgroundColor: 'rgba(247,104,8,0.08)', borderBottom: '1px solid rgba(247,104,8,0.15)' }}
+            >
+              <Wallet size={12} className="shrink-0" style={{ color: 'rgb(var(--accent))' }} />
+              <span style={{ color: 'rgb(var(--accent))' }}>
+                Fund your node wallet to start.{' '}
+                <button
+                  onClick={() => navigate('/account')}
+                  className="underline font-semibold"
+                  style={{ color: 'rgb(var(--accent))' }}
+                >
+                  Go to Wallet →
+                </button>
+              </span>
+            </div>
+          )}
+
+          <div className="flex-1 overflow-auto flex flex-col">
+            {showOnboarding ? <Onboarding skipReady={onboardingCompleted} /> : <Outlet />}
           </div>
-        )}
-
-        {/* Needs funding — shown when Bee exits because wallet has no xDAI */}
-        {showFundingWarning && !showOnboarding && (
-          <div
-            className="flex items-center gap-2.5 px-4 py-2.5 text-xs shrink-0"
-            style={{ backgroundColor: 'rgba(247,104,8,0.08)', borderBottom: '1px solid rgba(247,104,8,0.15)' }}
-          >
-            <Wallet size={12} className="shrink-0" style={{ color: 'rgb(var(--accent))' }} />
-            <span style={{ color: 'rgb(var(--accent))' }}>
-              Fund your node wallet to start.{' '}
-              <button
-                onClick={() => navigate('/account')}
-                className="underline font-semibold"
-                style={{ color: 'rgb(var(--accent))' }}
-              >
-                Go to Wallet →
-              </button>
-            </span>
-          </div>
-        )}
-
-        <div className="flex-1 overflow-auto flex flex-col">
-          {showOnboarding ? <Onboarding skipReady={onboardingCompleted} /> : <Outlet />}
-        </div>
-      </main>
-    </div>
+        </main>
+      </div>
+    </SidebarProvider>
   )
 }

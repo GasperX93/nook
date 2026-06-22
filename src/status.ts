@@ -2,6 +2,7 @@ import { readFileSync } from 'fs'
 import { join } from 'path'
 import { isBeeAssetReady } from './downloader'
 import { BeeMode, getMode } from './funding-monitor'
+import { BeeManager } from './lifecycle'
 import { checkPath, getPath } from './path'
 import { readConfigYaml } from './config'
 
@@ -10,12 +11,15 @@ interface Status {
   config?: Record<string, any>
   assetsReady: boolean
   mode: BeeMode
+  /** True when the user intentionally stopped Bee via the tray menu. */
+  userStopped: boolean
 }
 
 export function getStatus() {
   const status: Status = {
     assetsReady: isBeeAssetReady(),
     mode: getMode(),
+    userStopped: BeeManager.wasEverStarted() && !BeeManager.shouldRestart(),
   }
 
   if (!checkPath('config.yaml') || !checkPath('data-dir')) {

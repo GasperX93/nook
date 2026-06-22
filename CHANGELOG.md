@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.5.0](https://github.com/GasperX93/nook/releases/tag/v0.5.0) (2026-06-22)
+
+### Features
+
+* **Messaging** — end-to-end encrypted direct messages between Nook users (Swarm Notify integration): contacts, message threads, and on-chain invitation pings so first-contact works even before someone has added you
+* **Nook identity** — a wallet-derived "Nook address" you publish so others can reach you; used for messaging and contacts
+* **Contacts** — add people by Nook address or contact link, with name autocomplete and per-contact unread badges
+* **Encrypted drives & sharing** — create ACT-encrypted drives and share them with contacts; grant/revoke access per person; deliver via Messages or a contact link
+* **Re-publish** — re-encrypt & re-upload a drive's files under its current key so re-granted people can open existing files after a revoke (and to push up content that hasn't reached the network)
+
+### Reliability fixes
+
+* Append-only mailbox feed — fixes rapid-send message loss (the old single-slot feed overwrote messages sent close together)
+* Indexed feed reads now resolve the message content (fixes messages silently never arriving)
+* Direct (non-deferred) upload for shared/encrypted content — fixes recipients getting "content unavailable" on shared files (chunks now reach the network's storers, not just the local node)
+* Per-recipient send serialization + node-readiness gate (hold sends until the node can actually push)
+
+### UI improvements
+
+* Reworked share modal — names instead of raw keys, one clear "Share" action, per-person notify/revoke inline, plain-language on-chain option
+* Shared-drive de-duplication (re-importing the same drive updates one entry instead of duplicating)
+* Apple-style red notification badge on Contacts
+* ENS resolves on Ethereum mainnet regardless of the connected wallet's chain
+
 ## [0.3.6](https://github.com/GasperX93/nook/releases/tag/v0.3.6) (2026-03-16)
 
 ### Features

@@ -3,6 +3,21 @@ import { create } from 'zustand'
 export const DEFAULT_GATEWAY = 'https://gateway.ethswarm.org'
 
 const ONBOARDING_KEY = 'nook:onboarding-completed'
+const THEME_KEY = 'nook:theme'
+const NOTIFICATION_SOUND_KEY = 'nook:notification-sound'
+
+export type Theme = 'dark' | 'light'
+
+function readInitialTheme(): Theme {
+  const stored = localStorage.getItem(THEME_KEY)
+
+  return stored === 'dark' ? 'dark' : 'light'
+}
+
+function applyThemeClass(theme: Theme) {
+  document.documentElement.classList.toggle('dark', theme === 'dark')
+  document.documentElement.classList.toggle('light', theme === 'light')
+}
 
 interface AppState {
   apiKey: string | null
@@ -12,7 +27,15 @@ interface AppState {
   setDevMode: (enabled: boolean) => void
   onboardingCompleted: boolean
   setOnboardingCompleted: () => void
+  theme: Theme
+  setTheme: (theme: Theme) => void
+  notificationSound: boolean
+  setNotificationSound: (enabled: boolean) => void
 }
+
+const initialTheme = readInitialTheme()
+
+applyThemeClass(initialTheme)
 
 export const useAppStore = create<AppState>()(set => ({
   apiKey: null,
@@ -24,5 +47,17 @@ export const useAppStore = create<AppState>()(set => ({
   setOnboardingCompleted: () => {
     localStorage.setItem(ONBOARDING_KEY, 'true')
     set({ onboardingCompleted: true })
+  },
+  theme: initialTheme,
+  setTheme: theme => {
+    localStorage.setItem(THEME_KEY, theme)
+    applyThemeClass(theme)
+    set({ theme })
+  },
+  // Default true — chirps when new messages arrive while you're not on /contacts.
+  notificationSound: localStorage.getItem(NOTIFICATION_SOUND_KEY) !== 'false',
+  setNotificationSound: enabled => {
+    localStorage.setItem(NOTIFICATION_SOUND_KEY, String(enabled))
+    set({ notificationSound: enabled })
   },
 }))

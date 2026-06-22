@@ -35,7 +35,12 @@ function purgeLogs() {
   return rm(paths.log, { recursive: true, force: true })
 }
 
-function copyUi() {
+async function copyUi() {
+  // Clear the destination first — Vite emits hash-named chunks, so without this
+  // each build's chunks pile up on top of the previous one's, accumulating dead
+  // files in dist/ui and bloating the packaged app.asar unbounded across builds.
+  await rm(join('dist', 'ui'), { recursive: true, force: true })
+
   return cpy('.', join('..', '..', 'dist', 'ui'), { cwd: join('ui', 'build') })
 }
 
