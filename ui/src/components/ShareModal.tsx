@@ -346,14 +346,19 @@ export default function ShareModal({
       const notifyTarget = grantedContact ?? contactForGrantee(key) ?? null
 
       if (notifyOnGrant && notifyTarget?.walletPublicKey) {
-        try {
-          // Pass the grant's fresh historyRef so the shared metadata is encrypted
-          // against the chain that includes this grantee (the prop is still stale).
-          const fail = await notifyContacts([notifyTarget], sendOnChain, result.historyRef)
+        if (!files?.length) {
+          // Grant succeeded, but an empty drive has nothing to put in the link yet.
+          setError('Access granted. Add a file to this drive, then notify them with the bell next to their name.')
+        } else {
+          try {
+            // Pass the grant's fresh historyRef so the shared metadata is encrypted
+            // against the chain that includes this grantee (the prop is still stale).
+            const fail = await notifyContacts([notifyTarget], sendOnChain, result.historyRef)
 
-          if (fail) setError(`Access granted, but notification failed: ${fail}`)
-        } catch (e) {
-          setError(`Access granted, but notification failed: ${(e as Error).message}`)
+            if (fail) setError(`Access granted, but notification failed: ${fail}`)
+          } catch (e) {
+            setError(`Access granted, but notification failed: ${(e as Error).message}`)
+          }
         }
       }
     } catch (err) {
