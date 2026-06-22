@@ -2059,8 +2059,15 @@ export default function Drive() {
   // pushes any deferred-only content onto the network. Clears the keyRotated flag.
   async function handleRepublish(driveId: string) {
     const meta = driveMetadata.get(driveId)
+    const driveRecords = records.filter(r => r.driveId === driveId)
+    // actPublisher isn't stored on driveMetadata — it lives on the file records
+    // (and equals this node's publicKey). Source it the same way the Share modal
+    // does, falling back to the record / current node.
+    const firstRec = driveRecords.find(r => r.actHistoryRef && r.actPublisher)
+    const actPublisher = meta?.actPublisher || firstRec?.actPublisher || nodeAddresses?.publicKey
+    const currentHistoryRef = meta?.actHistoryRef || firstRec?.actHistoryRef
 
-    if (!meta?.actPublisher || !meta?.actHistoryRef) {
+    if (!actPublisher || !currentHistoryRef) {
       setRepublishMsg('This drive isn’t ready to re-publish yet.')
 
       return
@@ -2070,9 +2077,9 @@ export default function Drive() {
     try {
       await republishDrive({
         driveId,
-        records: records.filter(r => r.driveId === driveId),
-        actPublisher: meta.actPublisher,
-        currentHistoryRef: meta.actHistoryRef,
+        records: driveRecords,
+        actPublisher,
+        currentHistoryRef,
         onProgress: setRepublishMsg,
         onRecordUpdate: (id, changes) => updateRecord(id, changes),
         onHistoryUpdate: historyRef => driveMetadata.update(driveId, { actHistoryRef: historyRef }),
