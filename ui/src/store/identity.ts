@@ -68,6 +68,7 @@ function parsePersisted(raw: string | null): PersistedShape | null {
   if (!raw) return null
   try {
     const parsed = JSON.parse(raw) as PersistedShape
+
     if (typeof parsed.signatureHex !== 'string' || typeof parsed.walletAddress !== 'string') return null
 
     return parsed
@@ -155,6 +156,7 @@ export const useIdentityStore = create<IdentityState>()((set, get) => ({
 
       if (available) {
         const parsed = parsePersisted(value)
+
         if (parsed) {
           try {
             const signer = createWalletSigner(parsed.signatureHex)
@@ -182,6 +184,7 @@ export const useIdentityStore = create<IdentityState>()((set, get) => ({
 
     // safeStorage genuinely unavailable → fall back to sessionStorage.
     const persisted = readSession()
+
     if (persisted) {
       try {
         const signer = createWalletSigner(persisted.signatureHex)
@@ -209,6 +212,7 @@ export const useIdentityStore = create<IdentityState>()((set, get) => ({
     // Try safeStorage; fall back to sessionStorage if unavailable or call fails
     try {
       const result = await serverApi.writeIdentityCache(JSON.stringify({ signatureHex, walletAddress }))
+
       if (result.stored) {
         set({ backend: 'safe-storage' })
 

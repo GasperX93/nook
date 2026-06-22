@@ -66,6 +66,7 @@ export function useInboxPolling(): void {
         if (newCount > 0 && useAppStore.getState().notificationSound) {
           const hash = window.location.hash
           const viewingMessages = hash.startsWith('#/contacts') || hash.startsWith('#/apps/messages')
+
           if (document.hidden || !viewingMessages) playCricketChirp()
         }
       } catch {

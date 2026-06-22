@@ -93,6 +93,7 @@ async function main() {
   if (force) {
     splash.setMessage('Downloading Bee')
     await runDownloader(true)
+
     if (desktopVersionChanged) writeNookVersionFile()
   }
 

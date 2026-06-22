@@ -32,19 +32,8 @@ import { wagmiConfig } from '../wagmi'
 export function useDerivedKey() {
   const { address, isConnected, status } = useAccount()
   const { signMessageAsync } = useSignMessage()
-  const {
-    signer,
-    deriving,
-    error,
-    walletAddress,
-    hydrated,
-    setSigner,
-    setDeriving,
-    setError,
-    clear,
-    hydrate,
-  } = useIdentityStore()
-
+  const { signer, deriving, error, walletAddress, hydrated, setSigner, setDeriving, setError, clear, hydrate } =
+    useIdentityStore()
 
   // Hydrate the identity store from safeStorage on first mount. hydrate()
   // returns false on a transient failure (Koa not up yet at boot); retry a
@@ -184,9 +173,13 @@ export function useDerivedKey() {
   // Auto-derive on wallet connect if we don't already have a signer cached.
   useEffect(() => {
     if (!hydrated) return
+
     if (status !== 'connected' || !address) return
+
     if (signer) return
+
     if (deriving) return
+
     if (getAutoDeriveDeclined()) return
     void derive({ auto: true })
   }, [hydrated, status, address, signer, deriving, derive])
@@ -210,6 +203,7 @@ export function useDerivedKey() {
 
   useEffect(() => {
     setActiveIdentity(safeAddress)
+
     // Once the identity namespace is active, run the one-time v2 clean break
     // (drops stale single-slot v1 threads — see migrateMessagesToV2). Idempotent.
     if (safeAddress) migrateMessagesToV2()
@@ -229,7 +223,7 @@ export function useDerivedKey() {
     walletConnected: isConnected,
 
     /** Manually trigger the signMessage popup (used by the Identity CTA after a user-declined auto-derive). */
-    derive: () => derive(),
+    derive: async () => derive(),
 
     /** Clear the derived key manually */
     clear,

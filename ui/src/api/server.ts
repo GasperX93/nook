@@ -129,6 +129,7 @@ export const serverApi = {
 
   clearIdentityCache: async () => {
     const response = await fetch('/identity-cache', { method: 'DELETE', headers: authHeaders() })
+
     if (!response.ok) throw new Error('Failed to clear identity cache')
 
     return (await response.json()) as { cleared: boolean }

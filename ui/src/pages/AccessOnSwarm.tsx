@@ -93,7 +93,10 @@ export default function AccessOnSwarm() {
         {previewUrl && (
           <>
             <div>
-              <label className="text-xs uppercase tracking-widest block mb-1.5" style={{ color: 'rgb(var(--fg-muted))' }}>
+              <label
+                className="text-xs uppercase tracking-widest block mb-1.5"
+                style={{ color: 'rgb(var(--fg-muted))' }}
+              >
                 Save as (optional)
               </label>
               <input
@@ -106,8 +109,13 @@ export default function AccessOnSwarm() {
               />
             </div>
 
-            <div className="rounded-lg px-3 py-2 text-[11px] font-mono break-all" style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg-muted))' }}>
-              <span className="block uppercase tracking-widest mb-1" style={{ fontSize: '9px' }}>Preview URL</span>
+            <div
+              className="rounded-lg px-3 py-2 text-[11px] font-mono break-all"
+              style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg-muted))' }}
+            >
+              <span className="block uppercase tracking-widest mb-1" style={{ fontSize: '9px' }}>
+                Preview URL
+              </span>
               {previewUrl}
             </div>
           </>

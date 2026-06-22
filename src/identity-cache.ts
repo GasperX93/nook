@@ -22,6 +22,7 @@ export function isIdentityCacheAvailable(): boolean {
 export function readIdentityCache(): string | null {
   if (!isIdentityCacheAvailable()) return null
   const filePath = getPath(CACHE_FILE)
+
   if (!existsSync(filePath)) return null
   try {
     const encrypted = readFileSync(filePath)
@@ -57,6 +58,7 @@ export function writeIdentityCache(value: string): boolean {
 
 export function clearIdentityCache(): void {
   const filePath = getPath(CACHE_FILE)
+
   if (!existsSync(filePath)) return
   try {
     unlinkSync(filePath)
