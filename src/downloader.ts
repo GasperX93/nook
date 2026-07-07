@@ -27,7 +27,7 @@ const platformTable = {
   linux: 'linux',
 }
 
-export const EXPECTED_BEE_VERSION = '2.8.0'
+export const EXPECTED_BEE_VERSION = '2.8.1'
 
 export function isBeeAssetReady(): boolean {
   return existsSync(getPath(process.platform === 'win32' ? 'bee.exe' : 'bee'))
