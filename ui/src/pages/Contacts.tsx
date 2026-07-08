@@ -1,6 +1,6 @@
 import { Bee } from '@ethersphere/bee-js'
 import { identity } from '@swarm-notify/sdk'
-import { Check, Copy, Mail, MessageSquare, Plus, Search, Send, Share2, Trash2, X } from 'lucide-react'
+import { Check, Copy, Mail, MessageSquare, Pencil, Plus, Search, Send, Share2, Trash2, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
 import Messages, { ConnectionStatusBadge } from '../apps/Messages'
@@ -20,7 +20,7 @@ import {
   removeInvitationsFor,
 } from '../notify/invitations'
 import { decodeShareLink, encodeShareLink } from '../notify/share-link'
-import { addContact, loadContacts, removeContact, saveContacts } from '../notify/storage'
+import { addContact, loadContacts, removeContact, renameContact, saveContacts } from '../notify/storage'
 import type { NookContact } from '../notify/types'
 
 const BEE_URL = `${window.location.origin}/bee-api`
@@ -117,6 +117,10 @@ export default function Contacts() {
 
   const [copied, setCopied] = useState<'detail-address' | 'detail-share' | null>(null)
   const [copiedRowId, setCopiedRowId] = useState<string | null>(null)
+
+  // Inline nickname edit (#78) — id of the contact being renamed, or null
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
 
   const decoded = useMemo(() => {
     if (!shareLinkInput.trim()) return null
@@ -332,6 +336,20 @@ export default function Contacts() {
     await navigator.clipboard.writeText(value)
     setCopied(kind)
     setTimeout(() => setCopied(null), 1500)
+  }
+
+  function startRename(c: NookContact) {
+    setRenameValue(c.nickname)
+    setRenamingId(c.id)
+  }
+
+  function commitRename() {
+    if (!renamingId) return
+    const next = renameValue.trim()
+
+    // Empty name would make the contact unfindable in the list — keep the old one.
+    if (next) setContacts(renameContact(contacts, renamingId, next))
+    setRenamingId(null)
   }
 
   function handleShareContact(c: NookContact) {
@@ -587,7 +605,33 @@ export default function Contacts() {
             <div className="p-5 pb-4 shrink-0">
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3 min-w-0">
-                  <h1 className="text-lg font-semibold truncate">{selected.nickname}</h1>
+                  {renamingId === selected.id ? (
+                    <Input
+                      autoFocus
+                      value={renameValue}
+                      onChange={e => setRenameValue(e.target.value)}
+                      onBlur={commitRename}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') commitRename()
+
+                        if (e.key === 'Escape') setRenamingId(null)
+                      }}
+                      className="h-8 text-lg font-semibold max-w-56"
+                      aria-label="Edit nickname"
+                    />
+                  ) : (
+                    <>
+                      <h1 className="text-lg font-semibold truncate">{selected.nickname}</h1>
+                      <button
+                        onClick={() => startRename(selected)}
+                        className="p-1 rounded hover:opacity-70 shrink-0"
+                        style={{ color: 'rgb(var(--fg-muted))' }}
+                        aria-label={`Rename ${selected.nickname}`}
+                      >
+                        <Pencil size={13} />
+                      </button>
+                    </>
+                  )}
                   <ConnectionStatusBadge state={connectionState} contactId={selected.id} />
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
@@ -625,7 +669,33 @@ export default function Contacts() {
                 aria-label="Contact avatar"
               />
               <div className="text-center space-y-2">
-                <p className="text-xl font-semibold">{selected.nickname}</p>
+                {renamingId === selected.id ? (
+                  <Input
+                    autoFocus
+                    value={renameValue}
+                    onChange={e => setRenameValue(e.target.value)}
+                    onBlur={commitRename}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') commitRename()
+
+                      if (e.key === 'Escape') setRenamingId(null)
+                    }}
+                    className="h-9 text-xl font-semibold max-w-64 mx-auto text-center"
+                    aria-label="Edit nickname"
+                  />
+                ) : (
+                  <div className="flex items-center justify-center gap-1.5">
+                    <p className="text-xl font-semibold">{selected.nickname}</p>
+                    <button
+                      onClick={() => startRename(selected)}
+                      className="p-1 rounded hover:opacity-70"
+                      style={{ color: 'rgb(var(--fg-muted))' }}
+                      aria-label={`Rename ${selected.nickname}`}
+                    >
+                      <Pencil size={14} />
+                    </button>
+                  </div>
+                )}
                 <div className="flex justify-center">
                   <ConnectionStatusBadge state={connectionState} contactId={selected.id} />
                 </div>
