@@ -69,8 +69,13 @@ export default function WebsitePublisher() {
   const [sizeIdx, setSizeIdx] = useState(1)
   const [durationIdx, setDurationIdx] = useState(1)
   const [driveName, setDriveName] = useState('')
-  const [feedEnabled, setFeedEnabled] = useState(false)
+  const [feedEnabled, setFeedEnabled] = useState(true)
   const [feedTopic, setFeedTopic] = useState('')
+
+  // A stamp bought by a previous (failed) publish attempt. Reused on retry so
+  // the user isn't charged twice — but only while the size/duration selection
+  // still matches what was paid for; changing either buys fresh.
+  const [boughtStamp, setBoughtStamp] = useState<{ batchID: string; sizeIdx: number; durationIdx: number } | null>(null)
 
   // Publishing state
   const [publishPhase, setPublishPhase] = useState('')
@@ -104,6 +109,10 @@ export default function WebsitePublisher() {
   const selectedDuration = DURATION_PRESETS[durationIdx]
   const cost = chainState ? calcStampCost(selectedSize.depth, selectedDuration.months, chainState.currentPrice) : null
   const bzzBalance = wallet ? Number(plurToBzz(wallet.bzzBalance)) : null
+  // Storage already paid for by a failed attempt with the same selection —
+  // retry must not re-buy, and must not be blocked by the balance check.
+  const reusableStamp =
+    boughtStamp && boughtStamp.sizeIdx === sizeIdx && boughtStamp.durationIdx === durationIdx ? boughtStamp : null
   const canAfford = cost && bzzBalance !== null ? bzzBalance >= Number(cost.bzzCost) : true
 
   // ── Content selection ─────────────────────────────────────────────────────
@@ -144,20 +153,27 @@ export default function WebsitePublisher() {
   // ── Publish ───────────────────────────────────────────────────────────────
 
   async function publish() {
-    if (!content || !cost) return
+    if (!content || (!cost && !reusableStamp)) return
 
     setStep('publishing')
     setPublishError(null)
 
     try {
-      setPublishPhase('Buying storage…')
-      const res = await buyStamp.mutateAsync({
-        amount: cost.amount,
-        depth: selectedSize.depth,
-        immutable: true,
-        label: driveName.trim() || undefined,
-      })
-      const batchID = res.batchID
+      let batchID: string
+
+      if (reusableStamp) {
+        batchID = reusableStamp.batchID
+      } else {
+        setPublishPhase('Buying storage…')
+        const res = await buyStamp.mutateAsync({
+          amount: cost!.amount,
+          depth: selectedSize.depth,
+          immutable: true,
+          label: driveName.trim() || undefined,
+        })
+        batchID = res.batchID
+        setBoughtStamp({ batchID, sizeIdx, durationIdx })
+      }
 
       const uploadResult = await upload({
         entries: content.entries,
@@ -172,6 +188,7 @@ export default function WebsitePublisher() {
       })
 
       setResult(uploadResult)
+      setBoughtStamp(null)
       setStep('done')
     } catch (err) {
       setPublishError(err instanceof Error ? err.message : 'Something went wrong')
@@ -186,8 +203,9 @@ export default function WebsitePublisher() {
     setSizeIdx(1)
     setDurationIdx(1)
     setDriveName('')
-    setFeedEnabled(false)
+    setFeedEnabled(true)
     setFeedTopic('')
+    setBoughtStamp(null)
     setPublishPhase('')
     setPublishError(null)
     setUploadProgress(null)
@@ -403,7 +421,7 @@ export default function WebsitePublisher() {
             </div>
           </div>
 
-          {!canAfford && (
+          {!canAfford && !reusableStamp && (
             <div
               className="rounded-lg border px-4 py-3 flex items-center justify-between gap-4"
               style={{ backgroundColor: 'rgba(239,68,68,0.06)', borderColor: 'rgba(239,68,68,0.25)' }}
@@ -475,12 +493,14 @@ export default function WebsitePublisher() {
           </p>
 
           {publishError && (
-            <p
-              className="text-xs px-3 py-2 rounded-lg"
-              style={{ backgroundColor: 'rgba(239,68,68,0.1)', color: '#ef4444' }}
-            >
-              {publishError}
-            </p>
+            <div className="text-xs px-3 py-2 rounded-lg space-y-1" style={{ backgroundColor: 'rgba(239,68,68,0.1)' }}>
+              <p style={{ color: '#ef4444' }}>{publishError}</p>
+              {reusableStamp && (
+                <p style={{ color: 'rgb(var(--fg-muted))' }}>
+                  Your storage is already paid for — pressing Publish will reuse it and retry the upload.
+                </p>
+              )}
+            </div>
           )}
 
           <div className="flex gap-3">
@@ -493,7 +513,7 @@ export default function WebsitePublisher() {
             </button>
             <button
               onClick={publish}
-              disabled={!canAfford || !cost}
+              disabled={reusableStamp ? false : !canAfford || !cost}
               className="flex-1 px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-40"
               style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
             >
