@@ -57,6 +57,15 @@ export function addContact(contacts: NookContact[], next: NookContact): NookCont
   return updated
 }
 
+/** Rename a contact (display nickname only) by id (case-insensitive). */
+export function renameContact(contacts: NookContact[], id: string, nickname: string): NookContact[] {
+  const updated = contacts.map(c => (c.id.toLowerCase() === id.toLowerCase() ? { ...c, nickname } : c))
+
+  saveContacts(updated)
+
+  return updated
+}
+
 /** Remove a contact by id (case-insensitive). */
 export function removeContact(contacts: NookContact[], id: string): NookContact[] {
   const updated = contacts.filter(c => c.id.toLowerCase() !== id.toLowerCase())

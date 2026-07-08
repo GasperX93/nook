@@ -75,5 +75,8 @@ export async function readNookLogs(): Promise<string> {
 }
 
 export async function readBeeLogs(): Promise<string> {
-  return readFile(getLogPath('bee.current.log'), { encoding: 'utf8' })
+  // bee.0.log is always the active file (see log-rotator.ts) — reading it
+  // directly avoids depending on the bee.current.log symlink, which may not
+  // exist on platforms where symlink creation fails (unprivileged Windows).
+  return readFile(getLogPath('bee.0.log'), { encoding: 'utf8' })
 }

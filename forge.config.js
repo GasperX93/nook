@@ -19,6 +19,9 @@ const config = {
     icon: iconPath,
     executableName: 'nook',
     name: 'Nook',
+    // Inherited from the swarm-desktop fork but MUST NOT change: it is the
+    // installed app's macOS identity — changing it breaks auto-update pairing
+    // and Gatekeeper/notarization continuity for existing installs (#76).
     appBundleId: 'org.ethswarm.nook',
     protocols: [
       {
@@ -26,7 +29,12 @@ const config = {
         schemes: ['nook'],
       },
     ],
-    asar: true,
+    // UI assets are unpacked (real files next to app.asar) so the dashboard
+    // keeps serving even if Electron's in-process asar cache is poisoned by a
+    // transient fs error mid-run (see #80). Electron resolves reads through
+    // the app.asar path transparently either way. NOTE: verify on next
+    // `npm run make` that /dashboard serves from the packaged app.
+    asar: { unpack: '**/dist/ui/**' },
     ignore: [
       // Build output / release artifacts — must never be packaged into the app.
       // forge does NOT read .gitignore, so these need listing here even though
