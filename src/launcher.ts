@@ -1,10 +1,10 @@
 import { spawn } from 'child_process'
-import * as FileStreamRotator from 'file-stream-rotator'
 import { mkdirSync, writeFileSync } from 'fs'
 import { platform } from 'os'
 import { v4 } from 'uuid'
 import { rebuildElectronTray } from './electron'
 import { BeeManager } from './lifecycle'
+import { RotatingLogWriter } from './log-rotator'
 import { logger } from './logger'
 import { checkPath, getLogPath, getPath } from './path'
 
@@ -88,22 +88,19 @@ async function runProcess(command: string, args: string[], abortController: Abor
     subprocess.stdout.pipe(process.stdout)
     subprocess.stderr.pipe(process.stderr)
 
-    // Also store the logs to log dir
-    const fileStream = FileStreamRotator.getStream({
-      filename: getLogPath('bee'),
-      verbose: false,
-      size: '500k',
-      max_logs: '10',
-      extension: '.log',
-      create_symlink: true,
-      symlink_name: 'bee.current.log',
+    // Also store the logs to log dir — rotation-safe writer, see #80
+    const logWriter = new RotatingLogWriter(getLogPath('bee'), {
+      maxBytes: 500_000,
+      maxFiles: 10,
+      symlinkPath: getLogPath('bee.current.log'),
     })
-    fileStream.on('error', err => logger.error(err))
 
-    subprocess.stdout.pipe(fileStream)
-    subprocess.stderr.pipe(fileStream)
+    subprocess.stdout.on('data', chunk => logWriter.write(chunk))
+    subprocess.stderr.on('data', chunk => logWriter.write(chunk))
 
     subprocess.on('close', code => {
+      void logWriter.close()
+
       if (code === 0) {
         resolve()
       } else {

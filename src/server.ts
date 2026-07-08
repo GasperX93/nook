@@ -30,6 +30,19 @@ const AUTO_UPDATE_ENABLED_PLATFORMS = ['darwin', 'win32']
 export function runServer() {
   const app = new Koa()
   logger.info(`Serving UI from path: ${UI_DIST}`)
+
+  // A 404 on dashboard assets while the server is up means the UI files are
+  // unreadable (e.g. poisoned asar reads, see #80) — an error condition, not a
+  // routine access. Log it loudly, rate-limited to avoid spam.
+  let lastDashboard404 = 0
+  app.use(async (context, next) => {
+    await next()
+
+    if (context.path.startsWith('/dashboard') && context.status === 404 && Date.now() - lastDashboard404 > 60_000) {
+      lastDashboard404 = Date.now()
+      logger.error(`dashboard asset unreadable (404): ${context.path} — UI serving may be broken, see issue #80`)
+    }
+  })
   app.use(mount('/dashboard', serve(UI_DIST)))
 
   // Pass-through proxy: /bee-api/* → http://127.0.0.1:1633/*
