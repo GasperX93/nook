@@ -81,6 +81,8 @@ export interface NodeAddresses {
 export interface Stamp {
   batchID: string
   utilization: number
+  /** True fractional usage 0–1 (Bee ≥ 2.8.1). Prefer over the worst-case `utilization` bucket metric when present. */
+  utilizationRatio?: number
   usable: boolean
   label: string
   depth: number
@@ -96,6 +98,22 @@ export interface ChainState {
   block: number
   totalAmount: string
   currentPrice: string // PLUR per chunk per block
+  /** Minimum batch validity in blocks enforced by the network (Bee ≥ 2.8.1). */
+  minimumValidityBlocks?: number
+}
+
+/**
+ * Effective fill ratio 0–1 for a stamp. Uses Bee 2.8.1's `utilizationRatio`
+ * (true fractional usage) when the node provides it; falls back to the
+ * worst-case bucket-fill estimate (`utilization / 2^(depth-bucketDepth)`) on
+ * older nodes. The fallback is systematically pessimistic — that's why the
+ * ratio is preferred.
+ */
+export function stampFillRatio(stamp: Stamp): number {
+  if (typeof stamp.utilizationRatio === 'number') return Math.min(stamp.utilizationRatio, 1)
+  const maxUtilization = 1 << (stamp.depth - stamp.bucketDepth)
+
+  return maxUtilization > 0 ? Math.min(stamp.utilization / maxUtilization, 1) : 0
 }
 
 export interface UploadResult {
@@ -186,9 +204,21 @@ export function calcStampCost(
   depth: number,
   months: number,
   currentPrice: string,
+  minimumValidityBlocks?: number,
 ): { amount: string; bzzCost: string } {
   const price = BigInt(currentPrice)
-  const durationBlocks = BigInt(months) * BLOCKS_PER_MONTH
+  let durationBlocks = BigInt(months) * BLOCKS_PER_MONTH
+
+  // Safety net (Bee ≥ 2.8.1): the network rejects batches below a minimum
+  // validity — a purchase under the floor would waste BZZ. Auto-bump to the
+  // minimum with a 5% margin for price drift between quote and buy; the
+  // returned cost reflects the bump. Presets are far above the floor, so this
+  // only ever fires on misconfiguration or extreme network changes.
+  if (minimumValidityBlocks && minimumValidityBlocks > 0) {
+    const floorBlocks = (BigInt(minimumValidityBlocks) * 105n) / 100n
+
+    if (durationBlocks < floorBlocks) durationBlocks = floorBlocks
+  }
   const amount = price * durationBlocks
   const totalChunks = 1n << BigInt(depth)
   const totalPlur = amount * totalChunks
@@ -263,6 +293,14 @@ export const beeApi = {
     }),
 
   getStamp: async (id: string) => beeRequest<Stamp>(`/stamps/${id}`),
+
+  /** Rename a drive — updates the batch label (local node metadata, no chain tx). Bee ≥ 2.8.1. */
+  renameStamp: async (id: string, label: string) =>
+    beeRequest<{ batchID: string }>(`/stamps/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label }),
+    }),
 
   topupStamp: async (id: string, amount: string) =>
     beeRequest<{ batchID: string }>(`/stamps/topup/${id}/${amount}`, { method: 'PATCH' }),
