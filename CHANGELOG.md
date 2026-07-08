@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.5.1](https://github.com/GasperX93/nook/releases/tag/v0.5.1) (2026-07-08)
+
+### Bee node
+
+* Bundled Bee upgraded **2.8.0 → 2.8.1** (existing installs upgrade automatically on launch) — crash-safe chunk store recovery after unclean shutdowns, substantially reduced blockchain RPC traffic during postage sync, retrieval redundancy fixes
+* bee-js 12.2.1 → 12.3.1
+
+### Bug fixes
+
+* Website publish: a failed publish no longer buys a second drive on retry — the already-paid storage is remembered and reused ([details](https://github.com/GasperX93/nook/issues/79))
+* Bee log rotation: replaced the rotation library with a rotation-safe writer — fixes frozen Bee logs and the dashboard becoming unreachable ("Not Found") after days of uptime ([#80](https://github.com/GasperX93/nook/issues/80))
+* Dashboard UI files are now unpacked in the app bundle, so a transient read error can never take the dashboard down mid-run
+
+### Features
+
+* Contacts can be renamed — pencil icon next to the name ([#78](https://github.com/GasperX93/nook/issues/78))
+* Website publish: "Permanent address" is now ON by default, so published sites stay updatable
+
+### Cleanup
+
+* Leftover swarm-desktop fork metadata tidied ([#76](https://github.com/GasperX93/nook/issues/76))
+
 ## [0.5.0](https://github.com/GasperX93/nook/releases/tag/v0.5.0) (2026-06-22)
 
 ### Features
