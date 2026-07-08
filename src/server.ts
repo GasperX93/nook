@@ -302,7 +302,13 @@ export function runServer() {
 
     try {
       const bee = makeBee()
-      const result = await bee.uploadData(stampId, data)
+      // deferred: false — this uploads the public wrapper that a drive's
+      // metadata feed points at. The feed slot itself (SOC) is always pushed
+      // directly by Bee; without this the wrapper could sit in the local
+      // store awaiting the background pusher, and quitting the app right
+      // after sharing strands it — recipients then get "could not access
+      // this drive" even though the feed resolves. See #86.
+      const result = await bee.uploadData(stampId, data, { deferred: false })
       context.body = { reference: result.reference.toHex() }
     } catch (error) {
       logger.error(error)
