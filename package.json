@@ -6,8 +6,7 @@
   },
   "contributors": [
     {
-      "name": "Swarm Association",
-      "email": "info@ethswarm.org",
+      "name": "Swarm Association (upstream: swarm-desktop)",
       "url": "https://github.com/ethersphere/swarm-desktop"
     }
   ],

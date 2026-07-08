@@ -19,6 +19,9 @@ const config = {
     icon: iconPath,
     executableName: 'nook',
     name: 'Nook',
+    // Inherited from the swarm-desktop fork but MUST NOT change: it is the
+    // installed app's macOS identity — changing it breaks auto-update pairing
+    // and Gatekeeper/notarization continuity for existing installs (#76).
     appBundleId: 'org.ethswarm.nook',
     protocols: [
       {
