@@ -28,7 +28,7 @@
     "react-dom": "^19.2.5",
     "react-router-dom": "^6.26.2",
     "tailwind-merge": "^2.5.3",
-    "viem": "^2.48.0",
+    "viem": "^2.54.6",
     "wagmi": "^2.19.5",
     "zustand": "^5.0.12"
   },
