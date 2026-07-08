@@ -107,7 +107,14 @@ export default function WebsitePublisher() {
 
   const selectedSize = SIZE_PRESETS[sizeIdx]
   const selectedDuration = DURATION_PRESETS[durationIdx]
-  const cost = chainState ? calcStampCost(selectedSize.depth, selectedDuration.months, chainState.currentPrice) : null
+  const cost = chainState
+    ? calcStampCost(
+        selectedSize.depth,
+        selectedDuration.months,
+        chainState.currentPrice,
+        chainState.minimumValidityBlocks,
+      )
+    : null
   const bzzBalance = wallet ? Number(plurToBzz(wallet.bzzBalance)) : null
   // Storage already paid for by a failed attempt with the same selection —
   // retry must not re-buy, and must not be blocked by the balance check.
