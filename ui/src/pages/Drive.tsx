@@ -1248,7 +1248,23 @@ function DriveCard({
               Name this drive…
             </button>
           ) : (
-            <span className="text-lg font-medium truncate min-w-0">{driveName}</span>
+            <span className="inline-flex items-center gap-1.5 min-w-0 group/drivename">
+              <span className="text-lg font-medium truncate min-w-0">{driveName}</span>
+              {/* Same inline-rename affordance as folders and contacts — the
+                  kebab's Rename item stays as the all-actions fallback. */}
+              <button
+                onClick={e => {
+                  e.stopPropagation()
+                  setRenameInput(driveName)
+                  setRenaming(true)
+                }}
+                className="opacity-0 group-hover/drivename:opacity-100 transition-opacity shrink-0"
+                style={{ color: 'rgb(var(--fg-muted))' }}
+                aria-label={`Rename ${driveName}`}
+              >
+                <Pencil size={13} />
+              </button>
+            </span>
           )}
 
           {/* Encrypted pill */}
