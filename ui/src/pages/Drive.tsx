@@ -67,6 +67,12 @@ import { useSidebar } from '../components/ui/sidebar'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+// Why "used" can read higher than the sum of your files: it shows network
+// storage RESERVED (chunk + version overhead, quantized to bucket slots), not
+// logical file bytes. On small drives the smallest step is capacity/32.
+const USAGE_TOOLTIP =
+  'Network storage reserved — includes chunk and version overhead, so it may read higher than your file sizes on small drives.'
+
 function formatBytes(bytes: number): string {
   if (bytes >= 1_073_741_824) return `${(bytes / 1_073_741_824).toFixed(1)} GB`
 
@@ -1368,6 +1374,7 @@ function DriveCard({
             className="w-32 h-1 rounded-full shrink-0"
             style={{ backgroundColor: 'rgb(var(--border))' }}
             aria-label={`${Math.round(usagePct)}% used`}
+            title={USAGE_TOOLTIP}
           >
             <div
               className="h-1 rounded-full"
@@ -1377,7 +1384,7 @@ function DriveCard({
               }}
             />
           </div>
-          <span style={{ color: isFull ? '#ef4444' : 'rgb(var(--fg-muted))' }}>
+          <span style={{ color: isFull ? '#ef4444' : 'rgb(var(--fg-muted))' }} title={USAGE_TOOLTIP}>
             {usedBytes > 0 ? `${formatBytes(usedBytes)} / ${formatBytes(capacityBytes)}` : formatBytes(capacityBytes)}
           </span>
           {stamp.usable && (
