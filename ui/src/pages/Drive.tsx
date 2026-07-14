@@ -39,6 +39,7 @@ import {
   getBeeUrl,
   plurToBzz,
   SIZE_PRESETS,
+  stampFillRatio,
   topicFromString,
   type Stamp,
 } from '../api/bee'
@@ -65,6 +66,12 @@ import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { useSidebar } from '../components/ui/sidebar'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+// Why "used" can read higher than the sum of your files: it shows network
+// storage RESERVED (chunk + version overhead, quantized to bucket slots), not
+// logical file bytes. On small drives the smallest step is capacity/32.
+const USAGE_TOOLTIP =
+  'Network storage reserved — includes chunk and version overhead, so it may read higher than your file sizes on small drives.'
 
 function formatBytes(bytes: number): string {
   if (bytes >= 1_073_741_824) return `${(bytes / 1_073_741_824).toFixed(1)} GB`
@@ -210,7 +217,14 @@ function BuyDriveModal({
 
   const selectedSize = SIZE_PRESETS[sizeIdx]
   const selectedDuration = DURATION_PRESETS[durationIdx]
-  const cost = chainState ? calcStampCost(selectedSize.depth, selectedDuration.months, chainState.currentPrice) : null
+  const cost = chainState
+    ? calcStampCost(
+        selectedSize.depth,
+        selectedDuration.months,
+        chainState.currentPrice,
+        chainState.minimumValidityBlocks,
+      )
+    : null
   const bzzBalance = wallet ? Number(plurToBzz(wallet.bzzBalance)) : null
   const canAfford = cost && bzzBalance !== null ? bzzBalance >= Number(cost.bzzCost) : true
 
@@ -1107,15 +1121,16 @@ function DriveCard({
   const hasName = Boolean(customName || stamp.label)
   const driveName = customName || stamp.label || `${stamp.batchID.slice(0, 8)}…`
   const capacityBytes = depthToBytes(stamp.depth)
-  const maxUtilization = 1 << (stamp.depth - stamp.bucketDepth)
-  // Use Bee's reported utilization (matches swarm-cli) instead of summing local
-  // upload history — anything uploaded outside Nook (swarm-cli, ACT chunks,
-  // feed updates) wouldn't show up otherwise. Bee's metric is worst-case
-  // bucket-fill, so the byte estimate is conservative.
-  const usedBytes = maxUtilization > 0 ? Math.round(capacityBytes * (stamp.utilization / maxUtilization)) : 0
-  const usagePct = capacityBytes > 0 ? Math.min((usedBytes / capacityBytes) * 100, 100) : 0
-  const utilizationPct = Math.round((stamp.utilization / maxUtilization) * 100)
-  const isFull = stamp.utilization >= maxUtilization
+  // Use Bee's reported fill instead of summing local upload history — anything
+  // uploaded outside Nook (swarm-cli, ACT chunks, feed updates) wouldn't show
+  // up otherwise. stampFillRatio prefers Bee 2.8.1's utilizationRatio (true
+  // fractional usage) and falls back to the pessimistic worst-case bucket-fill
+  // estimate on older nodes.
+  const fillRatio = stampFillRatio(stamp)
+  const usedBytes = Math.round(capacityBytes * fillRatio)
+  const usagePct = Math.min(fillRatio * 100, 100)
+  const utilizationPct = Math.round(fillRatio * 100)
+  const isFull = fillRatio >= 1
   const ttlDays = stamp.batchTTL / 86400
   // Critical = days-pill turns red. Matches Figma's 'red at ≤7 days' threshold.
   const isCriticalTtl = stamp.usable && ttlDays > 0 && ttlDays <= 7
@@ -1233,7 +1248,23 @@ function DriveCard({
               Name this drive…
             </button>
           ) : (
-            <span className="text-lg font-medium truncate min-w-0">{driveName}</span>
+            <span className="inline-flex items-center gap-1.5 min-w-0 group/drivename">
+              <span className="text-lg font-medium truncate min-w-0">{driveName}</span>
+              {/* Same inline-rename affordance as folders and contacts — the
+                  kebab's Rename item stays as the all-actions fallback. */}
+              <button
+                onClick={e => {
+                  e.stopPropagation()
+                  setRenameInput(driveName)
+                  setRenaming(true)
+                }}
+                className="opacity-0 group-hover/drivename:opacity-100 transition-opacity shrink-0"
+                style={{ color: 'rgb(var(--fg-muted))' }}
+                aria-label={`Rename ${driveName}`}
+              >
+                <Pencil size={13} />
+              </button>
+            </span>
           )}
 
           {/* Encrypted pill */}
@@ -1359,6 +1390,7 @@ function DriveCard({
             className="w-32 h-1 rounded-full shrink-0"
             style={{ backgroundColor: 'rgb(var(--border))' }}
             aria-label={`${Math.round(usagePct)}% used`}
+            title={USAGE_TOOLTIP}
           >
             <div
               className="h-1 rounded-full"
@@ -1368,7 +1400,7 @@ function DriveCard({
               }}
             />
           </div>
-          <span style={{ color: isFull ? '#ef4444' : 'rgb(var(--fg-muted))' }}>
+          <span style={{ color: isFull ? '#ef4444' : 'rgb(var(--fg-muted))' }} title={USAGE_TOOLTIP}>
             {usedBytes > 0 ? `${formatBytes(usedBytes)} / ${formatBytes(capacityBytes)}` : formatBytes(capacityBytes)}
           </span>
           {stamp.usable && (
@@ -1993,6 +2025,7 @@ export default function Drive() {
   const driveMetadata = useDriveMetadata()
   const sharedDrives = useSharedDrives()
   const { signer } = useDerivedKey()
+  const queryClient = useQueryClient()
 
   const [customDriveLabels, setCustomDriveLabels] = useState<Record<string, string>>(() => {
     try {
@@ -2003,12 +2036,23 @@ export default function Drive() {
   })
 
   function renameDrive(batchID: string, name: string) {
+    // Optimistic local overlay — shows instantly and doubles as a fallback for
+    // nodes older than Bee 2.8.1 (where PATCH /stamps doesn't exist).
     setCustomDriveLabels(prev => {
       const next = { ...prev, [batchID]: name }
       localStorage.setItem('nook-drive-labels', JSON.stringify(next))
 
       return next
     })
+    // Persist on the node (batch label) — survives reinstall/other browsers,
+    // unlike this origin's localStorage. Best-effort: local rename stands
+    // regardless.
+    beeApi
+      .renameStamp(batchID, name)
+      .then(async () => queryClient.invalidateQueries({ queryKey: ['bee', 'stamps'] }))
+      .catch(() => {
+        // Older node or transient error — the localStorage overlay covers it.
+      })
   }
 
   const [activeDriveId, setActiveDriveId] = useState<string | null>(null)
