@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.2](https://github.com/GasperX93/nook/releases/tag/v0.5.2) (2026-07-14)
+
+### Messaging & sharing reliability
+
+* **Direct network push for message payloads and drive-share metadata** — quitting Nook right after sending could strand a message (or a shared drive's metadata) in the local store: it looked sent, but the recipient's inbox stalled on it forever. Send/share now completes only once the content is on the network ([#86](https://github.com/GasperX93/nook/issues/86), swarm-notify#58). Verified with the "send and quit within 2 seconds" test.
+
+### Drives
+
+* **Rename drives** — hover pencil next to the name (also in the ⋯ menu); names persist on the node via `PATCH /stamps`, surviving reinstalls ([#83](https://github.com/GasperX93/nook/issues/83))
+* **Honest usage display** — usage bars use Bee 2.8.1's true fill ratio instead of the worst-case estimate ([#84](https://github.com/GasperX93/nook/issues/84)); tooltip explains reserved-vs-file-size overhead
+* **Purchase safety net** — drive purchases auto-bump to the network's minimum storage duration ([#85](https://github.com/GasperX93/nook/issues/85))
+
 ## [0.5.1](https://github.com/GasperX93/nook/releases/tag/v0.5.1) (2026-07-08)
 
 ### Bee node
