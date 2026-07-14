@@ -99,4 +99,4 @@ Present results as a single report:
 
 ## Reference
 
-Full dependency documentation: `/Users/gzupan/Downloads/Repos/spindle/projects/nook/notes/dependencies.md`
+Full dependency documentation: `/Users/gzupan/Downloads/Repos/spindle/projects/nook/notes/reference/dependencies.md`
