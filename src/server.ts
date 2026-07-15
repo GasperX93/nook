@@ -20,6 +20,14 @@ import { BeeManager } from './lifecycle'
 import { logger, readNookLogs, readBeeLogs, subscribeLogServerRequests } from './logger'
 import { getPath } from './path'
 import { port } from './port'
+import {
+  MIN_RECLAIMABLE_DEPTH,
+  RECLAIMABLE_WRITE_BLOCKED_MESSAGE,
+  findBlockedBeeWrite,
+  isReclaimableBatch,
+  listReclaimableBatches,
+  registerReclaimableBatch,
+} from './reclaimable-registry'
 import { getStatus } from './status'
 import { resetCrashLoop } from './supervisor'
 import { fetchWithTimeout } from './fetch-timeout'
@@ -28,6 +36,37 @@ import { swap } from './swap'
 const UI_DIST = path.join(__dirname, '..', '..', 'ui')
 
 const AUTO_UPDATE_ENABLED_PLATFORMS = ['darwin', 'win32']
+
+// Server routes that stamp through Bee (uploads, feeds, ACT, grantees) must
+// refuse reclaimable-drive batches — see reclaimable-registry.ts for why.
+// Returns true when the request was rejected.
+function rejectReclaimableStamp(context: { status: number; body: unknown }, stampId: string | undefined): boolean {
+  if (stampId && isReclaimableBatch(stampId)) {
+    context.status = 403
+    context.body = { message: RECLAIMABLE_WRITE_BLOCKED_MESSAGE }
+
+    return true
+  }
+
+  return false
+}
+
+// Shared by /buy-stamp and /reclaimable — maps batch-creation failures to
+// actionable copy instead of a generic error.
+function friendlyBatchCreationError(error: unknown): string {
+  const beeMessage: string = (error as any)?.responseBody?.message ?? ''
+  const errString = String(error)
+
+  if (beeMessage.toLowerCase().includes('syncing')) {
+    return 'Your node is still syncing with the network. This can take a few minutes — please try again shortly.'
+  }
+
+  if (errString.includes('ECONNREFUSED') || errString.includes('fetch failed')) {
+    return 'Your node is still starting up. Please wait a moment and try again.'
+  }
+
+  return 'Failed to create drive. Please try again.'
+}
 
 export function runServer() {
   const app = new Koa()
@@ -59,6 +98,18 @@ export function runServer() {
       return
     }
     const beePath = context.path.replace(/^\/bee-api/, '')
+
+    // Reclaimable-drive batches are stamped client-side against a local slot
+    // ledger; a Bee-stamped write to one allocates slots the ledger can't see
+    // and eventually loses data (#99). Refuse loudly instead.
+    const blockedReason = findBlockedBeeWrite(context.method, beePath, context.headers)
+
+    if (blockedReason) {
+      context.status = 403
+      context.body = { message: blockedReason }
+
+      return
+    }
     const url = `http://127.0.0.1:1633${beePath}${context.search || ''}`
     const headers: Record<string, string> = {}
 
@@ -263,6 +314,10 @@ export function runServer() {
 
       return
     }
+
+    if (rejectReclaimableStamp(context, stampId)) {
+      return
+    }
     try {
       const feedManifestAddress = await createFeedUpdate(topicHex, reference, stampId)
       context.body = { feedManifestAddress }
@@ -309,6 +364,10 @@ export function runServer() {
       return
     }
 
+    if (rejectReclaimableStamp(context, stampId)) {
+      return
+    }
+
     try {
       const bee = makeBee()
       // deferred: false — this uploads the public wrapper that a drive's
@@ -347,19 +406,60 @@ export function runServer() {
     } catch (error) {
       logger.error(error)
       context.status = 500
-      const beeMessage: string = (error as any)?.responseBody?.message ?? ''
-      const errString = String(error)
-      let message: string
-
-      if (beeMessage.toLowerCase().includes('syncing')) {
-        message = 'Your node is still syncing with the network. This can take a few minutes — please try again shortly.'
-      } else if (errString.includes('ECONNREFUSED') || errString.includes('fetch failed')) {
-        message = 'Your node is still starting up. Please wait a moment and try again.'
-      } else {
-        message = 'Failed to create drive. Please try again.'
-      }
-      context.body = { message }
+      context.body = { message: friendlyBatchCreationError(error) }
     }
+  })
+
+  // ─── Reclaimable drives (#99) ─────────────────────────────────────────────
+  // Drives whose batches are stamped client-side by the reclaimable engine, so
+  // deleting a file frees its slots and capacity comes back. Batches created
+  // here are registered as reclaimable and refused by every Bee-stamping path
+  // above (ledger poisoning guard). Upload/delete/ledger endpoints follow with
+  // the swarm-fs integration (design doc M1).
+
+  router.post('/reclaimable', async context => {
+    const { amount, depth, encrypted, label } = context.request.body as {
+      amount: string
+      depth: number
+      encrypted?: boolean
+      label?: string
+    }
+
+    if (!amount || !depth) {
+      context.status = 400
+      context.body = { message: 'amount and depth are required' }
+
+      return
+    }
+
+    if (!Number.isInteger(depth) || depth < MIN_RECLAIMABLE_DEPTH) {
+      context.status = 400
+      context.body = { message: `Reclaimable drives require depth ${MIN_RECLAIMABLE_DEPTH} or higher` }
+
+      return
+    }
+
+    try {
+      // Always immutable: slot reuse works there (spike-verified) and it
+      // matches the default drive type everywhere else in Nook.
+      const batchID = (await makeBee().createPostageBatch(amount, depth, { immutableFlag: true, label })).toString()
+      registerReclaimableBatch({
+        batchId: batchID,
+        depth,
+        encrypted: Boolean(encrypted),
+        label,
+        createdAt: new Date().toISOString(),
+      })
+      context.body = { batchID }
+    } catch (error) {
+      logger.error(error)
+      context.status = 500
+      context.body = { message: friendlyBatchCreationError(error) }
+    }
+  })
+
+  router.get('/reclaimable', context => {
+    context.body = { drives: listReclaimableBatches() }
   })
 
   // ─── ACT proxy endpoints ──────────────────────────────────────────────────
@@ -378,6 +478,10 @@ export function runServer() {
       context.status = 400
       context.body = { message: 'stampId and data are required' }
 
+      return
+    }
+
+    if (rejectReclaimableStamp(context, stampId)) {
       return
     }
 
@@ -484,6 +588,10 @@ export function runServer() {
       return
     }
 
+    if (rejectReclaimableStamp(context, stampId)) {
+      return
+    }
+
     try {
       const beePassword = readConfigYaml().password as string | undefined
       const headers: Record<string, string> = {
@@ -550,6 +658,10 @@ export function runServer() {
       context.status = 400
       context.body = { message: 'stampId and historyRef are required' }
 
+      return
+    }
+
+    if (rejectReclaimableStamp(context, stampId)) {
       return
     }
 
