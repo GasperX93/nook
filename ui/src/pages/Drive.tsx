@@ -1137,16 +1137,28 @@ function DriveCard({
   const usagePct = Math.min(fillRatio * 100, 100)
   const utilizationPct = Math.round(fillRatio * 100)
   const isFull = fillRatio >= 1
-  // #93: slow-cadence health check for SHARED drives — can the network serve
-  // the newest file? Stewardship triggers a real retrieval, so this is gated to
-  // shared+encrypted drives only, one file, refreshed at most hourly.
+  // #93: slow-cadence health check for SHARED drives. Target = the PUBLIC
+  // metadata wrapper (the first hop recipients resolve) — ACT file refs are
+  // encrypted pointers that stewardship cannot verify, so drives without a
+  // recorded wrapper ref are simply not checked.
   const isShared = Boolean(encrypted && granteeCount && granteeCount > 1)
-  const newestRef = records.length > 0 ? records[records.length - 1].hash : undefined
   const { data: healthOk } = useQuery({
-    queryKey: ['drive-health', stamp.batchID, newestRef],
-    queryFn: async () => beeApi.checkRetrievable(newestRef!),
-    enabled: isShared && Boolean(newestRef) && stamp.usable,
-    staleTime: 60 * 60 * 1000,
+    queryKey: ['drive-health', stamp.batchID, wrapperRef],
+    // Two-strike rule: bee's IsRetrievable retrieves ONLY from the network
+    // (steward netGetter — bypasses the local store), which is the right
+    // question but flaky for freshly-pushed content on a light node. Only
+    // report unhealthy when two checks ~25s apart BOTH fail.
+    queryFn: async () => {
+      if (await beeApi.checkRetrievable(wrapperRef!)) return true
+      await new Promise(r => setTimeout(r, 25_000))
+
+      return beeApi.checkRetrievable(wrapperRef!)
+    },
+    enabled: isShared && Boolean(wrapperRef) && stamp.usable,
+    // Red verdicts re-check every 10 minutes so the pill clears itself once
+    // the network catches up; healthy drives only re-check hourly.
+    refetchInterval: query => (query.state.data === false ? 10 * 60 * 1000 : 60 * 60 * 1000),
+    staleTime: 10 * 60 * 1000,
     gcTime: 60 * 60 * 1000,
     retry: false,
     refetchOnWindowFocus: false,
