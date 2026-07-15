@@ -58,6 +58,8 @@ interface ShareModalProps {
   republishMsg?: string | null
   /** Re-encrypt + re-upload this drive's files under the current key. */
   onRepublish?: () => void
+  /** Latest public wrapper ref after a metadata refresh (#93 health checks). */
+  onWrapperRef?: (ref: string) => void
 }
 
 function isValidPublicKey(key: string): boolean {
@@ -86,6 +88,7 @@ export default function ShareModal({
   republishing,
   republishMsg,
   onRepublish,
+  onWrapperRef,
 }: ShareModalProps) {
   const { signer } = useDerivedKey()
   const { data: walletClient } = useWalletClient()
@@ -442,6 +445,7 @@ export default function ShareModal({
     if (!(await waitForRetrievable(wrapperResult.reference, { attempts: 3, delayMs: 4000 }))) {
       throw new Error("Content hasn't reached the network yet — wait a moment and try sharing again.")
     }
+    onWrapperRef?.(wrapperResult.reference)
 
     return buildShareLink({
       feedTopic: topic,

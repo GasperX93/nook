@@ -1078,6 +1078,8 @@ interface DriveCardProps {
   customName?: string
   encrypted?: boolean
   granteeCount?: number
+  /** Latest public metadata-wrapper ref — the health-check target (#93). */
+  wrapperRef?: string
   onOpen: (folderId?: string) => void
   onExtend: () => void
   onShare?: () => void
@@ -1109,6 +1111,7 @@ function DriveCard({
   onSetENS,
   encrypted,
   granteeCount,
+  wrapperRef,
   onShare,
   onMoveToFolder,
 }: DriveCardProps) {
@@ -1301,7 +1304,7 @@ function DriveCard({
             <span
               className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-semibold shrink-0"
               style={{ backgroundColor: 'rgba(239,68,68,0.12)', color: '#ef4444' }}
-              title="The newest file in this drive isn't retrievable from the network right now — recipients may not be able to open it. Re-publish can push it again."
+              title="This drive's shared metadata isn't retrievable from the network right now — recipients may not be able to open the drive. Sharing again (or re-publish) pushes it back."
             >
               <AlertTriangle size={11} />
               Availability
@@ -1465,6 +1468,8 @@ interface AddFileProps {
   onDone: () => void
   onAdd: (record: UploadRecord) => void
   onActHistoryUpdate?: (historyRef: string) => void
+  /** Latest public wrapper ref after the metadata feed update (#93 health checks). */
+  onWrapperRef?: (ref: string) => void
 }
 
 function generateFolderIndex(name: string, entries: FileEntry[]): FileEntry {
@@ -1481,7 +1486,15 @@ ${rows}
   return { path: '_index.html', file: new FileClass([html], '_index.html', { type: 'text/html' }) }
 }
 
-function AddFilePanel({ driveId, encrypted, actHistoryRef, onDone, onAdd, onActHistoryUpdate }: AddFileProps) {
+function AddFilePanel({
+  driveId,
+  encrypted,
+  actHistoryRef,
+  onDone,
+  onAdd,
+  onActHistoryUpdate,
+  onWrapperRef,
+}: AddFileProps) {
   const { data: addresses } = useAddresses()
   const [phase, setPhase] = useState('')
   const [progress, setProgress] = useState<number | null>(null)
@@ -1576,13 +1589,11 @@ function AddFilePanel({ driveId, encrypted, actHistoryRef, onDone, onAdd, onActH
         }
       }
 
-      if (encrypted) {
-        // #93: encrypted content is direct-uploaded — confirm the network can
-        // actually serve it (grantees depend on it). Soft outcome: on failure
-        // keep going (pusher may still finish); the hard gate is in ShareModal.
-        setPhase('Confirming availability…')
-        await waitForRetrievable(reference, { attempts: 2, delayMs: 4000 })
-      } else if (uploadTagUid !== undefined) {
+      // NOTE (#93): encrypted content refs are ACT-encrypted POINTERS, not
+      // content addresses — stewardship can't verify them. The availability
+      // check for encrypted drives happens on the public metadata WRAPPER
+      // below (the first thing recipients resolve).
+      if (!encrypted && uploadTagUid !== undefined) {
         // #92 stage 2: follow the tag until the content is on the network.
         setPhase('Propagating to network…')
         setProgress(0)
@@ -1651,6 +1662,12 @@ function AddFilePanel({ driveId, encrypted, actHistoryRef, onDone, onAdd, onActH
 
           await serverApi.createFeedUpdate(topic, wrapperResult.reference, driveId)
           onActHistoryUpdate?.(uploaded.historyRef)
+          onWrapperRef?.(wrapperResult.reference)
+          // #93: the wrapper is PUBLIC bytes — a real address stewardship can
+          // verify. Confirm the share chain is servable (soft: the ShareModal
+          // gate is the hard stop).
+          setPhase('Confirming availability…')
+          await waitForRetrievable(wrapperResult.reference, { attempts: 2, delayMs: 4000 })
         } catch {
           // Feed update failed — not critical, drive still works without live sharing
         }
@@ -2185,6 +2202,7 @@ export default function Drive() {
     setRepublishMsg('Starting…')
     try {
       await republishDrive({
+        onWrapperRef: ref => driveMetadata.update(driveId, { lastWrapperRef: ref }),
         driveId,
         records: driveRecords,
         actPublisher,
@@ -2392,6 +2410,7 @@ export default function Drive() {
                 customName={customDriveLabels[stamp.batchID]}
                 encrypted={driveMetadata.isEncrypted(stamp.batchID)}
                 granteeCount={driveMetadata.get(stamp.batchID)?.granteeCount}
+                wrapperRef={driveMetadata.get(stamp.batchID)?.lastWrapperRef}
                 onOpen={folderId => {
                   setActiveDriveId(stamp.batchID)
 
@@ -2453,6 +2472,7 @@ export default function Drive() {
                   .filter(r => r.actHistoryRef && r.actPublisher)
                   .map(r => ({ name: r.name, reference: r.hash, historyRef: r.actHistoryRef!, size: r.size }))}
                 onClose={() => setShowShareModal(null)}
+                onWrapperRef={ref => driveMetadata.update(showShareModal, { lastWrapperRef: ref })}
                 onUpdate={({ granteeRef, historyRef, granteeCount, keyRotated }) => {
                   driveMetadata.update(showShareModal, {
                     granteeRef,
@@ -2822,6 +2842,9 @@ export default function Drive() {
           onActHistoryUpdate={historyRef => {
             driveMetadata.update(activeDriveId, { actHistoryRef: historyRef })
           }}
+          onWrapperRef={ref => {
+            driveMetadata.update(activeDriveId, { lastWrapperRef: ref })
+          }}
         />
       )}
 
@@ -3012,6 +3035,7 @@ export default function Drive() {
                 .filter(r => r.actHistoryRef && r.actPublisher)
                 .map(r => ({ name: r.name, reference: r.hash, historyRef: r.actHistoryRef!, size: r.size }))}
               onClose={() => setShowShareModal(null)}
+              onWrapperRef={ref => driveMetadata.update(showShareModal, { lastWrapperRef: ref })}
               onUpdate={({ granteeRef, historyRef, granteeCount, keyRotated }) => {
                 driveMetadata.update(showShareModal, {
                   granteeRef,

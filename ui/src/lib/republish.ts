@@ -32,10 +32,12 @@ export interface RepublishDeps {
   onRecordUpdate: (id: string, changes: Partial<UploadRecord>) => void
   /** Persist the drive's new latest history ref. */
   onHistoryUpdate: (historyRef: string) => void
+  /** Latest public wrapper ref after the metadata rebuild (#93 health checks). */
+  onWrapperRef?: (ref: string) => void
 }
 
 export async function republishDrive(deps: RepublishDeps): Promise<void> {
-  const { driveId, records, actPublisher, onProgress, onRecordUpdate, onHistoryUpdate } = deps
+  const { driveId, records, actPublisher, onProgress, onRecordUpdate, onHistoryUpdate, onWrapperRef } = deps
 
   // Only single files are round-trippable via ACT download/upload here.
   // (Folders/websites are collections — re-publishing those is a follow-up.)
@@ -76,4 +78,5 @@ export async function republishDrive(deps: RepublishDeps): Promise<void> {
 
   await serverApi.createFeedUpdate(topic, wrapperResult.reference, driveId)
   onHistoryUpdate(uploaded.historyRef)
+  onWrapperRef?.(wrapperResult.reference)
 }
