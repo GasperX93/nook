@@ -2473,6 +2473,7 @@ export default function Drive() {
                   .map(r => ({ name: r.name, reference: r.hash, historyRef: r.actHistoryRef!, size: r.size }))}
                 onClose={() => setShowShareModal(null)}
                 onWrapperRef={ref => driveMetadata.update(showShareModal, { lastWrapperRef: ref })}
+                onGranteeCount={n => driveMetadata.update(showShareModal, { granteeCount: n })}
                 onUpdate={({ granteeRef, historyRef, granteeCount, keyRotated }) => {
                   driveMetadata.update(showShareModal, {
                     granteeRef,
@@ -3036,6 +3037,7 @@ export default function Drive() {
                 .map(r => ({ name: r.name, reference: r.hash, historyRef: r.actHistoryRef!, size: r.size }))}
               onClose={() => setShowShareModal(null)}
               onWrapperRef={ref => driveMetadata.update(showShareModal, { lastWrapperRef: ref })}
+              onGranteeCount={n => driveMetadata.update(showShareModal, { granteeCount: n })}
               onUpdate={({ granteeRef, historyRef, granteeCount, keyRotated }) => {
                 driveMetadata.update(showShareModal, {
                   granteeRef,

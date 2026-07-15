@@ -60,6 +60,12 @@ interface ShareModalProps {
   onRepublish?: () => void
   /** Latest public wrapper ref after a metadata refresh (#93 health checks). */
   onWrapperRef?: (ref: string) => void
+  /**
+   * Authoritative grantee count (including owner), reported whenever the list
+   * is loaded from the node. Self-heals the cached count on the drive card —
+   * grant/revoke math can drift when operations race the async list load.
+   */
+  onGranteeCount?: (n: number) => void
 }
 
 function isValidPublicKey(key: string): boolean {
@@ -89,6 +95,7 @@ export default function ShareModal({
   republishMsg,
   onRepublish,
   onWrapperRef,
+  onGranteeCount,
 }: ShareModalProps) {
   const { signer } = useDerivedKey()
   const { data: walletClient } = useWalletClient()
@@ -198,7 +205,11 @@ export default function ShareModal({
     setLoadedGrantees(true)
     serverApi
       .getGrantees(granteeRef)
-      .then(result => setGrantees(result.grantees))
+      .then(result => {
+        setGrantees(result.grantees)
+        // Server list is the truth — heal the drive card's cached count.
+        onGranteeCount?.(result.grantees.length)
+      })
       .catch(() => setGrantees([]))
   }
 
