@@ -411,6 +411,20 @@ export const beeApi = {
   getTag: async (uid: number): Promise<UploadTag> => beeRequest<UploadTag>(`/tags/${uid}`),
 
   /**
+   * Re-push content to the network from this node's local store (#93 fix
+   * action). Bee stewardship PUT traverses the reference and re-uploads every
+   * chunk with a fresh stamp — the one-call cure when the network can't serve
+   * content this node still holds.
+   */
+  reuploadToNetwork: async (reference: string, stampId: string): Promise<void> => {
+    await beeRequest(`/stewardship/${reference}`, {
+      method: 'PUT',
+      headers: { 'swarm-postage-batch-id': stampId },
+      signal: AbortSignal.timeout(120_000),
+    })
+  },
+
+  /**
    * Is this reference retrievable from the NETWORK (#93)? One stewardship call —
    * Bee attempts an actual retrieval, so treat it as expensive: on-demand and
    * slow-cadence only, never in fast polls.

@@ -1164,6 +1164,22 @@ function DriveCard({
     refetchOnWindowFocus: false,
   })
   const showHealthWarning = isShared && healthOk === false
+  const [fixingAvailability, setFixingAvailability] = useState(false)
+  const healthQueryClient = useQueryClient()
+
+  /** #93 fix action: re-push the shared metadata from this node, then re-check. */
+  async function fixAvailability() {
+    if (!wrapperRef || fixingAvailability) return
+    setFixingAvailability(true)
+
+    try {
+      await beeApi.reuploadToNetwork(wrapperRef, stamp.batchID)
+    } catch {
+      // Soft failure — the re-check below reports the true state either way.
+    }
+    await healthQueryClient.invalidateQueries({ queryKey: ['drive-health', stamp.batchID, wrapperRef] })
+    setFixingAvailability(false)
+  }
   const ttlDays = stamp.batchTTL / 86400
   // Critical = days-pill turns red. Matches Figma's 'red at ≤7 days' threshold.
   const isCriticalTtl = stamp.usable && ttlDays > 0 && ttlDays <= 7
@@ -1311,16 +1327,22 @@ function DriveCard({
             </span>
           )}
 
-          {/* #93: newest shared file isn't retrievable from the network */}
+          {/* #93: shared metadata isn't retrievable from the network — the pill
+              carries its own cure: one click re-pushes it from this node. */}
           {showHealthWarning && (
-            <span
-              className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-semibold shrink-0"
+            <button
+              onClick={e => {
+                e.stopPropagation()
+                void fixAvailability()
+              }}
+              disabled={fixingAvailability}
+              className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-semibold shrink-0 transition-opacity hover:opacity-80 disabled:opacity-60"
               style={{ backgroundColor: 'rgba(239,68,68,0.12)', color: '#ef4444' }}
-              title="This drive's shared metadata isn't retrievable from the network right now — recipients may not be able to open the drive. Sharing again (or re-publish) pushes it back."
+              title="Recipients may not be able to open this drive right now — its shared metadata isn't reachable on the network. Click to push it back out from this device."
             >
               <AlertTriangle size={11} />
-              Availability
-            </span>
+              {fixingAvailability ? 'Pushing…' : 'Availability · Fix'}
+            </button>
           )}
 
           {/* Confirming pill */}
