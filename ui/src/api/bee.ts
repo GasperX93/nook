@@ -46,6 +46,92 @@ async function xhrUpload(
   })
 }
 
+/**
+ * Bee upload-session tag (#92). Counters (all in chunks):
+ * `split` = produced by the splitter, `seen` = already known to the network
+ * (dedup), `sent`/`synced` = pushed / receipt-confirmed. For a deferred upload,
+ * `(seen + synced) / split` is the true network-propagation progress — the XHR
+ * progress bar only measures bytes reaching the LOCAL node.
+ */
+export interface UploadTag {
+  uid: number
+  split: number
+  seen: number
+  sent: number
+  synced: number
+}
+
+/**
+ * Poll a tag until the upload is fully propagated (#92). swarm-cli's pattern:
+ * poll every second, and RESET the patience counter whenever progress advances,
+ * so slow networks don't time out spuriously — only genuine stalls do.
+ * Resolves `{ complete: false }` on stall instead of throwing: the content is
+ * safe on the local node and the background pusher keeps working; the caller
+ * should proceed with a soft warning, not fail the upload.
+ */
+export async function waitForTagPropagation(
+  uid: number,
+  onProgress?: (pct: number) => void,
+  opts: { pollMs?: number; maxStalledPolls?: number } = {},
+): Promise<{ complete: boolean; tag: UploadTag | null }> {
+  const pollMs = opts.pollMs ?? 1000
+  const maxStalledPolls = opts.maxStalledPolls ?? 60
+  let best = -1
+  let stalled = 0
+  let tag: UploadTag | null = null
+
+  while (stalled < maxStalledPolls) {
+    try {
+      tag = await beeRequest<UploadTag>(`/tags/${uid}`)
+      const done = tag.seen + tag.synced
+
+      if (tag.split > 0) {
+        onProgress?.(Math.min(Math.round((done / tag.split) * 100), 100))
+
+        if (done >= tag.split) return { complete: true, tag }
+      }
+
+      if (done > best) {
+        best = done
+        stalled = 0
+      } else {
+        stalled++
+      }
+    } catch {
+      stalled++
+    }
+    await new Promise(r => setTimeout(r, pollMs))
+  }
+
+  return { complete: false, tag }
+}
+
+/**
+ * Confirm a reference is retrievable from the network, with patience (#93).
+ * Direct uploads should pass quickly; a just-pushed ref can lag a few seconds.
+ * Returns false after `attempts` failures — callers show a soft warning, they
+ * don't fail the operation (the content may still propagate).
+ */
+export async function waitForRetrievable(
+  reference: string,
+  opts: { attempts?: number; delayMs?: number } = {},
+): Promise<boolean> {
+  const attempts = opts.attempts ?? 3
+  const delayMs = opts.delayMs ?? 4000
+
+  for (let i = 0; i < attempts; i++) {
+    try {
+      if (await beeApi.checkRetrievable(reference)) return true
+    } catch {
+      // stewardship endpoint unavailable/timeout — retry
+    }
+
+    if (i < attempts - 1) await new Promise(r => setTimeout(r, delayMs))
+  }
+
+  return false
+}
+
 async function beeRequest<T>(path: string, options?: RequestInit): Promise<T> {
   const url = `${getBeeUrl()}${path}`
   const response = await fetch(url, options)
@@ -314,11 +400,35 @@ export const beeApi = {
   diluteStamp: async (id: string, depth: number) =>
     beeRequest<{ batchID: string }>(`/stamps/dilute/${id}/${depth}`, { method: 'PATCH' }),
 
+  /** Create an upload-session tag (#92). Pass its uid to an upload to track network propagation. */
+  createTag: async (): Promise<UploadTag> =>
+    beeRequest<UploadTag>('/tags', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    }),
+
+  getTag: async (uid: number): Promise<UploadTag> => beeRequest<UploadTag>(`/tags/${uid}`),
+
+  /**
+   * Is this reference retrievable from the NETWORK (#93)? One stewardship call —
+   * Bee attempts an actual retrieval, so treat it as expensive: on-demand and
+   * slow-cadence only, never in fast polls.
+   */
+  checkRetrievable: async (reference: string): Promise<boolean> => {
+    const res = await beeRequest<{ isRetrievable: boolean }>(`/stewardship/${reference}`, {
+      signal: AbortSignal.timeout(30_000),
+    })
+
+    return res.isRetrievable
+  },
+
   uploadFileWithProgress: async (
     file: File,
     stampId: string,
     onProgress?: (pct: number) => void,
     deferred = true,
+    tagUid?: number,
   ): Promise<UploadResult> =>
     xhrUpload(
       `${getBeeUrl()}/bzz`,
@@ -328,6 +438,7 @@ export const beeApi = {
         'swarm-deferred-upload': deferred ? 'true' : 'false',
         'Content-Type': file.type || 'application/octet-stream',
         'Content-Disposition': `inline; filename="${encodeURIComponent(file.name)}"`,
+        ...(tagUid !== undefined ? { 'swarm-tag': String(tagUid) } : {}),
       },
       onProgress,
     ),
@@ -335,7 +446,7 @@ export const beeApi = {
   uploadCollectionWithProgress: async (
     entries: FileEntry[],
     stampId: string,
-    options?: { indexDocument?: string; errorDocument?: string; deferred?: boolean },
+    options?: { indexDocument?: string; errorDocument?: string; deferred?: boolean; tagUid?: number },
     onProgress?: (pct: number) => void,
   ): Promise<UploadResult> => {
     const tar = await createTar(entries)
@@ -350,6 +461,8 @@ export const beeApi = {
     if (options?.indexDocument) headers['swarm-index-document'] = options.indexDocument
 
     if (options?.errorDocument) headers['swarm-error-document'] = options.errorDocument
+
+    if (options?.tagUid !== undefined) headers['swarm-tag'] = String(options.tagUid)
 
     return xhrUpload(`${getBeeUrl()}/bzz`, tar as XMLHttpRequestBodyInit, headers, onProgress)
   },

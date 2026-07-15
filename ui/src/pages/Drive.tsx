@@ -1,4 +1,5 @@
 import {
+  AlertTriangle,
   ArrowLeft,
   Check,
   ChevronDown,
@@ -26,7 +27,7 @@ import {
   Users,
   X,
 } from 'lucide-react'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import React, { useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { useAccount } from 'wagmi'
@@ -41,6 +42,8 @@ import {
   SIZE_PRESETS,
   stampFillRatio,
   topicFromString,
+  waitForRetrievable,
+  waitForTagPropagation,
   type Stamp,
 } from '../api/bee'
 import { serverApi } from '../api/server'
@@ -1131,6 +1134,21 @@ function DriveCard({
   const usagePct = Math.min(fillRatio * 100, 100)
   const utilizationPct = Math.round(fillRatio * 100)
   const isFull = fillRatio >= 1
+  // #93: slow-cadence health check for SHARED drives — can the network serve
+  // the newest file? Stewardship triggers a real retrieval, so this is gated to
+  // shared+encrypted drives only, one file, refreshed at most hourly.
+  const isShared = Boolean(encrypted && granteeCount && granteeCount > 1)
+  const newestRef = records.length > 0 ? records[records.length - 1].hash : undefined
+  const { data: healthOk } = useQuery({
+    queryKey: ['drive-health', stamp.batchID, newestRef],
+    queryFn: async () => beeApi.checkRetrievable(newestRef!),
+    enabled: isShared && Boolean(newestRef) && stamp.usable,
+    staleTime: 60 * 60 * 1000,
+    gcTime: 60 * 60 * 1000,
+    retry: false,
+    refetchOnWindowFocus: false,
+  })
+  const showHealthWarning = isShared && healthOk === false
   const ttlDays = stamp.batchTTL / 86400
   // Critical = days-pill turns red. Matches Figma's 'red at ≤7 days' threshold.
   const isCriticalTtl = stamp.usable && ttlDays > 0 && ttlDays <= 7
@@ -1275,6 +1293,18 @@ function DriveCard({
             >
               <Lock size={12} />
               Encrypted{granteeCount && granteeCount > 1 ? ` · ${granteeCount - 1} shared` : ''}
+            </span>
+          )}
+
+          {/* #93: newest shared file isn't retrievable from the network */}
+          {showHealthWarning && (
+            <span
+              className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-semibold shrink-0"
+              style={{ backgroundColor: 'rgba(239,68,68,0.12)', color: '#ef4444' }}
+              title="The newest file in this drive isn't retrievable from the network right now — recipients may not be able to open it. Re-publish can push it again."
+            >
+              <AlertTriangle size={11} />
+              Availability
             </span>
           )}
 
@@ -1476,7 +1506,9 @@ function AddFilePanel({ driveId, encrypted, actHistoryRef, onDone, onAdd, onActH
 
       let currentHistoryRef = actHistoryRef
 
-      async function doUpload(attempt: number): Promise<{ reference: string; historyAddress?: string }> {
+      async function doUpload(
+        attempt: number,
+      ): Promise<{ reference: string; historyAddress?: string; tagUid?: number }> {
         if (attempt > 1) {
           setPhase(`Finalising storage… (retry ${attempt - 1})`)
           await new Promise(r => setTimeout(r, 5000))
@@ -1494,27 +1526,45 @@ function AddFilePanel({ driveId, encrypted, actHistoryRef, onDone, onAdd, onActH
           )
         }
 
-        if (type === 'file') {
-          const res = await beeApi.uploadFileWithProgress(entries[0].file, driveId, pct => setProgress(pct))
+        // Regular (deferred) upload — a tag (#92) tracks network propagation
+        // after the XHR bar (which only measures bytes to the LOCAL node).
+        let tagUid: number | undefined
 
-          return { reference: res.reference }
+        try {
+          tagUid = (await beeApi.createTag()).uid
+        } catch {
+          // Tags unavailable — proceed without stage-2 progress.
         }
 
-        const res = await beeApi.uploadCollectionWithProgress(uploadEntries, driveId, { indexDocument }, pct =>
+        if (type === 'file') {
+          const res = await beeApi.uploadFileWithProgress(
+            entries[0].file,
+            driveId,
+            pct => setProgress(pct),
+            true,
+            tagUid,
+          )
+
+          return { reference: res.reference, tagUid }
+        }
+
+        const res = await beeApi.uploadCollectionWithProgress(uploadEntries, driveId, { indexDocument, tagUid }, pct =>
           setProgress(pct),
         )
 
-        return { reference: res.reference }
+        return { reference: res.reference, tagUid }
       }
 
       let reference!: string
       let uploadHistoryAddress: string | undefined
+      let uploadTagUid: number | undefined
 
       for (let attempt = 1; attempt <= 4; attempt++) {
         try {
           const result = await doUpload(attempt)
           reference = result.reference
           uploadHistoryAddress = result.historyAddress
+          uploadTagUid = result.tagUid
 
           if (uploadHistoryAddress) {
             currentHistoryRef = uploadHistoryAddress
@@ -1524,6 +1574,21 @@ function AddFilePanel({ driveId, encrypted, actHistoryRef, onDone, onAdd, onActH
         } catch (err) {
           if (attempt === 4) throw err
         }
+      }
+
+      if (encrypted) {
+        // #93: encrypted content is direct-uploaded — confirm the network can
+        // actually serve it (grantees depend on it). Soft outcome: on failure
+        // keep going (pusher may still finish); the hard gate is in ShareModal.
+        setPhase('Confirming availability…')
+        await waitForRetrievable(reference, { attempts: 2, delayMs: 4000 })
+      } else if (uploadTagUid !== undefined) {
+        // #92 stage 2: follow the tag until the content is on the network.
+        setPhase('Propagating to network…')
+        setProgress(0)
+        const { complete } = await waitForTagPropagation(uploadTagUid, pct => setProgress(pct))
+
+        if (!complete) setPhase('Still propagating in the background…')
       }
 
       setProgress(null)

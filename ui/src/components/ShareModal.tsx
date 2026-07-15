@@ -10,7 +10,7 @@ import { useMemo, useState } from 'react'
 import { getWalletClient, switchChain } from '@wagmi/core'
 import { useWalletClient } from 'wagmi'
 
-import { topicFromString } from '../api/bee'
+import { topicFromString, waitForRetrievable } from '../api/bee'
 import { serverApi } from '../api/server'
 import { bytesToHex, hexToBytes } from '../lib/hex'
 import { useDerivedKey } from '../hooks/useDerivedKey'
@@ -435,6 +435,13 @@ export default function ShareModal({
     const wrapperResult = await serverApi.uploadRawBytes(stampId, wrapper)
 
     await serverApi.createFeedUpdate(topic, wrapperResult.reference, stampId)
+
+    // #93: never hand out a link to content the network can't serve. The
+    // wrapper is what the recipient's feed read resolves first — verify it's
+    // actually retrievable (uploads are direct, so this should pass fast).
+    if (!(await waitForRetrievable(wrapperResult.reference, { attempts: 3, delayMs: 4000 }))) {
+      throw new Error("Content hasn't reached the network yet — wait a moment and try sharing again.")
+    }
 
     return buildShareLink({
       feedTopic: topic,
