@@ -38,6 +38,16 @@ export const BeeManager = {
       state.abortController.abort()
     }
   },
+  /**
+   * Kill the Bee process WITHOUT clearing the run intention — the keep-alive
+   * loop relaunches it on its next tick. `stop()` is user intent ("keep it
+   * off"); this is supervision ("bounce it"). Used by the wedge restart.
+   */
+  kill: () => {
+    if (state.abortController) {
+      state.abortController.abort()
+    }
+  },
   waitForSigtermToFinish: async () => {
     if (state.process) {
       await state.process

@@ -1,3 +1,4 @@
+import { fetchWithTimeout } from './fetch-timeout'
 import { logger } from './logger'
 import { getMode } from './funding-monitor'
 import { readConfigYaml } from './config'
@@ -21,7 +22,7 @@ function getAuthHeaders(): Record<string, string> {
 }
 
 async function beeGet<T>(path: string): Promise<T> {
-  const res = await fetch(`${getBeeUrl()}${path}`, { headers: getAuthHeaders() })
+  const res = await fetchWithTimeout(`${getBeeUrl()}${path}`, { headers: getAuthHeaders() }, 10_000)
 
   if (!res.ok) throw new Error(`Bee ${path}: ${res.status}`)
 
@@ -29,7 +30,7 @@ async function beeGet<T>(path: string): Promise<T> {
 }
 
 async function beePost<T>(path: string): Promise<T> {
-  const res = await fetch(`${getBeeUrl()}${path}`, { method: 'POST', headers: getAuthHeaders() })
+  const res = await fetchWithTimeout(`${getBeeUrl()}${path}`, { method: 'POST', headers: getAuthHeaders() }, 30_000)
 
   if (!res.ok) throw new Error(`Bee ${path}: ${res.status}`)
 

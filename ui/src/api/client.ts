@@ -54,6 +54,8 @@ export interface Status {
   address?: string
   /** True when the user intentionally stopped Bee via the tray menu. */
   userStopped?: boolean
+  /** True when Bee crashed repeatedly and automatic restarts are paused (#94). */
+  crashLoop?: boolean
 }
 
 export interface Peers {
