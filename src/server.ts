@@ -21,6 +21,8 @@ import { logger, readNookLogs, readBeeLogs, subscribeLogServerRequests } from '.
 import { getPath } from './path'
 import { port } from './port'
 import { getStatus } from './status'
+import { resetCrashLoop } from './supervisor'
+import { fetchWithTimeout } from './fetch-timeout'
 import { swap } from './swap'
 
 const UI_DIST = path.join(__dirname, '..', '..', 'ui')
@@ -80,7 +82,13 @@ export function runServer() {
     }
 
     try {
-      const res = await fetch(url, { method: context.method, headers, body: body as BodyInit | undefined })
+      // Generous deadline: uploads/downloads through the proxy can be large,
+      // but nothing should hang forever (#94).
+      const res = await fetchWithTimeout(
+        url,
+        { method: context.method, headers, body: body as BodyInit | undefined },
+        5 * 60_000,
+      )
 
       context.status = res.status
       // Forward response headers EXCEPT CORS (Koa CORS middleware adds those —
@@ -202,6 +210,7 @@ export function runServer() {
     }
   })
   router.post('/restart', async context => {
+    resetCrashLoop()
     BeeManager.stop()
     await BeeManager.waitForSigtermToFinish()
     runLauncher()
