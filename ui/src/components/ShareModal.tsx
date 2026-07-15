@@ -208,7 +208,10 @@ export default function ShareModal({
       .then(result => {
         setGrantees(result.grantees)
         // Server list is the truth — heal the drive card's cached count.
-        onGranteeCount?.(result.grantees.length)
+        // Count OTHER people explicitly: depending on how a drive was created
+        // its list may or may not contain the owner's own key, so raw list
+        // length is off-by-one for some drives. Stored convention: others + 1.
+        onGranteeCount?.(result.grantees.filter(g => !isMyKey(g)).length + 1)
       })
       .catch(() => setGrantees([]))
   }
@@ -360,7 +363,7 @@ export default function ShareModal({
       onUpdate({
         granteeRef: result.ref,
         historyRef: result.historyRef,
-        granteeCount: grantees.length + 1,
+        granteeCount: [...grantees, key].filter(g => !isMyKey(g)).length + 1,
       })
 
       // Refresh from localStorage so a newly-added contact is matched for the
@@ -408,7 +411,7 @@ export default function ShareModal({
       onUpdate({
         granteeRef: result.ref,
         historyRef: result.historyRef,
-        granteeCount: grantees.length - 1,
+        granteeCount: grantees.filter(g => g !== key && !isMyKey(g)).length + 1,
         keyRotated: true,
       })
     } catch (err) {
