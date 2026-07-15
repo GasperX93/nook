@@ -9,10 +9,13 @@ Nook bundles a [Bee](https://github.com/ethersphere/bee) node and a clean UI int
 
 ## What you can do
 
-- **Store files** — upload any file or folder to Swarm, organized into drives with folders
+- **Store files** — upload any file or folder to Swarm, organized into drives with folders. Rename drives, see honest usage, extend before expiry
 - **Encrypt files** — create encrypted drives using Swarm's ACT (chunk-level encryption). Only people you grant access to can decrypt and download
-- **Share encrypted drives** — grant access to specific users via their sharing key, generate a share link, and recipients get a live-syncing view of your files
-- **Publish websites** — upload a website (HTML/CSS/JS) to Swarm and get a permanent link. Optionally attach a feed for updates so the URL stays the same when you publish new versions
+- **Share encrypted drives** — grant access to specific contacts, deliver via a message or share link, and recipients get a live-syncing view of your files. Revoke anytime; re-publish re-secures existing files
+- **Message other Nook users** — end-to-end encrypted messaging over Swarm, no servers. On-chain notification pings reach people even before they've added you back
+- **Contacts & identity** — publish a wallet-derived Nook address so others can find you
+- **Publish websites** — upload a website (HTML/CSS/JS) to Swarm with a permanent address that stays the same when you publish new versions
+- **Access anything on Swarm** — retrieve any Swarm hash and open it in your browser
 - **Connect to ENS** — link your Swarm-hosted website to an ENS domain (e.g. `yourname.eth`) so anyone can access it via a gateway or ENS-aware browser
 - **Manage your wallet** — view xDAI/xBZZ balances, swap between tokens, redeem gift codes, top up from any chain via the multichain widget
 - **Extend storage** — drives have a TTL (time to live). Extend them to keep your data alive longer
@@ -39,7 +42,7 @@ Download the latest build from the [releases page](https://github.com/GasperX93/
 | Linux | `nook_*_amd64.deb` / `nook-*.x86_64.rpm` |
 | Windows | `Nook-*-Setup.exe` |
 
-**macOS note:** Right-click the `.app` → Open to bypass the Gatekeeper warning on first launch (app is not yet notarized).
+**macOS note:** the app is not yet notarized. After downloading, run `xattr -cr ~/Downloads/Nook-*-arm64.dmg`, install, then `xattr -cr /Applications/Nook.app`, and right-click → Open on first launch.
 
 ## Development
 

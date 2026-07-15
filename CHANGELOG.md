@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.5.3](https://github.com/GasperX93/nook/releases/tag/v0.5.3) (2026-07-15)
+
+### Messaging reliability
+
+* **Conversations can no longer freeze** — the inbox reader previously stopped at the first unreadable feed index, so a single gap or unreachable payload in a sender's feed silently hid every later message, forever. The reader now skips past gaps (with a bounded lookahead) and unreachable payloads (swarm-notify#59, [#98](https://github.com/GasperX93/nook/pull/98)). Verified live on an affected conversation: all previously hidden messages delivered.
+
+### Docs
+
+* CLAUDE.md and README updated for the 0.5.x feature set (messaging, contacts, drive rename, honest usage, branch workflow)
+
 ## [0.5.2](https://github.com/GasperX93/nook/releases/tag/v0.5.2) (2026-07-14)
 
 ### Messaging & sharing reliability
