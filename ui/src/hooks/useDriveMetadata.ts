@@ -34,6 +34,13 @@ export interface LocalDriveMetadata {
    * signer: the drive can be re-anchored from bpub to this wpub.
    */
   creatorWpub?: string
+  /**
+   * Latest metadata-feed WRAPPER reference (public bytes). This is the first
+   * thing a share recipient resolves (feed → wrapper → metadata), and — unlike
+   * the ACT-encrypted file refs — it's a real content address that stewardship
+   * can verify. Used by the drive-health check (#93).
+   */
+  lastWrapperRef?: string
 }
 
 function load(): Record<string, LocalDriveMetadata> {

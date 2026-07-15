@@ -10,7 +10,7 @@ import { useMemo, useState } from 'react'
 import { getWalletClient, switchChain } from '@wagmi/core'
 import { useWalletClient } from 'wagmi'
 
-import { topicFromString } from '../api/bee'
+import { topicFromString, waitForRetrievable } from '../api/bee'
 import { serverApi } from '../api/server'
 import { bytesToHex, hexToBytes } from '../lib/hex'
 import { useDerivedKey } from '../hooks/useDerivedKey'
@@ -58,6 +58,14 @@ interface ShareModalProps {
   republishMsg?: string | null
   /** Re-encrypt + re-upload this drive's files under the current key. */
   onRepublish?: () => void
+  /** Latest public wrapper ref after a metadata refresh (#93 health checks). */
+  onWrapperRef?: (ref: string) => void
+  /**
+   * Authoritative grantee count (including owner), reported whenever the list
+   * is loaded from the node. Self-heals the cached count on the drive card —
+   * grant/revoke math can drift when operations race the async list load.
+   */
+  onGranteeCount?: (n: number) => void
 }
 
 function isValidPublicKey(key: string): boolean {
@@ -86,6 +94,8 @@ export default function ShareModal({
   republishing,
   republishMsg,
   onRepublish,
+  onWrapperRef,
+  onGranteeCount,
 }: ShareModalProps) {
   const { signer } = useDerivedKey()
   const { data: walletClient } = useWalletClient()
@@ -195,7 +205,14 @@ export default function ShareModal({
     setLoadedGrantees(true)
     serverApi
       .getGrantees(granteeRef)
-      .then(result => setGrantees(result.grantees))
+      .then(result => {
+        setGrantees(result.grantees)
+        // Server list is the truth — heal the drive card's cached count.
+        // Count OTHER people explicitly: depending on how a drive was created
+        // its list may or may not contain the owner's own key, so raw list
+        // length is off-by-one for some drives. Stored convention: others + 1.
+        onGranteeCount?.(result.grantees.filter(g => !isMyKey(g)).length + 1)
+      })
       .catch(() => setGrantees([]))
   }
 
@@ -346,7 +363,7 @@ export default function ShareModal({
       onUpdate({
         granteeRef: result.ref,
         historyRef: result.historyRef,
-        granteeCount: grantees.length + 1,
+        granteeCount: [...grantees, key].filter(g => !isMyKey(g)).length + 1,
       })
 
       // Refresh from localStorage so a newly-added contact is matched for the
@@ -394,7 +411,7 @@ export default function ShareModal({
       onUpdate({
         granteeRef: result.ref,
         historyRef: result.historyRef,
-        granteeCount: grantees.length - 1,
+        granteeCount: grantees.filter(g => g !== key && !isMyKey(g)).length + 1,
         keyRotated: true,
       })
     } catch (err) {
@@ -435,6 +452,14 @@ export default function ShareModal({
     const wrapperResult = await serverApi.uploadRawBytes(stampId, wrapper)
 
     await serverApi.createFeedUpdate(topic, wrapperResult.reference, stampId)
+
+    // #93: never hand out a link to content the network can't serve. The
+    // wrapper is what the recipient's feed read resolves first — verify it's
+    // actually retrievable (uploads are direct, so this should pass fast).
+    if (!(await waitForRetrievable(wrapperResult.reference, { attempts: 3, delayMs: 4000 }))) {
+      throw new Error("Content hasn't reached the network yet — wait a moment and try sharing again.")
+    }
+    onWrapperRef?.(wrapperResult.reference)
 
     return buildShareLink({
       feedTopic: topic,
