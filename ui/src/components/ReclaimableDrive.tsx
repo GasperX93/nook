@@ -457,7 +457,6 @@ export function ReclaimableDriveView({
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [copiedRef, setCopiedRef] = useState<string | null>(null)
   const pollRef = useRef<number | null>(null)
-  const { usedBytes, capacityBytes, pct } = usageOf(drive)
   const name = customName || drive.label || `${drive.batchId.slice(0, 8)}…`
 
   useEffect(
@@ -546,19 +545,6 @@ export function ReclaimableDriveView({
         </span>
 
         <div className="flex-1" />
-
-        <div className="hidden md:flex items-center gap-2 text-xs shrink-0" style={{ color: 'rgb(var(--fg-muted))' }}>
-          <div className="w-24 h-1 rounded-full" style={{ backgroundColor: 'rgb(var(--border))' }}>
-            <div
-              className="h-1 rounded-full"
-              style={{ width: `${pct}%`, backgroundColor: pct >= 100 ? '#ef4444' : 'rgb(var(--fg))' }}
-            />
-          </div>
-          <span>
-            {formatBytes(usedBytes)} / {formatBytes(capacityBytes)}
-          </span>
-          {stamp?.usable && <span>· expires in {ttlToDays(stamp.batchTTL)}</span>}
-        </div>
 
         <input
           ref={inputRef}
