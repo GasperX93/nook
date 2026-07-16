@@ -377,7 +377,61 @@ export function commitUploadStage(stageId: string, folderName: string): UploadJo
     }
   }
 
+  // swarm-fs only writes a website-index-document entry when index.html
+  // exists, and Bee 404s a manifest root without one — a plain folder of
+  // files would not be browseable at /bzz/<ref>/. Generate a minimal listing
+  // so the folder link always opens. (Real websites keep their own index.)
+  if (!existsSync(path.join(namedDir, 'index.html'))) {
+    writeFileSync(path.join(namedDir, 'index.html'), buildFolderIndexHtml(dirName, listFilesRecursive(namedDir)))
+  }
+
   return runUploadJob(entry, folderName, namedDir, stage.dir)
+}
+
+function listFilesRecursive(dir: string, prefix = ''): string[] {
+  const results: string[] = []
+
+  for (const item of readdirSync(dir, { withFileTypes: true })) {
+    if (item.isDirectory()) {
+      results.push(...listFilesRecursive(path.join(dir, item.name), `${prefix}${item.name}/`))
+    } else {
+      results.push(`${prefix}${item.name}`)
+    }
+  }
+
+  return results.sort()
+}
+
+function buildFolderIndexHtml(folderName: string, relPaths: string[]): string {
+  const escape = (s: string) =>
+    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+  const items = relPaths.map(p => `<li><a href="${escape(encodeURI(p))}">${escape(p)}</a></li>`).join('\n      ')
+
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${escape(folderName)}</title>
+    <style>
+      body { font-family: -apple-system, system-ui, sans-serif; max-width: 640px; margin: 3rem auto; padding: 0 1rem; color: #222; }
+      h1 { font-size: 1.1rem; }
+      ul { list-style: none; padding: 0; }
+      li { padding: 0.35rem 0; border-bottom: 1px solid #eee; }
+      a { color: #0366d6; text-decoration: none; word-break: break-all; }
+      a:hover { text-decoration: underline; }
+      p { color: #888; font-size: 0.8rem; }
+    </style>
+  </head>
+  <body>
+    <h1>${escape(folderName)}</h1>
+    <ul>
+      ${items}
+    </ul>
+    <p>${relPaths.length} file${relPaths.length === 1 ? '' : 's'} · stored on Swarm</p>
+  </body>
+</html>
+`
 }
 
 // ─── Delete & listing ────────────────────────────────────────────────────────

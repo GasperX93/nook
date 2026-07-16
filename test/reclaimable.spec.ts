@@ -227,6 +227,48 @@ describe('folder upload staging', () => {
     expect(opts.path.endsWith('/site')).toBe(true)
   })
 
+  test('commit generates a browseable index.html when the folder has none', async () => {
+    let uploaded: { files: string[]; indexContent: string } | null = null
+    const fake = makeFakeSwarmFs({
+      upload: jest.fn(async (opts: any): Promise<Buffer> => {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { readdirSync: rd, readFileSync: rf } = require('fs')
+        uploaded = { files: rd(opts.path).sort(), indexContent: rf(`${opts.path}/index.html`, 'utf-8') }
+
+        return Buffer.from(ROOT, 'hex')
+      }),
+    })
+    setSwarmFsModuleForTests(fake as any)
+
+    const { stageId } = await createUploadStage(BATCH)
+    addFileToStage(stageId, 'charts/a chart.png', Buffer.from('png'))
+    addFileToStage(stageId, 'charts/sub/b.svg', Buffer.from('svg'))
+    await waitForJob(commitUploadStage(stageId, 'charts').id)
+
+    expect(uploaded!.files).toEqual(['a chart.png', 'index.html', 'sub'])
+    expect(uploaded!.indexContent).toContain('a%20chart.png')
+    expect(uploaded!.indexContent).toContain('sub/b.svg')
+    expect(uploaded!.indexContent).not.toContain('index.html</a>') // never lists itself
+  })
+
+  test('commit keeps an existing index.html untouched (websites)', async () => {
+    let indexContent = ''
+    const fake = makeFakeSwarmFs({
+      upload: jest.fn(async (opts: any): Promise<Buffer> => {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        indexContent = require('fs').readFileSync(`${opts.path}/index.html`, 'utf-8')
+
+        return Buffer.from(ROOT, 'hex')
+      }),
+    })
+    setSwarmFsModuleForTests(fake as any)
+
+    const { stageId } = await createUploadStage(BATCH)
+    addFileToStage(stageId, 'site/index.html', Buffer.from('<html>mine</html>'))
+    await waitForJob(commitUploadStage(stageId, 'site').id)
+    expect(indexContent).toBe('<html>mine</html>')
+  })
+
   test('path traversal is rejected', async () => {
     const { stageId } = await createUploadStage(BATCH)
     expect(() => addFileToStage(stageId, '../escape.txt', Buffer.from('x'))).toThrow('Invalid file path')
