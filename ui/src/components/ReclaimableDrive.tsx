@@ -12,7 +12,6 @@ import {
   RefreshCw,
   Trash2,
   Upload,
-  X,
 } from 'lucide-react'
 import React, { useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
@@ -298,7 +297,6 @@ function FileRow({
   onCopy: () => void
   onDelete: () => void
 }) {
-  const [confirming, setConfirming] = useState(false)
   const openUrl = `${getBeeUrl()}/bzz/${file.reference}/`
   const ttlDays = ttlSeconds ? ttlSeconds / 86400 : null
   const urgent = ttlDays !== null && ttlDays <= 7
@@ -361,76 +359,101 @@ function FileRow({
       )}
 
       {/* Actions */}
-      {confirming ? (
-        <div className="flex items-center gap-2 shrink-0">
-          <span className="text-[10px]" style={{ color: 'rgb(var(--fg-muted))' }}>
-            Frees its space — network copies stay readable until they expire
-          </span>
+      <div className="flex items-center gap-0.5 shrink-0">
+        {/* The reference doubles as the decryption key on encrypted drives,
+            so link actions are hidden there (same gating as classic rows) */}
+        {!encrypted && (
           <button
-            onClick={() => {
-              setConfirming(false)
-              onDelete()
-            }}
-            className="px-2 py-0.5 rounded text-[10px] font-semibold"
-            style={{ backgroundColor: 'rgba(239,68,68,0.15)', color: '#ef4444' }}
+            onClick={onCopy}
+            title="Copy link"
+            className="w-6 h-6 flex items-center justify-center rounded transition-colors"
+            style={{ color: copied ? '#4ade80' : 'rgb(var(--fg-muted))' }}
           >
-            Delete
+            <Copy size={12} />
           </button>
-          <button
-            onClick={() => setConfirming(false)}
-            className="w-6 h-6 flex items-center justify-center rounded"
-            style={{ color: 'rgb(var(--fg-muted))' }}
-            aria-label="Cancel delete"
-          >
-            <X size={12} />
-          </button>
-        </div>
-      ) : (
-        <div className="flex items-center gap-0.5 shrink-0">
-          {/* The reference doubles as the decryption key on encrypted drives,
-              so link actions are hidden there (same gating as classic rows) */}
-          {!encrypted && (
-            <button
-              onClick={onCopy}
-              title="Copy link"
-              className="w-6 h-6 flex items-center justify-center rounded transition-colors"
-              style={{ color: copied ? '#4ade80' : 'rgb(var(--fg-muted))' }}
-            >
-              <Copy size={12} />
-            </button>
-          )}
-          {!encrypted && (
-            <a
-              href={openUrl}
-              target="_blank"
-              rel="noreferrer"
-              title="Open"
-              className="w-6 h-6 flex items-center justify-center rounded"
-              style={{ color: 'rgb(var(--fg-muted))' }}
-            >
-              <ExternalLink size={12} />
-            </a>
-          )}
+        )}
+        {!encrypted && (
           <a
             href={openUrl}
-            download={file.name}
-            title="Download"
-            className="w-6 h-6 flex items-center justify-center rounded transition-colors"
+            target="_blank"
+            rel="noreferrer"
+            title="Open"
+            className="w-6 h-6 flex items-center justify-center rounded"
             style={{ color: 'rgb(var(--fg-muted))' }}
           >
-            <Download size={12} />
+            <ExternalLink size={12} />
           </a>
+        )}
+        <a
+          href={openUrl}
+          download={file.name}
+          title="Download"
+          className="w-6 h-6 flex items-center justify-center rounded transition-colors"
+          style={{ color: 'rgb(var(--fg-muted))' }}
+        >
+          <Download size={12} />
+        </a>
+        <button
+          onClick={onDelete}
+          disabled={deleting}
+          title="Delete — frees this file's space"
+          className="w-6 h-6 flex items-center justify-center rounded transition-colors hover:text-red-400 disabled:opacity-40"
+          style={{ color: 'rgb(var(--fg-muted))' }}
+        >
+          {deleting ? <RefreshCw size={12} className="animate-spin" /> : <Trash2 size={12} />}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ─── Delete confirmation (house modal style) ─────────────────────────────────
+
+function DeleteFileModal({
+  file,
+  onConfirm,
+  onClose,
+}: {
+  file: ReclaimableFile
+  onConfirm: () => void
+  onClose: () => void
+}) {
+  return (
+    <div
+      className="fixed inset-0 flex items-center justify-center z-50"
+      style={{ backgroundColor: 'rgba(0,0,0,0.6)' }}
+      onClick={onClose}
+    >
+      <div
+        className="rounded-xl border p-6 w-96 space-y-4"
+        style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
+        onClick={e => e.stopPropagation()}
+      >
+        <p className="text-sm font-semibold">Delete file?</p>
+        <p className="text-sm truncate" style={{ color: 'rgb(var(--fg))' }}>
+          {file.name}
+        </p>
+        <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+          This frees ~{formatBytes(file.chunkCount * 4096)} in your drive for new uploads. Copies already stored on the
+          network stay readable until they expire — deleting doesn't erase them everywhere.
+        </p>
+        <div className="flex gap-3">
           <button
-            onClick={() => setConfirming(true)}
-            disabled={deleting}
-            title="Delete — frees this file's space"
-            className="w-6 h-6 flex items-center justify-center rounded transition-colors hover:text-red-400 disabled:opacity-40"
+            onClick={onClose}
+            className="flex-1 py-2 rounded-lg text-sm"
             style={{ color: 'rgb(var(--fg-muted))' }}
           >
-            {deleting ? <RefreshCw size={12} className="animate-spin" /> : <Trash2 size={12} />}
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            className="flex-1 py-2 rounded-lg text-sm font-semibold"
+            style={{ backgroundColor: 'rgba(239,68,68,0.15)', color: '#ef4444' }}
+          >
+            Delete file
           </button>
         </div>
-      )}
+      </div>
     </div>
   )
 }
@@ -455,6 +478,7 @@ export function ReclaimableDriveView({
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [deletingRef, setDeletingRef] = useState<string | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<ReclaimableFile | null>(null)
   const [copiedRef, setCopiedRef] = useState<string | null>(null)
   const pollRef = useRef<number | null>(null)
   const name = customName || drive.label || `${drive.batchId.slice(0, 8)}…`
@@ -610,10 +634,22 @@ export function ReclaimableDriveView({
               copied={copiedRef === file.reference}
               deleting={deletingRef === file.reference}
               onCopy={() => copyLink(file.reference)}
-              onDelete={() => void handleDelete(file.reference)}
+              onDelete={() => setConfirmDelete(file)}
             />
           ))}
         </div>
+      )}
+
+      {confirmDelete && (
+        <DeleteFileModal
+          file={confirmDelete}
+          onClose={() => setConfirmDelete(null)}
+          onConfirm={() => {
+            const target = confirmDelete
+            setConfirmDelete(null)
+            void handleDelete(target.reference)
+          }}
+        />
       )}
     </div>
   )
