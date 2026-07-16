@@ -1,14 +1,17 @@
 import {
+  ArrowLeft,
   Clock,
+  Copy,
   Download,
+  ExternalLink,
+  File,
   Lock,
   MoreVertical,
-  PanelLeft,
   Pencil,
-  Plus,
   Recycle,
   RefreshCw,
   Trash2,
+  Upload,
   X,
 } from 'lucide-react'
 import React, { useEffect, useRef, useState } from 'react'
@@ -16,7 +19,6 @@ import { useQueryClient } from '@tanstack/react-query'
 
 import { getBeeUrl, type Stamp, depthToBytes } from '../api/bee'
 import { serverApi, type ReclaimableDrive, type ReclaimableFile } from '../api/server'
-import { useSidebar } from './ui/sidebar'
 
 // Reclaimable drives (#99): the server stamps chunks client-side and keeps a
 // slot ledger, so deleting a file really frees its capacity. Files come from
@@ -41,6 +43,10 @@ function ttlToDays(seconds: number): string {
   if (d < 365) return `${d}d`
 
   return `${Math.floor(d / 365)}y`
+}
+
+function isImageFile(name: string): boolean {
+  return /\.(jpe?g|png|gif|webp|svg)$/i.test(name)
 }
 
 function usageOf(drive: ReclaimableDrive): { usedBytes: number; capacityBytes: number; pct: number } {
@@ -262,7 +268,7 @@ export function ReclaimableDriveCard({
   )
 }
 
-// ─── Upload panel ─────────────────────────────────────────────────────────────
+// ─── Upload plumbing ──────────────────────────────────────────────────────────
 // POST returns a job id; the job's chunk count is receipt-confirmed (every
 // chunk POST waited for the network), so this single stage IS propagation.
 
@@ -273,124 +279,99 @@ function estimateChunks(size: number): number {
   return dataChunks + Math.ceil(dataChunks / 128) + 4
 }
 
-function UploadPanel({ drive, onDone }: { drive: ReclaimableDrive; onDone: () => void }) {
-  const inputRef = useRef<HTMLInputElement>(null)
-  const [uploading, setUploading] = useState<{ name: string; estimate: number } | null>(null)
-  const [chunks, setChunks] = useState(0)
-  const [error, setError] = useState<string | null>(null)
-  const pollRef = useRef<number | null>(null)
+// ─── File row (mirrors RecordRow) ─────────────────────────────────────────────
 
-  useEffect(
-    () => () => {
-      if (pollRef.current) window.clearInterval(pollRef.current)
-    },
-    [],
-  )
-
-  async function handleFile(file: File) {
-    setError(null)
-    setChunks(0)
-    setUploading({ name: file.name, estimate: estimateChunks(file.size) })
-    try {
-      const { uploadId } = await serverApi.uploadReclaimableFile(drive.batchId, file)
-
-      pollRef.current = window.setInterval(async () => {
-        try {
-          const job = await serverApi.getReclaimableUpload(uploadId)
-          setChunks(job.chunksUploaded)
-
-          if (job.status !== 'uploading') {
-            if (pollRef.current) window.clearInterval(pollRef.current)
-            setUploading(null)
-
-            if (job.status === 'error') setError(job.error ?? 'Upload failed')
-            else onDone()
-          }
-        } catch {
-          // transient poll failure — keep polling
-        }
-      }, 1000)
-    } catch (err) {
-      setUploading(null)
-      setError(err instanceof Error ? err.message : 'Upload failed')
-    }
-  }
-
-  if (uploading) {
-    const pct = Math.min(99, Math.round((chunks / uploading.estimate) * 100))
-
-    return (
-      <div className="flex items-center gap-3 px-4 py-3 text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-        <RefreshCw size={12} className="animate-spin shrink-0" />
-        <span className="truncate">Uploading {uploading.name} to the network…</span>
-        <div className="w-32 h-1 rounded-full shrink-0" style={{ backgroundColor: 'rgb(var(--border))' }}>
-          <div className="h-1 rounded-full" style={{ width: `${pct}%`, backgroundColor: 'rgb(var(--fg))' }} />
-        </div>
-        <span className="shrink-0">{chunks} chunks confirmed</span>
-      </div>
-    )
-  }
-
-  return (
-    <div className="px-4 py-3">
-      <input
-        ref={inputRef}
-        type="file"
-        className="hidden"
-        onChange={e => {
-          const file = e.target.files?.[0]
-
-          if (file) handleFile(file)
-          e.target.value = ''
-        }}
-      />
-      <button
-        onClick={() => inputRef.current?.click()}
-        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold"
-        style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
-      >
-        <Plus size={12} />
-        Upload file
-      </button>
-      {error && (
-        <p className="text-xs mt-2" style={{ color: '#ef4444' }}>
-          {error}
-        </p>
-      )}
-    </div>
-  )
-}
-
-// ─── File row with real delete ────────────────────────────────────────────────
-
-function FileRow({ file, onDelete, deleting }: { file: ReclaimableFile; onDelete: () => void; deleting: boolean }) {
+function FileRow({
+  file,
+  encrypted,
+  ttlSeconds,
+  copied,
+  deleting,
+  onCopy,
+  onDelete,
+}: {
+  file: ReclaimableFile
+  encrypted: boolean
+  ttlSeconds?: number
+  copied: boolean
+  deleting: boolean
+  onCopy: () => void
+  onDelete: () => void
+}) {
   const [confirming, setConfirming] = useState(false)
-  const href = `${getBeeUrl()}/bzz/${file.reference}/`
+  const openUrl = `${getBeeUrl()}/bzz/${file.reference}/`
+  const ttlDays = ttlSeconds ? ttlSeconds / 86400 : null
+  const urgent = ttlDays !== null && ttlDays <= 7
 
   return (
-    <div
-      className="flex items-center gap-3 px-4 py-2.5 border-b text-sm transition-colors hover:bg-white/[0.02]"
-      style={{ borderColor: 'rgb(var(--border))' }}
-    >
-      <div className="flex-1 min-w-0">
-        <p className="truncate">{file.name}</p>
-        <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-          ~{formatBytes(file.chunkCount * 4096)}
-          {file.uploadDate ? ` · ${new Date(file.uploadDate).toLocaleDateString()}` : ''}
-        </p>
+    <div className="px-2 py-2 flex items-center gap-3 transition-colors hover:bg-white/[0.02]">
+      {/* Type icon or thumbnail */}
+      <div
+        className="w-6 h-6 rounded overflow-hidden flex items-center justify-center shrink-0"
+        style={{ backgroundColor: 'rgb(var(--bg))' }}
+      >
+        {encrypted ? (
+          <Lock size={12} style={{ color: 'rgb(var(--accent))' }} />
+        ) : isImageFile(file.name) ? (
+          <img
+            src={openUrl}
+            className="w-full h-full object-cover"
+            onError={e => {
+              ;(e.target as HTMLImageElement).style.display = 'none'
+            }}
+            alt=""
+          />
+        ) : (
+          <File size={12} style={{ color: 'rgb(var(--fg-muted))' }} />
+        )}
       </div>
 
+      {/* Name */}
+      <div className="flex items-center gap-2 flex-1 min-w-0">
+        <p className="text-xs font-medium truncate">{file.name}</p>
+      </div>
+
+      {/* Size (approximate — from the ledger's chunk count) */}
+      <span
+        className="text-xs shrink-0 hidden sm:block w-14 text-right tabular-nums"
+        style={{ color: 'rgb(var(--fg-muted))' }}
+      >
+        ~{formatBytes(file.chunkCount * 4096)}
+      </span>
+
+      {/* Expiry (the drive's TTL — all files on a drive expire together) */}
+      {ttlSeconds !== undefined && (
+        <div className="flex items-center gap-2 shrink-0">
+          <div className="h-1 rounded-full overflow-hidden w-24" style={{ backgroundColor: 'rgb(var(--border))' }}>
+            <div
+              className="h-full rounded-full transition-all"
+              style={{
+                width: `${Math.max(2, Math.min(100, ((ttlDays ?? 0) / 365) * 100))}%`,
+                backgroundColor: urgent ? '#ef4444' : '#4ade80',
+              }}
+            />
+          </div>
+          <span
+            className="text-[10px] uppercase tracking-widest font-semibold w-16 text-right whitespace-nowrap"
+            style={{ color: urgent ? '#ef4444' : 'rgb(var(--fg-muted))' }}
+          >
+            {ttlToDays(ttlSeconds)} left
+          </span>
+        </div>
+      )}
+
+      {/* Actions */}
       {confirming ? (
-        <div className="flex items-center gap-2 shrink-0 text-xs">
-          <span style={{ color: 'rgb(var(--fg-muted))' }}>
-            Frees this file's space. Copies already on the network stay readable until they expire.
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="text-[10px]" style={{ color: 'rgb(var(--fg-muted))' }}>
+            Frees its space — network copies stay readable until they expire
           </span>
           <button
             onClick={() => {
               setConfirming(false)
               onDelete()
             }}
-            className="px-2 py-1 rounded font-semibold"
+            className="px-2 py-0.5 rounded text-[10px] font-semibold"
             style={{ backgroundColor: 'rgba(239,68,68,0.15)', color: '#ef4444' }}
           >
             Delete
@@ -405,26 +386,48 @@ function FileRow({ file, onDelete, deleting }: { file: ReclaimableFile; onDelete
           </button>
         </div>
       ) : (
-        <div className="flex items-center gap-1 shrink-0">
+        <div className="flex items-center gap-0.5 shrink-0">
+          {/* The reference doubles as the decryption key on encrypted drives,
+              so link actions are hidden there (same gating as classic rows) */}
+          {!encrypted && (
+            <button
+              onClick={onCopy}
+              title="Copy link"
+              className="w-6 h-6 flex items-center justify-center rounded transition-colors"
+              style={{ color: copied ? '#4ade80' : 'rgb(var(--fg-muted))' }}
+            >
+              <Copy size={12} />
+            </button>
+          )}
+          {!encrypted && (
+            <a
+              href={openUrl}
+              target="_blank"
+              rel="noreferrer"
+              title="Open"
+              className="w-6 h-6 flex items-center justify-center rounded"
+              style={{ color: 'rgb(var(--fg-muted))' }}
+            >
+              <ExternalLink size={12} />
+            </a>
+          )}
           <a
-            href={href}
-            target="_blank"
-            rel="noreferrer"
+            href={openUrl}
             download={file.name}
-            className="w-7 h-7 flex items-center justify-center rounded-lg transition-colors hover:bg-white/5"
-            style={{ color: 'rgb(var(--fg-muted))' }}
             title="Download"
+            className="w-6 h-6 flex items-center justify-center rounded transition-colors"
+            style={{ color: 'rgb(var(--fg-muted))' }}
           >
-            <Download size={13} />
+            <Download size={12} />
           </a>
           <button
             onClick={() => setConfirming(true)}
             disabled={deleting}
-            className="w-7 h-7 flex items-center justify-center rounded-lg transition-colors hover:bg-white/5 disabled:opacity-40"
-            style={{ color: 'rgb(var(--fg-muted))' }}
             title="Delete — frees this file's space"
+            className="w-6 h-6 flex items-center justify-center rounded transition-colors hover:text-red-400 disabled:opacity-40"
+            style={{ color: 'rgb(var(--fg-muted))' }}
           >
-            {deleting ? <RefreshCw size={13} className="animate-spin" /> : <Trash2 size={13} />}
+            {deleting ? <RefreshCw size={12} className="animate-spin" /> : <Trash2 size={12} />}
           </button>
         </div>
       )}
@@ -432,7 +435,7 @@ function FileRow({ file, onDelete, deleting }: { file: ReclaimableFile; onDelete
   )
 }
 
-// ─── Drive detail view ────────────────────────────────────────────────────────
+// ─── Drive detail view (mirrors the classic drive view) ──────────────────────
 
 export function ReclaimableDriveView({
   drive,
@@ -446,11 +449,56 @@ export function ReclaimableDriveView({
   onBack: () => void
 }) {
   const queryClient = useQueryClient()
-  const { toggle: toggleSidebar } = useSidebar()
+  const inputRef = useRef<HTMLInputElement>(null)
+  const [uploading, setUploading] = useState<{ name: string; estimate: number } | null>(null)
+  const [chunks, setChunks] = useState(0)
+  const [uploadError, setUploadError] = useState<string | null>(null)
   const [deletingRef, setDeletingRef] = useState<string | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [copiedRef, setCopiedRef] = useState<string | null>(null)
+  const pollRef = useRef<number | null>(null)
   const { usedBytes, capacityBytes, pct } = usageOf(drive)
   const name = customName || drive.label || `${drive.batchId.slice(0, 8)}…`
+
+  useEffect(
+    () => () => {
+      if (pollRef.current) window.clearInterval(pollRef.current)
+    },
+    [],
+  )
+
+  function refreshDrives() {
+    queryClient.invalidateQueries({ queryKey: ['server', 'reclaimable'] })
+  }
+
+  async function handleFile(uploadFile: globalThis.File) {
+    setUploadError(null)
+    setChunks(0)
+    setUploading({ name: uploadFile.name, estimate: estimateChunks(uploadFile.size) })
+    try {
+      const { uploadId } = await serverApi.uploadReclaimableFile(drive.batchId, uploadFile)
+
+      pollRef.current = window.setInterval(async () => {
+        try {
+          const job = await serverApi.getReclaimableUpload(uploadId)
+          setChunks(job.chunksUploaded)
+
+          if (job.status !== 'uploading') {
+            if (pollRef.current) window.clearInterval(pollRef.current)
+            setUploading(null)
+
+            if (job.status === 'error') setUploadError(job.error ?? 'Upload failed')
+            else refreshDrives()
+          }
+        } catch {
+          // transient poll failure — keep polling
+        }
+      }, 1000)
+    } catch (err) {
+      setUploading(null)
+      setUploadError(err instanceof Error ? err.message : 'Upload failed')
+    }
+  }
 
   async function handleDelete(reference: string) {
     setDeletingRef(reference)
@@ -465,31 +513,33 @@ export function ReclaimableDriveView({
     }
   }
 
-  function refreshDrives() {
-    queryClient.invalidateQueries({ queryKey: ['server', 'reclaimable'] })
+  function copyLink(reference: string) {
+    void navigator.clipboard.writeText(`${getBeeUrl()}/bzz/${reference}/`)
+    setCopiedRef(reference)
+    setTimeout(() => setCopiedRef(null), 1500)
   }
+
+  const uploadPct = uploading ? Math.min(99, Math.round((chunks / uploading.estimate) * 100)) : 0
 
   return (
     <div className="p-6">
-      <div className="flex items-center gap-3 mb-4">
+      {/* Breadcrumb — same shape as the classic drive view */}
+      <div className="flex items-center gap-2 mb-6">
         <button
-          onClick={toggleSidebar}
-          aria-label="Toggle sidebar"
-          className="w-8 h-8 flex items-center justify-center rounded-lg transition-colors hover:bg-white/[0.04] shrink-0"
+          onClick={onBack}
+          className="flex items-center gap-1.5 text-xs transition-colors"
           style={{ color: 'rgb(var(--fg-muted))' }}
         >
-          <PanelLeft size={16} />
-        </button>
-
-        <button onClick={onBack} className="text-sm hover:underline" style={{ color: 'rgb(var(--fg-muted))' }}>
-          My drives
+          <ArrowLeft size={13} />
+          Drive
         </button>
         <span style={{ color: 'rgb(var(--fg-muted))' }}>/</span>
-        <p className="text-sm font-medium truncate">{name}</p>
-        {drive.encrypted && <Lock size={12} style={{ color: 'rgb(var(--fg-muted))' }} />}
+        <span className="text-sm font-medium truncate">{name}</span>
+        {drive.encrypted && <Lock size={12} className="shrink-0" style={{ color: 'rgb(var(--fg-muted))' }} />}
         <span
           className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium shrink-0"
           style={{ backgroundColor: 'rgba(74,222,128,0.1)', color: '#4ade80' }}
+          title="Deleting files on this drive frees their space for new uploads"
         >
           <Recycle size={11} />
           Deletable · Beta
@@ -497,7 +547,7 @@ export function ReclaimableDriveView({
 
         <div className="flex-1" />
 
-        <div className="flex items-center gap-2 text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+        <div className="hidden md:flex items-center gap-2 text-xs shrink-0" style={{ color: 'rgb(var(--fg-muted))' }}>
           <div className="w-24 h-1 rounded-full" style={{ backgroundColor: 'rgb(var(--border))' }}>
             <div
               className="h-1 rounded-full"
@@ -509,28 +559,72 @@ export function ReclaimableDriveView({
           </span>
           {stamp?.usable && <span>· expires in {ttlToDays(stamp.batchTTL)}</span>}
         </div>
+
+        <input
+          ref={inputRef}
+          type="file"
+          className="hidden"
+          onChange={e => {
+            const picked = e.target.files?.[0]
+
+            if (picked) void handleFile(picked)
+            e.target.value = ''
+          }}
+        />
+        <button
+          onClick={() => inputRef.current?.click()}
+          disabled={Boolean(uploading)}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0 disabled:opacity-40"
+          style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
+        >
+          <Upload size={12} />
+          Upload
+        </button>
       </div>
 
-      <UploadPanel drive={drive} onDone={refreshDrives} />
+      {/* Upload progress — same panel style as the classic upload */}
+      {uploading && (
+        <div
+          className="max-w-xl rounded-xl border p-6 mb-4 space-y-3"
+          style={{ backgroundColor: 'rgb(var(--bg-surface))', borderColor: 'rgb(var(--border))' }}
+        >
+          <div className="flex items-center gap-2">
+            <RefreshCw size={13} className="animate-spin shrink-0" style={{ color: 'rgb(var(--accent))' }} />
+            <p className="text-sm truncate" style={{ color: 'rgb(var(--fg-muted))' }}>
+              Uploading {uploading.name} to the network… · {chunks} chunks confirmed
+            </p>
+          </div>
+          <div className="h-1 rounded-full" style={{ backgroundColor: 'rgb(var(--border))' }}>
+            <div
+              className="h-1 rounded-full transition-all"
+              style={{ width: `${uploadPct}%`, backgroundColor: 'rgb(var(--accent))' }}
+            />
+          </div>
+        </div>
+      )}
 
-      {deleteError && (
-        <p className="text-xs px-4 pb-2" style={{ color: '#ef4444' }}>
-          {deleteError}
+      {(uploadError || deleteError) && (
+        <p className="text-xs mb-3" style={{ color: '#ef4444' }}>
+          {uploadError || deleteError}
         </p>
       )}
 
-      {drive.files.length === 0 ? (
+      {drive.files.length === 0 && !uploading ? (
         <p className="text-xs text-center py-12" style={{ color: 'rgb(var(--fg-muted))' }}>
           No files yet. Files you delete from this drive free their space for new uploads.
         </p>
       ) : (
-        <div className="border-t" style={{ borderColor: 'rgb(var(--border))' }}>
+        <div className="divide-y" style={{ borderColor: 'rgb(var(--border))' }}>
           {drive.files.map(file => (
             <FileRow
               key={file.reference}
               file={file}
+              encrypted={drive.encrypted}
+              ttlSeconds={stamp?.usable ? stamp.batchTTL : undefined}
+              copied={copiedRef === file.reference}
               deleting={deletingRef === file.reference}
-              onDelete={async () => handleDelete(file.reference)}
+              onCopy={() => copyLink(file.reference)}
+              onDelete={() => void handleDelete(file.reference)}
             />
           ))}
         </div>
