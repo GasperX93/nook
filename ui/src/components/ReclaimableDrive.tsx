@@ -674,7 +674,7 @@ export function ReclaimableDriveView({
             <p className="text-sm truncate" style={{ color: 'rgb(var(--fg-muted))' }}>
               {staging
                 ? `Preparing ${staging.name}… ${staging.done}/${staging.total} files`
-                : `Uploading ${uploading!.name} to the network… · ${chunks} chunks confirmed`}
+                : `Uploading & propagating ${uploading!.name}… · ${chunks} chunks confirmed by the network`}
             </p>
           </div>
           <div className="h-1 rounded-full" style={{ backgroundColor: 'rgb(var(--border))' }}>
