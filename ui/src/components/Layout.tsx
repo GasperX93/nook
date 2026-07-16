@@ -16,7 +16,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useDisconnect } from 'wagmi'
 import { weiToDai } from '../api/bee'
-import { useBeeHealth, usePeers, useStamps, useStatus, useWallet } from '../api/queries'
+import { useBeeHealth, usePeers, useRestart, useStamps, useStatus, useWallet } from '../api/queries'
 import { useInboxPolling } from '../hooks/useInboxPolling'
 import { primeCricketAudio } from '../lib/cricket'
 import { loadReadCursors, loadThreads, totalUnread } from '../notify/messages'
@@ -122,6 +122,7 @@ export default function Layout() {
   const { isError: beeOffline, isPending: beeChecking, isSuccess: beeOnline } = useBeeHealth()
   const { data: peers } = usePeers()
   const { data: status } = useStatus()
+  const restartBee = useRestart()
   const { data: stamps, isSuccess: stampsLoaded } = useStamps()
   const { data: wallet, isSuccess: walletLoaded } = useWallet()
   const { devMode, onboardingCompleted, setOnboardingCompleted } = useAppStore()
@@ -339,8 +340,28 @@ export default function Layout() {
             </div>
           )}
 
+          {/* Crash loop — the supervisor gave up restarting Bee (#94) */}
+          {status?.crashLoop && !showOnboarding && (
+            <div
+              className="flex items-center gap-2 px-4 py-2.5 text-xs shrink-0"
+              style={{ backgroundColor: 'rgba(239,68,68,0.1)', borderBottom: '1px solid rgba(239,68,68,0.2)' }}
+            >
+              <AlertTriangle size={13} className="shrink-0" style={{ color: '#ef4444' }} />
+              <span style={{ color: '#ef4444' }}>
+                Bee keeps crashing — automatic restarts paused. Check the Logs tab.{' '}
+                <button
+                  onClick={() => restartBee.mutate()}
+                  className="underline font-semibold"
+                  style={{ color: '#ef4444' }}
+                >
+                  Try again
+                </button>
+              </span>
+            </div>
+          )}
+
           {/* Bee down — only shown after it was previously online */}
-          {showDown && !showOnboarding && (
+          {showDown && !status?.crashLoop && !showOnboarding && (
             <div
               className="flex items-center gap-2 px-4 py-2.5 text-xs shrink-0"
               style={{ backgroundColor: 'rgba(239,68,68,0.1)', borderBottom: '1px solid rgba(239,68,68,0.2)' }}

@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.5.4](https://github.com/GasperX93/nook/releases/tag/v0.5.4) (2026-07-16)
+
+### Node reliability
+
+* **Bee supervisor** — the node now recovers on its own: restarts back off after crashes, a crash-loop guard stops endless restart cycles, wedge detection catches a node that is running but frozen, and every node request has a timeout so nothing can hang forever ([#94](https://github.com/GasperX93/nook/issues/94))
+
+### Upload honesty
+
+* **Two-stage upload progress** — uploads now show what is really happening: "Uploading…" (into your node) followed by "Propagating to network…" driven by the node's real sync counters. Slow propagation softens the indicator instead of failing the upload ([#92](https://github.com/GasperX93/nook/issues/92))
+* **Shared content is verified before you share it** — share links are only produced once the network can actually serve the content, encrypted uploads finish with an availability confirmation, and shared drives get an hourly health check with a one-click fix when the network lost their metadata ([#93](https://github.com/GasperX93/nook/issues/93))
+
 ## [0.5.3](https://github.com/GasperX93/nook/releases/tag/v0.5.3) (2026-07-15)
 
 ### Messaging reliability

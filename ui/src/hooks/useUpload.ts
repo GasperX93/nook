@@ -1,4 +1,4 @@
-import { beeApi, topicFromString } from '../api/bee'
+import { beeApi, topicFromString, waitForTagPropagation } from '../api/bee'
 import { serverApi } from '../api/server'
 import { detectIndexDocument, type FileEntry } from '../utils/directory'
 import { useUploadHistory } from './useUploadHistory'
@@ -84,7 +84,7 @@ export function useUpload() {
     // even after the stamp reports as usable via REST.
     let currentHistoryRef = actHistoryRef
 
-    async function doUpload(attempt: number): Promise<{ reference: string; historyAddress?: string }> {
+    async function doUpload(attempt: number): Promise<{ reference: string; historyAddress?: string; tagUid?: number }> {
       if (attempt > 1) {
         onPhase?.(`Finalising storage… (retry ${attempt - 1})`)
         await new Promise(r => setTimeout(r, 10000))
@@ -105,31 +105,48 @@ export function useUpload() {
         return beeApi.uploadCollectionWithACT(entries, driveId, currentHistoryRef, opts, pct => onProgress?.(pct))
       }
 
-      // Regular (non-encrypted) upload
-      if (type === 'file') {
-        const res = await beeApi.uploadFileWithProgress(entries[0].file, driveId, pct => onProgress?.(pct), true)
+      // Regular (non-encrypted) upload — deferred, so bytes land on the LOCAL
+      // node first. A tag (#92) tracks the real network propagation afterwards.
+      let tagUid: number | undefined
 
-        return { reference: res.reference }
+      try {
+        tagUid = (await beeApi.createTag()).uid
+      } catch {
+        // Tags unavailable — upload proceeds without stage-2 progress.
+      }
+
+      if (type === 'file') {
+        const res = await beeApi.uploadFileWithProgress(
+          entries[0].file,
+          driveId,
+          pct => onProgress?.(pct),
+          true,
+          tagUid,
+        )
+
+        return { reference: res.reference, tagUid }
       }
 
       const autoIndex = indexDocument ?? detectIndexDocument(entries) ?? 'index.html'
       const opts =
         type === 'website'
-          ? { indexDocument: autoIndex, errorDocument: '404.html', deferred: true }
-          : { deferred: true }
+          ? { indexDocument: autoIndex, errorDocument: '404.html', deferred: true, tagUid }
+          : { deferred: true, tagUid }
       const res = await beeApi.uploadCollectionWithProgress(entries, driveId, opts, pct => onProgress?.(pct))
 
-      return { reference: res.reference }
+      return { reference: res.reference, tagUid }
     }
 
     let reference!: string
     let uploadHistoryAddress: string | undefined
+    let uploadTagUid: number | undefined
 
     for (let attempt = 1; attempt <= 8; attempt++) {
       try {
         const result = await doUpload(attempt)
         reference = result.reference
         uploadHistoryAddress = result.historyAddress
+        uploadTagUid = result.tagUid
 
         // Update history ref for next upload in same session
         if (uploadHistoryAddress) currentHistoryRef = uploadHistoryAddress
@@ -142,6 +159,21 @@ export function useUpload() {
 
         if (attempt === 8) throw err
         // stamp issuer may not be loaded yet — retry
+      }
+    }
+
+    // Stage 2 (#92): the XHR bar only measured bytes reaching the LOCAL node.
+    // For deferred uploads, follow the tag until the content is actually on the
+    // network. A stall is a soft outcome — the background pusher keeps working,
+    // so warn in the phase text but never fail the upload here.
+    if (uploadTagUid !== undefined && !encrypted) {
+      onPhase?.('Propagating to network…')
+      onProgress?.(0)
+      const { complete } = await waitForTagPropagation(uploadTagUid, pct => onProgress?.(pct))
+
+      if (!complete) {
+        onPhase?.('Still propagating in the background…')
+        await new Promise(r => setTimeout(r, 1500))
       }
     }
 

@@ -1,4 +1,5 @@
 import {
+  AlertTriangle,
   ArrowLeft,
   Check,
   ChevronDown,
@@ -26,7 +27,7 @@ import {
   Users,
   X,
 } from 'lucide-react'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import React, { useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { useAccount } from 'wagmi'
@@ -41,6 +42,8 @@ import {
   SIZE_PRESETS,
   stampFillRatio,
   topicFromString,
+  waitForRetrievable,
+  waitForTagPropagation,
   type Stamp,
 } from '../api/bee'
 import { serverApi } from '../api/server'
@@ -1075,6 +1078,8 @@ interface DriveCardProps {
   customName?: string
   encrypted?: boolean
   granteeCount?: number
+  /** Latest public metadata-wrapper ref — the health-check target (#93). */
+  wrapperRef?: string
   onOpen: (folderId?: string) => void
   onExtend: () => void
   onShare?: () => void
@@ -1106,6 +1111,7 @@ function DriveCard({
   onSetENS,
   encrypted,
   granteeCount,
+  wrapperRef,
   onShare,
   onMoveToFolder,
 }: DriveCardProps) {
@@ -1131,6 +1137,49 @@ function DriveCard({
   const usagePct = Math.min(fillRatio * 100, 100)
   const utilizationPct = Math.round(fillRatio * 100)
   const isFull = fillRatio >= 1
+  // #93: slow-cadence health check for SHARED drives. Target = the PUBLIC
+  // metadata wrapper (the first hop recipients resolve) — ACT file refs are
+  // encrypted pointers that stewardship cannot verify, so drives without a
+  // recorded wrapper ref are simply not checked.
+  const isShared = Boolean(encrypted && granteeCount && granteeCount > 1)
+  const { data: healthOk } = useQuery({
+    queryKey: ['drive-health', stamp.batchID, wrapperRef],
+    // Two-strike rule: bee's IsRetrievable retrieves ONLY from the network
+    // (steward netGetter — bypasses the local store), which is the right
+    // question but flaky for freshly-pushed content on a light node. Only
+    // report unhealthy when two checks ~25s apart BOTH fail.
+    queryFn: async () => {
+      if (await beeApi.checkRetrievable(wrapperRef!)) return true
+      await new Promise(r => setTimeout(r, 25_000))
+
+      return beeApi.checkRetrievable(wrapperRef!)
+    },
+    enabled: isShared && Boolean(wrapperRef) && stamp.usable,
+    // Red verdicts re-check every 10 minutes so the pill clears itself once
+    // the network catches up; healthy drives only re-check hourly.
+    refetchInterval: query => (query.state.data === false ? 10 * 60 * 1000 : 60 * 60 * 1000),
+    staleTime: 10 * 60 * 1000,
+    gcTime: 60 * 60 * 1000,
+    retry: false,
+    refetchOnWindowFocus: false,
+  })
+  const showHealthWarning = isShared && healthOk === false
+  const [fixingAvailability, setFixingAvailability] = useState(false)
+  const healthQueryClient = useQueryClient()
+
+  /** #93 fix action: re-push the shared metadata from this node, then re-check. */
+  async function fixAvailability() {
+    if (!wrapperRef || fixingAvailability) return
+    setFixingAvailability(true)
+
+    try {
+      await beeApi.reuploadToNetwork(wrapperRef, stamp.batchID)
+    } catch {
+      // Soft failure — the re-check below reports the true state either way.
+    }
+    await healthQueryClient.invalidateQueries({ queryKey: ['drive-health', stamp.batchID, wrapperRef] })
+    setFixingAvailability(false)
+  }
   const ttlDays = stamp.batchTTL / 86400
   // Critical = days-pill turns red. Matches Figma's 'red at ≤7 days' threshold.
   const isCriticalTtl = stamp.usable && ttlDays > 0 && ttlDays <= 7
@@ -1276,6 +1325,24 @@ function DriveCard({
               <Lock size={12} />
               Encrypted{granteeCount && granteeCount > 1 ? ` · ${granteeCount - 1} shared` : ''}
             </span>
+          )}
+
+          {/* #93: shared metadata isn't retrievable from the network — the pill
+              carries its own cure: one click re-pushes it from this node. */}
+          {showHealthWarning && (
+            <button
+              onClick={e => {
+                e.stopPropagation()
+                void fixAvailability()
+              }}
+              disabled={fixingAvailability}
+              className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-semibold shrink-0 transition-opacity hover:opacity-80 disabled:opacity-60"
+              style={{ backgroundColor: 'rgba(239,68,68,0.12)', color: '#ef4444' }}
+              title="Recipients may not be able to open this drive right now — its shared metadata isn't reachable on the network. Click to push it back out from this device."
+            >
+              <AlertTriangle size={11} />
+              {fixingAvailability ? 'Pushing…' : 'Availability · Fix'}
+            </button>
           )}
 
           {/* Confirming pill */}
@@ -1435,6 +1502,8 @@ interface AddFileProps {
   onDone: () => void
   onAdd: (record: UploadRecord) => void
   onActHistoryUpdate?: (historyRef: string) => void
+  /** Latest public wrapper ref after the metadata feed update (#93 health checks). */
+  onWrapperRef?: (ref: string) => void
 }
 
 function generateFolderIndex(name: string, entries: FileEntry[]): FileEntry {
@@ -1451,7 +1520,15 @@ ${rows}
   return { path: '_index.html', file: new FileClass([html], '_index.html', { type: 'text/html' }) }
 }
 
-function AddFilePanel({ driveId, encrypted, actHistoryRef, onDone, onAdd, onActHistoryUpdate }: AddFileProps) {
+function AddFilePanel({
+  driveId,
+  encrypted,
+  actHistoryRef,
+  onDone,
+  onAdd,
+  onActHistoryUpdate,
+  onWrapperRef,
+}: AddFileProps) {
   const { data: addresses } = useAddresses()
   const [phase, setPhase] = useState('')
   const [progress, setProgress] = useState<number | null>(null)
@@ -1476,7 +1553,9 @@ function AddFilePanel({ driveId, encrypted, actHistoryRef, onDone, onAdd, onActH
 
       let currentHistoryRef = actHistoryRef
 
-      async function doUpload(attempt: number): Promise<{ reference: string; historyAddress?: string }> {
+      async function doUpload(
+        attempt: number,
+      ): Promise<{ reference: string; historyAddress?: string; tagUid?: number }> {
         if (attempt > 1) {
           setPhase(`Finalising storage… (retry ${attempt - 1})`)
           await new Promise(r => setTimeout(r, 5000))
@@ -1494,27 +1573,45 @@ function AddFilePanel({ driveId, encrypted, actHistoryRef, onDone, onAdd, onActH
           )
         }
 
-        if (type === 'file') {
-          const res = await beeApi.uploadFileWithProgress(entries[0].file, driveId, pct => setProgress(pct))
+        // Regular (deferred) upload — a tag (#92) tracks network propagation
+        // after the XHR bar (which only measures bytes to the LOCAL node).
+        let tagUid: number | undefined
 
-          return { reference: res.reference }
+        try {
+          tagUid = (await beeApi.createTag()).uid
+        } catch {
+          // Tags unavailable — proceed without stage-2 progress.
         }
 
-        const res = await beeApi.uploadCollectionWithProgress(uploadEntries, driveId, { indexDocument }, pct =>
+        if (type === 'file') {
+          const res = await beeApi.uploadFileWithProgress(
+            entries[0].file,
+            driveId,
+            pct => setProgress(pct),
+            true,
+            tagUid,
+          )
+
+          return { reference: res.reference, tagUid }
+        }
+
+        const res = await beeApi.uploadCollectionWithProgress(uploadEntries, driveId, { indexDocument, tagUid }, pct =>
           setProgress(pct),
         )
 
-        return { reference: res.reference }
+        return { reference: res.reference, tagUid }
       }
 
       let reference!: string
       let uploadHistoryAddress: string | undefined
+      let uploadTagUid: number | undefined
 
       for (let attempt = 1; attempt <= 4; attempt++) {
         try {
           const result = await doUpload(attempt)
           reference = result.reference
           uploadHistoryAddress = result.historyAddress
+          uploadTagUid = result.tagUid
 
           if (uploadHistoryAddress) {
             currentHistoryRef = uploadHistoryAddress
@@ -1524,6 +1621,19 @@ function AddFilePanel({ driveId, encrypted, actHistoryRef, onDone, onAdd, onActH
         } catch (err) {
           if (attempt === 4) throw err
         }
+      }
+
+      // NOTE (#93): encrypted content refs are ACT-encrypted POINTERS, not
+      // content addresses — stewardship can't verify them. The availability
+      // check for encrypted drives happens on the public metadata WRAPPER
+      // below (the first thing recipients resolve).
+      if (!encrypted && uploadTagUid !== undefined) {
+        // #92 stage 2: follow the tag until the content is on the network.
+        setPhase('Propagating to network…')
+        setProgress(0)
+        const { complete } = await waitForTagPropagation(uploadTagUid, pct => setProgress(pct))
+
+        if (!complete) setPhase('Still propagating in the background…')
       }
 
       setProgress(null)
@@ -1586,6 +1696,12 @@ function AddFilePanel({ driveId, encrypted, actHistoryRef, onDone, onAdd, onActH
 
           await serverApi.createFeedUpdate(topic, wrapperResult.reference, driveId)
           onActHistoryUpdate?.(uploaded.historyRef)
+          onWrapperRef?.(wrapperResult.reference)
+          // #93: the wrapper is PUBLIC bytes — a real address stewardship can
+          // verify. Confirm the share chain is servable (soft: the ShareModal
+          // gate is the hard stop).
+          setPhase('Confirming availability…')
+          await waitForRetrievable(wrapperResult.reference, { attempts: 2, delayMs: 4000 })
         } catch {
           // Feed update failed — not critical, drive still works without live sharing
         }
@@ -2120,6 +2236,7 @@ export default function Drive() {
     setRepublishMsg('Starting…')
     try {
       await republishDrive({
+        onWrapperRef: ref => driveMetadata.update(driveId, { lastWrapperRef: ref }),
         driveId,
         records: driveRecords,
         actPublisher,
@@ -2327,6 +2444,7 @@ export default function Drive() {
                 customName={customDriveLabels[stamp.batchID]}
                 encrypted={driveMetadata.isEncrypted(stamp.batchID)}
                 granteeCount={driveMetadata.get(stamp.batchID)?.granteeCount}
+                wrapperRef={driveMetadata.get(stamp.batchID)?.lastWrapperRef}
                 onOpen={folderId => {
                   setActiveDriveId(stamp.batchID)
 
@@ -2388,6 +2506,8 @@ export default function Drive() {
                   .filter(r => r.actHistoryRef && r.actPublisher)
                   .map(r => ({ name: r.name, reference: r.hash, historyRef: r.actHistoryRef!, size: r.size }))}
                 onClose={() => setShowShareModal(null)}
+                onWrapperRef={ref => driveMetadata.update(showShareModal, { lastWrapperRef: ref })}
+                onGranteeCount={n => driveMetadata.update(showShareModal, { granteeCount: n })}
                 onUpdate={({ granteeRef, historyRef, granteeCount, keyRotated }) => {
                   driveMetadata.update(showShareModal, {
                     granteeRef,
@@ -2757,6 +2877,9 @@ export default function Drive() {
           onActHistoryUpdate={historyRef => {
             driveMetadata.update(activeDriveId, { actHistoryRef: historyRef })
           }}
+          onWrapperRef={ref => {
+            driveMetadata.update(activeDriveId, { lastWrapperRef: ref })
+          }}
         />
       )}
 
@@ -2947,6 +3070,8 @@ export default function Drive() {
                 .filter(r => r.actHistoryRef && r.actPublisher)
                 .map(r => ({ name: r.name, reference: r.hash, historyRef: r.actHistoryRef!, size: r.size }))}
               onClose={() => setShowShareModal(null)}
+              onWrapperRef={ref => driveMetadata.update(showShareModal, { lastWrapperRef: ref })}
+              onGranteeCount={n => driveMetadata.update(showShareModal, { granteeCount: n })}
               onUpdate={({ granteeRef, historyRef, granteeCount, keyRotated }) => {
                 driveMetadata.update(showShareModal, {
                   granteeRef,

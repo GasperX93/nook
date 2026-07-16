@@ -3,15 +3,55 @@ import { mkdirSync, writeFileSync } from 'fs'
 import { platform } from 'os'
 import { v4 } from 'uuid'
 import { rebuildElectronTray } from './electron'
+import { fetchWithTimeout } from './fetch-timeout'
 import { BeeManager } from './lifecycle'
 import { RotatingLogWriter } from './log-rotator'
 import { logger } from './logger'
 import { checkPath, getLogPath, getPath } from './path'
+import { canAttemptStart, recordExit, recordStart, shouldRestartForWedge } from './supervisor'
+
+/** Liveness probes for the wedge check (see supervisor.ts). */
+const livenessProbes = {
+  getPeerCount: async (): Promise<number | null> => {
+    try {
+      const res = await fetchWithTimeout('http://localhost:1633/peers', {}, 5_000)
+
+      if (!res.ok) return null
+      const data = (await res.json()) as { peers?: unknown[] }
+
+      return Array.isArray(data.peers) ? data.peers.length : null
+    } catch {
+      return null
+    }
+  },
+  hasInternet: async (): Promise<boolean> => {
+    try {
+      const res = await fetchWithTimeout('https://api.github.com', { method: 'HEAD' }, 5_000)
+
+      return res.ok || res.status < 500
+    } catch {
+      return false
+    }
+  },
+}
 
 export function runKeepAliveLoop() {
-  setInterval(() => {
+  setInterval(async () => {
+    const now = Date.now()
+
     if (!BeeManager.isRunning() && BeeManager.shouldRestart()) {
-      runLauncher()
+      if (canAttemptStart(now)) runLauncher()
+
+      return
+    }
+
+    // Sleep/wake wedge detection: a running node with 0 peers for too long
+    // (while the host has internet) never self-recovers — kill it and let the
+    // next tick relaunch with fresh p2p state.
+    if (BeeManager.isRunning() && BeeManager.shouldRestart()) {
+      if (await shouldRestartForWedge(now, livenessProbes)) {
+        BeeManager.kill()
+      }
     }
   }, 10000)
 }
@@ -60,10 +100,12 @@ export async function runLauncher() {
   const subprocess = launchBee(abortController).catch(reason => {
     logger.error(reason)
   })
+  recordStart(Date.now())
   BeeManager.signalRunning(abortController, subprocess)
   rebuildElectronTray()
   await subprocess
   logger.info('Bee subprocess finished running')
+  recordExit(Date.now())
   abortController.abort()
   BeeManager.signalStopped()
   rebuildElectronTray()
