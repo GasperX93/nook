@@ -1,4 +1,16 @@
-import { Clock, Download, HardDrive, Lock, MoreVertical, PanelLeft, Plus, RefreshCw, Trash2, X } from 'lucide-react'
+import {
+  Clock,
+  Download,
+  Lock,
+  MoreVertical,
+  PanelLeft,
+  Pencil,
+  Plus,
+  Recycle,
+  RefreshCw,
+  Trash2,
+  X,
+} from 'lucide-react'
 import React, { useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 
@@ -47,44 +59,171 @@ export function ReclaimableDriveCard({
   customName,
   onOpen,
   onExtend,
+  onRename,
 }: {
   drive: ReclaimableDrive
   stamp?: Stamp
   customName?: string
   onOpen: () => void
   onExtend: () => void
+  onRename: (name: string) => void
 }) {
   const [kebabOpen, setKebabOpen] = useState(false)
+  const [renaming, setRenaming] = useState(false)
+  const [renameInput, setRenameInput] = useState('')
+  const kebabRef = useRef<HTMLDivElement>(null)
   const { usedBytes, capacityBytes, pct } = usageOf(drive)
   const name = customName || drive.label || `${drive.batchId.slice(0, 8)}…`
-  const isCriticalTtl = stamp ? stamp.batchTTL < 7 * 86400 : false
+  const ttlDays = stamp ? stamp.batchTTL / 86400 : 0
+  const isCriticalTtl = Boolean(stamp?.usable) && ttlDays > 0 && ttlDays <= 7
+  const needsExtend = Boolean(stamp?.usable) && ((ttlDays > 0 && ttlDays <= 30) || pct >= 100)
+
+  // Close kebab on outside click (same pattern as DriveCard)
+  useEffect(() => {
+    if (!kebabOpen) return
+    const handler = (e: MouseEvent) => {
+      if (kebabRef.current && !kebabRef.current.contains(e.target as Node)) setKebabOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+
+    return () => document.removeEventListener('mousedown', handler)
+  }, [kebabOpen])
+
+  function commitRename() {
+    const val = renameInput.trim()
+
+    if (val) onRename(val)
+    setRenaming(false)
+  }
 
   return (
-    <div
-      className="flex items-center gap-4 px-4 py-3 border-b cursor-pointer transition-colors hover:bg-white/[0.02]"
-      style={{ borderColor: 'rgb(var(--border))' }}
-      onClick={onOpen}
-    >
-      <div
-        className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
-        style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
-      >
-        <HardDrive size={16} style={{ color: 'rgb(var(--fg-muted))' }} />
-      </div>
-
-      <div className="flex-1 min-w-0">
+    <div className="border-b" style={{ borderColor: 'rgb(var(--border))' }}>
+      <div className="px-4 py-3 hover:bg-[rgb(var(--bg-surface))] transition-colors cursor-pointer" onClick={onOpen}>
+        {/* Top line: name + pills + actions */}
         <div className="flex items-center gap-2">
-          <p className="text-sm font-medium truncate">{name}</p>
-          {drive.encrypted && <Lock size={12} style={{ color: 'rgb(var(--fg-muted))' }} />}
+          {renaming ? (
+            <input
+              autoFocus
+              value={renameInput}
+              onChange={e => setRenameInput(e.target.value)}
+              onBlur={commitRename}
+              onKeyDown={e => {
+                if (e.key === 'Enter') commitRename()
+
+                if (e.key === 'Escape') setRenaming(false)
+              }}
+              onClick={e => e.stopPropagation()}
+              placeholder="Name this drive…"
+              className="text-lg font-medium bg-transparent border-b outline-none flex-1 min-w-0"
+              style={{ borderColor: 'rgb(var(--accent))', color: 'rgb(var(--fg))' }}
+            />
+          ) : (
+            <span className="inline-flex items-center gap-1.5 min-w-0 group/drivename">
+              <span className="text-lg font-medium truncate min-w-0">{name}</span>
+              <button
+                onClick={e => {
+                  e.stopPropagation()
+                  setRenameInput(name)
+                  setRenaming(true)
+                }}
+                className="opacity-0 group-hover/drivename:opacity-100 transition-opacity shrink-0"
+                style={{ color: 'rgb(var(--fg-muted))' }}
+                aria-label={`Rename ${name}`}
+              >
+                <Pencil size={13} />
+              </button>
+            </span>
+          )}
+
+          {/* Encrypted pill (private, no sharing on reclaimable drives yet) */}
+          {drive.encrypted && (
+            <span
+              className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-semibold shrink-0"
+              style={{ backgroundColor: '#3b82f6', color: 'white' }}
+            >
+              <Lock size={12} />
+              Encrypted
+            </span>
+          )}
+
+          {/* Reclaimable pill */}
           <span
-            className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide"
-            style={{ backgroundColor: 'rgba(74,222,128,0.12)', color: '#4ade80' }}
+            className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium shrink-0"
+            style={{ backgroundColor: 'rgba(74,222,128,0.1)', color: '#4ade80' }}
             title="Deleting files on this drive frees their space for new uploads"
           >
-            Reclaimable · Beta
+            <Recycle size={11} />
+            Deletable · Beta
           </span>
+
+          {/* Confirming pill */}
+          {stamp && !stamp.usable && (
+            <span
+              className="text-[10px] px-2 py-0.5 rounded-full font-semibold uppercase tracking-widest animate-pulse shrink-0"
+              style={{ backgroundColor: 'rgba(247,104,8,0.1)', color: 'rgb(var(--accent))' }}
+            >
+              Confirming…
+            </span>
+          )}
+
+          {/* Right-side actions */}
+          <div className="ml-auto flex items-center gap-2 shrink-0">
+            {needsExtend && (
+              <button
+                onClick={e => {
+                  e.stopPropagation()
+                  onExtend()
+                }}
+                className="px-3 py-1.5 rounded-lg border text-xs font-semibold transition-colors hover:bg-white/5"
+                style={{ borderColor: 'rgb(var(--border))', color: 'rgb(var(--fg))' }}
+              >
+                Extend storage
+              </button>
+            )}
+            <div className="relative" ref={kebabRef} onClick={e => e.stopPropagation()}>
+              <button
+                onClick={() => setKebabOpen(v => !v)}
+                className="w-7 h-7 flex items-center justify-center rounded-lg transition-colors hover:bg-white/5"
+                style={{ color: 'rgb(var(--fg-muted))' }}
+                aria-label="Drive menu"
+              >
+                <MoreVertical size={14} />
+              </button>
+              {kebabOpen && (
+                <div
+                  className="absolute right-0 top-8 z-20 w-40 rounded-lg border py-1"
+                  style={{ backgroundColor: 'rgb(var(--bg-surface))', borderColor: 'rgb(var(--border))' }}
+                >
+                  <button
+                    onClick={() => {
+                      setKebabOpen(false)
+                      onExtend()
+                    }}
+                    className="flex items-center gap-2 w-full px-3 py-2 text-xs transition-colors hover:bg-white/5"
+                    style={{ color: 'rgb(var(--fg))' }}
+                  >
+                    <Clock size={13} style={{ color: 'rgb(var(--fg-muted))' }} />
+                    Extend storage
+                  </button>
+                  <button
+                    onClick={() => {
+                      setKebabOpen(false)
+                      setRenameInput(name)
+                      setRenaming(true)
+                    }}
+                    className="flex items-center gap-2 w-full px-3 py-2 text-xs transition-colors hover:bg-white/5"
+                    style={{ color: 'rgb(var(--fg))' }}
+                  >
+                    <Pencil size={13} style={{ color: 'rgb(var(--fg-muted))' }} />
+                    Rename
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
 
+        {/* Bottom line: utilization bar + size + days-left pill + items */}
         <div className="flex items-center gap-2 mt-2 text-sm">
           <div
             className="w-32 h-1 rounded-full shrink-0"
@@ -97,7 +236,7 @@ export function ReclaimableDriveCard({
               style={{ width: `${pct}%`, backgroundColor: pct >= 100 ? '#ef4444' : 'rgb(var(--fg))' }}
             />
           </div>
-          <span style={{ color: 'rgb(var(--fg-muted))' }}>
+          <span style={{ color: pct >= 100 ? '#ef4444' : 'rgb(var(--fg-muted))' }}>
             {usedBytes > 0 ? `${formatBytes(usedBytes)} / ${formatBytes(capacityBytes)}` : formatBytes(capacityBytes)}
           </span>
           {stamp?.usable && (
@@ -118,35 +257,6 @@ export function ReclaimableDriveCard({
             {drive.files.length === 1 ? '1 file' : `${drive.files.length} files`}
           </span>
         </div>
-      </div>
-
-      <div className="relative shrink-0" onClick={e => e.stopPropagation()}>
-        <button
-          onClick={() => setKebabOpen(v => !v)}
-          className="w-7 h-7 flex items-center justify-center rounded-lg transition-colors hover:bg-white/5"
-          style={{ color: 'rgb(var(--fg-muted))' }}
-          aria-label="Drive menu"
-        >
-          <MoreVertical size={14} />
-        </button>
-        {kebabOpen && (
-          <div
-            className="absolute right-0 top-8 z-20 w-40 rounded-lg border py-1"
-            style={{ backgroundColor: 'rgb(var(--bg-surface))', borderColor: 'rgb(var(--border))' }}
-          >
-            <button
-              onClick={() => {
-                setKebabOpen(false)
-                onExtend()
-              }}
-              className="flex items-center gap-2 w-full px-3 py-2 text-xs transition-colors hover:bg-white/5"
-              style={{ color: 'rgb(var(--fg))' }}
-            >
-              <Clock size={13} style={{ color: 'rgb(var(--fg-muted))' }} />
-              Extend storage
-            </button>
-          </div>
-        )}
       </div>
     </div>
   )
@@ -378,10 +488,11 @@ export function ReclaimableDriveView({
         <p className="text-sm font-medium truncate">{name}</p>
         {drive.encrypted && <Lock size={12} style={{ color: 'rgb(var(--fg-muted))' }} />}
         <span
-          className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide"
-          style={{ backgroundColor: 'rgba(74,222,128,0.12)', color: '#4ade80' }}
+          className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium shrink-0"
+          style={{ backgroundColor: 'rgba(74,222,128,0.1)', color: '#4ade80' }}
         >
-          Reclaimable · Beta
+          <Recycle size={11} />
+          Deletable · Beta
         </span>
 
         <div className="flex-1" />

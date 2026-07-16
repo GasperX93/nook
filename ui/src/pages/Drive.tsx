@@ -2497,6 +2497,7 @@ export default function Drive() {
                 customName={customDriveLabels[drive.batchId]}
                 onOpen={() => setActiveDriveId(drive.batchId)}
                 onExtend={() => setShowExtendModal(drive.batchId)}
+                onRename={name => renameDrive(drive.batchId, name)}
               />
             ))}
             {allStamps.map(stamp => (
