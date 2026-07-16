@@ -1,6 +1,6 @@
 import { Binary } from 'cafe-utility'
 import Wallet from 'ethereumjs-wallet'
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'fs'
 import { mkdtemp, readFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import * as path from 'path'
@@ -226,12 +226,13 @@ export function getUploadJob(id: string): UploadJob | undefined {
   return jobs.get(id)
 }
 
-export function startUpload(batchId: string, fileName: string, data: Buffer): UploadJob {
-  const entry = requireRegisteredBatch(batchId)
+// Shared job runner: uploadPath is a file OR a directory (swarm-fs builds a
+// Mantaray manifest for directories, same as classic collection uploads).
+function runUploadJob(entry: ReclaimableBatch, displayName: string, uploadPath: string, cleanupDir: string): UploadJob {
   const job: UploadJob = {
     id: randomUUID(),
     batchId: entry.batchId,
-    fileName,
+    fileName: displayName,
     chunksUploaded: 0,
     status: 'uploading',
   }
@@ -239,13 +240,7 @@ export function startUpload(batchId: string, fileName: string, data: Buffer): Up
   sweepJobs()
 
   enqueue(entry.batchId, async () => {
-    // The temp file carries the real file name (inside a throwaway dir)
-    // because swarm-fs records the upload path in its registry.
-    const dir = await mkdtemp(path.join(tmpdir(), 'nook-reclaimable-'))
-    const filePath = path.join(dir, path.basename(fileName))
-
     try {
-      writeFileSync(filePath, data)
       rebuildFreeBitmapIfMissing(entry.batchId, entry.depth)
       const swarmFs = await loadSwarmFs()
       const root = await swarmFs.upload({
@@ -254,7 +249,7 @@ export function startUpload(batchId: string, fileName: string, data: Buffer): Up
         batchDepth: entry.depth,
         uploadUrl: 'http://127.0.0.1:1633/chunks',
         stateDir: reclaimableStateDir(),
-        path: filePath,
+        path: uploadPath,
         encrypt: entry.encrypted,
         parallelism: 32,
         fetchFn: buildDirectFetch(),
@@ -267,16 +262,122 @@ export function startUpload(batchId: string, fileName: string, data: Buffer): Up
       job.reference = Binary.uint8ArrayToHex(root)
       job.status = 'done'
     } catch (error) {
-      logger.error(`reclaimable upload failed (${fileName} → ${entry.batchId.slice(0, 8)}): ${error}`)
+      logger.error(`reclaimable upload failed (${displayName} → ${entry.batchId.slice(0, 8)}): ${error}`)
       job.status = 'error'
       job.error = String((error as Error).message ?? error)
     } finally {
       job.finishedAt = Date.now()
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(cleanupDir, { recursive: true, force: true })
     }
   })
 
   return job
+}
+
+export async function startUpload(batchId: string, fileName: string, data: Buffer): Promise<UploadJob> {
+  const entry = requireRegisteredBatch(batchId)
+  // The temp file carries the real file name (inside a throwaway dir)
+  // because swarm-fs records the upload path in its registry.
+  const dir = await mkdtemp(path.join(tmpdir(), 'nook-reclaimable-'))
+  writeFileSync(path.join(dir, path.basename(fileName)), data)
+
+  return runUploadJob(entry, fileName, path.join(dir, path.basename(fileName)), dir)
+}
+
+// ─── Folder upload staging ───────────────────────────────────────────────────
+// The renderer can't send a directory in one request without multipart, so it
+// stages files one raw-body POST at a time, then commits: the staged tree is
+// handed to swarm-fs as a directory (→ Mantaray manifest, kind 'manifest').
+
+interface UploadStage {
+  id: string
+  batchId: string
+  dir: string
+  createdAt: number
+  fileCount: number
+}
+
+const stages = new Map<string, UploadStage>()
+
+const STAGE_RETENTION_MS = 60 * 60_000
+
+function sweepStages(): void {
+  const now = Date.now()
+
+  stages.forEach((stage, id) => {
+    if (now - stage.createdAt > STAGE_RETENTION_MS) {
+      rmSync(stage.dir, { recursive: true, force: true })
+      stages.delete(id)
+    }
+  })
+}
+
+export async function createUploadStage(batchId: string): Promise<{ stageId: string }> {
+  const entry = requireRegisteredBatch(batchId)
+  const dir = await mkdtemp(path.join(tmpdir(), 'nook-reclaimable-stage-'))
+  const stage: UploadStage = { id: randomUUID(), batchId: entry.batchId, dir, createdAt: Date.now(), fileCount: 0 }
+  stages.set(stage.id, stage)
+  sweepStages()
+
+  return { stageId: stage.id }
+}
+
+export function addFileToStage(stageId: string, relPath: string, data: Buffer): { fileCount: number } {
+  const stage = stages.get(stageId)
+
+  if (!stage) {
+    throw new Error('Unknown upload stage')
+  }
+
+  // The relative path comes from the renderer — reject anything that could
+  // escape the staging dir.
+  const normalized = path.normalize(relPath)
+
+  if (path.isAbsolute(normalized) || normalized.split(path.sep).includes('..')) {
+    throw new Error(`Invalid file path: ${relPath}`)
+  }
+  const dest = path.join(stage.dir, normalized)
+
+  if (!dest.startsWith(stage.dir + path.sep)) {
+    throw new Error(`Invalid file path: ${relPath}`)
+  }
+  mkdirSync(path.dirname(dest), { recursive: true })
+  writeFileSync(dest, data)
+  stage.fileCount += 1
+
+  return { fileCount: stage.fileCount }
+}
+
+export function commitUploadStage(stageId: string, folderName: string): UploadJob {
+  const stage = stages.get(stageId)
+
+  if (!stage) {
+    throw new Error('Unknown upload stage')
+  }
+
+  if (stage.fileCount === 0) {
+    throw new Error('Upload stage is empty')
+  }
+  stages.delete(stageId)
+  const entry = requireRegisteredBatch(stage.batchId)
+  // swarm-fs records the directory path in its registry — give the staged
+  // tree the real folder name so listings show it. If the renderer staged
+  // paths already rooted in that folder, the dir exists; otherwise wrap.
+  const dirName = path.basename(folderName) || 'folder'
+  const namedDir = path.join(stage.dir, dirName)
+  const staged = readdirSync(stage.dir)
+
+  if (!(staged.length === 1 && staged[0] === dirName)) {
+    mkdirSync(namedDir, { recursive: true })
+
+    for (const item of staged) {
+      if (item !== dirName) {
+        renameSync(path.join(stage.dir, item), path.join(namedDir, item))
+      }
+    }
+  }
+
+  return runUploadJob(entry, folderName, namedDir, stage.dir)
 }
 
 // ─── Delete & listing ────────────────────────────────────────────────────────

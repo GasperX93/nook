@@ -5,6 +5,8 @@ import {
   Download,
   ExternalLink,
   File,
+  FolderOpen,
+  FolderUp,
   Lock,
   MoreVertical,
   Pencil,
@@ -310,6 +312,8 @@ function FileRow({
       >
         {encrypted ? (
           <Lock size={12} style={{ color: 'rgb(var(--accent))' }} />
+        ) : file.kind === 'manifest' ? (
+          <FolderOpen size={12} style={{ color: 'rgb(var(--fg-muted))' }} />
         ) : isImageFile(file.name) ? (
           <img
             src={openUrl}
@@ -324,9 +328,21 @@ function FileRow({
         )}
       </div>
 
-      {/* Name */}
+      {/* Name — folders are browseable, link them like classic rows */}
       <div className="flex items-center gap-2 flex-1 min-w-0">
-        <p className="text-xs font-medium truncate">{file.name}</p>
+        {file.kind === 'manifest' && !encrypted ? (
+          <a
+            href={openUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="text-xs font-medium truncate hover:underline"
+            style={{ color: 'rgb(var(--fg))' }}
+          >
+            {file.name}
+          </a>
+        ) : (
+          <p className="text-xs font-medium truncate">{file.name}</p>
+        )}
       </div>
 
       {/* Size (approximate — from the ledger's chunk count) */}
@@ -429,7 +445,7 @@ function DeleteFileModal({
         style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
         onClick={e => e.stopPropagation()}
       >
-        <p className="text-sm font-semibold">Delete file?</p>
+        <p className="text-sm font-semibold">{file.kind === 'manifest' ? 'Delete folder?' : 'Delete file?'}</p>
         <p className="text-sm truncate" style={{ color: 'rgb(var(--fg))' }}>
           {file.name}
         </p>
@@ -473,7 +489,9 @@ export function ReclaimableDriveView({
 }) {
   const queryClient = useQueryClient()
   const inputRef = useRef<HTMLInputElement>(null)
+  const folderInputRef = useRef<HTMLInputElement>(null)
   const [uploading, setUploading] = useState<{ name: string; estimate: number } | null>(null)
+  const [staging, setStaging] = useState<{ name: string; done: number; total: number } | null>(null)
   const [chunks, setChunks] = useState(0)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [deletingRef, setDeletingRef] = useState<string | null>(null)
@@ -494,32 +512,61 @@ export function ReclaimableDriveView({
     queryClient.invalidateQueries({ queryKey: ['server', 'reclaimable'] })
   }
 
+  function pollJob(uploadId: string) {
+    pollRef.current = window.setInterval(async () => {
+      try {
+        const job = await serverApi.getReclaimableUpload(uploadId)
+        setChunks(job.chunksUploaded)
+
+        if (job.status !== 'uploading') {
+          if (pollRef.current) window.clearInterval(pollRef.current)
+          setUploading(null)
+
+          if (job.status === 'error') setUploadError(job.error ?? 'Upload failed')
+          else refreshDrives()
+        }
+      } catch {
+        // transient poll failure — keep polling
+      }
+    }, 1000)
+  }
+
   async function handleFile(uploadFile: globalThis.File) {
     setUploadError(null)
     setChunks(0)
     setUploading({ name: uploadFile.name, estimate: estimateChunks(uploadFile.size) })
     try {
       const { uploadId } = await serverApi.uploadReclaimableFile(drive.batchId, uploadFile)
-
-      pollRef.current = window.setInterval(async () => {
-        try {
-          const job = await serverApi.getReclaimableUpload(uploadId)
-          setChunks(job.chunksUploaded)
-
-          if (job.status !== 'uploading') {
-            if (pollRef.current) window.clearInterval(pollRef.current)
-            setUploading(null)
-
-            if (job.status === 'error') setUploadError(job.error ?? 'Upload failed')
-            else refreshDrives()
-          }
-        } catch {
-          // transient poll failure — keep polling
-        }
-      }, 1000)
+      pollJob(uploadId)
     } catch (err) {
       setUploading(null)
       setUploadError(err instanceof Error ? err.message : 'Upload failed')
+    }
+  }
+
+  async function handleFolder(files: globalThis.File[]) {
+    if (files.length === 0) return
+    // webkitRelativePath is 'folderName/sub/file.ext' — first segment names the folder
+    const folderName = files[0].webkitRelativePath.split('/')[0] || 'folder'
+    setUploadError(null)
+    setChunks(0)
+    setStaging({ name: folderName, done: 0, total: files.length })
+    try {
+      const { stageId } = await serverApi.createReclaimableStage(drive.batchId)
+
+      for (let i = 0; i < files.length; i++) {
+        await serverApi.addFileToReclaimableStage(stageId, files[i].webkitRelativePath || files[i].name, files[i])
+        setStaging({ name: folderName, done: i + 1, total: files.length })
+      }
+      const totalBytes = files.reduce((sum, f) => sum + f.size, 0)
+      setStaging(null)
+      setUploading({ name: folderName, estimate: estimateChunks(totalBytes) + files.length })
+      const { uploadId } = await serverApi.commitReclaimableStage(stageId, folderName)
+      pollJob(uploadId)
+    } catch (err) {
+      setStaging(null)
+      setUploading(null)
+      setUploadError(err instanceof Error ? err.message : 'Folder upload failed')
     }
   }
 
@@ -581,19 +628,43 @@ export function ReclaimableDriveView({
             e.target.value = ''
           }}
         />
+        <input
+          ref={folderInputRef}
+          type="file"
+          className="hidden"
+          // Non-standard but universal in Chromium (= Electron): lets the
+          // picker select a directory, files carry webkitRelativePath.
+          {...({ webkitdirectory: '', directory: '' } as Record<string, string>)}
+          multiple
+          onChange={e => {
+            const picked = Array.from(e.target.files ?? [])
+
+            if (picked.length > 0) void handleFolder(picked)
+            e.target.value = ''
+          }}
+        />
         <button
           onClick={() => inputRef.current?.click()}
-          disabled={Boolean(uploading)}
+          disabled={Boolean(uploading) || Boolean(staging)}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0 disabled:opacity-40"
           style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
         >
           <Upload size={12} />
           Upload
         </button>
+        <button
+          onClick={() => folderInputRef.current?.click()}
+          disabled={Boolean(uploading) || Boolean(staging)}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium shrink-0 disabled:opacity-40"
+          style={{ color: 'rgb(var(--fg-muted))' }}
+        >
+          <FolderUp size={12} />
+          Folder
+        </button>
       </div>
 
       {/* Upload progress — same panel style as the classic upload */}
-      {uploading && (
+      {(uploading || staging) && (
         <div
           className="max-w-xl rounded-xl border p-6 mb-4 space-y-3"
           style={{ backgroundColor: 'rgb(var(--bg-surface))', borderColor: 'rgb(var(--border))' }}
@@ -601,13 +672,18 @@ export function ReclaimableDriveView({
           <div className="flex items-center gap-2">
             <RefreshCw size={13} className="animate-spin shrink-0" style={{ color: 'rgb(var(--accent))' }} />
             <p className="text-sm truncate" style={{ color: 'rgb(var(--fg-muted))' }}>
-              Uploading {uploading.name} to the network… · {chunks} chunks confirmed
+              {staging
+                ? `Preparing ${staging.name}… ${staging.done}/${staging.total} files`
+                : `Uploading ${uploading!.name} to the network… · ${chunks} chunks confirmed`}
             </p>
           </div>
           <div className="h-1 rounded-full" style={{ backgroundColor: 'rgb(var(--border))' }}>
             <div
               className="h-1 rounded-full transition-all"
-              style={{ width: `${uploadPct}%`, backgroundColor: 'rgb(var(--accent))' }}
+              style={{
+                width: `${staging ? Math.round((staging.done / staging.total) * 100) : uploadPct}%`,
+                backgroundColor: 'rgb(var(--accent))',
+              }}
             />
           </div>
         </div>
@@ -619,7 +695,7 @@ export function ReclaimableDriveView({
         </p>
       )}
 
-      {drive.files.length === 0 && !uploading ? (
+      {drive.files.length === 0 && !uploading && !staging ? (
         <p className="text-xs text-center py-12" style={{ color: 'rgb(var(--fg-muted))' }}>
           No files yet. Files you delete from this drive free their space for new uploads.
         </p>

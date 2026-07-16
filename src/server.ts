@@ -27,7 +27,15 @@ import {
   isReclaimableBatch,
   registerReclaimableBatch,
 } from './reclaimable-registry'
-import { deleteReclaimableFile, getUploadJob, listReclaimableDrives, startUpload } from './reclaimable'
+import {
+  addFileToStage,
+  commitUploadStage,
+  createUploadStage,
+  deleteReclaimableFile,
+  getUploadJob,
+  listReclaimableDrives,
+  startUpload,
+} from './reclaimable'
 import { getStatus } from './status'
 import { resetCrashLoop } from './supervisor'
 import { fetchWithTimeout } from './fetch-timeout'
@@ -492,12 +500,66 @@ export function runServer() {
     }
 
     try {
-      const job = startUpload(context.params.batch, fileName, Buffer.concat(chunks))
+      const job = await startUpload(context.params.batch, fileName, Buffer.concat(chunks))
       context.body = { uploadId: job.id }
     } catch (error) {
       logger.error(error)
       context.status = 404
       context.body = { message: 'Not a reclaimable drive' }
+    }
+  })
+
+  // Folder upload: stage files one raw-body POST at a time, then commit —
+  // the staged tree uploads as a directory (Mantaray manifest).
+  router.post('/reclaimable/:batch/stage', async context => {
+    try {
+      context.body = await createUploadStage(context.params.batch)
+    } catch (error) {
+      logger.error(error)
+      context.status = 404
+      context.body = { message: 'Not a reclaimable drive' }
+    }
+  })
+
+  router.post('/reclaimable/stage/:id/file', async context => {
+    const relPath = context.query.path as string
+
+    if (!relPath) {
+      context.status = 400
+      context.body = { message: 'path query param is required' }
+
+      return
+    }
+
+    const chunks: Buffer[] = []
+
+    for await (const chunk of context.req) chunks.push(chunk as Buffer)
+
+    try {
+      context.body = addFileToStage(context.params.id, relPath, Buffer.concat(chunks))
+    } catch (error) {
+      logger.error(error)
+      context.status = 400
+      context.body = { message: String((error as Error).message ?? error) }
+    }
+  })
+
+  router.post('/reclaimable/stage/:id/commit', context => {
+    const name = context.query.name as string
+
+    if (!name) {
+      context.status = 400
+      context.body = { message: 'name query param is required' }
+
+      return
+    }
+    try {
+      const job = commitUploadStage(context.params.id, name)
+      context.body = { uploadId: job.id }
+    } catch (error) {
+      logger.error(error)
+      context.status = 400
+      context.body = { message: String((error as Error).message ?? error) }
     }
   })
 

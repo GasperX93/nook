@@ -25,7 +25,10 @@ jest.mock('../src/config', () => ({
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
 
 import {
+  addFileToStage,
   buildDirectFetch,
+  commitUploadStage,
+  createUploadStage,
   deleteReclaimableFile,
   getUploadJob,
   listReclaimableDrives,
@@ -95,7 +98,7 @@ describe('reclaimable engine', () => {
     const fake = makeFakeSwarmFs()
     setSwarmFsModuleForTests(fake as any)
 
-    const job = startUpload(BATCH, 'photo.jpg', Buffer.from('data'))
+    const job = await startUpload(BATCH, 'photo.jpg', Buffer.from('data'))
     expect(job.status).toBe('uploading')
     const finished = await waitForJob(job.id)
 
@@ -116,20 +119,20 @@ describe('reclaimable engine', () => {
     const fake = makeFakeSwarmFs()
     setSwarmFsModuleForTests(fake as any)
 
-    await waitForJob(startUpload(BATCH, 'secret.pdf', Buffer.from('data')).id)
+    await waitForJob((await startUpload(BATCH, 'secret.pdf', Buffer.from('data'))).id)
     expect(fake.upload.mock.calls[0][0].encrypt).toBe(true)
   })
 
   test('upload failure surfaces on the job, not as an unhandled rejection', async () => {
     setSwarmFsModuleForTests(makeFakeSwarmFs({ upload: jest.fn().mockRejectedValue(new Error('bucket full')) }) as any)
 
-    const job = await waitForJob(startUpload(BATCH, 'photo.jpg', Buffer.from('data')).id)
+    const job = await waitForJob((await startUpload(BATCH, 'photo.jpg', Buffer.from('data'))).id)
     expect(job.status).toBe('error')
     expect(job.error).toContain('bucket full')
   })
 
-  test('unregistered batch is refused before any work starts', () => {
-    expect(() => startUpload('e'.repeat(64), 'photo.jpg', Buffer.from('data'))).toThrow('not a registered')
+  test('unregistered batch is refused before any work starts', async () => {
+    await expect(startUpload('e'.repeat(64), 'photo.jpg', Buffer.from('data'))).rejects.toThrow('not a registered')
   })
 
   test('mutations on the same batch are serialized', async () => {
@@ -156,8 +159,8 @@ describe('reclaimable engine', () => {
     })
     setSwarmFsModuleForTests(fake as any)
 
-    const first = startUpload(BATCH, 'a.bin', Buffer.from('a'))
-    const second = startUpload(BATCH, 'b.bin', Buffer.from('b'))
+    const first = await startUpload(BATCH, 'a.bin', Buffer.from('a'))
+    const second = await startUpload(BATCH, 'b.bin', Buffer.from('b'))
     await new Promise(resolve => setTimeout(resolve, 25))
     expect(order).toEqual(['first-start'])
     releaseFirst()
@@ -198,6 +201,48 @@ describe('reclaimable engine', () => {
     expect(drives).toHaveLength(1)
     expect(drives[0].files).toEqual([])
     expect(drives[0].usage).toBeNull()
+  })
+})
+
+describe('folder upload staging', () => {
+  beforeEach(() => {
+    cleanUp()
+    registerReclaimableBatch({ batchId: BATCH, depth: 19, encrypted: false, createdAt: '2026-07-16T00:00:00.000Z' })
+  })
+  afterAll(cleanUp)
+
+  test('stage → add files → commit uploads the staged directory', async () => {
+    const fake = makeFakeSwarmFs()
+    setSwarmFsModuleForTests(fake as any)
+
+    const { stageId } = await createUploadStage(BATCH)
+    expect(addFileToStage(stageId, 'site/index.html', Buffer.from('<html/>'))).toEqual({ fileCount: 1 })
+    expect(addFileToStage(stageId, 'site/img/logo.png', Buffer.from('png'))).toEqual({ fileCount: 2 })
+
+    const job = commitUploadStage(stageId, 'site')
+    const finished = await waitForJob(job.id)
+    expect(finished.status).toBe('done')
+
+    const opts = fake.upload.mock.calls[0][0]
+    expect(opts.path.endsWith('/site')).toBe(true)
+  })
+
+  test('path traversal is rejected', async () => {
+    const { stageId } = await createUploadStage(BATCH)
+    expect(() => addFileToStage(stageId, '../escape.txt', Buffer.from('x'))).toThrow('Invalid file path')
+    expect(() => addFileToStage(stageId, '/etc/passwd', Buffer.from('x'))).toThrow('Invalid file path')
+    expect(() => addFileToStage(stageId, 'ok/../../escape.txt', Buffer.from('x'))).toThrow('Invalid file path')
+  })
+
+  test('empty or unknown stages are refused', async () => {
+    const { stageId } = await createUploadStage(BATCH)
+    expect(() => commitUploadStage(stageId, 'site')).toThrow('empty')
+    expect(() => addFileToStage('nope', 'a.txt', Buffer.from('x'))).toThrow('Unknown upload stage')
+    expect(() => commitUploadStage('nope', 'site')).toThrow('Unknown upload stage')
+  })
+
+  test('stage refuses unregistered batches', async () => {
+    await expect(createUploadStage('f'.repeat(64))).rejects.toThrow('not a registered')
   })
 })
 

@@ -185,6 +185,28 @@ export const serverApi = {
 
   getReclaimableUpload: async (id: string) => serverGet<ReclaimableUploadJob>(`/reclaimable/upload/${id}`),
 
+  /** Folder upload: create a staging area, add files by relative path, commit */
+  createReclaimableStage: async (batchId: string) =>
+    serverPost<{ stageId: string }>(`/reclaimable/${batchId}/stage`, {}),
+
+  addFileToReclaimableStage: async (stageId: string, relPath: string, file: File) => {
+    const response = await fetch(`/reclaimable/stage/${stageId}/file?path=${encodeURIComponent(relPath)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream', ...authHeaders() },
+      body: file,
+    })
+
+    if (!response.ok) {
+      const body = await response.json().catch(() => null)
+      throw new Error(body?.message ?? `${response.status} error`)
+    }
+
+    return response.json() as Promise<{ fileCount: number }>
+  },
+
+  commitReclaimableStage: async (stageId: string, name: string) =>
+    serverPost<{ uploadId: string }>(`/reclaimable/stage/${stageId}/commit?name=${encodeURIComponent(name)}`, {}),
+
   deleteReclaimableFile: async (batchId: string, reference: string) => {
     const response = await fetch(`/reclaimable/${batchId}/files/${reference}`, {
       method: 'DELETE',
