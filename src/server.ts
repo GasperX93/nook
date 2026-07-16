@@ -25,9 +25,9 @@ import {
   RECLAIMABLE_WRITE_BLOCKED_MESSAGE,
   findBlockedBeeWrite,
   isReclaimableBatch,
-  listReclaimableBatches,
   registerReclaimableBatch,
 } from './reclaimable-registry'
+import { deleteReclaimableFile, getUploadJob, listReclaimableDrives, startUpload } from './reclaimable'
 import { getStatus } from './status'
 import { resetCrashLoop } from './supervisor'
 import { fetchWithTimeout } from './fetch-timeout'
@@ -458,8 +458,67 @@ export function runServer() {
     }
   })
 
-  router.get('/reclaimable', context => {
-    context.body = { drives: listReclaimableBatches() }
+  router.get('/reclaimable', async context => {
+    context.body = { drives: await listReclaimableDrives() }
+  })
+
+  // Raw octet-stream body (bodyparser ignores it, so the stream is intact);
+  // file name travels in the query. Returns a job id immediately — the upload
+  // pushes every chunk directly (receipt-backed), and the UI polls the job for
+  // network-confirmed progress.
+  router.post('/reclaimable/:batch/upload', async context => {
+    const fileName = context.query.name as string
+
+    if (!fileName) {
+      context.status = 400
+      context.body = { message: 'name query param is required' }
+
+      return
+    }
+
+    const chunks: Buffer[] = []
+
+    for await (const chunk of context.req) chunks.push(chunk as Buffer)
+
+    if (chunks.length === 0) {
+      context.status = 400
+      context.body = { message: 'request body is required' }
+
+      return
+    }
+
+    try {
+      const job = startUpload(context.params.batch, fileName, Buffer.concat(chunks))
+      context.body = { uploadId: job.id }
+    } catch (error) {
+      logger.error(error)
+      context.status = 404
+      context.body = { message: 'Not a reclaimable drive' }
+    }
+  })
+
+  router.get('/reclaimable/upload/:id', context => {
+    const job = getUploadJob(context.params.id)
+
+    if (!job) {
+      context.status = 404
+      context.body = { message: 'Unknown upload' }
+
+      return
+    }
+    context.body = job
+  })
+
+  router.delete('/reclaimable/:batch/files/:root', async context => {
+    try {
+      const usage = await deleteReclaimableFile(context.params.batch, context.params.root)
+      context.body = { deleted: true, usage }
+    } catch (error) {
+      logger.error(error)
+      const message = String((error as Error).message ?? error)
+      context.status = message.includes('not a registered') || message.includes('File not found') ? 404 : 500
+      context.body = { message: 'Could not delete the file' }
+    }
   })
 
   // ─── ACT proxy endpoints ──────────────────────────────────────────────────
