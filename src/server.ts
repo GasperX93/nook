@@ -177,7 +177,11 @@ export function runServer() {
     await next()
   })
 
-  app.use(koaBodyparser({ onerror: logger.error }))
+  // Only the error goes to the logger — bodyparser's onerror also passes the
+  // Koa ctx, and winston JSON-stringifies extra args: ctx holds a Socket
+  // (circular) and the logger itself throws, turning any malformed body into
+  // an opaque 500.
+  app.use(koaBodyparser({ onerror: error => logger.error(error) }))
   const router = new Router()
 
   // Open endpoints without any authentication

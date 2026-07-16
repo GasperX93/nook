@@ -43,7 +43,9 @@ const STATE_DIR = 'test/data/swarmfs'
 function makeFakeSwarmFs(overrides: Record<string, unknown> = {}) {
   return {
     upload: jest.fn(async (opts: any): Promise<Buffer> => {
-      opts.onProgress?.('file', 42)
+      // Real swarm-fs calls onProgress once per chunk (and resets its counter
+      // per file) — the engine counts calls, so N calls → chunksUploaded = N.
+      for (let i = 0; i < 42; i++) opts.onProgress?.('file', i + 1)
 
       return Buffer.from(ROOT, 'hex')
     }),

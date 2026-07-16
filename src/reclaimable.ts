@@ -258,8 +258,10 @@ export function startUpload(batchId: string, fileName: string, data: Buffer): Up
         encrypt: entry.encrypted,
         parallelism: 32,
         fetchFn: buildDirectFetch(),
-        onProgress: (_file, chunks) => {
-          job.chunksUploaded = chunks
+        // Count calls ourselves: swarm-fs's per-file counter resets for the
+        // manifest phase, so the passed value ends at ~3 instead of the total.
+        onProgress: () => {
+          job.chunksUploaded += 1
         },
       })
       job.reference = Binary.uint8ArrayToHex(root)
