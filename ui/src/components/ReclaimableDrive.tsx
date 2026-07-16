@@ -6,7 +6,6 @@ import {
   ExternalLink,
   File,
   FolderOpen,
-  FolderUp,
   Lock,
   MoreVertical,
   Pencil,
@@ -20,6 +19,7 @@ import { useQueryClient } from '@tanstack/react-query'
 
 import { getBeeUrl, type Stamp, depthToBytes } from '../api/bee'
 import { serverApi, type ReclaimableDrive, type ReclaimableFile } from '../api/server'
+import { fileListToEntries, readDroppedDirectory, type FileEntry } from '../utils/directory'
 
 // Reclaimable drives (#99): the server stamps chunks client-side and keeps a
 // slot ledger, so deleting a file really frees its capacity. Files come from
@@ -490,6 +490,8 @@ export function ReclaimableDriveView({
   const queryClient = useQueryClient()
   const inputRef = useRef<HTMLInputElement>(null)
   const folderInputRef = useRef<HTMLInputElement>(null)
+  const [addingFile, setAddingFile] = useState(false)
+  const [dragging, setDragging] = useState(false)
   const [uploading, setUploading] = useState<{ name: string; estimate: number } | null>(null)
   const [staging, setStaging] = useState<{ name: string; done: number; total: number } | null>(null)
   const [chunks, setChunks] = useState(0)
@@ -532,6 +534,7 @@ export function ReclaimableDriveView({
   }
 
   async function handleFile(uploadFile: globalThis.File) {
+    setAddingFile(false)
     setUploadError(null)
     setChunks(0)
     setUploading({ name: uploadFile.name, estimate: estimateChunks(uploadFile.size) })
@@ -544,29 +547,50 @@ export function ReclaimableDriveView({
     }
   }
 
-  async function handleFolder(files: globalThis.File[]) {
-    if (files.length === 0) return
-    // webkitRelativePath is 'folderName/sub/file.ext' — first segment names the folder
-    const folderName = files[0].webkitRelativePath.split('/')[0] || 'folder'
+  async function handleFolderEntries(folderName: string, entries: FileEntry[]) {
+    if (entries.length === 0) return
+    setAddingFile(false)
     setUploadError(null)
     setChunks(0)
-    setStaging({ name: folderName, done: 0, total: files.length })
+    setStaging({ name: folderName, done: 0, total: entries.length })
     try {
       const { stageId } = await serverApi.createReclaimableStage(drive.batchId)
 
-      for (let i = 0; i < files.length; i++) {
-        await serverApi.addFileToReclaimableStage(stageId, files[i].webkitRelativePath || files[i].name, files[i])
-        setStaging({ name: folderName, done: i + 1, total: files.length })
+      for (let i = 0; i < entries.length; i++) {
+        await serverApi.addFileToReclaimableStage(stageId, entries[i].path, entries[i].file)
+        setStaging({ name: folderName, done: i + 1, total: entries.length })
       }
-      const totalBytes = files.reduce((sum, f) => sum + f.size, 0)
+      const totalBytes = entries.reduce((sum, e) => sum + e.file.size, 0)
       setStaging(null)
-      setUploading({ name: folderName, estimate: estimateChunks(totalBytes) + files.length })
+      setUploading({ name: folderName, estimate: estimateChunks(totalBytes) + entries.length })
       const { uploadId } = await serverApi.commitReclaimableStage(stageId, folderName)
       pollJob(uploadId)
     } catch (err) {
       setStaging(null)
       setUploading(null)
       setUploadError(err instanceof Error ? err.message : 'Folder upload failed')
+    }
+  }
+
+  async function handleDrop(e: React.DragEvent) {
+    e.preventDefault()
+    setDragging(false)
+    const item = e.dataTransfer.items[0]
+
+    if (!item) return
+    const fsEntry = item.webkitGetAsEntry?.()
+
+    if (fsEntry?.isDirectory) {
+      try {
+        const { name: dirName, entries } = await readDroppedDirectory(item)
+        void handleFolderEntries(dirName, entries)
+      } catch {
+        /* ignore */
+      }
+    } else {
+      const dropped = e.dataTransfer.files[0]
+
+      if (dropped) void handleFile(dropped)
     }
   }
 
@@ -617,34 +641,8 @@ export function ReclaimableDriveView({
 
         <div className="flex-1" />
 
-        <input
-          ref={inputRef}
-          type="file"
-          className="hidden"
-          onChange={e => {
-            const picked = e.target.files?.[0]
-
-            if (picked) void handleFile(picked)
-            e.target.value = ''
-          }}
-        />
-        <input
-          ref={folderInputRef}
-          type="file"
-          className="hidden"
-          // Non-standard but universal in Chromium (= Electron): lets the
-          // picker select a directory, files carry webkitRelativePath.
-          {...({ webkitdirectory: '', directory: '' } as Record<string, string>)}
-          multiple
-          onChange={e => {
-            const picked = Array.from(e.target.files ?? [])
-
-            if (picked.length > 0) void handleFolder(picked)
-            e.target.value = ''
-          }}
-        />
         <button
-          onClick={() => inputRef.current?.click()}
+          onClick={() => setAddingFile(v => !v)}
           disabled={Boolean(uploading) || Boolean(staging)}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0 disabled:opacity-40"
           style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
@@ -652,16 +650,84 @@ export function ReclaimableDriveView({
           <Upload size={12} />
           Upload
         </button>
-        <button
-          onClick={() => folderInputRef.current?.click()}
-          disabled={Boolean(uploading) || Boolean(staging)}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium shrink-0 disabled:opacity-40"
-          style={{ color: 'rgb(var(--fg-muted))' }}
-        >
-          <FolderUp size={12} />
-          Folder
-        </button>
       </div>
+
+      {/* Upload panel — same drop zone as the classic AddFilePanel */}
+      {addingFile && !uploading && !staging && (
+        <div className="max-w-xl mb-4 space-y-3">
+          <div
+            onDragOver={e => {
+              e.preventDefault()
+              setDragging(true)
+            }}
+            onDragLeave={e => {
+              if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragging(false)
+            }}
+            onDrop={handleDrop}
+            className="rounded-xl border-2 border-dashed transition-colors"
+            style={{
+              borderColor: dragging ? 'rgb(var(--accent))' : 'rgb(var(--border))',
+              backgroundColor: dragging ? 'rgba(247,104,8,0.04)' : 'transparent',
+            }}
+          >
+            <div className="flex flex-col items-center gap-3 py-12 px-6 text-center">
+              <Upload size={26} style={{ color: 'rgb(var(--fg-muted))' }} />
+              <div>
+                <p className="text-sm font-medium" style={{ color: 'rgb(var(--fg))' }}>
+                  Drop a file or folder here
+                </p>
+                <p className="text-xs mt-1" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  or click to browse —{' '}
+                  <button
+                    onClick={() => inputRef.current?.click()}
+                    className="underline"
+                    style={{ color: 'rgb(var(--fg-muted))' }}
+                  >
+                    file
+                  </button>
+                  {' · '}
+                  <button
+                    onClick={() => folderInputRef.current?.click()}
+                    className="underline"
+                    style={{ color: 'rgb(var(--fg-muted))' }}
+                  >
+                    folder
+                  </button>
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <button onClick={() => setAddingFile(false)} className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+            Cancel
+          </button>
+
+          <input
+            ref={inputRef}
+            type="file"
+            className="hidden"
+            onChange={e => {
+              const picked = e.target.files?.[0]
+
+              if (picked) void handleFile(picked)
+              e.target.value = ''
+            }}
+          />
+          <input
+            ref={folderInputRef}
+            type="file"
+            className="hidden"
+            // @ts-expect-error — webkitdirectory not in TS types
+            webkitdirectory="true"
+            onChange={e => {
+              if (!e.target.files?.length) return
+              const { name: dirName, entries } = fileListToEntries(e.target.files)
+              void handleFolderEntries(dirName, entries)
+              e.target.value = ''
+            }}
+          />
+        </div>
+      )}
 
       {/* Upload progress — same panel style as the classic upload */}
       {(uploading || staging) && (
