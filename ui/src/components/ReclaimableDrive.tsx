@@ -6,6 +6,7 @@ import {
   ExternalLink,
   File,
   FolderOpen,
+  FolderPlus,
   Lock,
   MoreVertical,
   Pencil,
@@ -290,6 +291,8 @@ function FileRow({
   deleting,
   onCopy,
   onDelete,
+  onDragStart,
+  onDragEnd,
 }: {
   file: ReclaimableFile
   encrypted: boolean
@@ -298,13 +301,20 @@ function FileRow({
   deleting: boolean
   onCopy: () => void
   onDelete: () => void
+  onDragStart?: () => void
+  onDragEnd?: () => void
 }) {
   const openUrl = `${getBeeUrl()}/bzz/${file.reference}/`
   const ttlDays = ttlSeconds ? ttlSeconds / 86400 : null
   const urgent = ttlDays !== null && ttlDays <= 7
 
   return (
-    <div className="px-2 py-2 flex items-center gap-3 transition-colors hover:bg-white/[0.02]">
+    <div
+      draggable={Boolean(onDragStart)}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      className="px-2 py-2 flex items-center gap-3 transition-colors hover:bg-white/[0.02]"
+    >
       {/* Type icon or thumbnail */}
       <div
         className="w-6 h-6 rounded overflow-hidden flex items-center justify-center shrink-0"
@@ -492,6 +502,11 @@ export function ReclaimableDriveView({
   const folderInputRef = useRef<HTMLInputElement>(null)
   const [addingFile, setAddingFile] = useState(false)
   const [dragging, setDragging] = useState(false)
+  const [openFolderId, setOpenFolderId] = useState<string | null>(null)
+  const [creatingFolder, setCreatingFolder] = useState(false)
+  const [newFolderName, setNewFolderName] = useState('')
+  const [draggingRef, setDraggingRef] = useState<string | null>(null)
+  const [dragOverTarget, setDragOverTarget] = useState<string | 'root' | null>(null)
   const [uploading, setUploading] = useState<{ name: string; estimate: number } | null>(null)
   const [staging, setStaging] = useState<{ name: string; done: number; total: number } | null>(null)
   const [chunks, setChunks] = useState(0)
@@ -514,7 +529,7 @@ export function ReclaimableDriveView({
     queryClient.invalidateQueries({ queryKey: ['server', 'reclaimable'] })
   }
 
-  function pollJob(uploadId: string) {
+  function pollJob(uploadId: string, assignFolderId: string | null) {
     pollRef.current = window.setInterval(async () => {
       try {
         const job = await serverApi.getReclaimableUpload(uploadId)
@@ -524,13 +539,43 @@ export function ReclaimableDriveView({
           if (pollRef.current) window.clearInterval(pollRef.current)
           setUploading(null)
 
-          if (job.status === 'error') setUploadError(job.error ?? 'Upload failed')
-          else refreshDrives()
+          if (job.status === 'error') {
+            setUploadError(job.error ?? 'Upload failed')
+          } else {
+            // Uploaded while a folder was open → it lives there
+            if (assignFolderId && job.reference) {
+              await serverApi.moveReclaimableFile(drive.batchId, job.reference, assignFolderId).catch(() => undefined)
+            }
+            refreshDrives()
+          }
         }
       } catch {
         // transient poll failure — keep polling
       }
     }, 1000)
+  }
+
+  async function createFolder() {
+    const trimmed = newFolderName.trim()
+    setCreatingFolder(false)
+    setNewFolderName('')
+
+    if (!trimmed) return
+    try {
+      await serverApi.createReclaimableFolder(drive.batchId, trimmed)
+      refreshDrives()
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : 'Could not create the folder')
+    }
+  }
+
+  async function moveFile(reference: string, folderId: string | null) {
+    try {
+      await serverApi.moveReclaimableFile(drive.batchId, reference, folderId)
+      refreshDrives()
+    } catch {
+      /* refresh shows the true state either way */
+    }
   }
 
   async function handleFile(uploadFile: globalThis.File) {
@@ -540,7 +585,7 @@ export function ReclaimableDriveView({
     setUploading({ name: uploadFile.name, estimate: estimateChunks(uploadFile.size) })
     try {
       const { uploadId } = await serverApi.uploadReclaimableFile(drive.batchId, uploadFile)
-      pollJob(uploadId)
+      pollJob(uploadId, openFolderId)
     } catch (err) {
       setUploading(null)
       setUploadError(err instanceof Error ? err.message : 'Upload failed')
@@ -564,7 +609,7 @@ export function ReclaimableDriveView({
       setStaging(null)
       setUploading({ name: folderName, estimate: estimateChunks(totalBytes) + entries.length })
       const { uploadId } = await serverApi.commitReclaimableStage(stageId, folderName)
-      pollJob(uploadId)
+      pollJob(uploadId, openFolderId)
     } catch (err) {
       setStaging(null)
       setUploading(null)
@@ -614,30 +659,54 @@ export function ReclaimableDriveView({
   }
 
   const uploadPct = uploading ? Math.min(99, Math.round((chunks / uploading.estimate) * 100)) : 0
+  const openFolder = openFolderId ? (drive.folders.find(folder => folder.id === openFolderId) ?? null) : null
+  const visibleFiles = drive.files.filter(file => (openFolderId ? file.folderId === openFolderId : !file.folderId))
+  const folderCounts = new Map<string, number>()
+
+  for (const file of drive.files) {
+    if (file.folderId) folderCounts.set(file.folderId, (folderCounts.get(file.folderId) ?? 0) + 1)
+  }
 
   return (
     <div className="p-6">
       {/* Breadcrumb — same shape as the classic drive view */}
       <div className="flex items-center gap-2 mb-6">
-        <button
-          onClick={onBack}
-          className="flex items-center gap-1.5 text-xs transition-colors"
-          style={{ color: 'rgb(var(--fg-muted))' }}
-        >
-          <ArrowLeft size={13} />
-          Drive
-        </button>
-        <span style={{ color: 'rgb(var(--fg-muted))' }}>/</span>
-        <span className="text-sm font-medium truncate">{name}</span>
-        {drive.encrypted && <Lock size={12} className="shrink-0" style={{ color: 'rgb(var(--fg-muted))' }} />}
-        <span
-          className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium shrink-0"
-          style={{ backgroundColor: 'rgba(74,222,128,0.1)', color: '#4ade80' }}
-          title="Deleting files on this drive frees their space for new uploads"
-        >
-          <Recycle size={11} />
-          Deletable · Beta
-        </span>
+        {openFolder ? (
+          <>
+            <button
+              onClick={() => setOpenFolderId(null)}
+              className="flex items-center gap-1.5 text-xs transition-colors"
+              style={{ color: 'rgb(var(--fg-muted))' }}
+            >
+              <ArrowLeft size={13} />
+              {name}
+            </button>
+            <span style={{ color: 'rgb(var(--fg-muted))' }}>/</span>
+            <span className="text-sm font-medium truncate">{openFolder.name}</span>
+          </>
+        ) : (
+          <>
+            <button
+              onClick={onBack}
+              className="flex items-center gap-1.5 text-xs transition-colors"
+              style={{ color: 'rgb(var(--fg-muted))' }}
+            >
+              <ArrowLeft size={13} />
+              Drive
+            </button>
+            <span style={{ color: 'rgb(var(--fg-muted))' }}>/</span>
+            <span className="text-sm font-medium truncate">{name}</span>
+            {drive.encrypted && <Lock size={12} className="shrink-0" style={{ color: 'rgb(var(--fg-muted))' }} />}
+            <span
+              className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium shrink-0"
+              style={{ backgroundColor: 'rgba(74,222,128,0.1)', color: '#4ade80' }}
+              title="Deleting files on this drive frees their space for new uploads"
+            >
+              <Recycle size={11} />
+              Deletable · Beta
+            </span>
+          </>
+        )}
 
         <div className="flex-1" />
 
@@ -650,7 +719,51 @@ export function ReclaimableDriveView({
           <Upload size={12} />
           Upload
         </button>
+        {!openFolder && (
+          <button
+            onClick={() => {
+              setCreatingFolder(true)
+              setNewFolderName('')
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium shrink-0"
+            style={{ color: 'rgb(var(--fg-muted))' }}
+          >
+            <FolderPlus size={12} />
+            Folder
+          </button>
+        )}
       </div>
+
+      {/* New folder inline input — same as classic */}
+      {creatingFolder && (
+        <div
+          className="rounded-lg border px-4 py-2.5 flex items-center gap-3 mb-3"
+          style={{ backgroundColor: 'rgb(var(--bg-surface))', borderColor: 'rgb(var(--border))' }}
+        >
+          <FolderPlus size={14} style={{ color: 'rgb(var(--fg-muted))' }} />
+          <input
+            type="text"
+            autoFocus
+            value={newFolderName}
+            onChange={e => setNewFolderName(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter') void createFolder()
+
+              if (e.key === 'Escape') {
+                setCreatingFolder(false)
+                setNewFolderName('')
+              }
+            }}
+            onBlur={() => void createFolder()}
+            placeholder="Folder name…"
+            className="flex-1 bg-transparent text-sm focus:outline-none"
+            style={{ color: 'rgb(var(--fg))' }}
+          />
+          <span className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+            Enter to confirm
+          </span>
+        </div>
+      )}
 
       {/* Upload panel — same drop zone as the classic AddFilePanel */}
       {addingFile && !uploading && !staging && (
@@ -761,13 +874,89 @@ export function ReclaimableDriveView({
         </p>
       )}
 
-      {drive.files.length === 0 && !uploading && !staging ? (
+      {/* Folder rows (drive root only) — drop targets for drag-to-move */}
+      {!openFolder && drive.folders.length > 0 && (
+        <div className="space-y-1 mb-3">
+          {drive.folders.map(folder => (
+            <div
+              key={folder.id}
+              onClick={() => setOpenFolderId(folder.id)}
+              onDragOver={
+                draggingRef
+                  ? e => {
+                      e.preventDefault()
+                      setDragOverTarget(folder.id)
+                    }
+                  : undefined
+              }
+              onDragLeave={draggingRef ? () => setDragOverTarget(null) : undefined}
+              onDrop={
+                draggingRef
+                  ? e => {
+                      e.preventDefault()
+                      void moveFile(draggingRef, folder.id)
+                      setDraggingRef(null)
+                      setDragOverTarget(null)
+                    }
+                  : undefined
+              }
+              className="flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer transition-colors hover:bg-white/[0.03] group/folder"
+              style={dragOverTarget === folder.id ? { backgroundColor: 'rgba(247,104,8,0.08)' } : undefined}
+            >
+              <FolderOpen size={13} style={{ color: 'rgb(var(--fg-muted))' }} />
+              <span className="text-xs font-medium flex-1 truncate">{folder.name}</span>
+              <span className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                {folderCounts.get(folder.id) ?? 0} file{(folderCounts.get(folder.id) ?? 0) === 1 ? '' : 's'}
+              </span>
+              <button
+                onClick={e => {
+                  e.stopPropagation()
+                  void serverApi.deleteReclaimableFolder(drive.batchId, folder.id).then(refreshDrives)
+                }}
+                title="Remove folder (files move back to the drive)"
+                className="w-6 h-6 flex items-center justify-center rounded opacity-0 group-hover/folder:opacity-100 transition-opacity hover:text-red-400"
+                style={{ color: 'rgb(var(--fg-muted))' }}
+              >
+                <Trash2 size={12} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Move-out drop zone — appears while dragging inside a folder */}
+      {openFolder && draggingRef && (
+        <div
+          onDragOver={e => {
+            e.preventDefault()
+            setDragOverTarget('root')
+          }}
+          onDragLeave={() => setDragOverTarget(null)}
+          onDrop={e => {
+            e.preventDefault()
+            void moveFile(draggingRef, null)
+            setDraggingRef(null)
+            setDragOverTarget(null)
+          }}
+          className="rounded-lg border-2 border-dashed px-4 py-3 mb-3 text-center text-xs"
+          style={{
+            borderColor: dragOverTarget === 'root' ? 'rgb(var(--accent))' : 'rgb(var(--border))',
+            color: dragOverTarget === 'root' ? 'rgb(var(--accent))' : 'rgb(var(--fg-muted))',
+          }}
+        >
+          Drop here to move out of {openFolder.name}
+        </div>
+      )}
+
+      {visibleFiles.length === 0 && !uploading && !staging ? (
         <p className="text-xs text-center py-12" style={{ color: 'rgb(var(--fg-muted))' }}>
-          No files yet. Files you delete from this drive free their space for new uploads.
+          {openFolder
+            ? 'This folder is empty. Upload here or drag files onto it from the drive.'
+            : 'No files yet. Files you delete from this drive free their space for new uploads.'}
         </p>
       ) : (
         <div className="divide-y" style={{ borderColor: 'rgb(var(--border))' }}>
-          {drive.files.map(file => (
+          {visibleFiles.map(file => (
             <FileRow
               key={file.reference}
               file={file}
@@ -777,6 +966,11 @@ export function ReclaimableDriveView({
               deleting={deletingRef === file.reference}
               onCopy={() => copyLink(file.reference)}
               onDelete={() => setConfirmDelete(file)}
+              onDragStart={() => setDraggingRef(file.reference)}
+              onDragEnd={() => {
+                setDraggingRef(null)
+                setDragOverTarget(null)
+              }}
             />
           ))}
         </div>

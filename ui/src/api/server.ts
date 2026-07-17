@@ -15,6 +15,12 @@ export interface ReclaimableFile {
   kind: string
   chunkCount: number
   uploadDate?: number
+  folderId?: string
+}
+
+export interface ReclaimableFolder {
+  id: string
+  name: string
 }
 
 export interface ReclaimableUsage {
@@ -30,6 +36,7 @@ export interface ReclaimableDrive {
   encrypted: boolean
   label?: string
   createdAt: string
+  folders: ReclaimableFolder[]
   files: ReclaimableFile[]
   usage: ReclaimableUsage | null
 }
@@ -206,6 +213,24 @@ export const serverApi = {
 
   commitReclaimableStage: async (stageId: string, name: string) =>
     serverPost<{ uploadId: string }>(`/reclaimable/stage/${stageId}/commit?name=${encodeURIComponent(name)}`, {}),
+
+  /** Organizational folders — server-side grouping, no Swarm objects */
+  createReclaimableFolder: async (batchId: string, name: string) =>
+    serverPost<ReclaimableFolder>(`/reclaimable/${batchId}/folders`, { name }),
+
+  deleteReclaimableFolder: async (batchId: string, folderId: string) => {
+    const response = await fetch(`/reclaimable/${batchId}/folders/${folderId}`, {
+      method: 'DELETE',
+      headers: authHeaders(),
+    })
+
+    if (!response.ok) throw new Error('Could not delete the folder')
+
+    return response.json() as Promise<{ deleted: boolean }>
+  },
+
+  moveReclaimableFile: async (batchId: string, reference: string, folderId: string | null) =>
+    serverPatch<{ moved: boolean }>(`/reclaimable/${batchId}/files/${reference}/folder`, { folderId }),
 
   deleteReclaimableFile: async (batchId: string, reference: string) => {
     const response = await fetch(`/reclaimable/${batchId}/files/${reference}`, {

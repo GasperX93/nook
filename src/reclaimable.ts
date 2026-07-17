@@ -1,6 +1,6 @@
 import { Binary } from 'cafe-utility'
 import Wallet from 'ethereumjs-wallet'
-import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs'
 import { mkdtemp, readFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import * as path from 'path'
@@ -434,6 +434,102 @@ function buildFolderIndexHtml(folderName: string, relPaths: string[]): string {
 `
 }
 
+// ─── Organizational folders ──────────────────────────────────────────────────
+// Grouping only — no Swarm objects involved. Stored server-side next to the
+// ledger (classic drives keep this in localStorage, which fragments across
+// origins/reinstalls; reclaimable file lists are server-backed, so their
+// folder structure is too).
+
+interface DriveFolders {
+  folders: { id: string; name: string }[]
+  // file reference (hex) → folder id
+  assignments: Record<string, string>
+}
+
+function foldersPath(): string {
+  return path.join(reclaimableStateDir(), 'folders.json')
+}
+
+function readAllFolders(): Record<string, DriveFolders> {
+  if (!existsSync(foldersPath())) {
+    return {}
+  }
+  try {
+    return JSON.parse(readFileSync(foldersPath(), 'utf-8')) as Record<string, DriveFolders>
+  } catch (error) {
+    logger.error(`reclaimable folders file unreadable: ${error}`)
+
+    return {}
+  }
+}
+
+function writeAllFolders(all: Record<string, DriveFolders>): void {
+  writeFileSync(foldersPath(), JSON.stringify(all, null, 2))
+}
+
+function driveFolders(all: Record<string, DriveFolders>, batchId: string): DriveFolders {
+  return all[batchId] ?? { folders: [], assignments: {} }
+}
+
+export function createReclaimableFolder(batchId: string, name: string): { id: string; name: string } {
+  const entry = requireRegisteredBatch(batchId)
+  const all = readAllFolders()
+  const drive = driveFolders(all, entry.batchId)
+  const folder = { id: randomUUID(), name: name.trim() }
+
+  if (!folder.name) {
+    throw new Error('Folder name is required')
+  }
+  drive.folders.push(folder)
+  all[entry.batchId] = drive
+  writeAllFolders(all)
+
+  return folder
+}
+
+export function deleteReclaimableFolder(batchId: string, folderId: string): void {
+  const entry = requireRegisteredBatch(batchId)
+  const all = readAllFolders()
+  const drive = driveFolders(all, entry.batchId)
+  drive.folders = drive.folders.filter(folder => folder.id !== folderId)
+
+  // Files fall back to the drive root
+  for (const [reference, assigned] of Object.entries(drive.assignments)) {
+    if (assigned === folderId) {
+      delete drive.assignments[reference]
+    }
+  }
+  all[entry.batchId] = drive
+  writeAllFolders(all)
+}
+
+export function assignFileToFolder(batchId: string, reference: string, folderId: string | null): void {
+  const entry = requireRegisteredBatch(batchId)
+  const all = readAllFolders()
+  const drive = driveFolders(all, entry.batchId)
+
+  if (folderId) {
+    if (!drive.folders.some(folder => folder.id === folderId)) {
+      throw new Error('Unknown folder')
+    }
+    drive.assignments[reference.toLowerCase()] = folderId
+  } else {
+    delete drive.assignments[reference.toLowerCase()]
+  }
+  all[entry.batchId] = drive
+  writeAllFolders(all)
+}
+
+function removeFolderAssignment(batchId: string, reference: string): void {
+  const all = readAllFolders()
+  const drive = all[batchId]
+
+  if (drive && drive.assignments[reference.toLowerCase()]) {
+    delete drive.assignments[reference.toLowerCase()]
+    writeAllFolders(all)
+  }
+}
+
 // ─── Delete & listing ────────────────────────────────────────────────────────
 
 export async function deleteReclaimableFile(batchId: string, rootHex: string): Promise<SwarmFsStats> {
@@ -448,18 +544,21 @@ export async function deleteReclaimableFile(batchId: string, rootHex: string): P
       stateDir: reclaimableStateDir(),
     }
     await swarmFs.deleteFile({ ...opts, rootHash: Binary.hexToUint8Array(rootHex) })
+    removeFolderAssignment(entry.batchId, rootHex)
 
     return swarmFs.status(opts)
   })
 }
 
 export interface ReclaimableDriveView extends ReclaimableBatch {
+  folders: { id: string; name: string }[]
   files: {
     name: string
     reference: string
     kind: string
     chunkCount: number
     uploadDate?: number
+    folderId?: string
   }[]
   usage: SwarmFsStats | null
 }
@@ -467,7 +566,11 @@ export interface ReclaimableDriveView extends ReclaimableBatch {
 export async function listReclaimableDrives(): Promise<ReclaimableDriveView[]> {
   const drives: ReclaimableDriveView[] = []
 
+  const allFolders = readAllFolders()
+
   for (const entry of listReclaimableBatches()) {
+    const { folders, assignments } = driveFolders(allFolders, entry.batchId)
+
     try {
       const swarmFs = await loadSwarmFs()
       const opts = {
@@ -477,18 +580,24 @@ export async function listReclaimableDrives(): Promise<ReclaimableDriveView[]> {
       }
       drives.push({
         ...entry,
-        files: swarmFs.list(opts).map(row => ({
-          name: path.basename(row.path),
-          reference: Binary.uint8ArrayToHex(row.rootHash),
-          kind: row.kind,
-          chunkCount: row.chunkCount,
-          uploadDate: row.uploadDate,
-        })),
+        folders,
+        files: swarmFs.list(opts).map(row => {
+          const reference = Binary.uint8ArrayToHex(row.rootHash)
+
+          return {
+            name: path.basename(row.path),
+            reference,
+            kind: row.kind,
+            chunkCount: row.chunkCount,
+            uploadDate: row.uploadDate,
+            folderId: assignments[reference.toLowerCase()],
+          }
+        }),
         usage: swarmFs.status(opts),
       })
     } catch (error) {
       logger.error(`reclaimable drive listing failed for ${entry.batchId.slice(0, 8)}: ${error}`)
-      drives.push({ ...entry, files: [], usage: null })
+      drives.push({ ...entry, folders, files: [], usage: null })
     }
   }
 

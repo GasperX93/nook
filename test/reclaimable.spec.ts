@@ -26,10 +26,13 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
 
 import {
   addFileToStage,
+  assignFileToFolder,
   buildDirectFetch,
   commitUploadStage,
+  createReclaimableFolder,
   createUploadStage,
   deleteReclaimableFile,
+  deleteReclaimableFolder,
   getUploadJob,
   listReclaimableDrives,
   rebuildFreeBitmapIfMissing,
@@ -201,6 +204,53 @@ describe('reclaimable engine', () => {
     expect(drives).toHaveLength(1)
     expect(drives[0].files).toEqual([])
     expect(drives[0].usage).toBeNull()
+  })
+})
+
+describe('organizational folders', () => {
+  beforeEach(() => {
+    cleanUp()
+    registerReclaimableBatch({ batchId: BATCH, depth: 19, encrypted: false, createdAt: '2026-07-16T00:00:00.000Z' })
+  })
+  afterAll(cleanUp)
+
+  test('create → assign → listing carries folders and folderId', async () => {
+    setSwarmFsModuleForTests(makeFakeSwarmFs() as any)
+    const folder = createReclaimableFolder(BATCH, 'Photos')
+    assignFileToFolder(BATCH, ROOT, folder.id)
+
+    const [drive] = await listReclaimableDrives()
+    expect(drive.folders).toEqual([{ id: folder.id, name: 'Photos' }])
+    expect(drive.files[0].folderId).toBe(folder.id)
+  })
+
+  test('assigning to an unknown folder is refused', () => {
+    expect(() => assignFileToFolder(BATCH, ROOT, 'nope')).toThrow('Unknown folder')
+  })
+
+  test('deleting a folder returns its files to the drive root', async () => {
+    setSwarmFsModuleForTests(makeFakeSwarmFs() as any)
+    const folder = createReclaimableFolder(BATCH, 'Photos')
+    assignFileToFolder(BATCH, ROOT, folder.id)
+    deleteReclaimableFolder(BATCH, folder.id)
+
+    const [drive] = await listReclaimableDrives()
+    expect(drive.folders).toEqual([])
+    expect(drive.files[0].folderId).toBeUndefined()
+  })
+
+  test('deleting a file cleans up its folder assignment', async () => {
+    setSwarmFsModuleForTests(makeFakeSwarmFs() as any)
+    const folder = createReclaimableFolder(BATCH, 'Photos')
+    assignFileToFolder(BATCH, ROOT, folder.id)
+    await deleteReclaimableFile(BATCH, ROOT)
+
+    const stored = JSON.parse(readFileSync('test/data/swarmfs/folders.json', 'utf-8'))
+    expect(stored[BATCH].assignments).toEqual({})
+  })
+
+  test('empty folder names are refused', () => {
+    expect(() => createReclaimableFolder(BATCH, '   ')).toThrow('name is required')
   })
 })
 

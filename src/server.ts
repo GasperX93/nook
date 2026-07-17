@@ -29,9 +29,12 @@ import {
 } from './reclaimable-registry'
 import {
   addFileToStage,
+  assignFileToFolder,
   commitUploadStage,
+  createReclaimableFolder,
   createUploadStage,
   deleteReclaimableFile,
+  deleteReclaimableFolder,
   getUploadJob,
   listReclaimableDrives,
   startUpload,
@@ -573,6 +576,50 @@ export function runServer() {
       return
     }
     context.body = job
+  })
+
+  // Organizational folders — grouping only, no Swarm objects. Server-side so
+  // the structure survives origins and reinstalls (unlike classic localStorage).
+  router.post('/reclaimable/:batch/folders', context => {
+    const { name } = context.request.body as { name?: string }
+
+    if (!name?.trim()) {
+      context.status = 400
+      context.body = { message: 'name is required' }
+
+      return
+    }
+    try {
+      context.body = createReclaimableFolder(context.params.batch, name)
+    } catch (error) {
+      logger.error(error)
+      context.status = 404
+      context.body = { message: 'Not a reclaimable drive' }
+    }
+  })
+
+  router.delete('/reclaimable/:batch/folders/:id', context => {
+    try {
+      deleteReclaimableFolder(context.params.batch, context.params.id)
+      context.body = { deleted: true }
+    } catch (error) {
+      logger.error(error)
+      context.status = 404
+      context.body = { message: 'Not a reclaimable drive' }
+    }
+  })
+
+  router.patch('/reclaimable/:batch/files/:root/folder', context => {
+    const { folderId } = context.request.body as { folderId?: string | null }
+
+    try {
+      assignFileToFolder(context.params.batch, context.params.root, folderId ?? null)
+      context.body = { moved: true }
+    } catch (error) {
+      logger.error(error)
+      context.status = 400
+      context.body = { message: String((error as Error).message ?? error) }
+    }
   })
 
   router.delete('/reclaimable/:batch/files/:root', async context => {
