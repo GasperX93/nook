@@ -36,7 +36,7 @@ import {
   getUploadJob,
   listReclaimableDrives,
   rebuildFreeBitmapIfMissing,
-  setSwarmFsModuleForTests,
+  setEtherchunkModuleForTests,
   startUpload,
 } from '../src/reclaimable'
 import { registerReclaimableBatch, resetReclaimableRegistryCache } from '../src/reclaimable-registry'
@@ -44,12 +44,12 @@ import { registerReclaimableBatch, resetReclaimableRegistryCache } from '../src/
 const BATCH = 'c'.repeat(64)
 const ROOT = 'd'.repeat(64)
 const REGISTRY = 'test/data/reclaimable-batches.json'
-const STATE_DIR = 'test/data/swarmfs'
+const STATE_DIR = 'test/data/etherchunk'
 
-function makeFakeSwarmFs(overrides: Record<string, unknown> = {}) {
+function makeFakeEtherchunk(overrides: Record<string, unknown> = {}) {
   return {
     upload: jest.fn(async (opts: any): Promise<Buffer> => {
-      // Real swarm-fs calls onProgress once per chunk (and resets its counter
+      // Real etherchunk calls onProgress once per chunk (and resets its counter
       // per file) — the engine counts calls, so N calls → chunksUploaded = N.
       for (let i = 0; i < 42; i++) opts.onProgress?.('file', i + 1)
 
@@ -87,7 +87,7 @@ function cleanUp() {
   rmSync(REGISTRY, { force: true })
   rmSync(STATE_DIR, { recursive: true, force: true })
   resetReclaimableRegistryCache()
-  setSwarmFsModuleForTests(null)
+  setEtherchunkModuleForTests(null)
 }
 
 describe('reclaimable engine', () => {
@@ -97,9 +97,9 @@ describe('reclaimable engine', () => {
   })
   afterAll(cleanUp)
 
-  test('upload runs through swarm-fs and reports a done job with the root reference', async () => {
-    const fake = makeFakeSwarmFs()
-    setSwarmFsModuleForTests(fake as any)
+  test('upload runs through etherchunk and reports a done job with the root reference', async () => {
+    const fake = makeFakeEtherchunk()
+    setEtherchunkModuleForTests(fake as any)
 
     const job = await startUpload(BATCH, 'photo.jpg', Buffer.from('data'))
     expect(job.status).toBe('uploading')
@@ -119,15 +119,15 @@ describe('reclaimable engine', () => {
   test('encrypted drives upload with encrypt: true', async () => {
     cleanUp()
     registerReclaimableBatch({ batchId: BATCH, depth: 20, encrypted: true, createdAt: '2026-07-16T00:00:00.000Z' })
-    const fake = makeFakeSwarmFs()
-    setSwarmFsModuleForTests(fake as any)
+    const fake = makeFakeEtherchunk()
+    setEtherchunkModuleForTests(fake as any)
 
     await waitForJob((await startUpload(BATCH, 'secret.pdf', Buffer.from('data'))).id)
     expect(fake.upload.mock.calls[0][0].encrypt).toBe(true)
   })
 
   test('upload failure surfaces on the job, not as an unhandled rejection', async () => {
-    setSwarmFsModuleForTests(makeFakeSwarmFs({ upload: jest.fn().mockRejectedValue(new Error('bucket full')) }) as any)
+    setEtherchunkModuleForTests(makeFakeEtherchunk({ upload: jest.fn().mockRejectedValue(new Error('bucket full')) }) as any)
 
     const job = await waitForJob((await startUpload(BATCH, 'photo.jpg', Buffer.from('data'))).id)
     expect(job.status).toBe('error')
@@ -144,7 +144,7 @@ describe('reclaimable engine', () => {
     const gate = new Promise<void>(resolve => {
       releaseFirst = resolve
     })
-    const fake = makeFakeSwarmFs({
+    const fake = makeFakeEtherchunk({
       upload: jest
         .fn()
         .mockImplementationOnce(async () => {
@@ -160,7 +160,7 @@ describe('reclaimable engine', () => {
           return Buffer.from(ROOT, 'hex')
         }),
     })
-    setSwarmFsModuleForTests(fake as any)
+    setEtherchunkModuleForTests(fake as any)
 
     const first = await startUpload(BATCH, 'a.bin', Buffer.from('a'))
     const second = await startUpload(BATCH, 'b.bin', Buffer.from('b'))
@@ -173,8 +173,8 @@ describe('reclaimable engine', () => {
   })
 
   test('delete returns fresh usage stats', async () => {
-    const fake = makeFakeSwarmFs()
-    setSwarmFsModuleForTests(fake as any)
+    const fake = makeFakeEtherchunk()
+    setEtherchunkModuleForTests(fake as any)
 
     const usage = await deleteReclaimableFile(BATCH, ROOT)
     const deleteArgs = fake.deleteFile.mock.calls[0] as unknown as [{ rootHash: Uint8Array }]
@@ -183,7 +183,7 @@ describe('reclaimable engine', () => {
   })
 
   test('listing maps ledger rows to basename + hex reference', async () => {
-    setSwarmFsModuleForTests(makeFakeSwarmFs() as any)
+    setEtherchunkModuleForTests(makeFakeEtherchunk() as any)
 
     const drives = await listReclaimableDrives()
     expect(drives).toHaveLength(1)
@@ -192,8 +192,8 @@ describe('reclaimable engine', () => {
   })
 
   test('listing survives a broken ledger without dropping the drive', async () => {
-    setSwarmFsModuleForTests(
-      makeFakeSwarmFs({
+    setEtherchunkModuleForTests(
+      makeFakeEtherchunk({
         list: jest.fn(() => {
           throw new Error('db locked')
         }),
@@ -215,7 +215,7 @@ describe('organizational folders', () => {
   afterAll(cleanUp)
 
   test('create → assign → listing carries folders and folderId', async () => {
-    setSwarmFsModuleForTests(makeFakeSwarmFs() as any)
+    setEtherchunkModuleForTests(makeFakeEtherchunk() as any)
     const folder = createReclaimableFolder(BATCH, 'Photos')
     assignFileToFolder(BATCH, ROOT, folder.id)
 
@@ -229,7 +229,7 @@ describe('organizational folders', () => {
   })
 
   test('deleting a folder returns its files to the drive root', async () => {
-    setSwarmFsModuleForTests(makeFakeSwarmFs() as any)
+    setEtherchunkModuleForTests(makeFakeEtherchunk() as any)
     const folder = createReclaimableFolder(BATCH, 'Photos')
     assignFileToFolder(BATCH, ROOT, folder.id)
     deleteReclaimableFolder(BATCH, folder.id)
@@ -240,12 +240,12 @@ describe('organizational folders', () => {
   })
 
   test('deleting a file cleans up its folder assignment', async () => {
-    setSwarmFsModuleForTests(makeFakeSwarmFs() as any)
+    setEtherchunkModuleForTests(makeFakeEtherchunk() as any)
     const folder = createReclaimableFolder(BATCH, 'Photos')
     assignFileToFolder(BATCH, ROOT, folder.id)
     await deleteReclaimableFile(BATCH, ROOT)
 
-    const stored = JSON.parse(readFileSync('test/data/swarmfs/folders.json', 'utf-8'))
+    const stored = JSON.parse(readFileSync('test/data/etherchunk/folders.json', 'utf-8'))
     expect(stored[BATCH].assignments).toEqual({})
   })
 
@@ -262,8 +262,8 @@ describe('folder upload staging', () => {
   afterAll(cleanUp)
 
   test('stage → add files → commit uploads the staged directory', async () => {
-    const fake = makeFakeSwarmFs()
-    setSwarmFsModuleForTests(fake as any)
+    const fake = makeFakeEtherchunk()
+    setEtherchunkModuleForTests(fake as any)
 
     const { stageId } = await createUploadStage(BATCH)
     expect(addFileToStage(stageId, 'site/index.html', Buffer.from('<html/>'))).toEqual({ fileCount: 1 })
@@ -279,7 +279,7 @@ describe('folder upload staging', () => {
 
   test('commit generates a browseable index.html when the folder has none', async () => {
     let uploaded: { files: string[]; indexContent: string } | null = null
-    const fake = makeFakeSwarmFs({
+    const fake = makeFakeEtherchunk({
       upload: jest.fn(async (opts: any): Promise<Buffer> => {
         // eslint-disable-next-line @typescript-eslint/no-var-requires
         const { readdirSync: rd, readFileSync: rf } = require('fs')
@@ -288,7 +288,7 @@ describe('folder upload staging', () => {
         return Buffer.from(ROOT, 'hex')
       }),
     })
-    setSwarmFsModuleForTests(fake as any)
+    setEtherchunkModuleForTests(fake as any)
 
     const { stageId } = await createUploadStage(BATCH)
     addFileToStage(stageId, 'charts/a chart.png', Buffer.from('png'))
@@ -303,7 +303,7 @@ describe('folder upload staging', () => {
 
   test('commit keeps an existing index.html untouched (websites)', async () => {
     let indexContent = ''
-    const fake = makeFakeSwarmFs({
+    const fake = makeFakeEtherchunk({
       upload: jest.fn(async (opts: any): Promise<Buffer> => {
         // eslint-disable-next-line @typescript-eslint/no-var-requires
         indexContent = require('fs').readFileSync(`${opts.path}/index.html`, 'utf-8')
@@ -311,7 +311,7 @@ describe('folder upload staging', () => {
         return Buffer.from(ROOT, 'hex')
       }),
     })
-    setSwarmFsModuleForTests(fake as any)
+    setEtherchunkModuleForTests(fake as any)
 
     const { stageId } = await createUploadStage(BATCH)
     addFileToStage(stageId, 'site/index.html', Buffer.from('<html>mine</html>'))
@@ -338,12 +338,40 @@ describe('folder upload staging', () => {
   })
 })
 
+describe('swarm-fs → etherchunk state migration', () => {
+  beforeEach(() => {
+    cleanUp()
+    rmSync('test/data/swarmfs', { recursive: true, force: true })
+    registerReclaimableBatch({ batchId: BATCH, depth: 19, encrypted: false, createdAt: '2026-07-16T00:00:00.000Z' })
+  })
+  afterAll(() => {
+    cleanUp()
+    rmSync('test/data/swarmfs', { recursive: true, force: true })
+  })
+
+  test('legacy dir and ledger file prefixes are renamed forward', async () => {
+    // Simulate pre-rename state: old dir name, old file prefixes
+    mkdirSync('test/data/swarmfs', { recursive: true })
+    writeFileSync(`test/data/swarmfs/swarmfs-${BATCH.slice(0, 8)}.free`, Buffer.alloc(65536))
+    writeFileSync(`test/data/swarmfs/swarmfs-${BATCH.slice(0, 8)}.db`, Buffer.from('db'))
+    writeFileSync('test/data/swarmfs/folders.json', '{}')
+
+    setEtherchunkModuleForTests(makeFakeEtherchunk() as any)
+    await listReclaimableDrives() // any state access triggers the migration
+
+    expect(existsSync('test/data/swarmfs')).toBe(false)
+    expect(existsSync(`test/data/etherchunk/etherchunk-${BATCH.slice(0, 8)}.free`)).toBe(true)
+    expect(existsSync(`test/data/etherchunk/etherchunk-${BATCH.slice(0, 8)}.db`)).toBe(true)
+    expect(existsSync('test/data/etherchunk/folders.json')).toBe(true)
+  })
+})
+
 describe('rebuildFreeBitmapIfMissing', () => {
   beforeEach(cleanUp)
   afterAll(cleanUp)
 
-  const DB_PATH = `${STATE_DIR}/swarmfs-${BATCH.slice(0, 8)}.db`
-  const FREE_PATH = `${STATE_DIR}/swarmfs-${BATCH.slice(0, 8)}.free`
+  const DB_PATH = `${STATE_DIR}/etherchunk-${BATCH.slice(0, 8)}.db`
+  const FREE_PATH = `${STATE_DIR}/etherchunk-${BATCH.slice(0, 8)}.free`
 
   function createDb(pairs: [number, number][]) {
     mkdirSync(STATE_DIR, { recursive: true })
@@ -362,7 +390,7 @@ describe('rebuildFreeBitmapIfMissing', () => {
     database.close()
   }
 
-  test('reconstructs the bitmap from db pairs (swarm-fs >= 1.3.2 layout)', () => {
+  test('reconstructs the bitmap from db pairs (etherchunk sub-byte layout)', () => {
     createDb([
       [0, 0], // bit 0 → byte 0, mask 0x01
       [0, 7], // bit 7 → byte 0, mask 0x80

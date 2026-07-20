@@ -430,7 +430,7 @@ export function runServer() {
   // deleting a file frees its slots and capacity comes back. Batches created
   // here are registered as reclaimable and refused by every Bee-stamping path
   // above (ledger poisoning guard). Upload/delete/ledger endpoints follow with
-  // the swarm-fs integration (design doc M1).
+  // the etherchunk integration (design doc M1).
 
   router.post('/reclaimable', async context => {
     const { amount, depth, encrypted, label } = context.request.body as {

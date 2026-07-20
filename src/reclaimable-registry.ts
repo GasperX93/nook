@@ -18,9 +18,9 @@ export interface ReclaimableBatch {
   createdAt: string
 }
 
-// swarm-fs SlotMap silently corrupts its ledger below depth 19 (fractional
+// etherchunk (formerly swarm-fs) SlotMap silently corrupted its ledger below depth 19 (fractional
 // bytes-per-bucket → allocations never recorded → duplicate stamps → chunk
-// loss; see Cafe137/swarm-fs#1). Hard floor, enforced at drive creation.
+// loss; see Cafe137/etherchunk#1, fixed in swarm-fs 1.3.2 = etherchunk 1.0.0).
 export const MIN_RECLAIMABLE_DEPTH = 19
 
 export const RECLAIMABLE_WRITE_BLOCKED_MESSAGE =

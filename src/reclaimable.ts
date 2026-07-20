@@ -11,20 +11,21 @@ import { logger } from './logger'
 import { getPath } from './path'
 import { listReclaimableBatches, ReclaimableBatch } from './reclaimable-registry'
 
-// The reclaimable-drive engine (#99): uploads through swarm-fs, which stamps
-// chunks client-side and tracks the (bucket, slot) each chunk occupies, so
-// deleting a file frees its slots and future uploads reuse them. Design notes
-// live in spindle (reclaimable-drive-design-2026-07-15.md); the spike that
-// validated all of this is swarm-fs-spike-2026-07-15.md.
+// The reclaimable-drive engine (#99): uploads through etherchunk (formerly
+// swarm-fs), which stamps chunks client-side and tracks the (bucket, slot)
+// each chunk occupies, so deleting a file frees its slots and future uploads
+// reuse them. Design notes live in spindle (reclaimable-drive-design-
+// 2026-07-15.md); the spike that validated all of this is
+// swarm-fs-spike-2026-07-15.md.
 
-// ─── swarm-fs module loading ─────────────────────────────────────────────────
-// swarm-fs is ESM-only ("type": "module"). Our build targets CommonJS, where
+// ─── etherchunk module loading ───────────────────────────────────────────────
+// etherchunk is ESM-only ("type": "module"). Our build targets CommonJS, where
 // tsc rewrites `import()` into `require()` — which cannot load ESM. Routing
 // through new Function keeps a genuine dynamic import in the emitted code.
-// NOTE: never import 'swarm-fs' (dist/index.js) — that is the CLI and runs
+// NOTE: never import 'etherchunk' (dist/index.js) — that is the CLI and runs
 // main() on import. The library surface is dist/commands.js.
 
-interface SwarmFsFileRow {
+interface EtherchunkFileRow {
   path: string
   rootHash: Uint8Array
   kind: string
@@ -33,14 +34,14 @@ interface SwarmFsFileRow {
   uploadDate?: number
 }
 
-interface SwarmFsStats {
+interface EtherchunkStats {
   totalSlots: number
   occupiedSlots: number
   freeSlots: number
   slotsPerBucket: number
 }
 
-interface SwarmFsModule {
+interface EtherchunkModule {
   upload(opts: {
     signer: bigint
     batchId: Uint8Array
@@ -54,41 +55,60 @@ interface SwarmFsModule {
     onProgress?: (file: string, chunks: number) => void
   }): Promise<Uint8Array>
   deleteFile(opts: { batchId: Uint8Array; batchDepth: number; stateDir: string; rootHash: Uint8Array }): Promise<void>
-  list(opts: { batchId: Uint8Array; stateDir: string }): SwarmFsFileRow[]
-  status(opts: { batchId: Uint8Array; batchDepth: number; stateDir: string }): SwarmFsStats
+  list(opts: { batchId: Uint8Array; stateDir: string }): EtherchunkFileRow[]
+  status(opts: { batchId: Uint8Array; batchDepth: number; stateDir: string }): EtherchunkStats
 }
 
-const dynamicImport = new Function('specifier', 'return import(specifier)') as (s: string) => Promise<SwarmFsModule>
+const dynamicImport = new Function('specifier', 'return import(specifier)') as (s: string) => Promise<EtherchunkModule>
 
-let swarmFsModule: Promise<SwarmFsModule> | null = null
+let etherchunkModule: Promise<EtherchunkModule> | null = null
 
-async function loadSwarmFs(): Promise<SwarmFsModule> {
-  if (!swarmFsModule) {
-    swarmFsModule = dynamicImport('swarm-fs/dist/commands.js')
+async function loadEtherchunk(): Promise<EtherchunkModule> {
+  if (!etherchunkModule) {
+    etherchunkModule = dynamicImport('etherchunk/dist/commands.js')
   }
 
-  return swarmFsModule
+  return etherchunkModule
 }
 
 // Test hook: jest's CJS sandbox cannot dynamic-import ESM, so specs inject a fake.
-export function setSwarmFsModuleForTests(module: SwarmFsModule | null): void {
-  swarmFsModule = module ? Promise.resolve(module) : null
+export function setEtherchunkModuleForTests(module: EtherchunkModule | null): void {
+  etherchunkModule = module ? Promise.resolve(module) : null
 }
 
 // ─── State locations ─────────────────────────────────────────────────────────
 // The slot ledger lives in Nook's data dir (not ~/.swarmfs) so it travels with
 // app-data backups and is covered by the same durability story as everything
-// else. File names must match swarm-fs's getPaths() convention.
+// else. File names must match etherchunk's getPaths() convention.
 
 export function reclaimableStateDir(): string {
-  const dir = getPath('swarmfs')
+  const dir = getPath('etherchunk')
+  const legacyDir = getPath('swarmfs')
+
+  // One-time migration: the library was renamed swarm-fs → etherchunk and its
+  // ledger file prefix changed with it. If existing ledgers were left behind
+  // under the old names, etherchunk would start from an all-free bitmap and
+  // re-issue occupied slots — silent data loss. Move everything forward.
+  if (!existsSync(dir) && existsSync(legacyDir)) {
+    renameSync(legacyDir, dir)
+  }
   mkdirSync(dir, { recursive: true })
+
+  for (const item of readdirSync(dir)) {
+    if (item.startsWith('swarmfs-')) {
+      const target = path.join(dir, item.replace(/^swarmfs-/, 'etherchunk-'))
+
+      if (!existsSync(target)) {
+        renameSync(path.join(dir, item), target)
+      }
+    }
+  }
 
   return dir
 }
 
 function ledgerPaths(batchId: string): { free: string; db: string } {
-  const prefix = path.join(reclaimableStateDir(), `swarmfs-${batchId.slice(0, 8)}`)
+  const prefix = path.join(reclaimableStateDir(), `etherchunk-${batchId.slice(0, 8)}`)
 
   return { free: `${prefix}.free`, db: `${prefix}.db` }
 }
@@ -96,9 +116,10 @@ function ledgerPaths(batchId: string): { free: string; db: string } {
 // ─── Ledger rebuild ──────────────────────────────────────────────────────────
 // The SQLite db stores every file's (bucket, slot) pairs, so the .free bitmap
 // is fully derivable from it. If the bitmap is missing while the db has rows,
-// swarm-fs would silently start from an all-free bitmap and re-issue occupied
+// etherchunk would silently start from an all-free bitmap and re-issue occupied
 // slots — exactly the duplicate-stamp data loss the spike demonstrated. Rebuild
-// before every mutation instead. Layout must match swarm-fs >= 1.3.2: a flat
+// before every mutation instead. Layout must match etherchunk 1.0.0 (formerly
+// swarm-fs 1.3.2, where the sub-byte layout landed): a flat
 // bitmap addressed by global bit index `bucket * slotsPerBucket + slot`,
 // LSB-first within each byte.
 
@@ -138,11 +159,11 @@ export function rebuildFreeBitmapIfMissing(batchId: string, depth: number): bool
 }
 
 // ─── Direct upload ───────────────────────────────────────────────────────────
-// swarm-fs alone sends deferred uploads: Bee 201s into an upload store that is
+// etherchunk alone sends deferred uploads: Bee 201s into an upload store that is
 // invisible to retrieval, and "uploaded" means nothing yet (the #86 trap, re-
 // confirmed in the spike). Injecting this fetchFn makes every chunk POST wait
 // for a pushsync receipt — progress counts are then network-confirmed. The
-// timeout is raised from swarm-fs's 30s: receipts usually land in well under a
+// timeout is raised from etherchunk's 30s: receipts usually land in well under a
 // second, but a congested light node should soften, not fail.
 
 export function buildDirectFetch(fetchFn: typeof fetch = fetch): typeof fetch {
@@ -173,7 +194,7 @@ async function enqueue<T>(batchId: string, task: () => Promise<T>): Promise<T> {
 }
 
 // ─── Signer ──────────────────────────────────────────────────────────────────
-// The batch owner is the Bee node wallet; swarm-fs signs stamps with the same
+// The batch owner is the Bee node wallet; etherchunk signs stamps with the same
 // key Bee itself would use. Read on demand, never cached.
 
 async function readSigner(): Promise<bigint> {
@@ -226,7 +247,7 @@ export function getUploadJob(id: string): UploadJob | undefined {
   return jobs.get(id)
 }
 
-// Shared job runner: uploadPath is a file OR a directory (swarm-fs builds a
+// Shared job runner: uploadPath is a file OR a directory (etherchunk builds a
 // Mantaray manifest for directories, same as classic collection uploads).
 function runUploadJob(entry: ReclaimableBatch, displayName: string, uploadPath: string, cleanupDir: string): UploadJob {
   const job: UploadJob = {
@@ -242,8 +263,8 @@ function runUploadJob(entry: ReclaimableBatch, displayName: string, uploadPath: 
   enqueue(entry.batchId, async () => {
     try {
       rebuildFreeBitmapIfMissing(entry.batchId, entry.depth)
-      const swarmFs = await loadSwarmFs()
-      const root = await swarmFs.upload({
+      const etherchunk = await loadEtherchunk()
+      const root = await etherchunk.upload({
         signer: await readSigner(),
         batchId: Binary.hexToUint8Array(entry.batchId),
         batchDepth: entry.depth,
@@ -253,7 +274,7 @@ function runUploadJob(entry: ReclaimableBatch, displayName: string, uploadPath: 
         encrypt: entry.encrypted,
         parallelism: 32,
         fetchFn: buildDirectFetch(),
-        // Count calls ourselves: swarm-fs's per-file counter resets for the
+        // Count calls ourselves: etherchunk's per-file counter resets for the
         // manifest phase, so the passed value ends at ~3 instead of the total.
         onProgress: () => {
           job.chunksUploaded += 1
@@ -277,7 +298,7 @@ function runUploadJob(entry: ReclaimableBatch, displayName: string, uploadPath: 
 export async function startUpload(batchId: string, fileName: string, data: Buffer): Promise<UploadJob> {
   const entry = requireRegisteredBatch(batchId)
   // The temp file carries the real file name (inside a throwaway dir)
-  // because swarm-fs records the upload path in its registry.
+  // because etherchunk records the upload path in its registry.
   const dir = await mkdtemp(path.join(tmpdir(), 'nook-reclaimable-'))
   writeFileSync(path.join(dir, path.basename(fileName)), data)
 
@@ -287,7 +308,7 @@ export async function startUpload(batchId: string, fileName: string, data: Buffe
 // ─── Folder upload staging ───────────────────────────────────────────────────
 // The renderer can't send a directory in one request without multipart, so it
 // stages files one raw-body POST at a time, then commits: the staged tree is
-// handed to swarm-fs as a directory (→ Mantaray manifest, kind 'manifest').
+// handed to etherchunk as a directory (→ Mantaray manifest, kind 'manifest').
 
 interface UploadStage {
   id: string
@@ -360,7 +381,7 @@ export function commitUploadStage(stageId: string, folderName: string): UploadJo
   }
   stages.delete(stageId)
   const entry = requireRegisteredBatch(stage.batchId)
-  // swarm-fs records the directory path in its registry — give the staged
+  // etherchunk records the directory path in its registry — give the staged
   // tree the real folder name so listings show it. If the renderer staged
   // paths already rooted in that folder, the dir exists; otherwise wrap.
   const dirName = path.basename(folderName) || 'folder'
@@ -377,7 +398,7 @@ export function commitUploadStage(stageId: string, folderName: string): UploadJo
     }
   }
 
-  // swarm-fs only writes a website-index-document entry when index.html
+  // etherchunk only writes a website-index-document entry when index.html
   // exists, and Bee 404s a manifest root without one — a plain folder of
   // files would not be browseable at /bzz/<ref>/. Generate a minimal listing
   // so the folder link always opens. (Real websites keep their own index.)
@@ -532,21 +553,21 @@ function removeFolderAssignment(batchId: string, reference: string): void {
 
 // ─── Delete & listing ────────────────────────────────────────────────────────
 
-export async function deleteReclaimableFile(batchId: string, rootHex: string): Promise<SwarmFsStats> {
+export async function deleteReclaimableFile(batchId: string, rootHex: string): Promise<EtherchunkStats> {
   const entry = requireRegisteredBatch(batchId)
 
   return enqueue(entry.batchId, async () => {
     rebuildFreeBitmapIfMissing(entry.batchId, entry.depth)
-    const swarmFs = await loadSwarmFs()
+    const etherchunk = await loadEtherchunk()
     const opts = {
       batchId: Binary.hexToUint8Array(entry.batchId),
       batchDepth: entry.depth,
       stateDir: reclaimableStateDir(),
     }
-    await swarmFs.deleteFile({ ...opts, rootHash: Binary.hexToUint8Array(rootHex) })
+    await etherchunk.deleteFile({ ...opts, rootHash: Binary.hexToUint8Array(rootHex) })
     removeFolderAssignment(entry.batchId, rootHex)
 
-    return swarmFs.status(opts)
+    return etherchunk.status(opts)
   })
 }
 
@@ -560,7 +581,7 @@ export interface ReclaimableDriveView extends ReclaimableBatch {
     uploadDate?: number
     folderId?: string
   }[]
-  usage: SwarmFsStats | null
+  usage: EtherchunkStats | null
 }
 
 export async function listReclaimableDrives(): Promise<ReclaimableDriveView[]> {
@@ -572,7 +593,7 @@ export async function listReclaimableDrives(): Promise<ReclaimableDriveView[]> {
     const { folders, assignments } = driveFolders(allFolders, entry.batchId)
 
     try {
-      const swarmFs = await loadSwarmFs()
+      const etherchunk = await loadEtherchunk()
       const opts = {
         batchId: Binary.hexToUint8Array(entry.batchId),
         batchDepth: entry.depth,
@@ -581,7 +602,7 @@ export async function listReclaimableDrives(): Promise<ReclaimableDriveView[]> {
       drives.push({
         ...entry,
         folders,
-        files: swarmFs.list(opts).map(row => {
+        files: etherchunk.list(opts).map(row => {
           const reference = Binary.uint8ArrayToHex(row.rootHash)
 
           return {
@@ -593,7 +614,7 @@ export async function listReclaimableDrives(): Promise<ReclaimableDriveView[]> {
             folderId: assignments[reference.toLowerCase()],
           }
         }),
-        usage: swarmFs.status(opts),
+        usage: etherchunk.status(opts),
       })
     } catch (error) {
       logger.error(`reclaimable drive listing failed for ${entry.batchId.slice(0, 8)}: ${error}`)
