@@ -1100,13 +1100,16 @@ function RecordRow({
             {downloadingId === record.id ? <RefreshCw size={12} className="animate-spin" /> : <Download size={12} />}
           </button>
         )}
+        {/* Forget, not delete: classic drives can't remove content from Swarm —
+            this only drops the local record. Reclaimable rows keep the trash
+            icon because there deletion is real. */}
         <button
           onClick={() => onRemove(record.id)}
-          title="Remove from Drive"
-          className="w-6 h-6 flex items-center justify-center rounded transition-colors hover:text-red-400"
+          title="Forget — file stays on Swarm until the drive expires"
+          className="w-6 h-6 flex items-center justify-center rounded transition-colors hover:text-[rgb(var(--fg))]"
           style={{ color: 'rgb(var(--fg-muted))' }}
         >
-          <Trash2 size={12} />
+          <X size={12} />
         </button>
       </div>
     </div>
@@ -1483,15 +1486,6 @@ function DriveCard({
                   >
                     <Pencil size={13} style={{ color: 'rgb(var(--fg-muted))' }} />
                     Rename
-                  </button>
-                  <button
-                    disabled
-                    title="Coming soon"
-                    className="flex items-center gap-2 w-full px-3 py-2 text-xs opacity-40 cursor-not-allowed"
-                    style={{ color: 'rgb(var(--fg))' }}
-                  >
-                    <X size={13} style={{ color: 'rgb(var(--fg-muted))' }} />
-                    Forget
                   </button>
                 </div>
               )}
@@ -2135,11 +2129,11 @@ function SharedDriveCard({
             e.stopPropagation()
             onRemove()
           }}
-          className="shrink-0 w-6 h-6 flex items-center justify-center rounded transition-colors hover:text-red-400"
+          className="shrink-0 w-6 h-6 flex items-center justify-center rounded transition-colors hover:text-[rgb(var(--fg))]"
           style={{ color: 'rgb(var(--fg-muted))' }}
-          title="Remove from list"
+          title="Forget — removes it from your list"
         >
-          <Trash2 size={12} />
+          <X size={12} />
         </button>
       </div>
 
@@ -2770,7 +2764,7 @@ export default function Drive() {
               e.stopPropagation()
               removeFolder(folder.id, folders)
             }}
-            title="Delete folder"
+            title="Delete folder — files inside move back to the drive root"
             className="w-6 h-6 flex items-center justify-center rounded hover:text-red-400 transition-colors"
             style={{ color: 'rgb(var(--fg-muted))' }}
           >
