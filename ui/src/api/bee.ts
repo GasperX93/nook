@@ -482,8 +482,13 @@ export const beeApi = {
   },
 
   downloadFile: async (hash: string, onProgress?: (pct: number) => void): Promise<Blob> => {
+    // Trailing slash matters: /bzz/<ref> answers 308 → /bzz/<ref>/, and in dev
+    // that Location escapes the /bee-api proxy prefix, so the browser lands on
+    // the SPA fallback and "downloads" index.html instead of the file.
+    const url = `${getBeeUrl()}/bzz/${hash.endsWith('/') ? hash : `${hash}/`}`
+
     if (!onProgress) {
-      const r = await fetch(`${getBeeUrl()}/bzz/${hash}`)
+      const r = await fetch(url)
 
       if (!r.ok) throw new Error(`Download failed: ${r.status}`)
 
@@ -492,7 +497,7 @@ export const beeApi = {
 
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest()
-      xhr.open('GET', `${getBeeUrl()}/bzz/${hash}`)
+      xhr.open('GET', url)
       xhr.responseType = 'blob'
       xhr.onprogress = e => {
         if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100))

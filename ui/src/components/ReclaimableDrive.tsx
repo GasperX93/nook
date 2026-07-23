@@ -18,7 +18,7 @@ import {
 import React, { useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 
-import { getBeeUrl, type Stamp, depthToBytes } from '../api/bee'
+import { beeApi, getBeeUrl, type Stamp, depthToBytes } from '../api/bee'
 import { serverApi, type ReclaimableDrive, type ReclaimableFile } from '../api/server'
 import { fileListToEntries, readDroppedDirectory, type FileEntry } from '../utils/directory'
 
@@ -307,6 +307,31 @@ function FileRow({
   const openUrl = `${getBeeUrl()}/bzz/${file.reference}/`
   const ttlDays = ttlSeconds ? ttlSeconds / 86400 : null
   const urgent = ttlDays !== null && ttlDays <= 7
+  const [downloadPct, setDownloadPct] = useState<number | null>(null)
+
+  // The bee URL is a different origin than the dashboard, so an anchor's
+  // download attribute is ignored — fetch to a blob and save it instead
+  // (same pattern as classic rows). The filename comes from the ledger, so
+  // even pre-1.0.1 uploads without manifest Filename metadata save correctly.
+  async function handleDownload() {
+    if (downloadPct !== null) return
+
+    setDownloadPct(0)
+
+    try {
+      const blob = await beeApi.downloadFile(file.reference, setDownloadPct)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = file.name
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } finally {
+      setDownloadPct(null)
+    }
+  }
 
   return (
     <div
@@ -410,15 +435,20 @@ function FileRow({
             <ExternalLink size={12} />
           </a>
         )}
-        <a
-          href={openUrl}
-          download={file.name}
-          title="Download"
-          className="w-6 h-6 flex items-center justify-center rounded transition-colors"
-          style={{ color: 'rgb(var(--fg-muted))' }}
-        >
-          <Download size={12} />
-        </a>
+        {downloadPct !== null ? (
+          <span className="text-[10px] tabular-nums px-1" style={{ color: 'rgb(var(--fg-muted))' }}>
+            {downloadPct}%
+          </span>
+        ) : (
+          <button
+            onClick={() => void handleDownload()}
+            title="Download"
+            className="w-6 h-6 flex items-center justify-center rounded transition-colors"
+            style={{ color: 'rgb(var(--fg-muted))' }}
+          >
+            <Download size={12} />
+          </button>
+        )}
         <button
           onClick={onDelete}
           disabled={deleting}

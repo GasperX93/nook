@@ -976,7 +976,7 @@ function RecordRow({
           <Lock size={12} style={{ color: 'rgb(var(--accent))' }} />
         ) : record.type === 'file' && isImageFile(record.name) ? (
           <img
-            src={`${getBeeUrl()}/bzz/${record.hash}`}
+            src={`${getBeeUrl()}/bzz/${record.hash}/`}
             className="w-full h-full object-cover"
             onError={e => {
               ;(e.target as HTMLImageElement).style.display = 'none'
