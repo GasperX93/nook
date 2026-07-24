@@ -27,9 +27,15 @@ import { fileListToEntries, readDroppedDirectory, type FileEntry } from '../util
 // the server ledger, not localStorage. Uploads are direct (every chunk waits
 // for a pushsync receipt), so progress here means on-the-network.
 
-// Downloads currently in flight, by reference — row state resets on remount
-// but the underlying fetch survives navigation, so dedupe lives here (#105).
-const inFlightDownloads = new Set<string>()
+// Downloads currently in flight, reference → progress pct. Row state resets
+// on remount but the underlying fetch survives navigation, so both the dedupe
+// and the progress display live here; rows subscribe to stay in sync (#105).
+const inFlightDownloads = new Map<string, number>()
+const downloadListeners = new Set<() => void>()
+
+function notifyDownloadListeners() {
+  downloadListeners.forEach(listener => listener())
+}
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
@@ -311,24 +317,39 @@ function FileRow({
   const openUrl = `${getBeeUrl()}/bzz/${file.reference}/`
   const ttlDays = ttlSeconds ? ttlSeconds / 86400 : null
   const urgent = ttlDays !== null && ttlDays <= 7
-  const [downloadPct, setDownloadPct] = useState<number | null>(null)
+  // Progress mirrors the module-level in-flight map so a row remounted after
+  // navigation shows the running download's NN% again instead of a dead arrow.
+  const [downloadPct, setDownloadPct] = useState<number | null>(() => inFlightDownloads.get(file.reference) ?? null)
   const [downloadError, setDownloadError] = useState<string | null>(null)
+
+  useEffect(() => {
+    const sync = () => setDownloadPct(inFlightDownloads.get(file.reference) ?? null)
+    sync()
+    downloadListeners.add(sync)
+
+    return () => {
+      downloadListeners.delete(sync)
+    }
+  }, [file.reference])
 
   // The bee URL is a different origin than the dashboard, so an anchor's
   // download attribute is ignored — fetch to a blob and save it instead
   // (same pattern as classic rows). The filename comes from the ledger, so
   // even pre-1.0.1 uploads without manifest Filename metadata save correctly.
   async function handleDownload() {
-    // Dedupe across remounts too (#105): row state resets on navigation but
-    // the fetch keeps running — a module-level set prevents a duplicate.
-    if (downloadPct !== null || inFlightDownloads.has(file.reference)) return
+    // Dedupe across remounts (#105): the fetch survives navigation, so the
+    // in-flight map is the source of truth, not row state.
+    if (inFlightDownloads.has(file.reference)) return
 
-    inFlightDownloads.add(file.reference)
-    setDownloadPct(0)
+    inFlightDownloads.set(file.reference, 0)
+    notifyDownloadListeners()
     setDownloadError(null)
 
     try {
-      const blob = await beeApi.downloadFile(file.reference, setDownloadPct)
+      const blob = await beeApi.downloadFile(file.reference, pct => {
+        inFlightDownloads.set(file.reference, pct)
+        notifyDownloadListeners()
+      })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
@@ -343,7 +364,7 @@ function FileRow({
       setDownloadError(error instanceof Error ? error.message : 'Download failed')
     } finally {
       inFlightDownloads.delete(file.reference)
-      setDownloadPct(null)
+      notifyDownloadListeners()
     }
   }
 
