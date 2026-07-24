@@ -499,14 +499,38 @@ export const beeApi = {
       const xhr = new XMLHttpRequest()
       xhr.open('GET', url)
       xhr.responseType = 'blob'
+      // Stall guard (#105): Bee can hang mid-stream while chunks are still
+      // propagating — without this the XHR waits forever and the UI shows a
+      // frozen percentage with no way to retry.
+      let stallTimer: ReturnType<typeof setTimeout>
+      let stalled = false
+      const armStallGuard = () => {
+        clearTimeout(stallTimer)
+        stallTimer = setTimeout(() => {
+          stalled = true
+          xhr.abort()
+        }, 30_000)
+      }
+      armStallGuard()
       xhr.onprogress = e => {
+        armStallGuard()
+
         if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100))
       }
       xhr.onload = () => {
+        clearTimeout(stallTimer)
+
         if (xhr.status >= 200 && xhr.status < 300) resolve(xhr.response as Blob)
         else reject(new Error(`Download failed: ${xhr.status}`))
       }
-      xhr.onerror = () => reject(new Error('Download failed'))
+      xhr.onerror = () => {
+        clearTimeout(stallTimer)
+        reject(new Error('Download failed'))
+      }
+      xhr.onabort = () => {
+        clearTimeout(stallTimer)
+        reject(new Error(stalled ? 'Download stalled — content may still be propagating' : 'Download cancelled'))
+      }
       xhr.send()
     })
   },

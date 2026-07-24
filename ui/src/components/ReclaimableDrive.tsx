@@ -27,6 +27,10 @@ import { fileListToEntries, readDroppedDirectory, type FileEntry } from '../util
 // the server ledger, not localStorage. Uploads are direct (every chunk waits
 // for a pushsync receipt), so progress here means on-the-network.
 
+// Downloads currently in flight, by reference — row state resets on remount
+// but the underlying fetch survives navigation, so dedupe lives here (#105).
+const inFlightDownloads = new Set<string>()
+
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
 
@@ -308,15 +312,20 @@ function FileRow({
   const ttlDays = ttlSeconds ? ttlSeconds / 86400 : null
   const urgent = ttlDays !== null && ttlDays <= 7
   const [downloadPct, setDownloadPct] = useState<number | null>(null)
+  const [downloadError, setDownloadError] = useState<string | null>(null)
 
   // The bee URL is a different origin than the dashboard, so an anchor's
   // download attribute is ignored — fetch to a blob and save it instead
   // (same pattern as classic rows). The filename comes from the ledger, so
   // even pre-1.0.1 uploads without manifest Filename metadata save correctly.
   async function handleDownload() {
-    if (downloadPct !== null) return
+    // Dedupe across remounts too (#105): row state resets on navigation but
+    // the fetch keeps running — a module-level set prevents a duplicate.
+    if (downloadPct !== null || inFlightDownloads.has(file.reference)) return
 
+    inFlightDownloads.add(file.reference)
     setDownloadPct(0)
+    setDownloadError(null)
 
     try {
       const blob = await beeApi.downloadFile(file.reference, setDownloadPct)
@@ -327,8 +336,13 @@ function FileRow({
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)
-      URL.revokeObjectURL(url)
+      // Delayed revoke: revoking synchronously can abort a large-blob save
+      // the browser hasn't started reading yet.
+      setTimeout(() => URL.revokeObjectURL(url), 10_000)
+    } catch (error) {
+      setDownloadError(error instanceof Error ? error.message : 'Download failed')
     } finally {
+      inFlightDownloads.delete(file.reference)
       setDownloadPct(null)
     }
   }
@@ -442,9 +456,9 @@ function FileRow({
         ) : (
           <button
             onClick={() => void handleDownload()}
-            title="Download"
+            title={downloadError ? `${downloadError} — click to retry` : 'Download'}
             className="w-6 h-6 flex items-center justify-center rounded transition-colors"
-            style={{ color: 'rgb(var(--fg-muted))' }}
+            style={{ color: downloadError ? '#ef4444' : 'rgb(var(--fg-muted))' }}
           >
             <Download size={12} />
           </button>

@@ -146,7 +146,9 @@ async function downloadFromSwarm(
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
-  URL.revokeObjectURL(url)
+  // Delayed revoke: revoking synchronously can abort a large-blob save the
+  // browser hasn't started reading yet.
+  setTimeout(() => URL.revokeObjectURL(url), 10_000)
 }
 
 async function pollStampUsable(id: string, onPhase?: (p: string) => void): Promise<void> {
@@ -2322,6 +2324,11 @@ export default function Drive() {
           : undefined
 
       await downloadFromSwarm(hash, name, pct => setDownloadPct(pct), actOptions)
+    } catch (error) {
+      // Surface failures (#105) — a silent catch here left users with no
+      // feedback when a download stalled or errored mid-stream.
+      // eslint-disable-next-line no-alert
+      alert(error instanceof Error ? error.message : 'Download failed — please try again.')
     } finally {
       setDownloadingId(null)
       setDownloadPct(null)
