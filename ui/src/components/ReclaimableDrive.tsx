@@ -581,16 +581,19 @@ export function ReclaimableDriveView({
 
         if (job.status !== 'uploading') {
           if (pollRef.current) window.clearInterval(pollRef.current)
-          setUploading(null)
 
           if (job.status === 'error') {
+            setUploading(null)
             setUploadError(job.error ?? 'Upload failed')
           } else {
             // Uploaded while a folder was open → it lives there
             if (assignFolderId && job.reference) {
               await serverApi.moveReclaimableFile(drive.batchId, job.reference, assignFolderId).catch(() => undefined)
             }
-            refreshDrives()
+            // Keep the uploading panel up until the refetched list actually
+            // contains the file — dropping it first flashes "No files yet".
+            await queryClient.invalidateQueries({ queryKey: ['server', 'reclaimable'] })
+            setUploading(null)
           }
         }
       } catch {
