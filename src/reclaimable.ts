@@ -9,7 +9,7 @@ import { randomUUID } from 'crypto'
 import { readWalletPasswordOrThrow } from './config'
 import { logger } from './logger'
 import { getPath } from './path'
-import { listReclaimableBatches, ReclaimableBatch } from './reclaimable-registry'
+import { listReclaimableBatches, ReclaimableBatch, unregisterReclaimableBatch } from './reclaimable-registry'
 
 // The reclaimable-drive engine (#99): uploads through etherchunk (formerly
 // swarm-fs), which stamps chunks client-side and tracks the (bucket, slot)
@@ -39,6 +39,8 @@ interface EtherchunkStats {
   occupiedSlots: number
   freeSlots: number
   slotsPerBucket: number
+  mostUtilizedBucket: number
+  mostUtilizedCount: number
 }
 
 interface EtherchunkModule {
@@ -214,6 +216,131 @@ function requireRegisteredBatch(batchId: string): ReclaimableBatch {
   return entry
 }
 
+// ─── On-chain batch validity (#106) ──────────────────────────────────────────
+// The drive list comes from Nook's local registry, so a batch that expired
+// on-chain would look alive forever and uploads would die with a raw chunk 400.
+// Bee's global batchstore is the authority: GET /batches/:id 404s once the
+// batch is gone. A 404 is only trusted while Bee's chain view is near the tip —
+// during startup sync the batchstore is incomplete and everything 404s.
+
+export class ExpiredDriveError extends Error {
+  constructor() {
+    super('This drive has expired on the network — its files are no longer stored and it cannot take new uploads.')
+    this.name = 'ExpiredDriveError'
+    // ES5 downlevel emit loses the prototype chain on Error subclasses, which
+    // silently breaks the `instanceof` check in server.ts.
+    Object.setPrototypeOf(this, ExpiredDriveError.prototype)
+  }
+}
+
+export interface BatchValidity {
+  expired: boolean | null
+  batchTTL: number | null
+}
+
+const validityCache = new Map<string, { value: BatchValidity; checkedAt: number }>()
+
+const VALIDITY_CACHE_MS = 60_000
+
+// Test seam (same pattern as setEtherchunkModuleForTests): jest must not hit a
+// real Bee that may or may not be running on this machine.
+let validityFetchFn: typeof fetch = async (...args) => fetch(...args)
+
+export function setValidityFetchForTests(fetchFn: typeof fetch | null): void {
+  validityFetchFn = fetchFn ?? (async (...args) => fetch(...args))
+  validityCache.clear()
+}
+
+// Chain lag under which a batchstore 404 is believed. Gnosis blocks are ~5s,
+// so 120 blocks ≈ 10 minutes — far behind that means Bee is still syncing.
+const TRUSTED_CHAIN_LAG_BLOCKS = 120
+
+async function fetchBatchValidity(batchId: string): Promise<BatchValidity> {
+  try {
+    const response = await validityFetchFn(`http://127.0.0.1:1633/batches/${batchId}`, {
+      signal: AbortSignal.timeout(5000),
+    })
+
+    if (response.ok) {
+      const body = (await response.json()) as { batchTTL?: number }
+
+      return { expired: false, batchTTL: typeof body.batchTTL === 'number' ? body.batchTTL : null }
+    }
+
+    if (response.status === 404) {
+      const chain = await validityFetchFn('http://127.0.0.1:1633/chainstate', { signal: AbortSignal.timeout(5000) })
+
+      if (chain.ok) {
+        const { chainTip, block } = (await chain.json()) as { chainTip?: number; block?: number }
+
+        if (typeof chainTip === 'number' && typeof block === 'number' && chainTip - block < TRUSTED_CHAIN_LAG_BLOCKS) {
+          return { expired: true, batchTTL: null }
+        }
+      }
+    }
+  } catch {
+    // Bee down or slow — validity unknown
+  }
+
+  return { expired: null, batchTTL: null }
+}
+
+export async function checkBatchValidity(batchId: string): Promise<BatchValidity> {
+  const cached = validityCache.get(batchId)
+
+  if (cached && Date.now() - cached.checkedAt < VALIDITY_CACHE_MS) {
+    return cached.value
+  }
+  const value = await fetchBatchValidity(batchId)
+
+  // Unknowns are not cached so the next listing retries immediately
+  if (value.expired !== null) {
+    validityCache.set(batchId, { value, checkedAt: Date.now() })
+  }
+
+  return value
+}
+
+async function requireAliveBatch(batchId: string): Promise<ReclaimableBatch> {
+  const entry = requireRegisteredBatch(batchId)
+
+  if ((await checkBatchValidity(entry.batchId)).expired === true) {
+    throw new ExpiredDriveError()
+  }
+
+  return entry
+}
+
+// ─── Expired-drive removal (#106) ────────────────────────────────────────────
+// An expired batch is beyond use: Bee refuses its stamps, so the poison guard
+// protects nothing and the ledger records chunks the network no longer keeps.
+// Removal deletes the whole local record — registry entry, ledger files, and
+// folder assignments. Only allowed once expiry is CONFIRMED on-chain, so a
+// living drive can never be destroyed through this path.
+
+function removeDriveState(batchId: string): void {
+  const { free, db } = ledgerPaths(batchId)
+  rmSync(free, { force: true })
+  rmSync(db, { force: true })
+  const all = readAllFolders()
+
+  if (all[batchId]) {
+    delete all[batchId]
+    writeAllFolders(all)
+  }
+  unregisterReclaimableBatch(batchId)
+  validityCache.delete(batchId)
+}
+
+export async function removeExpiredDrive(batchId: string): Promise<void> {
+  const entry = requireRegisteredBatch(batchId)
+
+  if ((await checkBatchValidity(entry.batchId)).expired !== true) {
+    throw new Error('Only expired drives can be removed — this drive is still live on the network')
+  }
+  removeDriveState(entry.batchId)
+}
+
 // ─── Upload jobs ─────────────────────────────────────────────────────────────
 // POST returns a job id immediately; the UI polls the job for receipt-confirmed
 // chunk counts. Finished jobs are kept for pickup and swept after an hour.
@@ -296,7 +423,7 @@ function runUploadJob(entry: ReclaimableBatch, displayName: string, uploadPath: 
 }
 
 export async function startUpload(batchId: string, fileName: string, data: Buffer): Promise<UploadJob> {
-  const entry = requireRegisteredBatch(batchId)
+  const entry = await requireAliveBatch(batchId)
   // The temp file carries the real file name (inside a throwaway dir)
   // because etherchunk records the upload path in its registry.
   const dir = await mkdtemp(path.join(tmpdir(), 'nook-reclaimable-'))
@@ -334,7 +461,7 @@ function sweepStages(): void {
 }
 
 export async function createUploadStage(batchId: string): Promise<{ stageId: string }> {
-  const entry = requireRegisteredBatch(batchId)
+  const entry = await requireAliveBatch(batchId)
   const dir = await mkdtemp(path.join(tmpdir(), 'nook-reclaimable-stage-'))
   const stage: UploadStage = { id: randomUUID(), batchId: entry.batchId, dir, createdAt: Date.now(), fileCount: 0 }
   stages.set(stage.id, stage)
@@ -582,6 +709,9 @@ export interface ReclaimableDriveView extends ReclaimableBatch {
     folderId?: string
   }[]
   usage: EtherchunkStats | null
+  // On-chain validity (#106): null = could not be determined (Bee down/syncing)
+  expired: boolean | null
+  batchTTL: number | null
 }
 
 export async function listReclaimableDrives(): Promise<ReclaimableDriveView[]> {
@@ -591,6 +721,7 @@ export async function listReclaimableDrives(): Promise<ReclaimableDriveView[]> {
 
   for (const entry of listReclaimableBatches()) {
     const { folders, assignments } = driveFolders(allFolders, entry.batchId)
+    const validity = await checkBatchValidity(entry.batchId)
 
     try {
       const etherchunk = await loadEtherchunk()
@@ -599,26 +730,39 @@ export async function listReclaimableDrives(): Promise<ReclaimableDriveView[]> {
         batchDepth: entry.depth,
         stateDir: reclaimableStateDir(),
       }
+      const files = etherchunk.list(opts).map(row => {
+        const reference = Binary.uint8ArrayToHex(row.rootHash)
+
+        return {
+          name: path.basename(row.path),
+          reference,
+          kind: row.kind,
+          chunkCount: row.chunkCount,
+          uploadDate: row.uploadDate,
+          folderId: assignments[reference.toLowerCase()],
+        }
+      })
+
+      // An expired drive with an empty ledger has nothing to report — no files
+      // were lost, so there is no tombstone to show. Clean it up silently.
+      // (Only here, where the ledger was actually readable: an unreadable
+      // ledger also lists zero files but must never trigger removal.)
+      if (validity.expired === true && files.length === 0) {
+        logger.info(`removing expired empty reclaimable drive ${entry.batchId.slice(0, 8)}`)
+        removeDriveState(entry.batchId)
+        continue
+      }
+
       drives.push({
         ...entry,
+        ...validity,
         folders,
-        files: etherchunk.list(opts).map(row => {
-          const reference = Binary.uint8ArrayToHex(row.rootHash)
-
-          return {
-            name: path.basename(row.path),
-            reference,
-            kind: row.kind,
-            chunkCount: row.chunkCount,
-            uploadDate: row.uploadDate,
-            folderId: assignments[reference.toLowerCase()],
-          }
-        }),
+        files,
         usage: etherchunk.status(opts),
       })
     } catch (error) {
       logger.error(`reclaimable drive listing failed for ${entry.batchId.slice(0, 8)}: ${error}`)
-      drives.push({ ...entry, folders, files: [], usage: null })
+      drives.push({ ...entry, ...validity, folders, files: [], usage: null })
     }
   }
 

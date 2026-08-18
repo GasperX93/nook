@@ -28,6 +28,8 @@ export interface ReclaimableUsage {
   occupiedSlots: number
   freeSlots: number
   slotsPerBucket: number
+  mostUtilizedBucket: number
+  mostUtilizedCount: number
 }
 
 export interface ReclaimableDrive {
@@ -39,6 +41,9 @@ export interface ReclaimableDrive {
   folders: ReclaimableFolder[]
   files: ReclaimableFile[]
   usage: ReclaimableUsage | null
+  // On-chain validity (#106): null = unknown (Bee down or still syncing)
+  expired: boolean | null
+  batchTTL: number | null
 }
 
 export interface ReclaimableUploadJob {
@@ -244,6 +249,22 @@ export const serverApi = {
     }
 
     return response.json() as Promise<{ deleted: boolean; usage: ReclaimableUsage }>
+  },
+
+  // Remove an EXPIRED drive's record (registry + ledger + folders, #106).
+  // The server refuses this for drives still live on-chain.
+  removeReclaimableDrive: async (batchId: string) => {
+    const response = await fetch(`/reclaimable/${batchId}`, {
+      method: 'DELETE',
+      headers: authHeaders(),
+    })
+
+    if (!response.ok) {
+      const body = await response.json().catch(() => null)
+      throw new Error(body?.message ?? `${response.status} error`)
+    }
+
+    return response.json() as Promise<{ removed: boolean }>
   },
 
   // ─── Identity cache (Electron safeStorage, OS keychain) ─────────────────

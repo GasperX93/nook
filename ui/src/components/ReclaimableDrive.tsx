@@ -92,9 +92,20 @@ export function ReclaimableDriveCard({
   const kebabRef = useRef<HTMLDivElement>(null)
   const { usedBytes, capacityBytes, pct } = usageOf(drive)
   const name = customName || drive.label || `${drive.batchId.slice(0, 8)}…`
-  const ttlDays = stamp ? stamp.batchTTL / 86400 : 0
-  const isCriticalTtl = Boolean(stamp?.usable) && ttlDays > 0 && ttlDays <= 7
-  const needsExtend = Boolean(stamp?.usable) && ((ttlDays > 0 && ttlDays <= 30) || pct >= 100)
+  const expired = drive.expired === true
+  // TTL from Bee's stamp list when it carries the batch, else the server's
+  // on-chain check (#106) — Bee's list drops batches it didn't issue locally.
+  const ttlSeconds = stamp?.usable ? stamp.batchTTL : (drive.batchTTL ?? null)
+  const ttlDays = ttlSeconds !== null ? ttlSeconds / 86400 : 0
+  const isCriticalTtl = ttlSeconds !== null && ttlDays > 0 && ttlDays <= 7
+  // The advertised capacity is deliberately conservative (overbuy margin), so
+  // exceeding it is fine — the drive only truly fills when its most-utilized
+  // bucket runs out of slots. "Full" signals key on the bucket, not the label.
+  const overAdvertised = usedBytes > capacityBytes
+  const bucketFill =
+    drive.usage && drive.usage.slotsPerBucket > 0 ? drive.usage.mostUtilizedCount / drive.usage.slotsPerBucket : 0
+  const nearlyFull = bucketFill >= 0.85
+  const needsExtend = Boolean(stamp?.usable) && !expired && ((ttlDays > 0 && ttlDays <= 30) || nearlyFull)
 
   // Close kebab on outside click (same pattern as DriveCard)
   useEffect(() => {
@@ -174,6 +185,18 @@ export function ReclaimableDriveCard({
             Deletable · Beta
           </span>
 
+          {/* Expired pill (#106) — the batch is gone on-chain */}
+          {expired && (
+            <span
+              className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-semibold shrink-0"
+              style={{ backgroundColor: 'rgba(239,68,68,0.1)', color: '#ef4444' }}
+              title="This drive's storage period ran out — its files are no longer stored on the network"
+            >
+              <Clock size={11} />
+              Expired
+            </span>
+          )}
+
           {/* Confirming pill */}
           {stamp && !stamp.usable && (
             <span
@@ -251,13 +274,33 @@ export function ReclaimableDriveCard({
           >
             <div
               className="h-1 rounded-full"
-              style={{ width: `${pct}%`, backgroundColor: pct >= 100 ? '#ef4444' : 'rgb(var(--fg))' }}
+              style={{
+                width: `${pct}%`,
+                backgroundColor: expired
+                  ? 'rgb(var(--fg-muted))'
+                  : nearlyFull
+                    ? '#ef4444'
+                    : overAdvertised
+                      ? '#f59e0b'
+                      : 'rgb(var(--fg))',
+              }}
             />
           </div>
-          <span style={{ color: pct >= 100 ? '#ef4444' : 'rgb(var(--fg-muted))' }}>
-            {usedBytes > 0 ? `${formatBytes(usedBytes)} / ${formatBytes(capacityBytes)}` : formatBytes(capacityBytes)}
-          </span>
-          {stamp?.usable && (
+          {expired ? (
+            <span style={{ color: '#ef4444' }}>Expired — files are no longer stored on the network</span>
+          ) : (
+            <span
+              style={{ color: nearlyFull ? '#ef4444' : overAdvertised ? '#f59e0b' : 'rgb(var(--fg-muted))' }}
+              title={
+                overAdvertised
+                  ? 'Drives include reserve space — uploads keep working past the advertised size'
+                  : undefined
+              }
+            >
+              {usedBytes > 0 ? `${formatBytes(usedBytes)} / ${formatBytes(capacityBytes)}` : formatBytes(capacityBytes)}
+            </span>
+          )}
+          {!expired && ttlSeconds !== null && (
             <span
               className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full"
               style={
@@ -267,13 +310,87 @@ export function ReclaimableDriveCard({
               }
             >
               <Clock size={11} />
-              {ttlToDays(stamp.batchTTL)}
+              {ttlToDays(ttlSeconds)}
             </span>
           )}
           <span style={{ color: 'rgb(var(--border))' }}>|</span>
           <span style={{ color: 'rgb(var(--fg-muted))' }}>
             {drive.files.length === 1 ? '1 file' : `${drive.files.length} files`}
           </span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Expired drive row (#106) ─────────────────────────────────────────────────
+// Lives in the collapsed "Expired" section: a compact tombstone recording what
+// was lost, with an explicit Remove that deletes the whole local record.
+// Empty expired drives never get here — the server cleans those up silently.
+
+export function ExpiredDriveRow({
+  drive,
+  customName,
+  onOpen,
+}: {
+  drive: ReclaimableDrive
+  customName?: string
+  onOpen: () => void
+}) {
+  const queryClient = useQueryClient()
+  const [removing, setRemoving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const name = customName || drive.label || `${drive.batchId.slice(0, 8)}…`
+  const fileCount = drive.files.length
+
+  async function handleRemove(e: React.MouseEvent) {
+    e.stopPropagation()
+    setRemoving(true)
+    setError(null)
+    try {
+      await serverApi.removeReclaimableDrive(drive.batchId)
+      await queryClient.invalidateQueries({ queryKey: ['server', 'reclaimable'] })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not remove the drive')
+      setRemoving(false)
+    }
+  }
+
+  return (
+    <div className="border-t" style={{ borderColor: 'rgb(var(--border))' }}>
+      <div
+        className="px-4 py-2.5 flex items-center gap-2 cursor-pointer hover:bg-[rgb(var(--bg-surface))] transition-colors"
+        onClick={onOpen}
+      >
+        <span className="text-sm font-medium truncate min-w-0" style={{ color: 'rgb(var(--fg-muted))' }}>
+          {name}
+        </span>
+        {drive.encrypted && <Lock size={11} className="shrink-0" style={{ color: 'rgb(var(--fg-muted))' }} />}
+        <span
+          className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-semibold shrink-0"
+          style={{ backgroundColor: 'rgba(239,68,68,0.1)', color: '#ef4444' }}
+        >
+          <Clock size={10} />
+          Expired
+        </span>
+        <span className="text-xs truncate" style={{ color: 'rgb(var(--fg-muted))' }}>
+          Files no longer stored · {fileCount === 1 ? '1 file lost' : `${fileCount} files lost`}
+        </span>
+        <div className="ml-auto flex items-center gap-2 shrink-0">
+          {error && (
+            <span className="text-xs" style={{ color: '#ef4444' }}>
+              {error}
+            </span>
+          )}
+          <button
+            onClick={handleRemove}
+            disabled={removing}
+            className="px-3 py-1 rounded-lg border text-xs font-medium transition-colors hover:bg-white/5 disabled:opacity-40"
+            style={{ borderColor: 'rgb(var(--border))', color: 'rgb(var(--fg-muted))' }}
+            title="Delete this drive's local record — the files themselves are already gone from the network"
+          >
+            {removing ? 'Removing…' : 'Remove'}
+          </button>
         </div>
       </div>
     </div>
@@ -582,6 +699,7 @@ export function ReclaimableDriveView({
   const [copiedRef, setCopiedRef] = useState<string | null>(null)
   const pollRef = useRef<number | null>(null)
   const name = customName || drive.label || `${drive.batchId.slice(0, 8)}…`
+  const expired = drive.expired === true
 
   useEffect(
     () => () => {
@@ -688,6 +806,8 @@ export function ReclaimableDriveView({
   async function handleDrop(e: React.DragEvent) {
     e.preventDefault()
     setDragging(false)
+
+    if (expired) return
     const item = e.dataTransfer.items[0]
 
     if (!item) return
@@ -773,6 +893,15 @@ export function ReclaimableDriveView({
               <Recycle size={11} />
               Deletable · Beta
             </span>
+            {expired && (
+              <span
+                className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-semibold shrink-0"
+                style={{ backgroundColor: 'rgba(239,68,68,0.1)', color: '#ef4444' }}
+              >
+                <Clock size={11} />
+                Expired
+              </span>
+            )}
           </>
         )}
 
@@ -780,7 +909,7 @@ export function ReclaimableDriveView({
 
         <button
           onClick={() => setAddingFile(v => !v)}
-          disabled={Boolean(uploading) || Boolean(staging)}
+          disabled={Boolean(uploading) || Boolean(staging) || expired}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0 disabled:opacity-40"
           style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
         >
@@ -793,7 +922,8 @@ export function ReclaimableDriveView({
               setCreatingFolder(true)
               setNewFolderName('')
             }}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium shrink-0"
+            disabled={expired}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium shrink-0 disabled:opacity-40"
             style={{ color: 'rgb(var(--fg-muted))' }}
           >
             <FolderPlus size={12} />
@@ -801,6 +931,18 @@ export function ReclaimableDriveView({
           </button>
         )}
       </div>
+
+      {/* Expired banner (#106): honest tombstone — the batch is gone on-chain */}
+      {expired && (
+        <div
+          className="rounded-lg border px-4 py-3 mb-3 text-sm"
+          style={{ borderColor: 'rgba(239,68,68,0.3)', backgroundColor: 'rgba(239,68,68,0.05)', color: '#ef4444' }}
+        >
+          This drive's storage period ran out, so the network no longer keeps its files. The list below is a record of
+          what it held — downloads may fail, and new uploads are disabled. When you no longer need this record, remove
+          the drive from the Expired section of the drive list.
+        </div>
+      )}
 
       {/* New folder inline input — same as classic */}
       {creatingFolder && (
@@ -1029,7 +1171,7 @@ export function ReclaimableDriveView({
               key={file.reference}
               file={file}
               encrypted={drive.encrypted}
-              ttlSeconds={stamp?.usable ? stamp.batchTTL : undefined}
+              ttlSeconds={expired ? undefined : stamp?.usable ? stamp.batchTTL : (drive.batchTTL ?? undefined)}
               copied={copiedRef === file.reference}
               deleting={deletingRef === file.reference}
               onCopy={() => copyLink(file.reference)}

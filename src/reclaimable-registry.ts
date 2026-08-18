@@ -75,6 +75,14 @@ export function registerReclaimableBatch(entry: ReclaimableBatch): void {
   cache = batches
 }
 
+// Removing an entry drops the poison guard for that batch — only safe once the
+// batch is beyond use (expired on-chain). Callers own that check (#106).
+export function unregisterReclaimableBatch(batchId: string): void {
+  const batches = listReclaimableBatches().filter(existing => existing.batchId !== batchId.toLowerCase())
+  writeFileSync(registryPath(), JSON.stringify(batches, null, 2))
+  cache = batches
+}
+
 export function isReclaimableBatch(batchId: string | undefined | null): boolean {
   if (!batchId) {
     return false
