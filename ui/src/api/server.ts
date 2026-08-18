@@ -7,6 +7,50 @@ function authHeaders(): Record<string, string> {
   return apiKey ? { Authorization: apiKey } : {}
 }
 
+// ─── Reclaimable drive types (#99) ────────────────────────────────────────────
+
+export interface ReclaimableFile {
+  name: string
+  reference: string
+  kind: string
+  chunkCount: number
+  uploadDate?: number
+  folderId?: string
+}
+
+export interface ReclaimableFolder {
+  id: string
+  name: string
+}
+
+export interface ReclaimableUsage {
+  totalSlots: number
+  occupiedSlots: number
+  freeSlots: number
+  slotsPerBucket: number
+}
+
+export interface ReclaimableDrive {
+  batchId: string
+  depth: number
+  encrypted: boolean
+  label?: string
+  createdAt: string
+  folders: ReclaimableFolder[]
+  files: ReclaimableFile[]
+  usage: ReclaimableUsage | null
+}
+
+export interface ReclaimableUploadJob {
+  id: string
+  batchId: string
+  fileName: string
+  chunksUploaded: number
+  status: 'uploading' | 'done' | 'error'
+  reference?: string
+  error?: string
+}
+
 async function serverPost<T>(path: string, body: unknown): Promise<T> {
   const response = await fetch(path, {
     method: 'POST',
@@ -119,6 +163,88 @@ export const serverApi = {
 
   patchGrantees: async (ref: string, stampId: string, historyRef: string, add?: string[], revoke?: string[]) =>
     serverPatch<{ ref: string; historyRef: string }>(`/grantee/${ref}`, { stampId, historyRef, add, revoke }),
+
+  // ─── Reclaimable drives (#99) ────────────────────────────────────────────
+  // Batches stamped client-side by the server's reclaimable engine: deleting
+  // a file frees its slots, so capacity comes back. Files live in the server
+  // ledger (not localStorage) and every upload is direct (receipt-backed).
+
+  listReclaimable: async () => serverGet<{ drives: ReclaimableDrive[] }>('/reclaimable'),
+
+  createReclaimable: async (amount: string, depth: number, encrypted: boolean, label?: string) =>
+    serverPost<{ batchID: string }>('/reclaimable', { amount, depth, encrypted, label }),
+
+  /** Raw-bytes upload; returns a job id — poll getReclaimableUpload for receipt-confirmed progress */
+  uploadReclaimableFile: async (batchId: string, file: File) => {
+    const response = await fetch(`/reclaimable/${batchId}/upload?name=${encodeURIComponent(file.name)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream', ...authHeaders() },
+      body: file,
+    })
+
+    if (!response.ok) {
+      const body = await response.json().catch(() => null)
+      throw new Error(body?.message ?? `${response.status} error`)
+    }
+
+    return response.json() as Promise<{ uploadId: string }>
+  },
+
+  getReclaimableUpload: async (id: string) => serverGet<ReclaimableUploadJob>(`/reclaimable/upload/${id}`),
+
+  /** Folder upload: create a staging area, add files by relative path, commit */
+  createReclaimableStage: async (batchId: string) =>
+    serverPost<{ stageId: string }>(`/reclaimable/${batchId}/stage`, {}),
+
+  addFileToReclaimableStage: async (stageId: string, relPath: string, file: File) => {
+    const response = await fetch(`/reclaimable/stage/${stageId}/file?path=${encodeURIComponent(relPath)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream', ...authHeaders() },
+      body: file,
+    })
+
+    if (!response.ok) {
+      const body = await response.json().catch(() => null)
+      throw new Error(body?.message ?? `${response.status} error`)
+    }
+
+    return response.json() as Promise<{ fileCount: number }>
+  },
+
+  commitReclaimableStage: async (stageId: string, name: string) =>
+    serverPost<{ uploadId: string }>(`/reclaimable/stage/${stageId}/commit?name=${encodeURIComponent(name)}`, {}),
+
+  /** Organizational folders — server-side grouping, no Swarm objects */
+  createReclaimableFolder: async (batchId: string, name: string) =>
+    serverPost<ReclaimableFolder>(`/reclaimable/${batchId}/folders`, { name }),
+
+  deleteReclaimableFolder: async (batchId: string, folderId: string) => {
+    const response = await fetch(`/reclaimable/${batchId}/folders/${folderId}`, {
+      method: 'DELETE',
+      headers: authHeaders(),
+    })
+
+    if (!response.ok) throw new Error('Could not delete the folder')
+
+    return response.json() as Promise<{ deleted: boolean }>
+  },
+
+  moveReclaimableFile: async (batchId: string, reference: string, folderId: string | null) =>
+    serverPatch<{ moved: boolean }>(`/reclaimable/${batchId}/files/${reference}/folder`, { folderId }),
+
+  deleteReclaimableFile: async (batchId: string, reference: string) => {
+    const response = await fetch(`/reclaimable/${batchId}/files/${reference}`, {
+      method: 'DELETE',
+      headers: authHeaders(),
+    })
+
+    if (!response.ok) {
+      const body = await response.json().catch(() => null)
+      throw new Error(body?.message ?? `${response.status} error`)
+    }
+
+    return response.json() as Promise<{ deleted: boolean; usage: ReclaimableUsage }>
+  },
 
   // ─── Identity cache (Electron safeStorage, OS keychain) ─────────────────
 

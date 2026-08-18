@@ -47,7 +47,15 @@ import {
   type Stamp,
 } from '../api/bee'
 import { serverApi } from '../api/server'
-import { useAddresses, useBuyStamp, useChainState, useStamps, useWallet } from '../api/queries'
+import {
+  useAddresses,
+  useBuyStamp,
+  useChainState,
+  useCreateReclaimable,
+  useReclaimableDrives,
+  useStamps,
+  useWallet,
+} from '../api/queries'
 import { useAppStore } from '../store/app'
 import { useDerivedKey } from '../hooks/useDerivedKey'
 import { useDriveMetadata } from '../hooks/useDriveMetadata'
@@ -63,6 +71,7 @@ import {
 } from '../utils/directory'
 import AddSharedDriveModal from '../components/AddSharedDriveModal'
 import ENSModal from '../components/ENSModal'
+import { ReclaimableDriveCard, ReclaimableDriveView } from '../components/ReclaimableDrive'
 import ShareModal from '../components/ShareModal'
 import { Switch } from '../components/ui/switch'
 import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs'
@@ -137,7 +146,9 @@ async function downloadFromSwarm(
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
-  URL.revokeObjectURL(url)
+  // Delayed revoke: revoking synchronously can abort a large-blob save the
+  // browser hasn't started reading yet.
+  setTimeout(() => URL.revokeObjectURL(url), 10_000)
 }
 
 async function pollStampUsable(id: string, onPhase?: (p: string) => void): Promise<void> {
@@ -207,6 +218,7 @@ function BuyDriveModal({
   const { data: chainState } = useChainState()
   const { data: wallet } = useWallet()
   const buyStamp = useBuyStamp()
+  const createReclaimable = useCreateReclaimable()
   const { isConnected } = useAccount()
   const { derive } = useDerivedKey()
 
@@ -214,6 +226,7 @@ function BuyDriveModal({
   const [sizeIdx, setSizeIdx] = useState(0)
   const [durationIdx, setDurationIdx] = useState(1)
   const [isEncrypted, setIsEncrypted] = useState(false)
+  const [isReclaimable, setIsReclaimable] = useState(false)
   const [buying, setBuying] = useState(false)
   const [buyDone, setBuyDone] = useState(false)
   const [buyError, setBuyError] = useState<string | null>(null)
@@ -246,16 +259,27 @@ function BuyDriveModal({
     setBuying(true)
     setBuyError(null)
     try {
-      const result = await buyStamp.mutateAsync({
-        amount: cost.amount,
-        depth: selectedSize.depth,
-        immutable: true,
-        label: driveName.trim(),
-      })
+      if (isReclaimable) {
+        // Reclaimable drives are created and registered server-side (#99);
+        // their files live in the server ledger, so no local metadata to save.
+        await createReclaimable.mutateAsync({
+          amount: cost.amount,
+          depth: selectedSize.depth,
+          encrypted: isEncrypted,
+          label: driveName.trim(),
+        })
+      } else {
+        const result = await buyStamp.mutateAsync({
+          amount: cost.amount,
+          depth: selectedSize.depth,
+          immutable: true,
+          label: driveName.trim(),
+        })
 
-      // Save encrypted flag immediately (ACT grantee setup deferred to first upload
-      // because the stamp isn't usable yet at this point — it needs on-chain confirmation)
-      onCreated?.(result.batchID, isEncrypted)
+        // Save encrypted flag immediately (ACT grantee setup deferred to first upload
+        // because the stamp isn't usable yet at this point — it needs on-chain confirmation)
+        onCreated?.(result.batchID, isEncrypted)
+      }
       setBuyDone(true)
       setTimeout(() => {
         setBuyDone(false)
@@ -339,7 +363,33 @@ function BuyDriveModal({
           <div>
             <p className="text-xs font-medium">Encrypt this drive</p>
             <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-              Files on this drive are encrypted. You can share access with others.
+              {isReclaimable
+                ? 'Files on this drive are encrypted so only your node can read them.'
+                : 'Files on this drive are encrypted. You can share access with others.'}
+            </p>
+          </div>
+        </label>
+
+        {/* Reclaimable (#99) */}
+        <label className="flex items-start gap-2 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={isReclaimable}
+            onChange={e => setIsReclaimable(e.target.checked)}
+            className="mt-0.5 accent-orange-500"
+          />
+          <div>
+            <p className="text-xs font-medium">
+              Deletable files{' '}
+              <span
+                className="px-1 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide align-middle"
+                style={{ backgroundColor: 'rgba(74,222,128,0.12)', color: '#4ade80' }}
+              >
+                Beta
+              </span>
+            </p>
+            <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+              Deleting a file gives you its space back. These drives can't be shared with others (yet).
             </p>
           </div>
         </label>
@@ -928,7 +978,7 @@ function RecordRow({
           <Lock size={12} style={{ color: 'rgb(var(--accent))' }} />
         ) : record.type === 'file' && isImageFile(record.name) ? (
           <img
-            src={`${getBeeUrl()}/bzz/${record.hash}`}
+            src={`${getBeeUrl()}/bzz/${record.hash}/`}
             className="w-full h-full object-cover"
             onError={e => {
               ;(e.target as HTMLImageElement).style.display = 'none'
@@ -1052,13 +1102,16 @@ function RecordRow({
             {downloadingId === record.id ? <RefreshCw size={12} className="animate-spin" /> : <Download size={12} />}
           </button>
         )}
+        {/* Forget, not delete: classic drives can't remove content from Swarm —
+            this only drops the local record. Reclaimable rows keep the trash
+            icon because there deletion is real. */}
         <button
           onClick={() => onRemove(record.id)}
-          title="Remove from Drive"
-          className="w-6 h-6 flex items-center justify-center rounded transition-colors hover:text-red-400"
+          title="Forget — file stays on Swarm until the drive expires"
+          className="w-6 h-6 flex items-center justify-center rounded transition-colors hover:text-[rgb(var(--fg))]"
           style={{ color: 'rgb(var(--fg-muted))' }}
         >
-          <Trash2 size={12} />
+          <X size={12} />
         </button>
       </div>
     </div>
@@ -1435,15 +1488,6 @@ function DriveCard({
                   >
                     <Pencil size={13} style={{ color: 'rgb(var(--fg-muted))' }} />
                     Rename
-                  </button>
-                  <button
-                    disabled
-                    title="Coming soon"
-                    className="flex items-center gap-2 w-full px-3 py-2 text-xs opacity-40 cursor-not-allowed"
-                    style={{ color: 'rgb(var(--fg))' }}
-                  >
-                    <X size={13} style={{ color: 'rgb(var(--fg-muted))' }} />
-                    Forget
                   </button>
                 </div>
               )}
@@ -2087,11 +2131,11 @@ function SharedDriveCard({
             e.stopPropagation()
             onRemove()
           }}
-          className="shrink-0 w-6 h-6 flex items-center justify-center rounded transition-colors hover:text-red-400"
+          className="shrink-0 w-6 h-6 flex items-center justify-center rounded transition-colors hover:text-[rgb(var(--fg))]"
           style={{ color: 'rgb(var(--fg-muted))' }}
-          title="Remove from list"
+          title="Forget — removes it from your list"
         >
-          <Trash2 size={12} />
+          <X size={12} />
         </button>
       </div>
 
@@ -2123,6 +2167,7 @@ function SharedDriveCard({
 export default function Drive() {
   const { toggle: toggleSidebar } = useSidebar()
   const { data: stamps } = useStamps()
+  const { data: reclaimableData } = useReclaimableDrives()
   const {
     records,
     folders,
@@ -2254,7 +2299,12 @@ export default function Drive() {
     }
   }
 
-  const allStamps = stamps ?? []
+  // Reclaimable drives (#99) render as their own card type; their batches also
+  // appear on the node's stamp list, so filter them out of the classic cards.
+  const reclaimableDrives = reclaimableData ?? []
+  const reclaimableIds = new Set(reclaimableDrives.map(d => d.batchId))
+  const allStamps = (stamps ?? []).filter(s => !reclaimableIds.has(s.batchID.toLowerCase()))
+  const driveCount = allStamps.length + reclaimableDrives.length
 
   function copyHash(id: string, hash: string) {
     navigator.clipboard.writeText(`${gatewayUrl}/bzz/${hash}/`)
@@ -2274,6 +2324,11 @@ export default function Drive() {
           : undefined
 
       await downloadFromSwarm(hash, name, pct => setDownloadPct(pct), actOptions)
+    } catch (error) {
+      // Surface failures (#105) — a silent catch here left users with no
+      // feedback when a download stalled or errored mid-stream.
+      // eslint-disable-next-line no-alert
+      alert(error instanceof Error ? error.message : 'Download failed — please try again.')
     } finally {
       setDownloadingId(null)
       setDownloadPct(null)
@@ -2284,7 +2339,11 @@ export default function Drive() {
   const driveRecords = activeDriveId ? records.filter(r => r.driveId === activeDriveId) : []
 
   const updatingRecord = records.find(r => r.id === updatingId)
-  const extendingStamp = showExtendModal ? allStamps.find(s => s.batchID === showExtendModal) : null
+  // Search the unfiltered stamp list: Extend must also work for reclaimable
+  // drives (top-up only changes TTL, the slot ledger is untouched)
+  const extendingStamp = showExtendModal
+    ? (stamps ?? []).find(s => s.batchID.toLowerCase() === showExtendModal.toLowerCase())
+    : null
 
   // Search: flat list across active drives only (exclude expired stamps)
   const activeBatchIds = new Set(allStamps.map(s => s.batchID))
@@ -2310,7 +2369,7 @@ export default function Drive() {
 
           <Tabs value={driveTab} onValueChange={v => setDriveTab(v as 'mine' | 'shared')}>
             <TabsList>
-              <TabsTrigger value="mine">My drives{allStamps.length > 0 ? ` (${allStamps.length})` : ''}</TabsTrigger>
+              <TabsTrigger value="mine">My drives{driveCount > 0 ? ` (${driveCount})` : ''}</TabsTrigger>
               <TabsTrigger value="shared">
                 Shared with me{sharedDrives.drives.length > 0 ? ` (${sharedDrives.drives.length})` : ''}
               </TabsTrigger>
@@ -2405,7 +2464,7 @@ export default function Drive() {
               ))}
             </div>
           )
-        ) : stamps === undefined ? null : allStamps.length === 0 ? (
+        ) : stamps === undefined ? null : driveCount === 0 ? (
           /* Empty state */
           <div className="flex flex-col items-center justify-center py-20 gap-4 text-center">
             <div
@@ -2431,6 +2490,17 @@ export default function Drive() {
         ) : (
           /* Drive list */
           <div className="border-t" style={{ borderColor: 'rgb(var(--border))' }}>
+            {reclaimableDrives.map(drive => (
+              <ReclaimableDriveCard
+                key={drive.batchId}
+                drive={drive}
+                stamp={stamps?.find(s => s.batchID.toLowerCase() === drive.batchId)}
+                customName={customDriveLabels[drive.batchId]}
+                onOpen={() => setActiveDriveId(drive.batchId)}
+                onExtend={() => setShowExtendModal(drive.batchId)}
+                onRename={name => renameDrive(drive.batchId, name)}
+              />
+            ))}
             {allStamps.map(stamp => (
               <DriveCard
                 key={stamp.batchID}
@@ -2545,6 +2615,23 @@ export default function Drive() {
             )
           })()}
       </div>
+    )
+  }
+
+  // ── Reclaimable drive view (#99) ─────────────────────────────────────────────
+  // Files live in the server ledger (not upload history); delete really frees
+  // capacity, so this drive type gets its own detail view.
+
+  const activeReclaimable = reclaimableDrives.find(d => d.batchId === activeDriveId)
+
+  if (activeReclaimable) {
+    return (
+      <ReclaimableDriveView
+        drive={activeReclaimable}
+        stamp={stamps?.find(s => s.batchID.toLowerCase() === activeReclaimable.batchId)}
+        customName={customDriveLabels[activeReclaimable.batchId]}
+        onBack={() => setActiveDriveId(null)}
+      />
     )
   }
 
@@ -2684,7 +2771,7 @@ export default function Drive() {
               e.stopPropagation()
               removeFolder(folder.id, folders)
             }}
-            title="Delete folder"
+            title="Delete folder — files inside move back to the drive root"
             className="w-6 h-6 flex items-center justify-center rounded hover:text-red-400 transition-colors"
             style={{ color: 'rgb(var(--fg-muted))' }}
           >

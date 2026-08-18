@@ -18,16 +18,32 @@ async function fetchResolved(hash: string): Promise<{ blob: Blob; suggestedName:
   // (the Vite proxy); resolve it against the current origin so bee-js accepts it.
   const beeBase = getBeeUrl().startsWith('http') ? getBeeUrl() : `${window.location.origin}${getBeeUrl()}`
   const bee = new Bee(beeBase)
-  const file = await bee.downloadFile(hash)
 
-  // Copy to a fresh ArrayBuffer to satisfy Blob's BlobPart type — bee-js
-  // returns a Uint8Array<ArrayBufferLike> which TS won't accept directly.
-  const src = file.data.toUint8Array()
-  const buf = new ArrayBuffer(src.byteLength)
-  new Uint8Array(buf).set(src)
-  const blob = new Blob([buf], { type: file.contentType || 'application/octet-stream' })
+  try {
+    const file = await bee.downloadFile(hash)
 
-  return { blob, suggestedName: file.name ?? null }
+    // Copy to a fresh ArrayBuffer to satisfy Blob's BlobPart type — bee-js
+    // returns a Uint8Array<ArrayBufferLike> which TS won't accept directly.
+    const src = file.data.toUint8Array()
+    const buf = new ArrayBuffer(src.byteLength)
+    new Uint8Array(buf).set(src)
+    const blob = new Blob([buf], { type: file.contentType || 'application/octet-stream' })
+
+    return { blob, suggestedName: file.name ?? null }
+  } catch (err) {
+    // bee-js refuses responses without a Content-Disposition header, but not
+    // all valid Swarm content carries filename metadata (e.g. swarm-fs
+    // manifests, raw external uploads). The bytes are still there — fall back
+    // to a plain /bzz fetch and let the caller name the file.
+    if (err instanceof Error && err.message.toLowerCase().includes('content-disposition')) {
+      const response = await fetch(`${beeBase}/bzz/${hash}/`)
+
+      if (!response.ok) throw new Error(`Download failed (${response.status})`)
+
+      return { blob: await response.blob(), suggestedName: null }
+    }
+    throw err
+  }
 }
 
 export default function AccessOnSwarm() {
