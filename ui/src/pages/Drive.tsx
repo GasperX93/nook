@@ -71,7 +71,7 @@ import {
 } from '../utils/directory'
 import AddSharedDriveModal from '../components/AddSharedDriveModal'
 import ENSModal from '../components/ENSModal'
-import { ReclaimableDriveCard, ReclaimableDriveView } from '../components/ReclaimableDrive'
+import { ExpiredDriveRow, ReclaimableDriveCard, ReclaimableDriveView } from '../components/ReclaimableDrive'
 import ShareModal from '../components/ShareModal'
 import { Switch } from '../components/ui/switch'
 import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs'
@@ -2218,6 +2218,7 @@ export default function Drive() {
 
   const [activeDriveId, setActiveDriveId] = useState<string | null>(null)
   const [showBuyModal, setShowBuyModal] = useState(false)
+  const [expiredOpen, setExpiredOpen] = useState(false)
   const [showExtendModal, setShowExtendModal] = useState<string | null>(null) // batchID
   const [showShareModal, setShowShareModal] = useState<string | null>(null) // batchID
   // After adding a file to a drive that's shared with others, prompt to notify them.
@@ -2301,8 +2302,10 @@ export default function Drive() {
 
   // Reclaimable drives (#99) render as their own card type; their batches also
   // appear on the node's stamp list, so filter them out of the classic cards.
-  const reclaimableDrives = reclaimableData ?? []
-  const reclaimableIds = new Set(reclaimableDrives.map(d => d.batchId))
+  // Expired ones (#106) move out of the main list into a collapsed section.
+  const reclaimableDrives = (reclaimableData ?? []).filter(d => d.expired !== true)
+  const expiredDrives = (reclaimableData ?? []).filter(d => d.expired === true)
+  const reclaimableIds = new Set((reclaimableData ?? []).map(d => d.batchId))
   const allStamps = (stamps ?? []).filter(s => !reclaimableIds.has(s.batchID.toLowerCase()))
   const driveCount = allStamps.length + reclaimableDrives.length
 
@@ -2464,7 +2467,7 @@ export default function Drive() {
               ))}
             </div>
           )
-        ) : stamps === undefined ? null : driveCount === 0 ? (
+        ) : stamps === undefined ? null : driveCount === 0 && expiredDrives.length === 0 ? (
           /* Empty state */
           <div className="flex flex-col items-center justify-center py-20 gap-4 text-center">
             <div
@@ -2531,6 +2534,31 @@ export default function Drive() {
                 onMoveToFolder={moveToFolder}
               />
             ))}
+
+            {/* Expired drives (#106): collapsed record of drives whose storage
+                period ran out with files still on them. Empty expired drives
+                are cleaned up server-side and never appear here. */}
+            {expiredDrives.length > 0 && (
+              <div className="border-t" style={{ borderColor: 'rgb(var(--border))' }}>
+                <button
+                  onClick={() => setExpiredOpen(v => !v)}
+                  className="w-full flex items-center gap-1.5 px-4 py-2.5 text-xs font-medium transition-colors hover:bg-[rgb(var(--bg-surface))]"
+                  style={{ color: 'rgb(var(--fg-muted))' }}
+                >
+                  {expiredOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                  Expired ({expiredDrives.length})
+                </button>
+                {expiredOpen &&
+                  expiredDrives.map(drive => (
+                    <ExpiredDriveRow
+                      key={drive.batchId}
+                      drive={drive}
+                      customName={customDriveLabels[drive.batchId]}
+                      onOpen={() => setActiveDriveId(drive.batchId)}
+                    />
+                  ))}
+              </div>
+            )}
           </div>
         )}
 

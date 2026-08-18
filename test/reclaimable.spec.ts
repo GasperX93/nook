@@ -33,13 +33,20 @@ import {
   createUploadStage,
   deleteReclaimableFile,
   deleteReclaimableFolder,
+  ExpiredDriveError,
   getUploadJob,
   listReclaimableDrives,
   rebuildFreeBitmapIfMissing,
+  removeExpiredDrive,
   setEtherchunkModuleForTests,
+  setValidityFetchForTests,
   startUpload,
 } from '../src/reclaimable'
-import { registerReclaimableBatch, resetReclaimableRegistryCache } from '../src/reclaimable-registry'
+import {
+  listReclaimableBatches,
+  registerReclaimableBatch,
+  resetReclaimableRegistryCache,
+} from '../src/reclaimable-registry'
 
 const BATCH = 'c'.repeat(64)
 const ROOT = 'd'.repeat(64)
@@ -66,7 +73,14 @@ function makeFakeEtherchunk(overrides: Record<string, unknown> = {}) {
         uploadDate: 1700000000000,
       },
     ]),
-    status: jest.fn(() => ({ totalSlots: 524288, occupiedSlots: 42, freeSlots: 524246, slotsPerBucket: 8 })),
+    status: jest.fn(() => ({
+      totalSlots: 524288,
+      occupiedSlots: 42,
+      freeSlots: 524246,
+      slotsPerBucket: 8,
+      mostUtilizedBucket: 0,
+      mostUtilizedCount: 3,
+    })),
     ...overrides,
   }
 }
@@ -83,11 +97,31 @@ async function waitForJob(id: string) {
   throw new Error('upload job never finished')
 }
 
+// Batch validity is checked against a live Bee — tests must never hit one
+// (a dev Bee may be running on this machine and would 404 the fake batch).
+// Default stub: Bee unreachable → validity unknown → operations proceed.
+function stubBatchValidity(kind: 'alive' | 'expired' | 'unknown', ttl = 4242) {
+  setValidityFetchForTests(async (input: RequestInfo | URL) => {
+    if (kind === 'unknown') throw new Error('bee down')
+
+    if (String(input).includes('/chainstate')) {
+      return new Response(JSON.stringify({ chainTip: 100, block: 99 }), { status: 200 })
+    }
+
+    if (kind === 'alive') {
+      return new Response(JSON.stringify({ batchTTL: ttl }), { status: 200 })
+    }
+
+    return new Response(JSON.stringify({ code: 404, message: 'batch not found' }), { status: 404 })
+  })
+}
+
 function cleanUp() {
   rmSync(REGISTRY, { force: true })
   rmSync(STATE_DIR, { recursive: true, force: true })
   resetReclaimableRegistryCache()
   setEtherchunkModuleForTests(null)
+  stubBatchValidity('unknown')
 }
 
 describe('reclaimable engine', () => {
@@ -204,6 +238,103 @@ describe('reclaimable engine', () => {
     expect(drives).toHaveLength(1)
     expect(drives[0].files).toEqual([])
     expect(drives[0].usage).toBeNull()
+  })
+})
+
+describe('expired drives (#106)', () => {
+  beforeEach(() => {
+    cleanUp()
+    registerReclaimableBatch({ batchId: BATCH, depth: 19, encrypted: false, createdAt: '2026-07-16T00:00:00.000Z' })
+  })
+  afterAll(cleanUp)
+
+  test('uploads to an expired drive are refused with an honest message', async () => {
+    setEtherchunkModuleForTests(makeFakeEtherchunk() as any)
+    stubBatchValidity('expired')
+
+    await expect(startUpload(BATCH, 'photo.jpg', Buffer.from('data'))).rejects.toThrow(/expired on the network/)
+    await expect(createUploadStage(BATCH)).rejects.toThrow(/expired on the network/)
+    // instanceof must survive the ES5 downlevel emit — server.ts keys the 410 on it
+    await expect(startUpload(BATCH, 'photo.jpg', Buffer.from('data'))).rejects.toBeInstanceOf(ExpiredDriveError)
+  })
+
+  test('validity unknown while Bee is unreachable — uploads proceed', async () => {
+    setEtherchunkModuleForTests(makeFakeEtherchunk() as any)
+    stubBatchValidity('unknown')
+
+    const job = await startUpload(BATCH, 'photo.jpg', Buffer.from('data'))
+    expect((await waitForJob(job.id)).status).toBe('done')
+  })
+
+  test('a batchstore 404 is not trusted while the chain view lags', async () => {
+    setEtherchunkModuleForTests(makeFakeEtherchunk() as any)
+    setValidityFetchForTests(async (input: RequestInfo | URL) => {
+      if (String(input).includes('/chainstate')) {
+        return new Response(JSON.stringify({ chainTip: 10_000, block: 100 }), { status: 200 })
+      }
+
+      return new Response(JSON.stringify({ code: 404, message: 'batch not found' }), { status: 404 })
+    })
+
+    const job = await startUpload(BATCH, 'photo.jpg', Buffer.from('data'))
+    expect((await waitForJob(job.id)).status).toBe('done')
+
+    const drives = await listReclaimableDrives()
+    expect(drives[0].expired).toBeNull()
+  })
+
+  test('listing carries the expired flag and on-chain TTL', async () => {
+    setEtherchunkModuleForTests(makeFakeEtherchunk() as any)
+    stubBatchValidity('alive', 999)
+    let drives = await listReclaimableDrives()
+    expect(drives[0].expired).toBe(false)
+    expect(drives[0].batchTTL).toBe(999)
+
+    stubBatchValidity('expired')
+    drives = await listReclaimableDrives()
+    expect(drives[0].expired).toBe(true)
+    expect(drives[0].batchTTL).toBeNull()
+  })
+
+  test('a live drive cannot be removed', async () => {
+    stubBatchValidity('alive')
+
+    await expect(removeExpiredDrive(BATCH)).rejects.toThrow(/still live/)
+    expect(listReclaimableBatches().some(b => b.batchId === BATCH)).toBe(true)
+  })
+
+  test('removing an expired drive deletes registry entry and ledger files', async () => {
+    stubBatchValidity('expired')
+    mkdirSync(STATE_DIR, { recursive: true })
+    const ledgerPrefix = `${STATE_DIR}/etherchunk-${BATCH.slice(0, 8)}`
+    writeFileSync(`${ledgerPrefix}.db`, 'x')
+    writeFileSync(`${ledgerPrefix}.free`, 'x')
+
+    await removeExpiredDrive(BATCH)
+
+    expect(listReclaimableBatches().some(b => b.batchId === BATCH)).toBe(false)
+    expect(existsSync(`${ledgerPrefix}.db`)).toBe(false)
+    expect(existsSync(`${ledgerPrefix}.free`)).toBe(false)
+  })
+
+  test('expired drives with an empty ledger are removed by the listing itself', async () => {
+    setEtherchunkModuleForTests(makeFakeEtherchunk({ list: jest.fn((): unknown[] => []) }) as any)
+    stubBatchValidity('expired')
+
+    const drives = await listReclaimableDrives()
+
+    expect(drives.some(d => d.batchId === BATCH)).toBe(false)
+    expect(listReclaimableBatches().some(b => b.batchId === BATCH)).toBe(false)
+  })
+
+  test('expired drives that still hold files stay listed as tombstones', async () => {
+    setEtherchunkModuleForTests(makeFakeEtherchunk() as any)
+    stubBatchValidity('expired')
+
+    const drives = await listReclaimableDrives()
+
+    expect(drives.some(d => d.batchId === BATCH && d.expired === true)).toBe(true)
+    expect(listReclaimableBatches().some(b => b.batchId === BATCH)).toBe(true)
   })
 })
 

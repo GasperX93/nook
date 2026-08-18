@@ -35,8 +35,10 @@ import {
   createUploadStage,
   deleteReclaimableFile,
   deleteReclaimableFolder,
+  ExpiredDriveError,
   getUploadJob,
   listReclaimableDrives,
+  removeExpiredDrive,
   startUpload,
 } from './reclaimable'
 import { getStatus } from './status'
@@ -507,6 +509,13 @@ export function runServer() {
       context.body = { uploadId: job.id }
     } catch (error) {
       logger.error(error)
+
+      if (error instanceof ExpiredDriveError) {
+        context.status = 410
+        context.body = { message: error.message }
+
+        return
+      }
       context.status = 404
       context.body = { message: 'Not a reclaimable drive' }
     }
@@ -519,6 +528,13 @@ export function runServer() {
       context.body = await createUploadStage(context.params.batch)
     } catch (error) {
       logger.error(error)
+
+      if (error instanceof ExpiredDriveError) {
+        context.status = 410
+        context.body = { message: error.message }
+
+        return
+      }
       context.status = 404
       context.body = { message: 'Not a reclaimable drive' }
     }
@@ -631,6 +647,30 @@ export function runServer() {
       const message = String((error as Error).message ?? error)
       context.status = message.includes('not a registered') || message.includes('File not found') ? 404 : 500
       context.body = { message: 'Could not delete the file' }
+    }
+  })
+
+  // Remove an EXPIRED drive's local record — registry entry, ledger, folders
+  // (#106). Refused while the batch is still live on-chain, so this can never
+  // destroy a working drive.
+  router.delete('/reclaimable/:batch', async context => {
+    try {
+      await removeExpiredDrive(context.params.batch)
+      context.body = { removed: true }
+    } catch (error) {
+      logger.error(error)
+      const message = String((error as Error).message ?? error)
+
+      if (message.includes('not a registered')) {
+        context.status = 404
+        context.body = { message: 'Not a reclaimable drive' }
+      } else if (message.includes('still live')) {
+        context.status = 409
+        context.body = { message: 'This drive is still live on the network — only expired drives can be removed' }
+      } else {
+        context.status = 500
+        context.body = { message: 'Could not remove the drive' }
+      }
     }
   })
 
