@@ -41,6 +41,13 @@ export function runMigrations() {
     writeConfigYaml({ 'blockchain-rpc-endpoint': 'https://rpc.gnosischain.com' })
   }
 
+  // Cloudflare deprecated its Ethereum gateway: it still answers the handshake
+  // (eth_chainId) but fails every real query (eth_call → -32603), so ENS
+  // resolution silently broke. Move existing installs to a working public RPC.
+  if (config['resolver-options'] === 'https://cloudflare-eth.com') {
+    writeConfigYaml({ 'resolver-options': 'https://ethereum-rpc.publicnode.com' })
+  }
+
   if (config['chain-enable'] !== undefined) {
     deleteKeyFromConfigYaml('chain-enable')
   }
