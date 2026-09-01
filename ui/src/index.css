@@ -137,3 +137,23 @@
 .multichain__wrapper {
   min-height: 0 !important;
 }
+
+/* Tooltip: the widget hardcodes a dark #323232 background while the text
+   inside follows theme.textColor (now near-black on light) — restyle as an
+   inverted Nook tooltip: accent surface, inverse text. Flips with the theme. */
+.multichain__tooltip {
+  background-color: rgb(var(--accent)) !important;
+}
+.multichain__tooltip * {
+  color: rgb(var(--primary-foreground)) !important;
+}
+
+/* Info icon: the widget's SVG hardcodes white strokes/fills (invisible on a
+   light button) — recolor to the surrounding button's text color. Attribute
+   selectors leave the transparent circle fill untouched. */
+.multichain__button-icon svg [stroke='white'] {
+  stroke: currentColor !important;
+}
+.multichain__button-icon svg [fill='white'] {
+  fill: currentColor !important;
+}
