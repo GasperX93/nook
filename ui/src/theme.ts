@@ -1,17 +1,23 @@
+// Multichain widget theme, mapped onto Nook's own design tokens (index.css).
+// The widget renders in the app's DOM and applies these values as CSS, so
+// `rgb(var(--…))` references resolve against :root — the widget follows the
+// app's light/dark theme automatically instead of being a hardcoded dark box.
 export const WIDGET_THEME = {
-  backgroundColor: '#0f1117',
-  inputBackgroundColor: '#181b23',
-  inputBorderColor: '#262a36',
-  inputTextColor: '#f0f4f8',
-  textColor: '#f0f4f8',
-  secondaryTextColor: '#78829690',
-  buttonBackgroundColor: '#f76808',
-  buttonTextColor: '#ffffff',
-  buttonSecondaryBackgroundColor: '#262a36',
-  buttonSecondaryTextColor: '#f0f4f8',
-  errorTextColor: '#ef4444',
-  borderRadius: '8px',
-  fontFamily: "ui-monospace, 'Cascadia Code', 'Fira Code', monospace",
+  backgroundColor: 'rgb(var(--bg))',
+  textColor: 'rgb(var(--fg))',
+  secondaryTextColor: 'rgb(var(--fg-muted))',
+  errorTextColor: 'rgb(var(--destructive))',
+  inputBackgroundColor: 'rgb(var(--bg-surface))',
+  inputBorderColor: 'rgb(var(--border))',
+  inputTextColor: 'rgb(var(--fg))',
+  // Primary action = Nook's neutral brand button (near-black in light mode,
+  // near-white in dark), same as Upload / New drive.
+  buttonBackgroundColor: 'rgb(var(--accent))',
+  buttonTextColor: 'rgb(var(--primary-foreground))',
+  buttonSecondaryBackgroundColor: 'rgb(var(--bg-surface))',
+  buttonSecondaryTextColor: 'rgb(var(--fg))',
+  borderRadius: '8px', // matches --radius (0.5rem)
+  fontFamily: "'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif",
   fontSize: '13px',
   fontWeight: 400,
   smallFontSize: '11px',

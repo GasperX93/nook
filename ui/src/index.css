@@ -122,7 +122,11 @@
   display: none !important;
 }
 
-/* Hide required field asterisks — browsers normalise hex to rgb in inline styles */
+/* Hide required field asterisks — the widget colors them with the theme's
+   buttonBackgroundColor (inline style), which is now Nook's accent token.
+   Legacy orange selectors kept for old cached bundles; validation messages
+   are safe (they use errorTextColor, not the button color). */
+.multichain__text[style*="var(--accent)"],
 .multichain__text[style*="#f76808"],
 .multichain__text[style*="247, 104, 8"],
 .multichain__text[style*="247,104,8"] {
