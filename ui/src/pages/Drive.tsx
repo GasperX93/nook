@@ -925,6 +925,12 @@ function UpdateFeedModal({ record, onClose }: { record: UploadRecord; onClose: (
 
 interface RecordRowProps {
   record: UploadRecord
+  // Live expiry from the drive's current stamp TTL. record.expiresAt is a
+  // snapshot frozen at upload time — extending the drive (or TTL drift from
+  // network price changes) leaves it stale, showing "Expired" on files whose
+  // batch is alive. The snapshot is only the fallback when Bee doesn't list
+  // the stamp.
+  liveExpiresAt?: number
   copiedId: string | null
   downloadingId: string | null
   downloadPct: number | null
@@ -940,6 +946,7 @@ interface RecordRowProps {
 
 function RecordRow({
   record,
+  liveExpiresAt,
   copiedId,
   downloadingId,
   downloadPct,
@@ -952,7 +959,8 @@ function RecordRow({
   onDragStart,
   onDragEnd,
 }: RecordRowProps) {
-  const { label: expiry, urgent } = timeUntil(record.expiresAt)
+  const expiresAt = liveExpiresAt ?? record.expiresAt
+  const { label: expiry, urgent } = timeUntil(expiresAt)
   const linkHash = record.feedManifestAddress ?? record.hash
   const isEnc = record.isEncrypted && record.actPublisher && record.actHistoryRef
 
@@ -1044,7 +1052,7 @@ function RecordRow({
 
       {/* Expiry */}
       <div className="flex items-center gap-2 shrink-0">
-        <ExpiryBar expiresAt={record.expiresAt} uploadedAt={record.uploadedAt} />
+        <ExpiryBar expiresAt={expiresAt} uploadedAt={record.uploadedAt} />
         <span
           className="text-[10px] uppercase tracking-widest font-semibold w-16 text-right whitespace-nowrap"
           style={{ color: urgent ? '#ef4444' : 'rgb(var(--fg-muted))' }}
@@ -2435,6 +2443,7 @@ export default function Drive() {
                   <RecordRow
                     key={record.id}
                     record={record}
+                    liveExpiresAt={liveExpiresAt(record)}
                     copiedId={copiedId}
                     downloadingId={downloadingId}
                     downloadPct={downloadPct}
@@ -2707,6 +2716,15 @@ export default function Drive() {
   function handleRecordDragStart(e: React.DragEvent, id: string) {
     e.dataTransfer.setData('recordId', id)
     setDraggingId(id)
+  }
+
+  // Per-file expiry from the drive's LIVE stamp TTL — matches what the drive
+  // list shows. The record's own expiresAt (frozen at upload) is only the
+  // fallback when the stamp isn't in Bee's list.
+  function liveExpiresAt(record: UploadRecord): number | undefined {
+    const stamp = stamps?.find(s => s.batchID === record.driveId)
+
+    return stamp?.usable ? Date.now() + stamp.batchTTL * 1000 : undefined
   }
 
   const commonRowProps = {
@@ -3116,7 +3134,7 @@ export default function Drive() {
           style={{ borderColor: 'rgb(var(--border))' }}
         >
           {visibleRecords.map(record => (
-            <RecordRow key={record.id} record={record} {...commonRowProps} />
+            <RecordRow key={record.id} record={record} liveExpiresAt={liveExpiresAt(record)} {...commonRowProps} />
           ))}
         </div>
       ) : visibleFolders.length === 0 && !addingFile && !creatingFolder ? (
