@@ -18,3 +18,6 @@ api-key.txt
 
 # secret
 .env
+
+# Claude Code personal permission files — per-machine, never shared
+.claude/settings.local.json
