@@ -138,6 +138,41 @@ export function useChainState() {
   })
 }
 
+export function useReclaimableDrives() {
+  return useQuery({
+    queryKey: ['server', 'reclaimable'],
+    queryFn: serverApi.listReclaimable,
+    refetchInterval: query => (query.state.status === 'error' ? 60_000 : 30_000),
+    retry: false,
+    select: data => data.drives,
+  })
+}
+
+export function useCreateReclaimable() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async ({
+      amount,
+      depth,
+      encrypted,
+      label,
+    }: {
+      amount: string
+      depth: number
+      encrypted: boolean
+      label?: string
+    }) => serverApi.createReclaimable(amount, depth, encrypted, label),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['server', 'reclaimable'] })
+      // The batch also shows up on the node's stamp list (filtered out of the
+      // classic drive cards, but the wallet balance moved)
+      queryClient.invalidateQueries({ queryKey: ['bee', 'stamps'] })
+      queryClient.invalidateQueries({ queryKey: ['bee', 'wallet'] })
+    },
+  })
+}
+
 export function useBuyStamp() {
   const queryClient = useQueryClient()
 

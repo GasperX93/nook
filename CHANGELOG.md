@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.6.0](https://github.com/GasperX93/nook/releases/tag/v0.6.0) (2026-09-11)
+
+### Deletable drives (Beta)
+
+* **Drives where deleting really frees space** — a new "Deletable files" drive type ([#99](https://github.com/GasperX93/nook/issues/99)): files are stamped client-side against a local slot ledger, so deleting a file returns its exact storage to the drive and new uploads reuse it. Includes exact ledger-based usage, folders, drag-and-drop folder uploads with browseable indexes, and receipt-confirmed upload progress ("N chunks confirmed by the network"). Plain and encrypted; sharing comes in a later release.
+* Powered by **etherchunk 1.2.0** — including fixes for encrypted uploads just past 16 MiB being truncated on download (Cafe137/etherchunk#3) and files with many identical blocks (zero-padded videos, disk images) failing with "Bucket full" on an empty drive (Cafe137/etherchunk#4)
+
+### Honest drive lifecycle
+
+* **Expired drives tell the truth** ([#106](https://github.com/GasperX93/nook/issues/106)) — drives are checked against the chain: an expired drive moves into a collapsed "Expired" section as a record of what it held, uploads to it are refused with a clear message instead of a cryptic chunk error, and it can be removed for good (removal of a still-live drive is refused). Expired drives with nothing on them clean themselves up.
+* **Usage bars stop crying wolf** — drives include reserve capacity, so the bar turns amber (not full-red) past the advertised size, and red is reserved for genuine fullness. File expiry labels now follow the drive's live on-chain lifetime, so extending a drive no longer leaves files falsely marked EXPIRED.
+* **Downloads fail loudly, never hang** ([#105](https://github.com/GasperX93/nook/issues/105)) — stall guard with a clear retry, progress that survives navigating away and back
+
+### Node
+
+* Bundled Bee upgraded **2.8.1 → 2.8.2** (existing installs upgrade automatically on launch) — a security-hardening release: malformed peer data, corrupted local state, and misbehaving RPC providers can no longer crash the node (including panics during drive purchases and top-ups)
+* **ENS links work again** — the default ENS resolver endpoint was a dead gateway (answered health checks but failed real queries); replaced with a working endpoint, existing installs migrate automatically
+
+### Wallet
+
+* **One-step top-up** — funding from other chains now swaps straight to xBZZ in a single action (gas top-up included) instead of a multi-step bridge-swap-transfer chain (multichain-widget 0.12.0)
+* **Top-up widget looks native** — restyled with Nook's design system (follows light/dark, readable tooltips and icons)
+
+### Known issues
+
+* A message sent moments before quitting the app can be lost while still showing as sent — a persistent outbox is planned for the next release ([#117](https://github.com/GasperX93/nook/issues/117))
+
 ## [0.5.4](https://github.com/GasperX93/nook/releases/tag/v0.5.4) (2026-07-16)
 
 ### Node reliability

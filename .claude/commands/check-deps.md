@@ -16,6 +16,7 @@ Run a comprehensive dependency and service health check for Nook. Execute ALL of
 - Run: `npm outdated --json` in the project root
 - Parse output: group by update type (patch / minor / major)
 - Flag these as HIGH RISK if major update available: `@ethersphere/bee-js`, `ethers`, `electron`, `koa`
+- Flag `etherchunk` as HIGH RISK on ANY update (it is exact-pinned; see Key Update Rules) and also check its upstream issue tracker: `gh issue list --repo Cafe137/etherchunk --state open` — open issues there may be release-blocking for reclaimable drives
 
 ## 3. npm Outdated (Frontend)
 
@@ -94,6 +95,7 @@ Present results as a single report:
 - **wagmi + viem + RainbowKit**: Must be updated TOGETHER as a group
 - **@upcoming/multichain-widget**: Check if external wagmi context was added before recommending update
 - **bee-js**: Must stay compatible with the Bee binary version
+- **etherchunk**: the reclaimable-drive engine (#99), exact-pinned on purpose — NEVER auto-bump. Any update must follow the full procedure: `npm i --save-exact etherchunk@<new>`, dist-diff the installed package against the previous version (especially `registry.js`/`slots.js` — byte-identical means no ledger/state migration; changes there mean STOP and plan a migration), confirm the `upload`/`deleteFile`/`list`/`status` surface still matches `EtherchunkModule` in `src/reclaimable.ts`, then live-retest upload → delete → slot-reuse before merging. Its fixes sometimes ride in via its only dep `cafe-utility`, so check that bump too. Repo: Cafe137/etherchunk (no GitHub releases — use `npm view etherchunk version` for latest)
 - **React**: Check all UI deps support the new version before recommending
 - **Electron**: Major updates may break native modules and forge config
 

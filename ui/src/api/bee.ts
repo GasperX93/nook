@@ -482,8 +482,13 @@ export const beeApi = {
   },
 
   downloadFile: async (hash: string, onProgress?: (pct: number) => void): Promise<Blob> => {
+    // Trailing slash matters: /bzz/<ref> answers 308 → /bzz/<ref>/, and in dev
+    // that Location escapes the /bee-api proxy prefix, so the browser lands on
+    // the SPA fallback and "downloads" index.html instead of the file.
+    const url = `${getBeeUrl()}/bzz/${hash.endsWith('/') ? hash : `${hash}/`}`
+
     if (!onProgress) {
-      const r = await fetch(`${getBeeUrl()}/bzz/${hash}`)
+      const r = await fetch(url)
 
       if (!r.ok) throw new Error(`Download failed: ${r.status}`)
 
@@ -492,16 +497,40 @@ export const beeApi = {
 
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest()
-      xhr.open('GET', `${getBeeUrl()}/bzz/${hash}`)
+      xhr.open('GET', url)
       xhr.responseType = 'blob'
+      // Stall guard (#105): Bee can hang mid-stream while chunks are still
+      // propagating — without this the XHR waits forever and the UI shows a
+      // frozen percentage with no way to retry.
+      let stallTimer: ReturnType<typeof setTimeout>
+      let stalled = false
+      const armStallGuard = () => {
+        clearTimeout(stallTimer)
+        stallTimer = setTimeout(() => {
+          stalled = true
+          xhr.abort()
+        }, 30_000)
+      }
+      armStallGuard()
       xhr.onprogress = e => {
+        armStallGuard()
+
         if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100))
       }
       xhr.onload = () => {
+        clearTimeout(stallTimer)
+
         if (xhr.status >= 200 && xhr.status < 300) resolve(xhr.response as Blob)
         else reject(new Error(`Download failed: ${xhr.status}`))
       }
-      xhr.onerror = () => reject(new Error('Download failed'))
+      xhr.onerror = () => {
+        clearTimeout(stallTimer)
+        reject(new Error('Download failed'))
+      }
+      xhr.onabort = () => {
+        clearTimeout(stallTimer)
+        reject(new Error(stalled ? 'Download stalled — content may still be propagating' : 'Download cancelled'))
+      }
       xhr.send()
     })
   },

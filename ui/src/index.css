@@ -122,7 +122,11 @@
   display: none !important;
 }
 
-/* Hide required field asterisks — browsers normalise hex to rgb in inline styles */
+/* Hide required field asterisks — the widget colors them with the theme's
+   buttonBackgroundColor (inline style), which is now Nook's accent token.
+   Legacy orange selectors kept for old cached bundles; validation messages
+   are safe (they use errorTextColor, not the button color). */
+.multichain__text[style*="var(--accent)"],
 .multichain__text[style*="#f76808"],
 .multichain__text[style*="247, 104, 8"],
 .multichain__text[style*="247,104,8"] {
@@ -132,4 +136,24 @@
 /* Remove widget min-height so the card doesn't exceed the left column */
 .multichain__wrapper {
   min-height: 0 !important;
+}
+
+/* Tooltip: the widget hardcodes a dark #323232 background while the text
+   inside follows theme.textColor (now near-black on light) — restyle as an
+   inverted Nook tooltip: accent surface, inverse text. Flips with the theme. */
+.multichain__tooltip {
+  background-color: rgb(var(--accent)) !important;
+}
+.multichain__tooltip * {
+  color: rgb(var(--primary-foreground)) !important;
+}
+
+/* Info icon: the widget's SVG hardcodes white strokes/fills (invisible on a
+   light button) — recolor to the surrounding button's text color. Attribute
+   selectors leave the transparent circle fill untouched. */
+.multichain__button-icon svg [stroke='white'] {
+  stroke: currentColor !important;
+}
+.multichain__button-icon svg [fill='white'] {
+  fill: currentColor !important;
 }

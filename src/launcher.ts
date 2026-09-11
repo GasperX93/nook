@@ -71,7 +71,7 @@ mainnet: true
 full-node: false
 cors-allowed-origins: '*'
 skip-postage-snapshot: false
-resolver-options: https://cloudflare-eth.com
+resolver-options: https://ethereum-rpc.publicnode.com
 data-dir: ${getPath('data-dir')}
 password: ${v4()}
 storage-incentives-enable: false`
