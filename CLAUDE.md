@@ -71,6 +71,8 @@ The app has two main layers:
 | `funding-monitor.ts` | Detects ultra-light/light mode, polls wallet balance via RPC, auto-switches to light mode when funded |
 | `chequebook-monitor.ts` | Auto-funds the chequebook for bandwidth (deposits when balance drops below threshold) |
 | `identity-cache.ts` | Server-side cache for the wallet-derived identity (survives page reloads) |
+| `reclaimable.ts` | Deletable-drive engine (#99): uploads via etherchunk (client-side stamping + slot ledger), delete-frees-space, folders, upload jobs, on-chain expiry checks (#106) |
+| `reclaimable-registry.ts` | Registry of ledger-managed batches + poison guards (refuses Bee-stamped writes to them) |
 | `browser.ts` / `nook-deep-link.ts` | Opens the dashboard in the default browser; `nook://` protocol deep links (contact links) |
 | `status.ts` | `/status` endpoint — exposes `mode` (ultra-light/light), `assetsReady` |
 | `config.ts` | Reads/writes Bee YAML config |
@@ -83,11 +85,13 @@ The app has two main layers:
 
 **Startup sequence** (`index.ts`): migrations → splash → download Bee if needed → API key → free port → start Koa server → init Bee config → launch Bee → start funding monitor → start chequebook monitor → setup tray → keep-alive loop.
 
-**Bundled Bee version**: `EXPECTED_BEE_VERSION` in `src/downloader.ts` (currently **2.8.1**). On launch the downloader compares the installed binary's version and force-redownloads on mismatch — existing installs auto-upgrade.
+**Bundled Bee version**: `EXPECTED_BEE_VERSION` in `src/downloader.ts` (currently **2.8.2**). On launch the downloader compares the installed binary's version and force-redownloads on mismatch — existing installs auto-upgrade.
 
 **Ultra-light / light mode**: New installs start in ultra-light mode (`swap-enable: false`, no `blockchain-rpc-endpoint`). Bee API is available immediately without funds. The funding monitor polls wallet balance every 15s. When xDAI is detected: stop Bee → write `blockchain-rpc-endpoint` and `swap-enable: true` → restart in light mode. Postage sync takes ~2–3 minutes thanks to clean snapshot loading.
 
-**Server** (`server.ts`): Koa REST API. Serves the dashboard at `/dashboard` (unpacked from asar) and proxies `/bee-api/*` → `http://127.0.0.1:1633/*` (mirrors the Vite dev proxy so renderer code works in dev and prod). Routes: `/info`, `/status`, `/config`, `/logs/*`, `/restart`, `/swap`, `/redeem`, `/buy-stamp`, `/feed-update`, `/feed-read`, `/withdraw`, `/chequebook-withdraw`, `/peers`, `/grantee` (+ `GET|PATCH /grantee/:ref`), `/act/upload-metadata`, `/act/download/:hash`, `/upload-bytes` (direct/non-deferred — see #86), `/identity-cache`.
+**Server** (`server.ts`): Koa REST API. Serves the dashboard at `/dashboard` (unpacked from asar) and proxies `/bee-api/*` → `http://127.0.0.1:1633/*` (mirrors the Vite dev proxy so renderer code works in dev and prod). Routes: `/info`, `/status`, `/config`, `/logs/*`, `/restart`, `/swap`, `/redeem`, `/buy-stamp`, `/feed-update`, `/feed-read`, `/withdraw`, `/chequebook-withdraw`, `/peers`, `/grantee` (+ `GET|PATCH /grantee/:ref`), `/act/upload-metadata`, `/act/download/:hash`, `/upload-bytes` (direct/non-deferred — see #86), `/identity-cache`, and the deletable-drive family: `GET|POST /reclaimable`, `DELETE /reclaimable/:batch` (expired only, 409 otherwise), `POST /reclaimable/:batch/upload?name=` (raw octet-stream body), `/reclaimable/:batch/stage` + `/reclaimable/stage/:id/file` + `/reclaimable/stage/:id/commit` (folder uploads), `GET /reclaimable/upload/:id` (job polling), `/reclaimable/:batch/folders`, `/reclaimable/:batch/files/:root` (DELETE + folder PATCH).
+
+**Deletable (reclaimable) drives** (#99, Beta since 0.6.0): batches stamped CLIENT-SIDE by `etherchunk` (exact-pinned dep — never auto-bump; see `/check-deps` rules) against a per-drive slot ledger (SQLite + `.free` bitmap in the data dir). Deleting a file frees its exact `(bucket, slot)` pairs for reuse. Uploads are direct (receipt-per-chunk). The registry poison-guards these batches from every Bee-stamping path — a Bee-stamped write would corrupt the ledger and lose data. Expired drives are detected via Bee `GET /batches/:id` (404 trusted only when chain-synced), refused for upload (410), shown as tombstones in a collapsed UI section, and removable; empty expired drives auto-clean. v1 has NO sharing.
 
 ### Frontend (`ui/`) — Custom React app
 
@@ -105,7 +109,9 @@ Key files:
 - `ui/src/components/ShareModal.tsx` — grantee management (grant/revoke), share link generation, contact autocomplete
 - `ui/src/components/AddSharedDriveModal.tsx` — import shared drives from share links, feed-based and snapshot
 - `ui/src/apps/WebsitePublisher.tsx` — publish wizard (select → options → publishing → done); "Permanent address" (feed) defaults ON; remembers a bought-but-unused stamp and reuses it on retry (never double-buys); sidebar click resets wizard via `location.key`
-- `ui/src/pages/Drive.tsx` — drive list (rename via hover pencil or kebab; usage bar from `stampFillRatio`; Extend storage), upload history with recursive folder tree, encrypted drives + ACT uploads, "My Drives" / "Shared with me" tabs, feed-based shared-drive sync, re-publish after revoke
+- `ui/src/pages/Drive.tsx` — drive list (rename via hover pencil or kebab; Extend storage), upload history with recursive folder tree, encrypted drives + ACT uploads, "My Drives" / "Shared with me" tabs, feed-based shared-drive sync, re-publish after revoke, collapsed "Expired" section for dead deletable drives; per-file expiry labels derive from the drive's LIVE stamp TTL (the record's `expiresAt` snapshot is only a fallback)
+- `ui/src/components/ReclaimableDrive.tsx` — deletable-drive card + detail view + expired tombstone row; usage bar amber past advertised size (overbuy reserve), red keyed on real bucket fullness (`mostUtilizedCount/slotsPerBucket`); downloads with stall guard/retry/re-attach (#105)
+- `ui/src/theme.ts` — `WIDGET_THEME` for the multichain widget, mapped onto Nook's CSS-variable tokens (`rgb(var(--…))` resolves in-DOM, follows light/dark)
 - `ui/src/lib/republish.ts` — re-encrypt & re-upload a drive's files under its current ACT key (post-revoke recovery)
 - `ui/src/pages/Wallet.tsx` — balances (xDAI/xBZZ), collapsible multichain top-up widget, redeem gift code, swap
 - `ui/src/pages/Account.tsx` — two tabs: Wallet + Identity (Nook address / identity publishing). Drive management lives on the Drive page.
@@ -113,7 +119,7 @@ Key files:
 - `ui/src/pages/Dev.tsx` — node config editor + live Bee logs + wallet key derivation test + "Exit Developer Mode" button (shown in dev mode only)
 - `ui/src/components/Layout.tsx` — sidebar nav + Bee status banner; dot states: checking (gray), syncing/0 peers (orange), live (green), off (red); funding warning banner when mode is ultra-light
 - `ui/src/hooks/useUploadHistory.ts` — localStorage records + folders with `parentFolderId` for subfolder support; includes `isEncrypted`, `actPublisher`, `actHistoryRef` fields
-- `ui/src/index.css` — global styles + CSS overrides for `@upcoming/multichain-widget` internals (hiding the info banner, asterisks, adjusting min-height)
+- `ui/src/index.css` — global styles (Nook design tokens on `:root.light`/`:root.dark`) + CSS overrides for `@upcoming/multichain-widget` internals (hiding the info banner and required-field asterisks, min-height, tooltip/info-icon contrast on light theme)
 - `assets/splash.html` — startup splash screen (dark theme, iA Writer font, no external dependencies)
 
 ### Messaging (`ui/src/notify/` + `@swarm-notify/sdk`)
