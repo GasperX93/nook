@@ -10,6 +10,7 @@ Nook bundles a [Bee](https://github.com/ethersphere/bee) node and a clean UI int
 ## What you can do
 
 - **Store files** — upload any file or folder to Swarm, organized into drives with folders. Rename drives, see honest usage, extend before expiry
+- **Delete to free space (Beta)** — "Deletable files" drives track storage in a local ledger, so removing a file returns its exact space to the drive and new uploads reuse it. Expired drives are clearly marked instead of failing silently
 - **Encrypt files** — create encrypted drives using Swarm's ACT (chunk-level encryption). Only people you grant access to can decrypt and download
 - **Share encrypted drives** — grant access to specific contacts, deliver via a message or share link, and recipients get a live-syncing view of your files. Revoke anytime; re-publish re-secures existing files
 - **Message other Nook users** — end-to-end encrypted messaging over Swarm, no servers. On-chain notification pings reach people even before they've added you back

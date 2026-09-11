@@ -14,10 +14,8 @@
 import { Bee } from '@ethersphere/bee-js'
 
 import { NookSigner } from '../crypto/signer'
-import { appendSent, loadThreads } from './messages'
-import { sendMailboxMessage } from './send-message'
-import { enqueueSend } from './send-queue'
-import { type NookContact, toLibraryContact } from './types'
+import { queueAndDeliver } from './deliver'
+import { type NookContact } from './types'
 
 export async function sendInviteAck(
   bee: Bee,
@@ -30,17 +28,9 @@ export async function sendInviteAck(
   const name = myDisplayName.trim() || 'They'
   const body = `${name} accepted your invitation`
 
-  try {
-    await enqueueSend(sender.id, async () =>
-      sendMailboxMessage(bee, signer.getSigningKey(), stampId, signer.getAddress(), toLibraryContact(sender), {
-        subject: '',
-        body,
-      }),
-    )
-    // Mirror it into our own thread so the conversation isn't empty.
-    appendSent(loadThreads(), sender.id, body)
-  } catch {
-    // Best-effort — the contact is already added; the sender just won't flip to
-    // "connected" until we send a real message.
-  }
+  // Persistent outbox (#117): the ack + its thread bubble are stored before
+  // any network work, and the Layout drain retries — so an ack sent right
+  // before a quit still reaches the inviter (whose UI is stuck on "waiting"
+  // until something inbound arrives).
+  queueAndDeliver(bee, signer, stampId, sender, { kind: 'invite-ack', body })
 }
