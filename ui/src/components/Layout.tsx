@@ -1,4 +1,4 @@
-import { ConnectButton } from '@rainbow-me/rainbowkit'
+import { ConnectButton, useConnectModal } from '@rainbow-me/rainbowkit'
 import {
   AlertTriangle,
   Contact,
@@ -204,8 +204,9 @@ export default function Layout() {
   // arriving messages look lost. The un-namespaced last-identity marker is
   // the one signal that there is an inbox worth unlocking; only users who
   // have actually used messaging ever see this.
-  const { signer: derivedSigner } = useDerivedKey()
+  const { signer: derivedSigner, walletConnected } = useDerivedKey()
   const showMessagesPaused = !derivedSigner && hasKnownIdentity()
+  const { openConnectModal } = useConnectModal()
 
   // Auto-complete onboarding for existing users upgrading from v0.2.0 (they never had the flag).
   // Once stamps or wallet data loads and shows existing activity, mark onboarding done.
@@ -417,11 +418,17 @@ export default function Layout() {
               <span style={{ color: 'rgb(var(--fg))' }}>
                 Messages are paused — connect your wallet to unlock your inbox.{' '}
                 <button
-                  onClick={() => navigate('/contacts')}
+                  onClick={() => {
+                    // Wallet not connected → open the RainbowKit dialog right
+                    // here. Connected but not derived → the Contacts page owns
+                    // the sign-to-unlock step.
+                    if (!walletConnected && openConnectModal) openConnectModal()
+                    else navigate('/contacts')
+                  }}
                   className="underline font-semibold"
                   style={{ color: '#60a5fa' }}
                 >
-                  Connect →
+                  {walletConnected ? 'Unlock →' : 'Connect →'}
                 </button>
               </span>
             </div>
