@@ -13,6 +13,7 @@ import { useWalletClient } from 'wagmi'
 import { topicFromString, waitForRetrievable } from '../api/bee'
 import { serverApi } from '../api/server'
 import { bytesToHex, hexToBytes } from '../lib/hex'
+import { contactsForNodeKey, stripKeyPrefix } from '../lib/node-key'
 import { useDerivedKey } from '../hooks/useDerivedKey'
 import { GNOSIS_CHAIN_ID, REGISTRY_ADDRESS } from '../notify/constants'
 import { queueAndDeliver } from '../notify/deliver'
@@ -136,37 +137,14 @@ export default function ShareModal({
     localStorage.setItem('nook-grantee-labels', JSON.stringify(next))
   }
 
-  /** Strip compression prefix (02/03/04) and 0x from a public key for comparison */
-  function stripKeyPrefix(k: string): string {
-    const clean = k.toLowerCase().replace('0x', '')
-
-    // Compressed keys start with 02 or 03 (66 chars), uncompressed with 04 (130 chars)
-    // Bee returns uncompressed without 04 prefix (128 chars)
-    if (clean.length === 66 && (clean.startsWith('02') || clean.startsWith('03'))) {
-      return clean.slice(2) // Remove 02/03 → 64 char X coordinate
-    }
-
-    if (clean.length === 130 && clean.startsWith('04')) {
-      return clean.slice(2, 66) // Remove 04, take X coordinate only
-    }
-
-    // Uncompressed without prefix (128 chars) — take first 64 (X coordinate)
-    if (clean.length === 128) {
-      return clean.slice(0, 64)
-    }
-
-    return clean
-  }
-
-  /** Find a label for a key — prefers contact list, falls back to legacy label map. */
+  /** Find a label for a key — prefers contact list (newest match, #122), falls back to legacy label map. */
   function findLabel(key: string): string | undefined {
-    const keyX = stripKeyPrefix(key)
+    const match = contactsForNodeKey(contacts, key)[0]
 
-    for (const c of contacts) {
-      if (stripKeyPrefix(c.beePublicKey) === keyX) return c.nickname
-    }
+    if (match) return match.nickname
 
     if (labels[key]) return labels[key]
+    const keyX = stripKeyPrefix(key)
 
     for (const [storedKey, label] of Object.entries(labels)) {
       if (stripKeyPrefix(storedKey) === keyX) return label
@@ -352,7 +330,7 @@ export default function ShareModal({
       // If user typed a manual label for someone NOT in their contact list
       // (and we didn't already save them via address resolve), remember it
       // so the grantee row shows a name.
-      const matchedContact = contacts.find(c => stripKeyPrefix(c.beePublicKey) === stripKeyPrefix(key))
+      const matchedContact = contactsForNodeKey(contacts, key)[0]
 
       if (newLabel.trim() && !matchedContact) saveLabel(key, newLabel.trim())
 
@@ -487,11 +465,20 @@ export default function ShareModal({
     }
   }
 
-  /** Find the contact whose beePublicKey matches this grantee key, if any. */
+  /**
+   * The contact to notify for this grantee key (#122): when a person
+   * re-derives their Nook identity on the same node, several contacts share
+   * one node key — the NEWEST one is their current identity. First-found
+   * used to route share notifications to the stale identity's mailbox,
+   * which nobody reads.
+   */
   function contactForGrantee(granteeKey: string) {
-    const keyX = stripKeyPrefix(granteeKey)
+    return contactsForNodeKey(contacts, granteeKey)[0]
+  }
 
-    return contacts.find(c => stripKeyPrefix(c.beePublicKey) === keyX)
+  /** True when this grantee key maps to more than one contact (rotated identity). */
+  function granteeIsAmbiguous(granteeKey: string): boolean {
+    return contactsForNodeKey(contacts, granteeKey).length > 1
   }
 
   /**
@@ -647,6 +634,15 @@ export default function ShareModal({
                           style={{ backgroundColor: 'rgba(245,158,11,0.12)', color: '#f59e0b' }}
                         >
                           queued
+                        </span>
+                      )}
+                      {!isMe && contact && granteeIsAmbiguous(key) && (
+                        <span
+                          className="ml-2 text-[10px] font-sans font-medium px-1.5 py-0.5 rounded"
+                          title={`Several contacts share this node key (a re-derived identity?). Notifications go to the newest: ${contact.nickname}. Delete stale duplicates in Contacts if that's wrong.`}
+                          style={{ backgroundColor: 'rgba(245,158,11,0.12)', color: '#f59e0b' }}
+                        >
+                          2+ identities → {contact.nickname}
                         </span>
                       )}
                       {!isMe && contact && onChainStatus[contact.id] === 'sent' && (
