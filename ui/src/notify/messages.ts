@@ -30,6 +30,14 @@ export interface StoredMessage {
   driveShareLink?: string
   driveName?: string
   fileCount?: number
+  /**
+   * Delivery status for sent messages (#117). Absent = 'sent' (all records
+   * predating the outbox were written after their network push — or lied
+   * about it, which is exactly what this field ends).
+   */
+  status?: 'sending' | 'sent' | 'failed'
+  /** Link to the outbox entry that delivers/delivered this message. */
+  outboxId?: string
 }
 
 export interface DriveShareExtras {
@@ -140,6 +148,62 @@ export function appendSent(threads: ThreadMap, counterparty: string, body: strin
     kind: 'message',
   }
   const updated: ThreadMap = { ...threads, [key]: [...(threads[key] ?? []), msg] }
+
+  saveThreads(updated)
+
+  return updated
+}
+
+/**
+ * Append a bubble for an outbox entry with status 'sending' (#117).
+ * Called synchronously right after the entry is persisted — before any
+ * network work — so the visible bubble and the durable intent always agree.
+ */
+export function appendOutboxMessage(
+  threads: ThreadMap,
+  entry: {
+    id: string
+    recipientId: string
+    ts: number
+    kind: 'message' | 'drive-share' | 'invite-ack'
+    body: string
+    driveShare?: DriveShareExtras
+  },
+): ThreadMap {
+  const key = entry.recipientId.toLowerCase()
+  const msg: StoredMessage = {
+    id: `ob-${entry.id}`,
+    counterparty: key,
+    ts: entry.ts,
+    body: entry.body,
+    direction: 'sent',
+    kind: entry.kind === 'drive-share' ? 'drive-share' : 'message',
+    ...(entry.driveShare ?? {}),
+    status: 'sending',
+    outboxId: entry.id,
+  }
+  const updated: ThreadMap = { ...threads, [key]: [...(threads[key] ?? []), msg] }
+
+  saveThreads(updated)
+
+  return updated
+}
+
+/** Update the delivery status of the bubble linked to an outbox entry. */
+export function setMessageStatusByOutboxId(
+  threads: ThreadMap,
+  counterparty: string,
+  outboxId: string,
+  status: 'sending' | 'sent' | 'failed',
+): ThreadMap {
+  const key = counterparty.toLowerCase()
+  const thread = threads[key]
+
+  if (!thread?.some(m => m.outboxId === outboxId)) return threads
+  const updated: ThreadMap = {
+    ...threads,
+    [key]: thread.map(m => (m.outboxId === outboxId ? { ...m, status } : m)),
+  }
 
   saveThreads(updated)
 

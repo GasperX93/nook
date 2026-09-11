@@ -25,7 +25,8 @@ import {
 import { sendInviteAck } from '../notify/invite-ack'
 import { enqueueSend } from '../notify/send-queue'
 import { loadInvitations, markInvitationProcessed, pendingInvitations, type Invitation } from '../notify/invitations'
-import { appendSent, loadReadCursors, loadThreads, markRead, unreadCount } from '../notify/messages'
+import { queueAndDeliver, retryOutboxEntry } from '../notify/deliver'
+import { appendSent, loadReadCursors, loadThreads, markRead, type StoredMessage, unreadCount } from '../notify/messages'
 import { sendMailboxMessage } from '../notify/send-message'
 import { waitForBeeReady } from '../notify/bee-ready'
 import { createNotifyProvider } from '../notify/provider'
@@ -285,37 +286,34 @@ export default function Messages({ initialContactId, hideContactList, hideThread
     }
   }, [selected, selectedThread, cursors])
 
-  // Deliver a regular message in the background: serialize per recipient, hold
-  // until the node is ready to push, and write to the next append-only feed
-  // index via the persisted send cursor (so it can't overwrite a prior message).
-  // NOTE: there's still no reliable sender-side delivery confirmation — sender
-  // feed read-back diverges from what actually propagated — so we show no
-  // sent/failed status. A truthful "delivered" needs recipient read receipts
-  // (swarm-notify#56).
-  async function deliverMessage(contact: NookContact, body: string) {
-    const s = signer
+  // Regular-message delivery lives in notify/deliver.ts (#117): the outbox
+  // persists the intent before any network work, the Layout drain retries
+  // pending entries, and the bubble carries an honest sending/sent/failed
+  // status. ("Delivered" — recipient-side confirmation — still needs read
+  // receipts, swarm-notify#56.)
 
-    if (!s || !stampId) {
-      if (!stampId) setError('No usable stamp — buy one in Account → My Storage')
+  // Honest delivery footer (#117): "sending…" while the outbox pushes,
+  // tap-to-retry once attempts are exhausted, silence when confirmed sent.
+  function renderDeliveryStatus(m: StoredMessage) {
+    if (m.direction !== 'sent' || !m.status || m.status === 'sent') return null
 
-      return
+    if (m.status === 'sending') {
+      return <p className="text-[10px] mt-0.5 text-right italic text-muted-foreground">sending…</p>
     }
-    const stamp = stampId
 
-    try {
-      await enqueueSend(contact.id, async () => {
-        // Don't send during warmup — a send before the node can push never
-        // propagates to the recipient.
-        if (!(await waitForBeeReady())) throw new Error('Node not ready yet')
-
-        return sendMailboxMessage(bee, s.getSigningKey(), stamp, s.getAddress(), toLibraryContact(contact), {
-          subject: '',
-          body,
-        })
-      })
-    } catch {
-      setError('Message may not have sent — try again.')
-    }
+    return (
+      <button
+        onClick={() => {
+          if (!signer || !stampId || !m.outboxId) return
+          retryOutboxEntry(bee, signer, stampId, m.outboxId)
+          setThreads(loadThreads())
+        }}
+        className="text-[10px] mt-0.5 block ml-auto"
+        style={{ color: '#ef4444' }}
+      >
+        not sent — tap to retry
+      </button>
+    )
   }
 
   async function handleSend() {
@@ -355,14 +353,15 @@ export default function Messages({ initialContactId, hideContactList, hideThread
 
     if (!body) return
 
-    // ── Regular message (connected): optimistic + background confirmed delivery ──
-    // Show the bubble instantly; deliverMessage sends in the background
-    // (serialized per recipient, held until the node is ready).
+    // ── Regular message (connected): persistent outbox (#117) ──
+    // The entry + 'sending' bubble are persisted BEFORE any network work, so
+    // the send survives an immediate quit (delivered on next launch by the
+    // drain). The bubble shows the truth: sending… → sent, or failed + retry.
     if (!isInviteState) {
       setError(null)
-      setThreads(prev => appendSent(prev, selected.id, body))
+      queueAndDeliver(bee, signer, stampId, selected, { kind: 'message', body })
+      setThreads(loadThreads())
       setDraft('')
-      void deliverMessage(selected, body)
 
       return
     }
@@ -670,6 +669,7 @@ export default function Messages({ initialContactId, hideContactList, hideThread
                         <p className="text-[10px]" style={{ color: 'rgb(var(--fg-muted))' }}>
                           {formatTime(m.ts)}
                         </p>
+                        {renderDeliveryStatus(m)}
                       </div>
                     )
                   }
@@ -685,6 +685,7 @@ export default function Messages({ initialContactId, hideContactList, hideThread
                       <p className="text-[10px] mt-1 text-right text-muted-foreground">
                         {m.direction === 'sent' ? 'You' : selected.nickname} | {formatTime(m.ts)}
                       </p>
+                      {renderDeliveryStatus(m)}
                     </div>
                   )
                 })

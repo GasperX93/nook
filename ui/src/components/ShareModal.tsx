@@ -15,13 +15,11 @@ import { serverApi } from '../api/server'
 import { bytesToHex, hexToBytes } from '../lib/hex'
 import { useDerivedKey } from '../hooks/useDerivedKey'
 import { GNOSIS_CHAIN_ID, REGISTRY_ADDRESS } from '../notify/constants'
-import { appendSentDriveShare, loadThreads } from '../notify/messages'
+import { queueAndDeliver } from '../notify/deliver'
 import { createNotifyProvider } from '../notify/provider'
-import { sendMailboxMessage } from '../notify/send-message'
-import { enqueueSend } from '../notify/send-queue'
 import { decodeShareLink } from '../notify/share-link'
 import { addContact, isIdentityPublished, loadContacts } from '../notify/storage'
-import { type NookContact, toLibraryContact } from '../notify/types'
+import { type NookContact } from '../notify/types'
 import { buildShareLink } from '../hooks/useSharedDrives'
 import { wagmiConfig } from '../wagmi'
 import { Button } from './ui/button'
@@ -110,7 +108,7 @@ export default function ShareModal({
   const [grantees, setGrantees] = useState<string[]>([])
   const [senderName, setSenderName] = useState('')
   // Per-grantee notification status keyed by lowercased contact id (Nook addr)
-  type NotifyStatus = 'idle' | 'sending' | 'sent' | 'failed'
+  type NotifyStatus = 'idle' | 'sending' | 'sent' | 'queued' | 'failed'
   const [notifyStatus, setNotifyStatus] = useState<Record<string, NotifyStatus>>({})
   // Optional on-chain wake-up — fires a Gnosis registry event so recipients
   // who haven't added you yet still get a "someone wants to reach you" signal.
@@ -542,29 +540,20 @@ export default function ShareModal({
 
     for (const contact of targets) {
       setNotifyStatus(prev => ({ ...prev, [contact.id]: 'sending' }))
-      try {
-        // Serialize per recipient and write to the next append-only feed index
-        // via the persisted send cursor — no overwrite of a concurrent
-        // message/ack to the same contact.
-        await enqueueSend(contact.id, async () =>
-          sendMailboxMessage(bee, signer.getSigningKey(), stampId, myAddr, toLibraryContact(contact), {
-            subject,
-            body,
-            type: 'drive-share',
-            driveShareLink: link,
-            driveName,
-            fileCount,
-          }),
-        )
-        // Save locally so the sender sees the message in their own thread
-        appendSentDriveShare(loadThreads(), contact.id, { driveShareLink: link, driveName, fileCount })
-        setNotifyStatus(prev => ({ ...prev, [contact.id]: 'sent' }))
-      } catch (e) {
-        // eslint-disable-next-line no-console
-        console.error(`Notify ${contact.nickname} failed:`, e)
-        lastFailMsg = (e as Error).message ?? 'send failed'
-        setNotifyStatus(prev => ({ ...prev, [contact.id]: 'failed' }))
-      }
+      // Persistent outbox (#117): the entry + thread bubble are stored before
+      // any network work, so the notification survives closing the app — the
+      // Layout drain keeps retrying queued entries. A failed first attempt is
+      // therefore 'queued', not lost.
+      const { firstAttempt } = queueAndDeliver(bee, signer, stampId, contact, {
+        kind: 'drive-share',
+        body,
+        subject,
+        driveShare: { driveShareLink: link, driveName, fileCount },
+      })
+      // A queued (not yet delivered) notification is NOT a failure — no error
+      // surfaced; the row badge shows "queued" and the outbox delivers it.
+      const delivered = await firstAttempt
+      setNotifyStatus(prev => ({ ...prev, [contact.id]: delivered ? 'sent' : 'queued' }))
 
       // On-chain wake-up — fired AFTER mailbox so the message is already in
       // the feed by the time recipient discovers the event and resolves us.
@@ -649,6 +638,15 @@ export default function ShareModal({
                           style={{ backgroundColor: 'rgba(74,222,128,0.12)', color: '#4ade80' }}
                         >
                           notified
+                        </span>
+                      )}
+                      {!isMe && status === 'queued' && (
+                        <span
+                          className="ml-2 text-[10px] font-sans font-medium px-1.5 py-0.5 rounded"
+                          title="The node couldn't send yet — the message is stored and will be delivered automatically"
+                          style={{ backgroundColor: 'rgba(245,158,11,0.12)', color: '#f59e0b' }}
+                        >
+                          queued
                         </span>
                       )}
                       {!isMe && contact && onChainStatus[contact.id] === 'sent' && (

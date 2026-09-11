@@ -18,6 +18,7 @@ import { useDisconnect } from 'wagmi'
 import { weiToDai } from '../api/bee'
 import { useBeeHealth, usePeers, useRestart, useStamps, useStatus, useWallet } from '../api/queries'
 import { useInboxPolling } from '../hooks/useInboxPolling'
+import { useOutboxDrain } from '../hooks/useOutboxDrain'
 import { primeCricketAudio } from '../lib/cricket'
 import { loadReadCursors, loadThreads, totalUnread } from '../notify/messages'
 import { loadInvitations, pendingInvitations } from '../notify/invitations'
@@ -153,6 +154,9 @@ export default function Layout() {
   // Background on-chain notification polling — surfaces wake-up pings from
   // senders who aren't yet in our contact list (see #62/#63).
   useRegistryPolling()
+  // Persistent-outbox drain (#117) — delivers sends left behind by a quit,
+  // and keeps retrying failed ones, whichever page is open.
+  useOutboxDrain()
 
   // Unlock notification audio on the first user gesture so a background chirp
   // (e.g. an incoming invitation) isn't silently blocked by autoplay policy.
