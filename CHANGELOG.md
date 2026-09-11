@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.1](https://github.com/GasperX93/nook/releases/tag/v0.6.1) (2026-09-11)
+
+### Messages you can trust
+
+* **A send now survives quitting the app** ([#117](https://github.com/GasperX93/nook/issues/117)) — messages are stored in a persistent outbox *before* any network work and only leave it once they are verifiably on the network. Quit right after hitting send and the message is delivered the next time Nook runs. Bubbles tell the truth the whole way: *sending…* → sent, or *not sent — tap to retry*. Applies to chat messages, drive-share notifications (an honest "queued" badge instead of a false failure), and invitation acks.
+* **Drive shares reach the person's current identity** ([#122](https://github.com/GasperX93/nook/issues/122)) — if a contact re-created their Nook identity on the same machine, share notifications silently went to their old, unread mailbox. They now route to the newest identity, and when several contacts share one device an amber "2+ identities" badge in the share dialog shows exactly who gets notified.
+* **A locked inbox announces itself** ([#65](https://github.com/GasperX93/nook/issues/65), first half) — after a restart, messaging silently stopped until the wallet was reconnected, with no hint anywhere. A banner now says "To use Messages, connect your wallet" whenever an inbox exists but isn't unlocked. (Keeping the identity unlocked across restarts is planned for the upcoming identity release.)
+
 ## [0.6.0](https://github.com/GasperX93/nook/releases/tag/v0.6.0) (2026-09-11)
 
 ### Deletable drives (Beta)
