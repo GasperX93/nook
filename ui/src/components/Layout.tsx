@@ -7,6 +7,7 @@ import {
   Globe,
   HardDrive,
   LogOut,
+  Mail,
   RefreshCw,
   Settings,
   Terminal,
@@ -17,8 +18,10 @@ import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useDisconnect } from 'wagmi'
 import { weiToDai } from '../api/bee'
 import { useBeeHealth, usePeers, useRestart, useStamps, useStatus, useWallet } from '../api/queries'
+import { useDerivedKey } from '../hooks/useDerivedKey'
 import { useInboxPolling } from '../hooks/useInboxPolling'
 import { useOutboxDrain } from '../hooks/useOutboxDrain'
+import { hasKnownIdentity } from '../notify/active-identity'
 import { primeCricketAudio } from '../lib/cricket'
 import { loadReadCursors, loadThreads, totalUnread } from '../notify/messages'
 import { loadInvitations, pendingInvitations } from '../notify/invitations'
@@ -194,6 +197,15 @@ export default function Layout() {
   const showDown = beeOffline && !beeChecking && hasEverBeenOnline.current
   const noFunds = walletLoaded && wallet && Number(weiToDai(wallet.nativeTokenBalance)) === 0
   const showFundingWarning = status?.mode === 'ultra-light' || (beeOnline && noFunds)
+
+  // Messages-paused warning (#65): the derived key is session-only, so after
+  // an app/browser restart the inbox silently stops polling — contacts and
+  // threads are unreadable without the key, so the UI shows NOTHING and
+  // arriving messages look lost. The un-namespaced last-identity marker is
+  // the one signal that there is an inbox worth unlocking; only users who
+  // have actually used messaging ever see this.
+  const { signer: derivedSigner } = useDerivedKey()
+  const showMessagesPaused = !derivedSigner && hasKnownIdentity()
 
   // Auto-complete onboarding for existing users upgrading from v0.2.0 (they never had the flag).
   // Once stamps or wallet data loads and shows existing activity, mark onboarding done.
@@ -390,6 +402,26 @@ export default function Layout() {
                   style={{ color: 'rgb(var(--accent))' }}
                 >
                   Go to Wallet →
+                </button>
+              </span>
+            </div>
+          )}
+
+          {/* Messages paused — identity not derived this session (#65) */}
+          {showMessagesPaused && !showOnboarding && (
+            <div
+              className="flex items-center gap-2.5 px-4 py-2.5 text-xs shrink-0"
+              style={{ backgroundColor: 'rgba(96,165,250,0.08)', borderBottom: '1px solid rgba(96,165,250,0.2)' }}
+            >
+              <Mail size={12} className="shrink-0" style={{ color: '#60a5fa' }} />
+              <span style={{ color: 'rgb(var(--fg))' }}>
+                Messages are paused — connect your wallet to unlock your inbox.{' '}
+                <button
+                  onClick={() => navigate('/contacts')}
+                  className="underline font-semibold"
+                  style={{ color: '#60a5fa' }}
+                >
+                  Connect →
                 </button>
               </span>
             </div>

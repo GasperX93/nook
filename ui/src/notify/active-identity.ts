@@ -19,11 +19,39 @@
 
 const NONE = '__none__'
 
+/**
+ * Durable, UN-namespaced marker that some identity has been active on this
+ * origin before (#65). Deliberately just an address — no key material — so
+ * the logged-out UI can honestly say "messages are paused" instead of showing
+ * nothing: without the key we cannot read contacts or threads at all, so this
+ * flag is the only signal that there is an inbox worth unlocking.
+ */
+const LAST_IDENTITY_KEY = 'nook-last-identity'
+
 let activeAddress: string | null = null
 
 /** Set the active derived identity (lowercased), or null when none is derived. */
 export function setActiveIdentity(address: string | null): void {
   activeAddress = address ? address.toLowerCase() : null
+
+  if (activeAddress) {
+    try {
+      localStorage.setItem(LAST_IDENTITY_KEY, activeAddress)
+    } catch {
+      // Storage unavailable — the banner hint is best-effort.
+    }
+  }
+  // Never cleared on disconnect — remembering that an identity EXISTED is the
+  // whole point: it's what lets the UI warn that messages are paused.
+}
+
+/** True when some identity has been derived on this origin before. */
+export function hasKnownIdentity(): boolean {
+  try {
+    return localStorage.getItem(LAST_IDENTITY_KEY) !== null
+  } catch {
+    return false
+  }
 }
 
 /** The currently-active derived address (lowercased), or null. */
