@@ -12,6 +12,7 @@ import {
   Settings,
   Terminal,
   Wallet,
+  X,
 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
@@ -222,6 +223,11 @@ export default function Layout() {
   // Returning users: show startup overlay on app load, dismiss once node is fully ready.
   // Wait for peers + stamps so the status dot is green when the overlay lifts.
   const [startupDone, setStartupDone] = useState(false)
+  // Session-dismiss for the auto-extend failure banner: it can be put away,
+  // but a blocked extension is a countdown — a NEW failure (different drives
+  // or reason) or an app restart brings it back. Keyed on the failure set.
+  const [dismissedFailureKey, setDismissedFailureKey] = useState<string | null>(null)
+  const failureKey = (status?.autoExtendFailures ?? []).map(f => `${f.batchId}:${f.reason}`).join('|')
 
   useEffect(() => {
     if (startupDone || !onboardingCompleted) return
@@ -413,7 +419,7 @@ export default function Layout() {
 
           {/* Auto-extend failure (#129) — a drive is on a countdown and the
               automatic extension couldn't run. Loud on purpose. */}
-          {(status?.autoExtendFailures?.length ?? 0) > 0 && !showOnboarding && (
+          {(status?.autoExtendFailures?.length ?? 0) > 0 && !showOnboarding && dismissedFailureKey !== failureKey && (
             <div
               className="flex items-center gap-2.5 px-4 py-2.5 text-xs shrink-0"
               style={{ backgroundColor: 'rgba(239,68,68,0.08)', borderBottom: '1px solid rgba(239,68,68,0.2)' }}
@@ -431,13 +437,22 @@ export default function Layout() {
                   return `Couldn't extend "${label}"${extra}: ${failure.reason} `
                 })()}
                 <button
-                  onClick={() => navigate('/drive')}
+                  onClick={() => navigate('/account')}
                   className="underline font-semibold"
                   style={{ color: '#ef4444' }}
                 >
-                  Go to Drives →
+                  Open wallet →
                 </button>
               </span>
+              <button
+                onClick={() => setDismissedFailureKey(failureKey)}
+                aria-label="Dismiss for now"
+                title="Hide until restart or a new failure"
+                className="ml-auto shrink-0 p-1 -m-1 rounded transition-colors hover:bg-white/10"
+                style={{ color: 'rgb(var(--fg-muted))' }}
+              >
+                <X size={12} />
+              </button>
             </div>
           )}
 
