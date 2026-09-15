@@ -53,9 +53,12 @@ const DAY_SECONDS = 86_400
 /** Extend when live TTL drops below this. Env override for live testing. */
 export const THRESHOLD_SECONDS = (Number(process.env.NOOK_AUTOEXTEND_THRESHOLD_DAYS) || 10) * DAY_SECONDS
 
-const CHECK_INTERVAL_MS = 6 * 60 * 60_000
-/** While any failure persists, retry hourly — TTL keeps falling. */
-const FAILURE_RETRY_MS = 60 * 60_000
+/** Check cadence. Env override (minutes) for live testing — like the
+ * threshold override, it only applies when set at launch; normal launches
+ * always get the production value. */
+const CHECK_INTERVAL_MS = (Number(process.env.NOOK_AUTOEXTEND_CHECK_MINUTES) || 6 * 60) * 60_000
+/** While any failure persists, retry hourly (never slower than the cadence). */
+const FAILURE_RETRY_MS = Math.min(60 * 60_000, CHECK_INTERVAL_MS)
 /** First check shortly after startup, once Bee has had time to come up. */
 const INITIAL_DELAY_MS = 3 * 60_000
 
@@ -350,7 +353,7 @@ async function checkOneBatch(
 
           pushNotification({
             type: 'upcoming-charge',
-            title: `"${label}" will extend automatically`,
+            title: `Drive "${label}" will extend automatically`,
             body: `In about ${daysUntil} day${daysUntil === 1 ? '' : 's'}: +${entry.months} month${
               entry.months === 1 ? '' : 's'
             } for ~${costXbzz} xBZZ from your wallet. Turn it off under Extend storage if you don't want this.`,
@@ -366,7 +369,7 @@ async function checkOneBatch(
         if (totalCost > bzzBalance && !entry.notifiedBlockedAt) {
           pushNotification({
             type: 'charge-blocked',
-            title: `"${label}" can't be extended — balance too low`,
+            title: `Drive "${label}" can't be extended — balance too low`,
             body: `The automatic extension (~${costXbzz} xBZZ) is due in about ${Math.max(
               1,
               Math.ceil((batch.ttl - THRESHOLD_SECONDS) / DAY_SECONDS),
@@ -392,7 +395,7 @@ async function checkOneBatch(
       if (!entry.notifiedBlockedAt) {
         pushNotification({
           type: 'charge-blocked',
-          title: `"${label}" couldn't be extended — balance too low`,
+          title: `Drive "${label}" couldn't be extended — balance too low`,
           body: `The automatic extension needs ~${costXbzz} xBZZ. Add funds before the drive expires (${Math.floor(
             batch.ttl / DAY_SECONDS,
           )} days left) — Nook keeps retrying hourly.`,
@@ -425,7 +428,7 @@ async function checkOneBatch(
     // wallet Activity list consumes (#139).
     pushNotification({
       type: 'charge-executed',
-      title: `Extended "${label}" by ${entry.months} month${entry.months === 1 ? '' : 's'}`,
+      title: `Extended drive "${label}" by ${entry.months} month${entry.months === 1 ? '' : 's'}`,
       body: `${costXbzz} xBZZ was spent from your wallet to keep this drive alive.`,
       link: '/drive',
       data: {
