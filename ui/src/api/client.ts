@@ -56,6 +56,8 @@ export interface Status {
   userStopped?: boolean
   /** True when Bee crashed repeatedly and automatic restarts are paused (#94). */
   crashLoop?: boolean
+  /** Outstanding auto-extend failures (#129) — drives that couldn't be extended. */
+  autoExtendFailures?: { batchId: string; ttlDays: number | null; reason: string; at: number }[]
 }
 
 export interface Peers {

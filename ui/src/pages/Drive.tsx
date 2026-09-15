@@ -46,7 +46,7 @@ import {
   waitForTagPropagation,
   type Stamp,
 } from '../api/bee'
-import { serverApi } from '../api/server'
+import { type AutoExtendEntry, serverApi } from '../api/server'
 import {
   useAddresses,
   useBuyStamp,
@@ -227,12 +227,17 @@ function BuyDriveModal({
   const [durationIdx, setDurationIdx] = useState(1)
   const [isEncrypted, setIsEncrypted] = useState(false)
   const [isReclaimable, setIsReclaimable] = useState(false)
+  const [keepAlive, setKeepAlive] = useState(false)
+  // Auto-extend duration (#129): defaults to the purchase duration until the
+  // user explicitly picks one (null = follow the purchase choice above).
+  const [keepAliveIdx, setKeepAliveIdx] = useState<number | null>(null)
   const [buying, setBuying] = useState(false)
   const [buyDone, setBuyDone] = useState(false)
   const [buyError, setBuyError] = useState<string | null>(null)
 
   const selectedSize = SIZE_PRESETS[sizeIdx]
   const selectedDuration = DURATION_PRESETS[durationIdx]
+  const keepAliveDuration = keepAliveIdx === null ? selectedDuration : DURATION_PRESETS[keepAliveIdx]
   const cost = chainState
     ? calcStampCost(
         selectedSize.depth,
@@ -259,15 +264,19 @@ function BuyDriveModal({
     setBuying(true)
     setBuyError(null)
     try {
+      let newBatchId: string
+
       if (isReclaimable) {
         // Reclaimable drives are created and registered server-side (#99);
         // their files live in the server ledger, so no local metadata to save.
-        await createReclaimable.mutateAsync({
+        const result = await createReclaimable.mutateAsync({
           amount: cost.amount,
           depth: selectedSize.depth,
           encrypted: isEncrypted,
           label: driveName.trim(),
         })
+
+        newBatchId = result.batchID
       } else {
         const result = await buyStamp.mutateAsync({
           amount: cost.amount,
@@ -276,9 +285,17 @@ function BuyDriveModal({
           label: driveName.trim(),
         })
 
+        newBatchId = result.batchID
         // Save encrypted flag immediately (ACT grantee setup deferred to first upload
         // because the stamp isn't usable yet at this point — it needs on-chain confirmation)
         onCreated?.(result.batchID, isEncrypted)
+      }
+
+      // Auto-extend opt-in (#129): register with the purchase duration.
+      // Best-effort — a failure here must not read as a failed purchase; the
+      // Extend modal can set it later.
+      if (keepAlive) {
+        serverApi.setAutoExtend(newBatchId, true, keepAliveDuration.months).catch(() => undefined)
       }
       setBuyDone(true)
       setTimeout(() => {
@@ -394,6 +411,50 @@ function BuyDriveModal({
           </div>
         </label>
 
+        {/* Auto-extend (#129) */}
+        <label className="flex items-start gap-2 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={keepAlive}
+            onChange={e => setKeepAlive(e.target.checked)}
+            className="mt-0.5 accent-orange-500"
+          />
+          <div className="flex-1">
+            <p className="text-xs font-medium">Keep this drive alive automatically</p>
+            <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+              {keepAlive
+                ? `Extends by ${keepAliveDuration.label.toLowerCase()} whenever less than 10 days remain, paid from your wallet. Change anytime under Extend storage.`
+                : 'Extends the drive before it expires, paid from your wallet.'}
+            </p>
+            {keepAlive && (
+              <div className="grid grid-cols-4 gap-2 mt-2">
+                {DURATION_PRESETS.map((d, i) => {
+                  const selected = (keepAliveIdx === null ? durationIdx : keepAliveIdx) === i
+
+                  return (
+                    <button
+                      key={d.label}
+                      type="button"
+                      onClick={e => {
+                        e.preventDefault()
+                        setKeepAliveIdx(i)
+                      }}
+                      className="px-2 py-1.5 rounded-lg border text-xs transition-all"
+                      style={{
+                        borderColor: selected ? 'rgb(var(--accent))' : 'rgb(var(--border))',
+                        backgroundColor: selected ? 'rgba(247,104,8,0.08)' : 'transparent',
+                        color: selected ? 'rgb(var(--fg))' : 'rgb(var(--fg-muted))',
+                      }}
+                    >
+                      {d.label}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        </label>
+
         {/* TODO: re-enable when metadata feeds are wired up */}
         {/* {isEncrypted && !isConnected && <WalletGate />} */}
 
@@ -466,6 +527,40 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
   const { data: wallet } = useWallet()
   const queryClient = useQueryClient()
 
+  // Auto-extend (#129) — STAGED like the other sections: nothing applies
+  // until the footer button, so Cancel means cancel and the button label can
+  // say exactly what will happen. (An instant-save section here is what made
+  // the first design's purchase button look broken.)
+  const [autoEnabled, setAutoEnabled] = useState(false)
+  const [autoIdx, setAutoIdx] = useState(1)
+  const [autoLoaded, setAutoLoaded] = useState(false)
+  const [autoInfo, setAutoInfo] = useState<AutoExtendEntry | null>(null)
+  const autoOriginal = useRef<{ enabled: boolean; idx: number }>({ enabled: false, idx: 1 })
+
+  useEffect(() => {
+    serverApi
+      .getAutoExtend()
+      .then(({ settings }) => {
+        const entry = settings[stamp.batchID.toLowerCase()]
+
+        if (entry) {
+          const i = DURATION_PRESETS.findIndex(d => d.months === entry.months)
+
+          setAutoEnabled(entry.enabled)
+
+          if (i >= 0) setAutoIdx(i)
+          setAutoInfo(entry)
+          autoOriginal.current = { enabled: entry.enabled, idx: i >= 0 ? i : 1 }
+        }
+        setAutoLoaded(true)
+      })
+      .catch(() => setAutoLoaded(true))
+  }, [stamp.batchID])
+
+  const autoDirty =
+    autoLoaded &&
+    (autoEnabled !== autoOriginal.current.enabled || (autoEnabled && autoIdx !== autoOriginal.current.idx))
+
   const targetDepth = capacityEnabled && capacityOptions[capacityIdx] ? capacityOptions[capacityIdx].depth : stamp.depth
   const willDilute = capacityEnabled && targetDepth > stamp.depth
   const userExtendMonths = durationEnabled ? DURATION_PRESETS[durationIdx].months : 0
@@ -498,39 +593,68 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
 
   const bzzBalance = wallet ? Number(plurToBzz(wallet.bzzBalance)) : null
   const canAfford = cost && bzzBalance !== null ? bzzBalance >= Number(cost.bzzCost) : true
-  const canSubmit = (willDilute || totalSecondsToBuy > 0) && canAfford
+  const purchaseStaged = willDilute || totalSecondsToBuy > 0
+  const nothingStaged = !purchaseStaged && !autoDirty
+  // The primary button is NEVER a grey dead-end: with nothing staged it's an
+  // enabled "Done" that just closes. It always says what pressing it does.
+  const canSubmit = nothingStaged || (purchaseStaged ? canAfford : true)
 
-  async function doExtend() {
-    if (!canSubmit) return
+  const buttonLabel = submitting
+    ? purchaseStaged
+      ? 'Extending…'
+      : 'Saving…'
+    : nothingStaged
+      ? 'Done'
+      : purchaseStaged && autoDirty
+        ? 'Extend & save'
+        : purchaseStaged
+          ? 'Extend drive'
+          : 'Save'
+
+  async function doApply() {
+    if (!canSubmit || submitting) return
+
+    if (nothingStaged) {
+      onClose()
+
+      return
+    }
     setExtendError(null)
     setSubmitting(true)
     try {
-      // Topup BEFORE dilute. Diluting halves the per-chunk balance, so if it
-      // would drop below the postage contract's minimum the on-chain tx emits
-      // no BatchDepthIncrease event and Bee returns "cannot dilute batch".
-      // Pre-topping avoids that.
-      //
-      // Per-chunk math: total BZZ cost is unchanged because Bee multiplies
-      // amount × current-chunk-count. Diluting later halves the per-chunk
-      // balance by 2^delta, so we scale the per-chunk amount up by 2^delta
-      // here to land on the same final balance/chunk.
-      if (cost) {
+      if (purchaseStaged && cost) {
+        // Topup BEFORE dilute. Diluting halves the per-chunk balance, so if it
+        // would drop below the postage contract's minimum the on-chain tx emits
+        // no BatchDepthIncrease event and Bee returns "cannot dilute batch".
+        // Pre-topping avoids that.
+        //
+        // Per-chunk math: total BZZ cost is unchanged because Bee multiplies
+        // amount × current-chunk-count. Diluting later halves the per-chunk
+        // balance by 2^delta, so we scale the per-chunk amount up by 2^delta
+        // here to land on the same final balance/chunk.
         const topupAmount =
           willDilute && depthDelta > 0 ? (BigInt(cost.amount) << BigInt(depthDelta)).toString() : cost.amount
+
         await beeApi.topupStamp(stamp.batchID, topupAmount)
+
+        if (willDilute) {
+          await beeApi.diluteStamp(stamp.batchID, targetDepth)
+        }
+        queryClient.refetchQueries({ queryKey: ['bee', 'stamps'] })
+        queryClient.refetchQueries({ queryKey: ['bee', 'wallet'] })
       }
 
-      if (willDilute) {
-        await beeApi.diluteStamp(stamp.batchID, targetDepth)
+      if (autoDirty) {
+        await serverApi.setAutoExtend(stamp.batchID, autoEnabled, DURATION_PRESETS[autoIdx].months)
+        queryClient.invalidateQueries({ queryKey: ['server', 'auto-extend'] })
       }
-      queryClient.refetchQueries({ queryKey: ['bee', 'stamps'] })
-      queryClient.refetchQueries({ queryKey: ['bee', 'wallet'] })
       onClose()
     } catch (err: any) {
       const raw = err?.message ?? 'Failed to extend drive.'
       // Bee errors come back as 'Bee API /…: 500 {"code":500,"message":"…"}'
       const inner = raw.match(/"message"\s*:\s*"([^"]+)"/)?.[1]
       const msg = raw.includes('402') ? 'Insufficient BZZ. Top up your wallet first.' : (inner ?? raw)
+
       setExtendError(msg)
     } finally {
       setSubmitting(false)
@@ -623,6 +747,50 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
           )}
         </div>
 
+        {/* Auto-extend (#129) — staged with the rest, applied by the button */}
+        <div>
+          <label className="flex items-center justify-between mb-2 cursor-pointer">
+            <span className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
+              Extend automatically
+            </span>
+            <Switch checked={autoEnabled} onCheckedChange={setAutoEnabled} disabled={!autoLoaded} />
+          </label>
+          {autoEnabled && (
+            <>
+              <div className="grid grid-cols-2 gap-2">
+                {DURATION_PRESETS.map((d, i) => (
+                  <button
+                    key={d.label}
+                    onClick={() => setAutoIdx(i)}
+                    className="px-3 py-2 rounded-lg border text-sm transition-all"
+                    style={{
+                      borderColor: autoIdx === i ? 'rgb(var(--accent))' : 'rgb(var(--border))',
+                      backgroundColor: autoIdx === i ? 'rgba(247,104,8,0.08)' : 'transparent',
+                      color: autoIdx === i ? 'rgb(var(--fg))' : 'rgb(var(--fg-muted))',
+                    }}
+                  >
+                    {d.label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[11px] mt-2" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Adds {DURATION_PRESETS[autoIdx].label.toLowerCase()} whenever less than 10 days remain, paid from your
+                wallet. Nook must be running for this to happen.
+              </p>
+            </>
+          )}
+          {autoInfo?.lastExtendedAt && (
+            <p className="text-[11px] mt-1" style={{ color: 'rgb(var(--fg-muted))' }}>
+              Last extended automatically {new Date(autoInfo.lastExtendedAt).toLocaleDateString()}
+            </p>
+          )}
+          {autoEnabled && autoInfo?.lastFailure && (
+            <p className="text-[11px] mt-1" style={{ color: '#ef4444' }}>
+              Last attempt failed: {autoInfo.lastFailure.reason}
+            </p>
+          )}
+        </div>
+
         {(willDilute || totalSecondsToBuy > 0) && (
           <div className="text-sm space-y-1">
             <p>
@@ -652,12 +820,12 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
             Cancel
           </button>
           <button
-            onClick={doExtend}
+            onClick={doApply}
             disabled={submitting || !canSubmit}
             className="flex-1 py-2 rounded-lg text-sm font-semibold disabled:opacity-40"
             style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
           >
-            {submitting ? 'Extending…' : 'Extend drive'}
+            {buttonLabel}
           </button>
         </div>
       </div>
@@ -1137,6 +1305,12 @@ interface DriveCardProps {
   downloadingId: string | null
   downloadPct: number | null
   customName?: string
+  /** Auto-extend enabled for this drive (#129) — shows the card badge. */
+  autoExtendOn?: boolean
+  /** Configured duration in months — for the badge tooltip. */
+  autoExtendMonths?: number
+  /** Open the auto-extend dialog (#129). */
+  onAutoExtend?: () => void
   encrypted?: boolean
   granteeCount?: number
   /** Latest public metadata-wrapper ref — the health-check target (#93). */
@@ -1175,6 +1349,9 @@ function DriveCard({
   wrapperRef,
   onShare,
   onMoveToFolder,
+  autoExtendOn,
+  autoExtendMonths,
+  onAutoExtend,
 }: DriveCardProps) {
   const [inlineDraggingId, setInlineDraggingId] = useState<string | null>(null)
   const [inlineDragOverFolderId, setInlineDragOverFolderId] = useState<string | null>(null)
@@ -1427,6 +1604,23 @@ function DriveCard({
             </span>
           )}
 
+          {/* Auto-extend badge (#129) — an active spending policy is card-level
+              state; click-through manages or cancels it */}
+          {autoExtendOn && (
+            <button
+              onClick={e => {
+                e.stopPropagation()
+                onAutoExtend?.()
+              }}
+              className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium shrink-0 transition-colors hover:bg-white/10"
+              style={{ backgroundColor: 'rgba(74,222,128,0.1)', color: '#4ade80' }}
+              title={`Extends automatically${autoExtendMonths ? ` by ${autoExtendMonths} month${autoExtendMonths === 1 ? '' : 's'}` : ''} when under 10 days remain — click to change or turn off`}
+            >
+              <RefreshCw size={11} />
+              auto-extend
+            </button>
+          )}
+
           {/* Right-side actions */}
           <div className="ml-auto flex items-center gap-2 shrink-0">
             {needsExtend && (
@@ -1472,6 +1666,20 @@ function DriveCard({
                     <Clock size={13} style={{ color: 'rgb(var(--fg-muted))' }} />
                     Extend storage
                   </button>
+                  {onAutoExtend && (
+                    <button
+                      onClick={() => {
+                        setKebabOpen(false)
+                        onAutoExtend()
+                      }}
+                      disabled={!stamp.usable}
+                      className="flex items-center gap-2 w-full px-3 py-2 text-xs transition-colors hover:bg-white/5 disabled:opacity-40 disabled:cursor-not-allowed"
+                      style={{ color: 'rgb(var(--fg))' }}
+                    >
+                      <RefreshCw size={13} style={{ color: 'rgb(var(--fg-muted))' }} />
+                      Extend automatically…
+                    </button>
+                  )}
                   {encrypted && onShare && (
                     <button
                       onClick={() => {
@@ -2308,6 +2516,16 @@ export default function Drive() {
     }
   }
 
+  // Auto-extend settings (#129) — drives with keep-alive show a marker on
+  // their TTL pill; the Extend modal owns editing.
+  const { data: autoExtendData } = useQuery({
+    queryKey: ['server', 'auto-extend'],
+    queryFn: serverApi.getAutoExtend,
+    refetchInterval: 60_000,
+    retry: false,
+  })
+  const autoExtendSettings = autoExtendData?.settings ?? {}
+
   // Reclaimable drives (#99) render as their own card type; their batches also
   // appear on the node's stamp list, so filter them out of the classic cards.
   // Expired ones (#106) move out of the main list into a collapsed section.
@@ -2508,6 +2726,9 @@ export default function Drive() {
                 drive={drive}
                 stamp={stamps?.find(s => s.batchID.toLowerCase() === drive.batchId)}
                 customName={customDriveLabels[drive.batchId]}
+                autoExtendOn={autoExtendSettings[drive.batchId]?.enabled}
+                autoExtendMonths={autoExtendSettings[drive.batchId]?.months}
+                onAutoExtend={() => setShowExtendModal(drive.batchId)}
                 onOpen={() => setActiveDriveId(drive.batchId)}
                 onExtend={() => setShowExtendModal(drive.batchId)}
                 onRename={name => renameDrive(drive.batchId, name)}
@@ -2523,6 +2744,9 @@ export default function Drive() {
                 copiedId={copiedId}
                 downloadingId={downloadingId}
                 downloadPct={downloadPct}
+                autoExtendOn={autoExtendSettings[stamp.batchID.toLowerCase()]?.enabled}
+                autoExtendMonths={autoExtendSettings[stamp.batchID.toLowerCase()]?.months}
+                onAutoExtend={() => setShowExtendModal(stamp.batchID)}
                 customName={customDriveLabels[stamp.batchID]}
                 encrypted={driveMetadata.isEncrypted(stamp.batchID)}
                 granteeCount={driveMetadata.get(stamp.batchID)?.granteeCount}

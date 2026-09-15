@@ -26,6 +26,7 @@ export default defineConfig(({ command }) => ({
       '/grantee': 'http://localhost:3054',
       '/chequebook-withdraw': 'http://localhost:3054',
       '/reclaimable': 'http://localhost:3054',
+      '/auto-extend': 'http://localhost:3054',
       // Bee node API — proxied to avoid CORS issues in dev
       '/bee-api': {
         target: 'http://localhost:1633',

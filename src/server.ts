@@ -41,6 +41,7 @@ import {
   removeExpiredDrive,
   startUpload,
 } from './reclaimable'
+import { getAutoExtendSettings, setAutoExtendSetting } from './extend-monitor'
 import { getStatus } from './status'
 import { resetCrashLoop } from './supervisor'
 import { fetchWithTimeout } from './fetch-timeout'
@@ -477,6 +478,28 @@ export function runServer() {
 
   router.get('/reclaimable', async context => {
     context.body = { drives: await listReclaimableDrives() }
+  })
+
+  // ─── Auto-extend (#129) — per-drive settings for the extend monitor ───────
+  router.get('/auto-extend', context => {
+    context.body = { settings: getAutoExtendSettings() }
+  })
+
+  router.put('/auto-extend/:batch', context => {
+    const { enabled, months } = (context.request.body ?? {}) as { enabled?: boolean; months?: number }
+
+    if (typeof enabled !== 'boolean' || typeof months !== 'number') {
+      context.status = 400
+      context.body = { message: 'enabled (boolean) and months (number) are required' }
+
+      return
+    }
+    try {
+      context.body = { entry: setAutoExtendSetting(context.params.batch, enabled, months) }
+    } catch (error) {
+      context.status = 400
+      context.body = { message: String((error as Error).message ?? error) }
+    }
   })
 
   // Raw octet-stream body (bodyparser ignores it, so the stream is intact);

@@ -407,6 +407,36 @@ export default function Layout() {
             </div>
           )}
 
+          {/* Auto-extend failure (#129) — a drive is on a countdown and the
+              automatic extension couldn't run. Loud on purpose. */}
+          {(status?.autoExtendFailures?.length ?? 0) > 0 && !showOnboarding && (
+            <div
+              className="flex items-center gap-2.5 px-4 py-2.5 text-xs shrink-0"
+              style={{ backgroundColor: 'rgba(239,68,68,0.08)', borderBottom: '1px solid rgba(239,68,68,0.2)' }}
+            >
+              <AlertTriangle size={12} className="shrink-0" style={{ color: '#ef4444' }} />
+              <span style={{ color: 'rgb(var(--fg))' }}>
+                {(() => {
+                  const failure = status!.autoExtendFailures![0]
+                  const label =
+                    stamps?.find(s => s.batchID.toLowerCase() === failure.batchId.toLowerCase())?.label ||
+                    `${failure.batchId.slice(0, 8)}…`
+                  const extra =
+                    status!.autoExtendFailures!.length > 1 ? ` (+${status!.autoExtendFailures!.length - 1} more)` : ''
+
+                  return `Couldn't extend "${label}"${extra}: ${failure.reason} `
+                })()}
+                <button
+                  onClick={() => navigate('/drive')}
+                  className="underline font-semibold"
+                  style={{ color: '#ef4444' }}
+                >
+                  Go to Drives →
+                </button>
+              </span>
+            </div>
+          )}
+
           {/* Messages paused — identity not derived this session (#65) */}
           {showMessagesPaused && !showOnboarding && (
             <div
