@@ -21,3 +21,7 @@ api-key.txt
 
 # Claude Code personal permission files — per-machine, never shared
 .claude/settings.local.json
+
+# Test-run debris (specs mock env-paths into test/data)
+test/data/
+!test/data/.gitkeep

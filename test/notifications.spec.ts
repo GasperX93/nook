@@ -1,15 +1,15 @@
 jest.mock('env-paths', () =>
   jest.fn().mockImplementation(() => ({
-    data: 'test/data',
-    config: 'test/data',
-    cache: 'test/data',
-    log: 'test/data',
-    temp: 'test/data',
+    data: 'test/data/notifications-spec',
+    config: 'test/data/notifications-spec',
+    cache: 'test/data/notifications-spec',
+    log: 'test/data/notifications-spec',
+    temp: 'test/data/notifications-spec',
   })),
 )
 jest.mock('../src/notify', () => ({ createNotification: jest.fn() }))
 
-import { rmSync } from 'fs'
+import { mkdirSync, rmSync } from 'fs'
 
 import { createNotification } from '../src/notify'
 import { dismissNotification, loadNotifications, markNotificationsRead, pushNotification } from '../src/notifications'
@@ -17,10 +17,11 @@ import { dismissNotification, loadNotifications, markNotificationsRead, pushNoti
 // The bell's contract (#138): events are permanent (up to the cap), newest
 // first, desktop firing is explicit per event, and reads are idempotent.
 
-const STORE = 'test/data/notifications.json'
+const STORE = 'test/data/notifications-spec/notifications.json'
 
 function cleanUp() {
   rmSync(STORE, { force: true })
+  mkdirSync('test/data/notifications-spec', { recursive: true })
   ;(createNotification as jest.Mock).mockClear()
 }
 

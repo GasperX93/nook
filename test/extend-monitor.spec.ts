@@ -1,10 +1,10 @@
 jest.mock('env-paths', () =>
   jest.fn().mockImplementation(() => ({
-    data: 'test/data',
-    config: 'test/data',
-    cache: 'test/data',
-    log: 'test/data',
-    temp: 'test/data',
+    data: 'test/data/extend-monitor-spec',
+    config: 'test/data/extend-monitor-spec',
+    cache: 'test/data/extend-monitor-spec',
+    log: 'test/data/extend-monitor-spec',
+    temp: 'test/data/extend-monitor-spec',
   })),
 )
 jest.mock('../src/config', () => ({
@@ -13,7 +13,7 @@ jest.mock('../src/config', () => ({
 }))
 jest.mock('../src/notify', () => ({ createNotification: jest.fn() }))
 
-import { rmSync } from 'fs'
+import { mkdirSync, rmSync } from 'fs'
 
 import {
   type BeeFetch,
@@ -34,11 +34,12 @@ import { loadNotifications } from '../src/notifications'
 
 const BATCH = 'a'.repeat(64)
 const DAY = 86_400
-const SETTINGS_FILE = 'test/data/auto-extend.json'
+const DATA = 'test/data/extend-monitor-spec'
+const SETTINGS_FILE = `${DATA}/auto-extend.json`
 
 function cleanUp() {
-  rmSync(SETTINGS_FILE, { force: true })
-  rmSync('test/data/notifications.json', { force: true })
+  rmSync(DATA, { recursive: true, force: true })
+  mkdirSync(DATA, { recursive: true })
 }
 
 /** Bee stub: map url-substring → responder. Records topup calls. */

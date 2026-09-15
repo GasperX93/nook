@@ -1,10 +1,10 @@
 jest.mock('env-paths', () =>
   jest.fn().mockImplementation(() => ({
-    data: 'test/data',
-    config: 'test/data',
-    cache: 'test/data',
-    log: 'test/data',
-    temp: 'test/data',
+    data: 'test/data/wallet-activity-spec',
+    config: 'test/data/wallet-activity-spec',
+    cache: 'test/data/wallet-activity-spec',
+    log: 'test/data/wallet-activity-spec',
+    temp: 'test/data/wallet-activity-spec',
   })),
 )
 jest.mock('../src/notify', () => ({ createNotification: jest.fn() }))
@@ -22,15 +22,16 @@ const ME = 'aa'.repeat(20)
 const PEER = '0x' + 'bb'.repeat(20)
 const POSTAGE = '0x45a1502382541Cd610CC9068e88727426b696293'
 
+const DATA = 'test/data/wallet-activity-spec'
+
 function setupWallet() {
-  mkdirSync('test/data/data-dir/keys', { recursive: true })
-  writeFileSync('test/data/data-dir/keys/swarm.key', JSON.stringify({ address: ME }))
+  mkdirSync(`${DATA}/data-dir/keys`, { recursive: true })
+  writeFileSync(`${DATA}/data-dir/keys/swarm.key`, JSON.stringify({ address: ME }))
 }
 
 function cleanUp() {
-  rmSync('test/data/notifications.json', { force: true })
-  rmSync('test/data/purchases.json', { force: true })
-  rmSync('test/data/data-dir', { recursive: true, force: true })
+  rmSync(DATA, { recursive: true, force: true })
+  mkdirSync(DATA, { recursive: true })
   resetActivityCacheForTests()
 }
 
@@ -46,7 +47,8 @@ function explorer(overrides: { txs?: unknown[]; transfers?: unknown[]; fail?: bo
   }
 }
 
-const T0 = '2026-09-15T10:00:00.000000Z'
+// Ledger matching is ±1h around Date.now() — the explorer rows must be 'now'
+const T0 = new Date().toISOString()
 
 function bzzTransfer(value: string, from: string, to: string, hash = '0x' + 'cc'.repeat(32)) {
   return {
