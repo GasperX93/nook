@@ -127,7 +127,12 @@ describe('runMigrations', () => {
   describe('swap-enable (no longer migrated)', () => {
     it('does not modify swap-enable regardless of value', () => {
       mockExists.mockReturnValue(true)
-      mockRead.mockReturnValue({ 'swap-enable': false, 'blockchain-rpc-endpoint': 'http://x', 'use-postage-snapshot': false, 'storage-incentives-enable': false })
+      mockRead.mockReturnValue({
+        'swap-enable': false,
+        'blockchain-rpc-endpoint': 'http://x',
+        'use-postage-snapshot': false,
+        'storage-incentives-enable': false,
+      })
       runMigrations()
       expect(mockWrite).not.toHaveBeenCalledWith(expect.objectContaining({ 'swap-enable': expect.anything() }))
     })
@@ -159,7 +164,11 @@ describe('runMigrations', () => {
 
     it('does not overwrite existing storage-incentives-enable', () => {
       mockExists.mockReturnValue(true)
-      mockRead.mockReturnValue({ 'blockchain-rpc-endpoint': 'http://x', 'use-postage-snapshot': false, 'storage-incentives-enable': false })
+      mockRead.mockReturnValue({
+        'blockchain-rpc-endpoint': 'http://x',
+        'use-postage-snapshot': false,
+        'storage-incentives-enable': false,
+      })
       runMigrations()
       expect(mockWrite).not.toHaveBeenCalledWith({ 'storage-incentives-enable': false })
     })

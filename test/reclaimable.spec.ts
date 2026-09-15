@@ -161,7 +161,9 @@ describe('reclaimable engine', () => {
   })
 
   test('upload failure surfaces on the job, not as an unhandled rejection', async () => {
-    setEtherchunkModuleForTests(makeFakeEtherchunk({ upload: jest.fn().mockRejectedValue(new Error('bucket full')) }) as any)
+    setEtherchunkModuleForTests(
+      makeFakeEtherchunk({ upload: jest.fn().mockRejectedValue(new Error('bucket full')) }) as any,
+    )
 
     const job = await waitForJob((await startUpload(BATCH, 'photo.jpg', Buffer.from('data'))).id)
     expect(job.status).toBe('error')
@@ -517,7 +519,9 @@ describe('rebuildFreeBitmapIfMissing', () => {
       chunks.writeUInt16BE(bucket, i * 4)
       chunks.writeUInt16BE(slot, i * 4 + 2)
     })
-    database.prepare('INSERT INTO files (path, root_hash, chunks) VALUES (?, ?, ?)').run('/x/a.bin', Buffer.alloc(32), chunks)
+    database
+      .prepare('INSERT INTO files (path, root_hash, chunks) VALUES (?, ?, ?)')
+      .run('/x/a.bin', Buffer.alloc(32), chunks)
     database.close()
   }
 

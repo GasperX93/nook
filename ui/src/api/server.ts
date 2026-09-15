@@ -52,6 +52,35 @@ export interface AutoExtendEntry {
   months: number
   lastExtendedAt?: number
   lastFailure?: { at: number; reason: string }
+  /** Set while the drive is in the advance-notice window (#138). */
+  notifiedUpcomingAt?: number
+  notifiedBlockedAt?: number
+}
+
+export interface ActivityRow {
+  hash?: string
+  at: number
+  direction: 'in' | 'out'
+  asset: 'xBZZ' | 'xDAI'
+  amount: string
+  counterparty?: string
+  label?: string
+}
+
+export interface WalletActivity {
+  rows: ActivityRow[]
+  degraded: boolean
+}
+
+export interface NookNotification {
+  id: string
+  type: string
+  title: string
+  body: string
+  createdAt: number
+  readAt?: number
+  link?: string
+  data?: Record<string, string | number>
 }
 
 export interface ReclaimableUploadJob {
@@ -273,6 +302,38 @@ export const serverApi = {
     }
 
     return response.json() as Promise<{ removed: boolean }>
+  },
+
+  // ─── Wallet activity (#139) ─────────────────────────────────────────────
+
+  getWalletActivity: async () => serverGet<WalletActivity>('/wallet-activity'),
+
+  // ─── Notifications (#138) — the bell's event feed ───────────────────────
+
+  getNotifications: async () => serverGet<{ notifications: NookNotification[] }>('/notifications'),
+
+  markNotificationsRead: async (ids?: string[]) => {
+    const response = await fetch('/notifications/read', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify(ids ? { ids } : {}),
+    })
+
+    if (!response.ok) throw new Error(`${response.status} error`)
+
+    return response.json() as Promise<{ marked: number }>
+  },
+
+  dismissNotification: async (id: string) => {
+    const response = await fetch('/notifications/dismiss', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ id }),
+    })
+
+    if (!response.ok) throw new Error(`${response.status} error`)
+
+    return response.json() as Promise<{ dismissed: boolean }>
   },
 
   // ─── Auto-extend (#129) — per-drive keep-alive settings ─────────────────

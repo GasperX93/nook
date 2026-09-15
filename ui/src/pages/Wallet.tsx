@@ -1,12 +1,15 @@
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   AlertTriangle,
+  ArrowDownLeft,
   ArrowUpRight,
   Check,
   ChevronDown,
   ChevronUp,
   Copy,
+  ExternalLink,
   Gift,
+  History,
   Info,
   Wallet as WalletIcon,
 } from 'lucide-react'
@@ -40,6 +43,14 @@ export default function Wallet() {
   const [redeemError, setRedeemError] = useState<string | null>(null)
   const [redeemDone, setRedeemDone] = useState(false)
   const [topUpOpen, setTopUpOpen] = useState(false)
+  const [activityOpen, setActivityOpen] = useState(false)
+  // Activity (#139): server-proxied explorer history + Nook's own ledger labels
+  const { data: activity } = useQuery({
+    queryKey: ['server', 'wallet-activity'],
+    queryFn: serverApi.getWalletActivity,
+    refetchInterval: 120_000,
+    retry: false,
+  })
   const [withdrawToken, setWithdrawToken] = useState<'bzz' | 'dai'>('bzz')
   const [withdrawAmount, setWithdrawAmount] = useState('')
   const [withdrawTo, setWithdrawTo] = useState('')
@@ -387,6 +398,92 @@ export default function Wallet() {
             <p className="text-xs mt-3" style={{ color: '#4ade80' }}>
               Gift code redeemed — balance updated.
             </p>
+          )}
+        </div>
+
+        {/* Activity (#139, collapsible) — audit surface for automatic spending */}
+        <div className="rounded-xl border" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
+          <button
+            onClick={() => setActivityOpen(!activityOpen)}
+            className="flex items-center justify-between w-full p-5 text-left"
+          >
+            <div>
+              <div className="flex items-center gap-2">
+                <History size={13} style={{ color: 'rgb(var(--accent))' }} />
+                <p className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--accent))' }}>
+                  Activity
+                </p>
+              </div>
+              <p className="text-xs mt-1" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Every movement on your node wallet — including what Nook spends automatically.
+              </p>
+            </div>
+            {activityOpen ? (
+              <ChevronUp size={16} style={{ color: 'rgb(var(--fg-muted))' }} />
+            ) : (
+              <ChevronDown size={16} style={{ color: 'rgb(var(--fg-muted))' }} />
+            )}
+          </button>
+          {activityOpen && (
+            <div className="px-5 pb-5">
+              {activity?.degraded && (
+                <p className="text-[11px] mb-2" style={{ color: '#f59e0b' }}>
+                  Block explorer unreachable — showing Nook's own records only.
+                </p>
+              )}
+              {activity && activity.rows.length === 0 && (
+                <p className="text-xs py-3" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  No transactions yet.
+                </p>
+              )}
+              {activity && activity.rows.length > 0 && (
+                <div className="divide-y max-h-80 overflow-y-auto" style={{ borderColor: 'rgb(var(--border))' }}>
+                  {activity.rows.map((row, i) => (
+                    <div key={row.hash ?? i} className="flex items-center gap-3 py-2 text-xs">
+                      {row.direction === 'out' ? (
+                        <ArrowUpRight size={13} className="shrink-0" style={{ color: 'rgb(var(--fg-muted))' }} />
+                      ) : (
+                        <ArrowDownLeft size={13} className="shrink-0" style={{ color: '#4ade80' }} />
+                      )}
+                      <span className="font-medium shrink-0" style={{ color: 'rgb(var(--fg))' }}>
+                        {row.direction === 'out' ? '−' : '+'}
+                        {row.amount} {row.asset}
+                      </span>
+                      <span className="truncate flex-1" style={{ color: 'rgb(var(--fg-muted))' }}>
+                        {row.label ??
+                          (row.counterparty ? `${row.counterparty.slice(0, 8)}…${row.counterparty.slice(-4)}` : '')}
+                      </span>
+                      <span className="shrink-0" style={{ color: 'rgb(var(--fg-muted))' }}>
+                        {new Date(row.at).toLocaleDateString()}
+                      </span>
+                      {row.hash && (
+                        <a
+                          href={`https://gnosisscan.io/tx/${row.hash}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="shrink-0"
+                          style={{ color: 'rgb(var(--fg-muted))' }}
+                          title="View on Gnosisscan"
+                        >
+                          <ExternalLink size={12} />
+                        </a>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {address && (
+                <a
+                  href={`https://gnosisscan.io/address/${address}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-block mt-3 text-[11px] underline"
+                  style={{ color: 'rgb(var(--fg-muted))' }}
+                >
+                  View full history on Gnosisscan →
+                </a>
+              )}
+            </div>
           )}
         </div>
       </div>
