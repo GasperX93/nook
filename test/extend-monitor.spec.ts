@@ -260,6 +260,60 @@ describe('charge notifications (#138)', () => {
     expect(getAutoExtendSettings()[BATCH].notifiedUpcomingAt).toBeUndefined()
   })
 
+  it('decrements the balance within a pass: two affordable-looking drives, funds for one', async () => {
+    const A = 'a'.repeat(64)
+    const B = 'b'.repeat(64)
+    // Per-drive cost at price 100, depth 20: 100 × 518400 << 20 = 54_358_179_840_000.
+    // Balance = 1.5× that: each drive alone looks affordable, together they are not.
+    const balance = '81537269760000'
+    const topups: string[] = []
+    const fetch: BeeFetch = async path => {
+      if (path.startsWith('/chainstate')) {
+        return new Response(JSON.stringify({ chainTip: 1000, block: 1000, currentPrice: '100' }), { status: 200 })
+      }
+
+      if (path.startsWith('/stamps') && !path.startsWith('/stamps/topup')) {
+        return new Response(
+          JSON.stringify({
+            stamps: [
+              { batchID: A, label: 'First' },
+              { batchID: B, label: 'Second' },
+            ],
+          }),
+          { status: 200 },
+        )
+      }
+
+      if (path.startsWith('/wallet')) return new Response(JSON.stringify({ bzzBalance: balance }), { status: 200 })
+
+      if (path.startsWith('/stamps/topup/')) {
+        topups.push(path)
+
+        return new Response('{}', { status: 200 })
+      }
+
+      if (path.startsWith('/batches/')) {
+        return new Response(JSON.stringify({ batchTTL: 5 * DAY, depth: 20 }), { status: 200 })
+      }
+
+      return new Response('{}', { status: 404 })
+    }
+
+    setAutoExtendSetting(A, true, 1)
+    setAutoExtendSetting(B, true, 1)
+    await runExtendCheck(fetch)
+
+    // Exactly one charge went through; the second was refused against the
+    // DECREMENTED balance with the honest notice, not a raw chain error.
+    expect(topups).toHaveLength(1)
+    expect(topups[0]).toContain(A)
+    const blocked = loadNotifications().find(n => n.type === 'charge-blocked')
+
+    expect(blocked?.title).toContain('Second')
+    expect(getAutoExtendFailures().map(f => f.batchId)).toEqual([B])
+    expect(getAutoExtendFailures()[0].reason).toContain('Not enough xBZZ')
+  })
+
   it('a blocked charge below threshold notifies once alongside the failure record', async () => {
     setAutoExtendSetting(BATCH, true, 3)
     await runExtendCheck(makeBee({ ttl: 5 * DAY, bzz: '1' }).fetch)

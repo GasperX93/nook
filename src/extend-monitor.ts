@@ -242,7 +242,7 @@ export async function runExtendCheck(beeFetch: BeeFetch = realBeeFetch): Promise
     if (inFlight.has(batchId)) continue
     inFlight.add(batchId)
     try {
-      await checkOneBatch(
+      const spent = await checkOneBatch(
         beeFetch,
         batchId,
         entry,
@@ -250,6 +250,10 @@ export async function runExtendCheck(beeFetch: BeeFetch = realBeeFetch): Promise
         bzzBalance,
         labels.get(batchId) ?? `${batchId.slice(0, 8)}…`,
       )
+
+      // What one drive spent is gone for the next — judge each against the
+      // wallet as it actually is, not as it was when the pass started.
+      bzzBalance -= spent
     } finally {
       inFlight.delete(batchId)
     }
@@ -316,7 +320,11 @@ async function checkOneBatch(
   currentPrice: string,
   bzzBalance: bigint,
   label: string,
-): Promise<void> {
+): Promise<bigint> {
+  // Returns the PLUR actually spent, so the caller can decrement its running
+  // balance — two drives due in one pass must not both be judged against the
+  // same starting balance (the second charge would fail with a raw chain
+  // error instead of the honest 'balance too low' notice).
   try {
     const batch = await readTtl(beeFetch, batchId)
 
@@ -325,13 +333,13 @@ async function checkOneBatch(
       // extend anymore. Record once; the UI shows the drive's own tombstone.
       recordFailure(batchId, 'The drive has already expired — it can no longer be extended')
 
-      return
+      return BigInt(0)
     }
 
     if (batch === null) {
       recordFailure(batchId, 'Could not read the drive from the node')
 
-      return
+      return BigInt(0)
     }
 
     const amount = topupAmount(entry.months, currentPrice)
@@ -386,7 +394,7 @@ async function checkOneBatch(
         setNotifyFlag(batchId, 'notifiedBlockedAt', null)
       }
 
-      return
+      return BigInt(0)
     }
 
     if (totalCost > bzzBalance) {
@@ -406,14 +414,14 @@ async function checkOneBatch(
         setNotifyFlag(batchId, 'notifiedBlockedAt', Date.now())
       }
 
-      return
+      return BigInt(0)
     }
 
     // Re-read right before paying — a manual extend may have just landed, and
     // a double topup would silently double-spend.
     const fresh = await readTtl(beeFetch, batchId)
 
-    if (fresh === 'gone' || fresh === null || !shouldExtend(entry, fresh.ttl)) return
+    if (fresh === 'gone' || fresh === null || !shouldExtend(entry, fresh.ttl)) return BigInt(0)
 
     // Chain transaction — generous timeout, mined before Bee responds.
     const topup = await beeFetch(`/stamps/topup/${batchId}/${amount.toString()}`, { method: 'PATCH' }, 180_000)
@@ -421,7 +429,7 @@ async function checkOneBatch(
     if (!topup.ok) {
       recordFailure(batchId, `Extension transaction failed (${topup.status})`)
 
-      return
+      return BigInt(0)
     }
     recordSuccess(batchId)
     // The permanent record of the charge (#138) — also the ledger entry the
@@ -445,8 +453,12 @@ async function checkOneBatch(
         batch.ttl / DAY_SECONDS,
       )}d)`,
     )
+
+    return totalCost
   } catch (error) {
     recordFailure(batchId, String((error as Error)?.message ?? error))
+
+    return BigInt(0)
   }
 }
 
