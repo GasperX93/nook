@@ -1,6 +1,7 @@
 import { readFileSync } from 'fs'
 import { join } from 'path'
 import { isBeeAssetReady } from './downloader'
+import { type AutoExtendFailure, getAutoExtendFailures } from './extend-monitor'
 import { BeeMode, getMode } from './funding-monitor'
 import { BeeManager } from './lifecycle'
 import { getSupervisorStatus } from './supervisor'
@@ -16,6 +17,8 @@ interface Status {
   userStopped: boolean
   /** True when Bee crashed repeatedly and the supervisor gave up restarting (#94). */
   crashLoop: boolean
+  /** Outstanding auto-extend failures (#129) — the UI banner keys on these. */
+  autoExtendFailures: AutoExtendFailure[]
 }
 
 export function getStatus() {
@@ -24,6 +27,7 @@ export function getStatus() {
     mode: getMode(),
     userStopped: BeeManager.wasEverStarted() && !BeeManager.shouldRestart(),
     crashLoop: getSupervisorStatus().crashLoop,
+    autoExtendFailures: getAutoExtendFailures(),
   }
 
   if (!checkPath('config.yaml') || !checkPath('data-dir')) {

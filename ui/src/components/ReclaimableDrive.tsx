@@ -75,6 +75,9 @@ export function ReclaimableDriveCard({
   drive,
   stamp,
   customName,
+  autoExtendOn,
+  autoExtendMonths,
+  onAutoExtend,
   onOpen,
   onExtend,
   onRename,
@@ -82,6 +85,12 @@ export function ReclaimableDriveCard({
   drive: ReclaimableDrive
   stamp?: Stamp
   customName?: string
+  /** Auto-extend enabled (#129) — shows the card badge. */
+  autoExtendOn?: boolean
+  /** Configured duration in months — for the badge tooltip. */
+  autoExtendMonths?: number
+  /** Open the auto-extend dialog (#129). */
+  onAutoExtend?: () => void
   onOpen: () => void
   onExtend: () => void
   onRename: (name: string) => void
@@ -197,6 +206,23 @@ export function ReclaimableDriveCard({
             </span>
           )}
 
+          {/* Auto-extend badge (#129) — an active spending policy is card-level
+              state; click-through manages or cancels it */}
+          {autoExtendOn && (
+            <button
+              onClick={e => {
+                e.stopPropagation()
+                onAutoExtend?.()
+              }}
+              className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium shrink-0 transition-colors hover:bg-white/10"
+              style={{ backgroundColor: 'rgba(74,222,128,0.1)', color: '#4ade80' }}
+              title={`Extends automatically${autoExtendMonths ? ` by ${autoExtendMonths} month${autoExtendMonths === 1 ? '' : 's'}` : ''} when under 10 days remain — click to change or turn off`}
+            >
+              <RefreshCw size={11} />
+              auto-extend
+            </button>
+          )}
+
           {/* Confirming pill */}
           {stamp && !stamp.usable && (
             <span
@@ -246,6 +272,19 @@ export function ReclaimableDriveCard({
                     <Clock size={13} style={{ color: 'rgb(var(--fg-muted))' }} />
                     Extend storage
                   </button>
+                  {onAutoExtend && (
+                    <button
+                      onClick={() => {
+                        setKebabOpen(false)
+                        onAutoExtend()
+                      }}
+                      className="flex items-center gap-2 w-full px-3 py-2 text-xs transition-colors hover:bg-white/5"
+                      style={{ color: 'rgb(var(--fg))' }}
+                    >
+                      <RefreshCw size={13} style={{ color: 'rgb(var(--fg-muted))' }} />
+                      Extend automatically…
+                    </button>
+                  )}
                   <button
                     onClick={() => {
                       setKebabOpen(false)

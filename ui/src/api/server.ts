@@ -46,6 +46,14 @@ export interface ReclaimableDrive {
   batchTTL: number | null
 }
 
+export interface AutoExtendEntry {
+  enabled: boolean
+  /** Months added per automatic extension — same options as manual Extend. */
+  months: number
+  lastExtendedAt?: number
+  lastFailure?: { at: number; reason: string }
+}
+
 export interface ReclaimableUploadJob {
   id: string
   batchId: string
@@ -265,6 +273,25 @@ export const serverApi = {
     }
 
     return response.json() as Promise<{ removed: boolean }>
+  },
+
+  // ─── Auto-extend (#129) — per-drive keep-alive settings ─────────────────
+
+  getAutoExtend: async () => serverGet<{ settings: Record<string, AutoExtendEntry> }>('/auto-extend'),
+
+  setAutoExtend: async (batchId: string, enabled: boolean, months: number) => {
+    const response = await fetch(`/auto-extend/${batchId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ enabled, months }),
+    })
+
+    if (!response.ok) {
+      const body = await response.json().catch(() => null)
+      throw new Error(body?.message ?? `${response.status} error`)
+    }
+
+    return response.json() as Promise<{ entry: AutoExtendEntry }>
   },
 
   // ─── Identity cache (Electron safeStorage, OS keychain) ─────────────────

@@ -8,6 +8,7 @@ import { getNookVersionFromFile, writeNookVersionFile } from './config'
 import { EXPECTED_BEE_VERSION, getInstalledBeeVersion, runDownloader } from './downloader'
 import { runElectronTray } from './electron'
 import { startChequebookMonitor } from './chequebook-monitor'
+import { startExtendMonitor } from './extend-monitor'
 import { startMonitorIfNeeded } from './funding-monitor'
 import { initializeBee, runKeepAliveLoop, runLauncher } from './launcher'
 import { logger } from './logger'
@@ -115,6 +116,7 @@ async function main() {
   runLauncher().catch(errorHandler)
   startMonitorIfNeeded()
   startChequebookMonitor()
+  startExtendMonitor()
   runElectronTray()
 
   if (process.env.NODE_ENV !== 'development') openDashboardInBrowser()
