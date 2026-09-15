@@ -1313,6 +1313,8 @@ interface DriveCardProps {
   autoExtendUpcoming?: boolean
   /** Last automatic extension failed (#138) — badge turns red. */
   autoExtendFailed?: boolean
+  /** Why it failed — shown in the badge tooltip, self-contained. */
+  autoExtendFailedReason?: string
   /** Open the auto-extend dialog (#129). */
   onAutoExtend?: () => void
   encrypted?: boolean
@@ -1357,6 +1359,7 @@ function DriveCard({
   autoExtendMonths,
   autoExtendUpcoming,
   autoExtendFailed,
+  autoExtendFailedReason,
   onAutoExtend,
 }: DriveCardProps) {
   const [inlineDraggingId, setInlineDraggingId] = useState<string | null>(null)
@@ -1628,7 +1631,7 @@ function DriveCard({
               }
               title={
                 autoExtendFailed
-                  ? 'The automatic extension is blocked (see the banner) — click to change it, or add xBZZ'
+                  ? `Couldn't extend automatically${autoExtendFailedReason ? `: ${autoExtendFailedReason}` : ''} — click to change it, or add xBZZ`
                   : autoExtendUpcoming
                     ? 'Automatic extension coming up in the next days — click for details or to turn it off'
                     : `Extends automatically${autoExtendMonths ? ` by ${autoExtendMonths} month${autoExtendMonths === 1 ? '' : 's'}` : ''} when under 10 days remain — click to change or turn off`
@@ -2763,6 +2766,7 @@ export default function Drive() {
                 autoExtendMonths={autoExtendSettings[drive.batchId]?.months}
                 autoExtendUpcoming={Boolean(autoExtendSettings[drive.batchId]?.notifiedUpcomingAt)}
                 autoExtendFailed={Boolean(autoExtendSettings[drive.batchId]?.lastFailure)}
+                autoExtendFailedReason={autoExtendSettings[drive.batchId]?.lastFailure?.reason}
                 onAutoExtend={() => setShowExtendModal(drive.batchId)}
                 onOpen={() => setActiveDriveId(drive.batchId)}
                 onExtend={() => setShowExtendModal(drive.batchId)}
@@ -2783,6 +2787,7 @@ export default function Drive() {
                 autoExtendMonths={autoExtendSettings[stamp.batchID.toLowerCase()]?.months}
                 autoExtendUpcoming={Boolean(autoExtendSettings[stamp.batchID.toLowerCase()]?.notifiedUpcomingAt)}
                 autoExtendFailed={Boolean(autoExtendSettings[stamp.batchID.toLowerCase()]?.lastFailure)}
+                autoExtendFailedReason={autoExtendSettings[stamp.batchID.toLowerCase()]?.lastFailure?.reason}
                 onAutoExtend={() => setShowExtendModal(stamp.batchID)}
                 customName={customDriveLabels[stamp.batchID]}
                 encrypted={driveMetadata.isEncrypted(stamp.batchID)}

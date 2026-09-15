@@ -79,6 +79,7 @@ export function ReclaimableDriveCard({
   autoExtendMonths,
   autoExtendUpcoming,
   autoExtendFailed,
+  autoExtendFailedReason,
   onAutoExtend,
   onOpen,
   onExtend,
@@ -95,6 +96,8 @@ export function ReclaimableDriveCard({
   autoExtendUpcoming?: boolean
   /** Last automatic extension failed (#138) — badge turns red. */
   autoExtendFailed?: boolean
+  /** Why it failed — shown in the badge tooltip, self-contained. */
+  autoExtendFailedReason?: string
   /** Open the auto-extend dialog (#129). */
   onAutoExtend?: () => void
   onOpen: () => void
@@ -230,7 +233,7 @@ export function ReclaimableDriveCard({
               }
               title={
                 autoExtendFailed
-                  ? 'The automatic extension is blocked (see the banner) — click to change it, or add xBZZ'
+                  ? `Couldn't extend automatically${autoExtendFailedReason ? `: ${autoExtendFailedReason}` : ''} — click to change it, or add xBZZ`
                   : autoExtendUpcoming
                     ? 'Automatic extension coming up in the next days — click for details or to turn it off'
                     : `Extends automatically${autoExtendMonths ? ` by ${autoExtendMonths} month${autoExtendMonths === 1 ? '' : 's'}` : ''} when under 10 days remain — click to change or turn off`
