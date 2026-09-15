@@ -12,7 +12,7 @@ jest.mock('../src/notify', () => ({ createNotification: jest.fn() }))
 import { rmSync } from 'fs'
 
 import { createNotification } from '../src/notify'
-import { loadNotifications, markNotificationsRead, pushNotification } from '../src/notifications'
+import { dismissNotification, loadNotifications, markNotificationsRead, pushNotification } from '../src/notifications'
 
 // The bell's contract (#138): events are permanent (up to the cap), newest
 // first, desktop firing is explicit per event, and reads are idempotent.
@@ -69,6 +69,21 @@ describe('notification store', () => {
 
     expect(markNotificationsRead()).toBe(1) // only 'b' was left unread
     expect(markNotificationsRead()).toBe(0)
+  })
+
+  it('dismiss hides without deleting and implies read; idempotent', () => {
+    const a = pushNotification({ type: 'charge-executed', title: 'a', body: '', data: { amountPlur: '5' } })
+
+    expect(dismissNotification(a.id)).toBe(true)
+    expect(dismissNotification(a.id)).toBe(false)
+    expect(dismissNotification('nope')).toBe(false)
+
+    // Still in the store — the Activity ledger (#139) reads from here.
+    const stored = loadNotifications().find(n => n.id === a.id)
+
+    expect(stored?.dismissedAt).toBeDefined()
+    expect(stored?.readAt).toBeDefined()
+    expect(stored?.data?.amountPlur).toBe('5')
   })
 
   it('keeps structured data for ledger consumers (#139)', () => {

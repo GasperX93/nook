@@ -28,6 +28,7 @@ import { loadInvitations, pendingInvitations } from '../notify/invitations'
 import { loadContacts } from '../notify/storage'
 import { useRegistryPolling } from '../hooks/useRegistryPolling'
 import { useAppStore } from '../store/app'
+import NotificationBell from './NotificationBell'
 import Onboarding from './Onboarding'
 import {
   Sidebar,
@@ -319,30 +320,33 @@ export default function Layout() {
             <h1 className="text-sm font-semibold uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
               {pageTitle}
             </h1>
-            <ConnectButton.Custom>
-              {({ account, chain, openConnectModal, mounted }) => {
-                if (!mounted) return null
+            <div className="flex items-center gap-2">
+              <NotificationBell />
+              <ConnectButton.Custom>
+                {({ account, chain, openConnectModal, mounted }) => {
+                  if (!mounted) return null
 
-                if (!account || !chain) {
+                  if (!account || !chain) {
+                    return (
+                      <button
+                        onClick={openConnectModal}
+                        className="nook-wallet-btn flex items-center gap-2 px-3 py-1.5 rounded-full text-xs transition-colors border"
+                      >
+                        Connect Wallet
+                      </button>
+                    )
+                  }
+
                   return (
-                    <button
-                      onClick={openConnectModal}
-                      className="nook-wallet-btn flex items-center gap-2 px-3 py-1.5 rounded-full text-xs transition-colors border"
-                    >
-                      Connect Wallet
-                    </button>
+                    <WalletDropdown
+                      displayName={account.displayName}
+                      address={account.address}
+                      avatar={account.ensAvatar}
+                    />
                   )
-                }
-
-                return (
-                  <WalletDropdown
-                    displayName={account.displayName}
-                    address={account.address}
-                    avatar={account.ensAvatar}
-                  />
-                )
-              }}
-            </ConnectButton.Custom>
+                }}
+              </ConnectButton.Custom>
+            </div>
           </div>
 
           {/* Starting up — friendly indicator */}

@@ -77,6 +77,7 @@ export function ReclaimableDriveCard({
   customName,
   autoExtendOn,
   autoExtendMonths,
+  autoExtendUpcoming,
   onAutoExtend,
   onOpen,
   onExtend,
@@ -89,6 +90,8 @@ export function ReclaimableDriveCard({
   autoExtendOn?: boolean
   /** Configured duration in months — for the badge tooltip. */
   autoExtendMonths?: number
+  /** In the advance-notice window (#138) — badge turns amber. */
+  autoExtendUpcoming?: boolean
   /** Open the auto-extend dialog (#129). */
   onAutoExtend?: () => void
   onOpen: () => void
@@ -215,8 +218,16 @@ export function ReclaimableDriveCard({
                 onAutoExtend?.()
               }}
               className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium shrink-0 transition-colors hover:bg-white/10"
-              style={{ backgroundColor: 'rgba(74,222,128,0.1)', color: '#4ade80' }}
-              title={`Extends automatically${autoExtendMonths ? ` by ${autoExtendMonths} month${autoExtendMonths === 1 ? '' : 's'}` : ''} when under 10 days remain — click to change or turn off`}
+              style={
+                autoExtendUpcoming
+                  ? { backgroundColor: 'rgba(245,158,11,0.12)', color: '#f59e0b' }
+                  : { backgroundColor: 'rgba(74,222,128,0.1)', color: '#4ade80' }
+              }
+              title={
+                autoExtendUpcoming
+                  ? 'Automatic extension coming up in the next days — click for details or to turn it off'
+                  : `Extends automatically${autoExtendMonths ? ` by ${autoExtendMonths} month${autoExtendMonths === 1 ? '' : 's'}` : ''} when under 10 days remain — click to change or turn off`
+              }
             >
               <RefreshCw size={11} />
               auto-extend

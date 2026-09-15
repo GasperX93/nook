@@ -1309,6 +1309,8 @@ interface DriveCardProps {
   autoExtendOn?: boolean
   /** Configured duration in months — for the badge tooltip. */
   autoExtendMonths?: number
+  /** In the advance-notice window (#138) — badge turns amber. */
+  autoExtendUpcoming?: boolean
   /** Open the auto-extend dialog (#129). */
   onAutoExtend?: () => void
   encrypted?: boolean
@@ -1351,6 +1353,7 @@ function DriveCard({
   onMoveToFolder,
   autoExtendOn,
   autoExtendMonths,
+  autoExtendUpcoming,
   onAutoExtend,
 }: DriveCardProps) {
   const [inlineDraggingId, setInlineDraggingId] = useState<string | null>(null)
@@ -1613,8 +1616,16 @@ function DriveCard({
                 onAutoExtend?.()
               }}
               className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium shrink-0 transition-colors hover:bg-white/10"
-              style={{ backgroundColor: 'rgba(74,222,128,0.1)', color: '#4ade80' }}
-              title={`Extends automatically${autoExtendMonths ? ` by ${autoExtendMonths} month${autoExtendMonths === 1 ? '' : 's'}` : ''} when under 10 days remain — click to change or turn off`}
+              style={
+                autoExtendUpcoming
+                  ? { backgroundColor: 'rgba(245,158,11,0.12)', color: '#f59e0b' }
+                  : { backgroundColor: 'rgba(74,222,128,0.1)', color: '#4ade80' }
+              }
+              title={
+                autoExtendUpcoming
+                  ? 'Automatic extension coming up in the next days — click for details or to turn it off'
+                  : `Extends automatically${autoExtendMonths ? ` by ${autoExtendMonths} month${autoExtendMonths === 1 ? '' : 's'}` : ''} when under 10 days remain — click to change or turn off`
+              }
             >
               <RefreshCw size={11} />
               auto-extend
@@ -2470,6 +2481,21 @@ export default function Drive() {
     // eslint-disable-next-line
   }, [location.key])
 
+  // Deep link from the bell (#138): /drive?extend=<batchId> opens the drive
+  // itself with the Extend modal on top — "view drive" must land ON the
+  // decision, with the drive visible behind it for context. Keyed on
+  // location.key so re-clicking the same notification reopens the modal.
+  // (Declared after the sidebar-click reset above so this wins the same tick.)
+  useEffect(() => {
+    const extendId = new URLSearchParams(location.search).get('extend')
+
+    if (extendId) {
+      setActiveDriveId(extendId)
+      setShowExtendModal(extendId)
+    }
+    // eslint-disable-next-line
+  }, [location.key])
+
   // Clear the per-drive prompts when switching drives.
   useEffect(() => {
     setUpdatedSharedDrive(false)
@@ -2728,6 +2754,7 @@ export default function Drive() {
                 customName={customDriveLabels[drive.batchId]}
                 autoExtendOn={autoExtendSettings[drive.batchId]?.enabled}
                 autoExtendMonths={autoExtendSettings[drive.batchId]?.months}
+                autoExtendUpcoming={Boolean(autoExtendSettings[drive.batchId]?.notifiedUpcomingAt)}
                 onAutoExtend={() => setShowExtendModal(drive.batchId)}
                 onOpen={() => setActiveDriveId(drive.batchId)}
                 onExtend={() => setShowExtendModal(drive.batchId)}
@@ -2746,6 +2773,7 @@ export default function Drive() {
                 downloadPct={downloadPct}
                 autoExtendOn={autoExtendSettings[stamp.batchID.toLowerCase()]?.enabled}
                 autoExtendMonths={autoExtendSettings[stamp.batchID.toLowerCase()]?.months}
+                autoExtendUpcoming={Boolean(autoExtendSettings[stamp.batchID.toLowerCase()]?.notifiedUpcomingAt)}
                 onAutoExtend={() => setShowExtendModal(stamp.batchID)}
                 customName={customDriveLabels[stamp.batchID]}
                 encrypted={driveMetadata.isEncrypted(stamp.batchID)}
@@ -2887,12 +2915,16 @@ export default function Drive() {
 
   if (activeReclaimable) {
     return (
-      <ReclaimableDriveView
-        drive={activeReclaimable}
-        stamp={stamps?.find(s => s.batchID.toLowerCase() === activeReclaimable.batchId)}
-        customName={customDriveLabels[activeReclaimable.batchId]}
-        onBack={() => setActiveDriveId(null)}
-      />
+      <>
+        <ReclaimableDriveView
+          drive={activeReclaimable}
+          stamp={stamps?.find(s => s.batchID.toLowerCase() === activeReclaimable.batchId)}
+          customName={customDriveLabels[activeReclaimable.batchId]}
+          onBack={() => setActiveDriveId(null)}
+        />
+        {/* Bell deep link opens the drive with the Extend modal on top (#138) */}
+        {extendingStamp && <ExtendModal stamp={extendingStamp} onClose={() => setShowExtendModal(null)} />}
+      </>
     )
   }
 
@@ -3444,6 +3476,8 @@ export default function Drive() {
             />
           )
         })()}
+      {/* Bell deep link opens the drive with the Extend modal on top (#138) */}
+      {extendingStamp && <ExtendModal stamp={extendingStamp} onClose={() => setShowExtendModal(null)} />}
     </div>
   )
 }

@@ -254,6 +254,7 @@ describe('charge notifications (#138)', () => {
     const executed = loadNotifications().find(n => n.type === 'charge-executed')
 
     expect(executed?.title).toContain('Photos')
+    expect(executed?.data?.driveLabel).toBe('Photos')
     expect(executed?.data?.amountXbzz).toBeDefined()
     expect(executed?.data?.amountPlur).toBeDefined()
     expect(getAutoExtendSettings()[BATCH].notifiedUpcomingAt).toBeUndefined()

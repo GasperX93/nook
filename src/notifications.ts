@@ -51,6 +51,12 @@ export interface NookNotification {
   createdAt: number
   /** Unix ms — absent while unread */
   readAt?: number
+  /**
+   * Unix ms — user dismissed it from the bell panel. Hidden from the UI but
+   * NEVER deleted: the wallet Activity list (#139) labels transactions from
+   * these events, so a hard delete would silently unlabel history.
+   */
+  dismissedAt?: number
   /** In-app deep link, e.g. '/drive' */
   link?: string
   /** Structured payload for consumers (e.g. the wallet Activity list, #139) */
@@ -131,6 +137,22 @@ export function pushNotification(options: PushOptions): NookNotification {
   }
 
   return notification
+}
+
+/** Dismiss one notification: hidden from the panel (and implicitly read). */
+export function dismissNotification(id: string): boolean {
+  const now = Date.now()
+  let changed = false
+  const updated = loadNotifications().map(n => {
+    if (n.id !== id || n.dismissedAt !== undefined) return n
+    changed = true
+
+    return { ...n, dismissedAt: now, readAt: n.readAt ?? now }
+  })
+
+  if (changed) save(updated)
+
+  return changed
 }
 
 /** Mark the given ids read (all unread when ids is undefined). */

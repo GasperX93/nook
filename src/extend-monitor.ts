@@ -354,7 +354,7 @@ async function checkOneBatch(
             body: `In about ${daysUntil} day${daysUntil === 1 ? '' : 's'}: +${entry.months} month${
               entry.months === 1 ? '' : 's'
             } for ~${costXbzz} xBZZ from your wallet. Turn it off under Extend storage if you don't want this.`,
-            link: '/drive',
+            link: `/drive?extend=${batchId}`,
             data: { batchId, months: entry.months, estXbzz: costXbzz },
             desktop: true,
           })
@@ -428,7 +428,13 @@ async function checkOneBatch(
       title: `Extended "${label}" by ${entry.months} month${entry.months === 1 ? '' : 's'}`,
       body: `${costXbzz} xBZZ was spent from your wallet to keep this drive alive.`,
       link: '/drive',
-      data: { batchId, months: entry.months, amountXbzz: costXbzz, amountPlur: totalCost.toString() },
+      data: {
+        batchId,
+        driveLabel: label,
+        months: entry.months,
+        amountXbzz: costXbzz,
+        amountPlur: totalCost.toString(),
+      },
       desktop: true,
     })
     logger.info(

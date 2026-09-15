@@ -42,7 +42,15 @@ import {
   startUpload,
 } from './reclaimable'
 import { getAutoExtendSettings, setAutoExtendSetting } from './extend-monitor'
-import { loadNotifications, markNotificationsRead, type NotificationType, pushNotification } from './notifications'
+import {
+  dismissNotification,
+  loadNotifications,
+  markNotificationsRead,
+  type NotificationType,
+  pushNotification,
+} from './notifications'
+import { purchaseCostPlur, recordPurchase } from './purchases'
+import { getWalletActivity } from './wallet-activity'
 import { getStatus } from './status'
 import { resetCrashLoop } from './supervisor'
 import { fetchWithTimeout } from './fetch-timeout'
@@ -173,6 +181,10 @@ export function runServer() {
       // Buffer response too — Bee API responses are small enough and this
       // avoids Web Stream / Node Stream conversion issues
       context.body = Buffer.from(await res.arrayBuffer())
+
+      // #139: a successful topup through the proxy moved BZZ on-chain —
+      // record it (fire-and-forget) so the Activity list can name the drive.
+      if (res.status < 300) void observeProxiedTopup(context.method, beePath)
     } catch (e) {
       logger.error(`bee-api proxy failed for ${url}: ${(e as Error).message}`)
       context.status = 502
@@ -421,6 +433,13 @@ export function runServer() {
 
     try {
       const batchID = await makeBee().createPostageBatch(amount, depth, { immutableFlag: Boolean(immutable), label })
+
+      recordPurchase({
+        kind: 'create',
+        batchId: batchID.toString(),
+        label,
+        amountPlur: purchaseCostPlur(amount, depth),
+      })
       context.body = { batchID: batchID.toString() }
     } catch (error) {
       logger.error(error)
@@ -462,6 +481,8 @@ export function runServer() {
       // Always immutable: slot reuse works there (spike-verified) and it
       // matches the default drive type everywhere else in Nook.
       const batchID = (await makeBee().createPostageBatch(amount, depth, { immutableFlag: true, label })).toString()
+
+      recordPurchase({ kind: 'create', batchId: batchID, label, amountPlur: purchaseCostPlur(amount, depth) })
       registerReclaimableBatch({
         batchId: batchID,
         depth,
@@ -481,15 +502,34 @@ export function runServer() {
     context.body = { drives: await listReclaimableDrives() }
   })
 
+  // ─── Wallet activity (#139) — audit surface for automatic spending ────────
+  router.get('/wallet-activity', async context => {
+    context.body = await getWalletActivity()
+  })
+
   // ─── Notifications (#138) — the bell's event feed ─────────────────────────
   router.get('/notifications', context => {
-    context.body = { notifications: loadNotifications() }
+    // Dismissed events stay in the store (the Activity list labels from
+    // them) but are the user's "done with this" — the panel never re-shows.
+    context.body = { notifications: loadNotifications().filter(n => n.dismissedAt === undefined) }
   })
 
   router.post('/notifications/read', context => {
     const { ids } = (context.request.body ?? {}) as { ids?: string[] }
 
     context.body = { marked: markNotificationsRead(Array.isArray(ids) ? ids : undefined) }
+  })
+
+  router.post('/notifications/dismiss', context => {
+    const { id } = (context.request.body ?? {}) as { id?: string }
+
+    if (typeof id !== 'string' || !id) {
+      context.status = 400
+      context.body = { message: 'id is required' }
+
+      return
+    }
+    context.body = { dismissed: dismissNotification(id) }
   })
 
   // Client-created events (future types like connection requests) join the
@@ -1097,6 +1137,31 @@ async function createFeedUpdate(topicHex: string, referenceHex: string, stampId:
   const manifest = await bee.createFeedManifest(stampId, topicHex, wallet.address)
 
   return manifest.toString()
+}
+
+/**
+ * #139: manual "Extend duration" reaches Bee as PATCH /stamps/topup/{id}/{amount}
+ * through the /bee-api proxy (auto-extend calls Bee directly and records its
+ * own charge-executed event — no double counting). The batch lookup supplies
+ * the depth for the exact cost and the drive's current name.
+ */
+async function observeProxiedTopup(method: string, beePath: string): Promise<void> {
+  const match = method === 'PATCH' && /^\/stamps\/topup\/([0-9a-fA-F]{64})\/(\d+)$/.exec(beePath)
+
+  if (!match) return
+
+  try {
+    const batch = await makeBee().getPostageBatch(match[1])
+
+    recordPurchase({
+      kind: 'topup',
+      batchId: match[1],
+      label: batch.label || undefined,
+      amountPlur: purchaseCostPlur(match[2], batch.depth),
+    })
+  } catch (error) {
+    logger.info(`could not record topup for activity labels: ${error}`)
+  }
 }
 
 function makeBee(): Bee {
