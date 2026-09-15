@@ -11,6 +11,7 @@ jest.mock('../src/config', () => ({
   ...jest.requireActual('../src/config'),
   readConfigYaml: () => ({ password: 'pw' }),
 }))
+jest.mock('../src/notify', () => ({ createNotification: jest.fn() }))
 
 import { rmSync } from 'fs'
 
@@ -18,12 +19,14 @@ import {
   type BeeFetch,
   getAutoExtendFailures,
   getAutoExtendSettings,
+  leadSeconds,
   runExtendCheck,
   setAutoExtendSetting,
   shouldExtend,
   THRESHOLD_SECONDS,
   topupAmount,
 } from '../src/extend-monitor'
+import { loadNotifications } from '../src/notifications'
 
 // The auto-extend contract (#129): extend an opted-in drive before it expires,
 // never double-spend, never act on stale chain data, and record every failure
@@ -35,6 +38,7 @@ const SETTINGS_FILE = 'test/data/auto-extend.json'
 
 function cleanUp() {
   rmSync(SETTINGS_FILE, { force: true })
+  rmSync('test/data/notifications.json', { force: true })
 }
 
 /** Bee stub: map url-substring → responder. Records topup calls. */
@@ -54,6 +58,10 @@ function makeBee(overrides: {
         JSON.stringify({ chainTip: 1000, block: 1000 - (overrides.lag ?? 0), currentPrice: overrides.price ?? '100' }),
         { status: 200 },
       )
+    }
+
+    if (path.startsWith('/stamps') && !path.startsWith('/stamps/topup')) {
+      return new Response(JSON.stringify({ stamps: [{ batchID: BATCH, label: 'Photos' }] }), { status: 200 })
     }
 
     if (path.startsWith('/wallet')) {
@@ -189,5 +197,74 @@ describe('runExtendCheck', () => {
 
     await runExtendCheck(bee.fetch)
     expect(bee.topups).toHaveLength(0)
+  })
+})
+
+describe('charge notifications (#138)', () => {
+  const DAY = 86_400
+
+  it('lead window scales with duration, capped at 10 days', () => {
+    expect(leadSeconds(1)).toBe(10 * DAY)
+    expect(leadSeconds(3)).toBe(10 * DAY)
+    expect(leadSeconds(12)).toBe(10 * DAY)
+  })
+
+  it('entering the lead window pushes upcoming-charge ONCE, with drive label and estimate', async () => {
+    setAutoExtendSetting(BATCH, true, 3)
+    const bee = makeBee({ ttl: 15 * DAY, price: '100' })
+
+    await runExtendCheck(bee.fetch)
+    await runExtendCheck(bee.fetch)
+
+    const events = loadNotifications().filter(n => n.type === 'upcoming-charge')
+
+    expect(events).toHaveLength(1)
+    expect(events[0].title).toContain('Photos')
+    expect(events[0].data?.estXbzz).toBeDefined()
+    expect(bee.topups).toHaveLength(0)
+  })
+
+  it('in the lead window with a short wallet, charge-blocked warns early', async () => {
+    setAutoExtendSetting(BATCH, true, 3)
+    const bee = makeBee({ ttl: 15 * DAY, bzz: '1' })
+
+    await runExtendCheck(bee.fetch)
+
+    expect(loadNotifications().some(n => n.type === 'charge-blocked')).toBe(true)
+    expect(bee.topups).toHaveLength(0)
+  })
+
+  it('leaving the window (manual extend) resets the cycle — next window notifies again', async () => {
+    setAutoExtendSetting(BATCH, true, 3)
+    await runExtendCheck(makeBee({ ttl: 15 * DAY }).fetch)
+    expect(getAutoExtendSettings()[BATCH].notifiedUpcomingAt).toBeDefined()
+
+    await runExtendCheck(makeBee({ ttl: 90 * DAY }).fetch)
+    expect(getAutoExtendSettings()[BATCH].notifiedUpcomingAt).toBeUndefined()
+
+    await runExtendCheck(makeBee({ ttl: 15 * DAY }).fetch)
+    expect(loadNotifications().filter(n => n.type === 'upcoming-charge')).toHaveLength(2)
+  })
+
+  it('a successful charge records charge-executed with the paid amount, and clears the flags', async () => {
+    setAutoExtendSetting(BATCH, true, 3)
+    await runExtendCheck(makeBee({ ttl: 15 * DAY }).fetch) // upcoming
+    await runExtendCheck(makeBee({ ttl: 5 * DAY, price: '100' }).fetch) // fires
+
+    const executed = loadNotifications().find(n => n.type === 'charge-executed')
+
+    expect(executed?.title).toContain('Photos')
+    expect(executed?.data?.amountXbzz).toBeDefined()
+    expect(executed?.data?.amountPlur).toBeDefined()
+    expect(getAutoExtendSettings()[BATCH].notifiedUpcomingAt).toBeUndefined()
+  })
+
+  it('a blocked charge below threshold notifies once alongside the failure record', async () => {
+    setAutoExtendSetting(BATCH, true, 3)
+    await runExtendCheck(makeBee({ ttl: 5 * DAY, bzz: '1' }).fetch)
+    await runExtendCheck(makeBee({ ttl: 5 * DAY, bzz: '1' }).fetch)
+
+    expect(loadNotifications().filter(n => n.type === 'charge-blocked')).toHaveLength(1)
+    expect(getAutoExtendFailures()).toHaveLength(1)
   })
 })

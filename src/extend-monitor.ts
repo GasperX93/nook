@@ -3,6 +3,7 @@ import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { readConfigYaml } from './config'
 import { fetchWithTimeout } from './fetch-timeout'
 import { logger } from './logger'
+import { pushNotification } from './notifications'
 import { getPath } from './path'
 
 /**
@@ -33,6 +34,10 @@ export interface AutoExtendEntry {
   lastExtendedAt?: number
   /** Present while the last attempt failed; cleared on success. */
   lastFailure?: { at: number; reason: string }
+  /** Unix ms — 'upcoming-charge' was sent for the current lead window (#138). */
+  notifiedUpcomingAt?: number
+  /** Unix ms — 'charge-blocked' was sent for the current failure (#138). */
+  notifiedBlockedAt?: number
 }
 
 export interface AutoExtendFailure {
@@ -144,6 +149,20 @@ export function topupAmount(months: number, currentPrice: string): bigint {
   return BigInt(currentPrice) * BLOCKS_PER_MONTH * BigInt(months)
 }
 
+/**
+ * Advance-notice window (#138): warn before the charge, scaled so short
+ * drives get proportionate notice instead of nagging — a 1-month auto-extend
+ * warns ~10 days after purchase with a flat 10-day lead, which reads as noise.
+ */
+export function leadSeconds(months: number): number {
+  return Math.min(10 * DAY_SECONDS, Math.floor((months * 30 * DAY_SECONDS) / 3))
+}
+
+/** PLUR → xBZZ display string with 4 decimals (BigInt-literal-free for ES5). */
+export function formatXbzz(totalPlur: bigint): string {
+  return (Number(totalPlur / BigInt('1000000000000')) / 10_000).toFixed(2)
+}
+
 // ─── The check ───────────────────────────────────────────────────────────────
 
 const inFlight = new Set<string>()
@@ -198,11 +217,36 @@ export async function runExtendCheck(beeFetch: BeeFetch = realBeeFetch): Promise
     return getAutoExtendFailures().length > 0
   }
 
+  // Drive names for notification copy — Bee's stamp list carries the labels
+  // for every locally-issued batch (both drive types). Best-effort.
+  const labels = new Map<string, string>()
+
+  try {
+    const stampsRes = await beeFetch('/stamps')
+
+    if (stampsRes.ok) {
+      const { stamps } = (await stampsRes.json()) as { stamps?: { batchID: string; label?: string }[] }
+
+      for (const s of stamps ?? []) {
+        if (s.label) labels.set(s.batchID.toLowerCase(), s.label)
+      }
+    }
+  } catch {
+    // Labels degrade to short batch ids.
+  }
+
   for (const [batchId, entry] of enabled) {
     if (inFlight.has(batchId)) continue
     inFlight.add(batchId)
     try {
-      await checkOneBatch(beeFetch, batchId, entry, currentPrice, bzzBalance)
+      await checkOneBatch(
+        beeFetch,
+        batchId,
+        entry,
+        currentPrice,
+        bzzBalance,
+        labels.get(batchId) ?? `${batchId.slice(0, 8)}…`,
+      )
     } finally {
       inFlight.delete(batchId)
     }
@@ -229,6 +273,22 @@ function recordSuccess(batchId: string): void {
   if (!entry) return
   entry.lastExtendedAt = Date.now()
   delete entry.lastFailure
+  // The charge cycle is over — the next lead window notifies afresh.
+  delete entry.notifiedUpcomingAt
+  delete entry.notifiedBlockedAt
+  settings[batchId] = entry
+  saveSettings(settings)
+}
+
+/** Set or clear the per-cycle notification flags (#138 dedupe). */
+function setNotifyFlag(batchId: string, flag: 'notifiedUpcomingAt' | 'notifiedBlockedAt', value: number | null): void {
+  const settings = getAutoExtendSettings()
+  const entry = settings[batchId]
+
+  if (!entry) return
+
+  if (value === null) delete entry[flag]
+  else entry[flag] = value
   settings[batchId] = entry
   saveSettings(settings)
 }
@@ -252,6 +312,7 @@ async function checkOneBatch(
   entry: AutoExtendEntry,
   currentPrice: string,
   bzzBalance: bigint,
+  label: string,
 ): Promise<void> {
   try {
     const batch = await readTtl(beeFetch, batchId)
@@ -270,21 +331,77 @@ async function checkOneBatch(
       return
     }
 
+    const amount = topupAmount(entry.months, currentPrice)
+    const totalCost = amount << BigInt(batch.depth)
+    const costXbzz = formatXbzz(totalCost)
+
     if (!shouldExtend(entry, batch.ttl)) {
       // Healthy — make sure no stale failure keeps a banner alive.
       if (entry.lastFailure) recordSuccessLikeClear(batchId)
 
+      const lead = leadSeconds(entry.months)
+
+      if (batch.ttl < THRESHOLD_SECONDS + lead) {
+        // Lead window (#138): the charge is coming — say so once per cycle,
+        // with enough time to disable or fund. Estimates are marked ~ (the
+        // network price moves between now and the charge).
+        if (!entry.notifiedUpcomingAt) {
+          const daysUntil = Math.max(1, Math.ceil((batch.ttl - THRESHOLD_SECONDS) / DAY_SECONDS))
+
+          pushNotification({
+            type: 'upcoming-charge',
+            title: `"${label}" will extend automatically`,
+            body: `In about ${daysUntil} day${daysUntil === 1 ? '' : 's'}: +${entry.months} month${
+              entry.months === 1 ? '' : 's'
+            } for ~${costXbzz} xBZZ from your wallet. Turn it off under Extend storage if you don't want this.`,
+            link: '/drive',
+            data: { batchId, months: entry.months, estXbzz: costXbzz },
+            desktop: true,
+          })
+          setNotifyFlag(batchId, 'notifiedUpcomingAt', Date.now())
+        }
+
+        // Early balance check: warn NOW if the wallet can't cover the coming
+        // charge — waiting for the charge to fail wastes the whole lead time.
+        if (totalCost > bzzBalance && !entry.notifiedBlockedAt) {
+          pushNotification({
+            type: 'charge-blocked',
+            title: `"${label}" can't be extended — balance too low`,
+            body: `The automatic extension (~${costXbzz} xBZZ) is due in about ${Math.max(
+              1,
+              Math.ceil((batch.ttl - THRESHOLD_SECONDS) / DAY_SECONDS),
+            )} days but your wallet doesn't cover it. Add xBZZ or the drive will expire.`,
+            link: '/account',
+            data: { batchId, estXbzz: costXbzz },
+            desktop: true,
+          })
+          setNotifyFlag(batchId, 'notifiedBlockedAt', Date.now())
+        }
+      } else if (entry.notifiedUpcomingAt || entry.notifiedBlockedAt) {
+        // Left the window (manual extend, settings change) — reset the cycle.
+        setNotifyFlag(batchId, 'notifiedUpcomingAt', null)
+        setNotifyFlag(batchId, 'notifiedBlockedAt', null)
+      }
+
       return
     }
 
-    const amount = topupAmount(entry.months, currentPrice)
-    const totalCost = amount << BigInt(batch.depth)
-
     if (totalCost > bzzBalance) {
-      // PLUR → xBZZ with 4 decimals, avoiding BigInt literals (ES5 target)
-      const needed = Number(totalCost / BigInt('1000000000000')) / 10_000
+      recordFailure(batchId, `Not enough xBZZ (needs ~${costXbzz} xBZZ)`)
 
-      recordFailure(batchId, `Not enough xBZZ (needs ~${needed.toFixed(2)} xBZZ)`)
+      if (!entry.notifiedBlockedAt) {
+        pushNotification({
+          type: 'charge-blocked',
+          title: `"${label}" couldn't be extended — balance too low`,
+          body: `The automatic extension needs ~${costXbzz} xBZZ. Add funds before the drive expires (${Math.floor(
+            batch.ttl / DAY_SECONDS,
+          )} days left) — Nook keeps retrying hourly.`,
+          link: '/account',
+          data: { batchId, estXbzz: costXbzz },
+          desktop: true,
+        })
+        setNotifyFlag(batchId, 'notifiedBlockedAt', Date.now())
+      }
 
       return
     }
@@ -304,6 +421,16 @@ async function checkOneBatch(
       return
     }
     recordSuccess(batchId)
+    // The permanent record of the charge (#138) — also the ledger entry the
+    // wallet Activity list consumes (#139).
+    pushNotification({
+      type: 'charge-executed',
+      title: `Extended "${label}" by ${entry.months} month${entry.months === 1 ? '' : 's'}`,
+      body: `${costXbzz} xBZZ was spent from your wallet to keep this drive alive.`,
+      link: '/drive',
+      data: { batchId, months: entry.months, amountXbzz: costXbzz, amountPlur: totalCost.toString() },
+      desktop: true,
+    })
     logger.info(
       `auto-extend: extended ${batchId.slice(0, 8)} by ${entry.months} month(s) (ttl was ${Math.floor(
         batch.ttl / DAY_SECONDS,

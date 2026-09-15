@@ -1,5 +1,6 @@
 import { fetchWithTimeout } from './fetch-timeout'
 import { logger } from './logger'
+import { pushNotification } from './notifications'
 import { getMode } from './funding-monitor'
 import { readConfigYaml } from './config'
 
@@ -78,6 +79,14 @@ async function checkAndFundChequebook() {
     logger.info(`Depositing ${depositAmount} PLUR into chequebook`)
     await beePost(`/chequebook/deposit?amount=${depositAmount}`)
     logger.info('Chequebook deposit successful')
+    // Feed-only record (#138): internal rebalancing the bell should remember
+    // without interrupting anyone — no desktop notification.
+    pushNotification({
+      type: 'chequebook-funded',
+      title: 'Bandwidth chequebook topped up',
+      body: `${(Number(depositAmount / BigInt('1000000000000')) / 10_000).toFixed(2)} xBZZ moved from your wallet to the bandwidth chequebook.`,
+      data: { amountPlur: depositAmount.toString() },
+    })
   } catch (err) {
     // Non-fatal — retry next interval. Chequebook may not be deployed yet during early startup.
     logger.debug(`Chequebook monitor: ${err}`)

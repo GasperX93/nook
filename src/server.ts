@@ -42,6 +42,7 @@ import {
   startUpload,
 } from './reclaimable'
 import { getAutoExtendSettings, setAutoExtendSetting } from './extend-monitor'
+import { loadNotifications, markNotificationsRead, type NotificationType, pushNotification } from './notifications'
 import { getStatus } from './status'
 import { resetCrashLoop } from './supervisor'
 import { fetchWithTimeout } from './fetch-timeout'
@@ -478,6 +479,44 @@ export function runServer() {
 
   router.get('/reclaimable', async context => {
     context.body = { drives: await listReclaimableDrives() }
+  })
+
+  // ─── Notifications (#138) — the bell's event feed ─────────────────────────
+  router.get('/notifications', context => {
+    context.body = { notifications: loadNotifications() }
+  })
+
+  router.post('/notifications/read', context => {
+    const { ids } = (context.request.body ?? {}) as { ids?: string[] }
+
+    context.body = { marked: markNotificationsRead(Array.isArray(ids) ? ids : undefined) }
+  })
+
+  // Client-created events (future types like connection requests) join the
+  // same permanent feed. Desktop firing stays a server-side decision.
+  router.post('/notifications', context => {
+    const { type, title, body, link, data } = (context.request.body ?? {}) as Record<string, unknown>
+
+    if (typeof type !== 'string' || typeof title !== 'string' || typeof body !== 'string') {
+      context.status = 400
+      context.body = { message: 'type, title and body are required' }
+
+      return
+    }
+    try {
+      context.body = {
+        notification: pushNotification({
+          type: type as NotificationType,
+          title,
+          body,
+          link: typeof link === 'string' ? link : undefined,
+          data: typeof data === 'object' && data !== null ? (data as Record<string, string | number>) : undefined,
+        }),
+      }
+    } catch (error) {
+      context.status = 400
+      context.body = { message: String((error as Error).message ?? error) }
+    }
   })
 
   // ─── Auto-extend (#129) — per-drive settings for the extend monitor ───────
