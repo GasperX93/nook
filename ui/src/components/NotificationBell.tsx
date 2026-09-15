@@ -92,12 +92,16 @@ export default function NotificationBell() {
   }
 
   function dismiss(id: string) {
-    // Dismiss hides the event from the panel; the server keeps it (the
-    // Activity list labels transactions from these events).
+    // Optimistic: the row vanishes on click (#136 principle — instant
+    // feedback), the server call follows. On failure, refetch restores the
+    // truth. The server keeps dismissed events either way (the Activity
+    // list labels transactions from them).
+    queryClient.setQueryData<{ notifications: NookNotification[] }>(['server', 'notifications'], old =>
+      old ? { notifications: old.notifications.filter(n => n.id !== id) } : old,
+    )
     serverApi
       .dismissNotification(id)
-      .then(async () => queryClient.invalidateQueries({ queryKey: ['server', 'notifications'] }))
-      .catch(() => undefined)
+      .catch(async () => queryClient.invalidateQueries({ queryKey: ['server', 'notifications'] }))
   }
 
   return (
