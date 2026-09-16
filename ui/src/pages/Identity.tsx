@@ -151,24 +151,31 @@ export default function Identity() {
                 One identity for every Swarm app, on all your devices. Share your contact link below so people can
                 message you and receive your drives.
               </p>
-              <div className="flex items-center gap-2 flex-wrap">
-                <code
-                  className="flex-1 text-xs font-mono px-3 py-2 rounded-lg border truncate"
-                  style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
-                >
-                  {swarmIdAccount?.name ? `${swarmIdAccount.name} · ` : ''}
-                  {swarmIdAccount?.address ?? myAddress}
-                </code>
-                <button
-                  onClick={async () => handleCopy(swarmIdAccount?.address ?? myAddress, 'address')}
-                  className="shrink-0 px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1 border"
-                  style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
-                  aria-label="Copy Swarm ID"
-                >
-                  {copied === 'address' ? <Check size={11} /> : <Copy size={11} />}
-                  {copied === 'address' ? 'Copied' : 'Copy'}
-                </button>
-              </div>
+              {swarmIdAccount ? (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <code
+                    className="flex-1 text-xs font-mono px-3 py-2 rounded-lg border truncate"
+                    style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
+                  >
+                    {swarmIdAccount.name ? `${swarmIdAccount.name} · ` : ''}
+                    {swarmIdAccount.address}
+                  </code>
+                  <button
+                    onClick={async () => handleCopy(swarmIdAccount.address, 'address')}
+                    className="shrink-0 px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1 border"
+                    style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
+                    aria-label="Copy Swarm ID"
+                  >
+                    {copied === 'address' ? <Check size={11} /> : <Copy size={11} />}
+                    {copied === 'address' ? 'Copied' : 'Copy'}
+                  </button>
+                </div>
+              ) : (
+                <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  Your account details aren't linked yet — sign out (top right) and sign in with Swarm ID again to
+                  show your account name and address here.
+                </p>
+              )}
 
               <div className="flex items-center gap-3 pt-1 flex-wrap">
                 <span
