@@ -50,6 +50,8 @@ export async function getSwarmId(): Promise<SwarmIdClient> {
     const c = new SwarmIdClient({
       iframeOrigin: IFRAME_ORIGIN,
       containerId: SWARM_ID_FRAME_CONTAINER_ID,
+      // A sized popup, not a full tab (the default 'window' mode).
+      popupMode: 'popup',
       metadata: {
         name: 'Nook',
         description: 'Swarm desktop node manager',
