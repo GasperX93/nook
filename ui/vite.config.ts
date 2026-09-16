@@ -29,6 +29,7 @@ export default defineConfig(({ command }) => ({
       '/auto-extend': 'http://localhost:3054',
       '/notifications': 'http://localhost:3054',
       '/wallet-activity': 'http://localhost:3054',
+      '/identity-cache': 'http://localhost:3054',
       // Bee node API — proxied to avoid CORS issues in dev
       '/bee-api': {
         target: 'http://localhost:1633',

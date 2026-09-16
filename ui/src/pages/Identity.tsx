@@ -2,10 +2,11 @@ import { Bee } from '@ethersphere/bee-js'
 import { Check, Copy, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
-import { useAddresses, useStamps } from '../api/queries'
+import { useAddresses, useReclaimableDrives, useStamps } from '../api/queries'
 import { Button } from '../components/ui/button'
 import { useDerivedKey } from '../hooks/useDerivedKey'
 import { bytesToHex } from '../lib/hex'
+import { pickMessagingStamp } from '../lib/system-stamp'
 import { publishIdentity } from '../notify/publish-identity'
 import { encodeShareLink } from '../notify/share-link'
 import { isIdentityPublished, isOnboardingDismissed, markOnboardingDismissed } from '../notify/storage'
@@ -25,8 +26,10 @@ export default function Identity() {
   const [copied, setCopied] = useState<'address' | 'share-link' | null>(null)
   const [hintDismissed, setHintDismissed] = useState(() => isOnboardingDismissed())
 
-  const usableStamps = (stamps ?? []).filter(s => s.usable)
-  const stampId = usableStamps[0]?.batchID ?? null
+  const { data: reclaimable } = useReclaimableDrives()
+  const reclaimableIds = new Set((reclaimable ?? []).map(d => d.batchId))
+  // System batch first (#130); drive batches are the graceful fallback.
+  const stampId = pickMessagingStamp(stamps, reclaimableIds)?.batchID ?? null
   const myAddress = signer?.getAddress() ?? null
   const published = myAddress ? isIdentityPublished(myAddress) : false
 

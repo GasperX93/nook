@@ -60,6 +60,7 @@ import { useAppStore } from '../store/app'
 import { useDerivedKey } from '../hooks/useDerivedKey'
 import { useDriveMetadata } from '../hooks/useDriveMetadata'
 import { useSharedDrives } from '../hooks/useSharedDrives'
+import { isSystemStamp } from '../lib/system-stamp'
 import { useUploadHistory, type DriveFolder, type UploadRecord } from '../hooks/useUploadHistory'
 import { republishDrive } from '../lib/republish'
 import {
@@ -2568,7 +2569,9 @@ export default function Drive() {
   const reclaimableDrives = (reclaimableData ?? []).filter(d => d.expired !== true)
   const expiredDrives = (reclaimableData ?? []).filter(d => d.expired === true)
   const reclaimableIds = new Set((reclaimableData ?? []).map(d => d.batchId))
-  const allStamps = (stamps ?? []).filter(s => !reclaimableIds.has(s.batchID.toLowerCase()))
+  // Reclaimable batches render as their own cards; the system batch (#130,
+  // "Identity & messages" in Settings) is not a drive at all.
+  const allStamps = (stamps ?? []).filter(s => !reclaimableIds.has(s.batchID.toLowerCase()) && !isSystemStamp(s))
   const driveCount = allStamps.length + reclaimableDrives.length
 
   function copyHash(id: string, hash: string) {
