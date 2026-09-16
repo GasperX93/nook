@@ -62,6 +62,10 @@ export function getAutoDeriveDeclined(): boolean {
 interface PersistedShape {
   signatureHex: string
   walletAddress: string
+  /** Swarm ID account address (spike/swarm-id-only) — THE user-visible identity. */
+  sid?: string
+  /** Swarm ID account display name at sign-in time. */
+  sidName?: string
 }
 
 function parsePersisted(raw: string | null): PersistedShape | null {
@@ -106,9 +110,16 @@ function clearSession(): void {
 
 type Backend = 'safe-storage' | 'session-storage'
 
+export interface SwarmIdAccount {
+  address: string
+  name: string
+}
+
 interface IdentityState {
   signer: NookSigner | null
   walletAddress: string | null
+  /** The Swarm ID account behind the signer (null for legacy wallet identities). */
+  swarmIdAccount: SwarmIdAccount | null
   /** True once the initial hydrate attempt has completed (success OR no cache found). */
   hydrated: boolean
   /** Which storage layer is active; null until hydrate runs. */
@@ -124,7 +135,7 @@ interface IdentityState {
    */
   hydrate: () => Promise<boolean>
   /** Persist the signature and rebuild the in-memory signer. */
-  setSigner: (signatureHex: string, walletAddress: string) => Promise<void>
+  setSigner: (signatureHex: string, walletAddress: string, account?: SwarmIdAccount) => Promise<void>
   setDeriving: (deriving: boolean) => void
   setError: (error: string | null) => void
   /** Wipe both safeStorage and sessionStorage caches and reset state. */
@@ -134,6 +145,7 @@ interface IdentityState {
 export const useIdentityStore = create<IdentityState>()((set, get) => ({
   signer: null,
   walletAddress: null,
+  swarmIdAccount: null,
   hydrated: false,
   backend: null,
   deriving: false,
@@ -163,6 +175,7 @@ export const useIdentityStore = create<IdentityState>()((set, get) => ({
             set({
               signer,
               walletAddress: parsed.walletAddress,
+              swarmIdAccount: parsed.sid ? { address: parsed.sid, name: parsed.sidName ?? '' } : null,
               hydrated: true,
               backend: 'safe-storage',
             })
@@ -191,6 +204,7 @@ export const useIdentityStore = create<IdentityState>()((set, get) => ({
         set({
           signer,
           walletAddress: persisted.walletAddress,
+          swarmIdAccount: persisted.sid ? { address: persisted.sid, name: persisted.sidName ?? '' } : null,
           hydrated: true,
           backend: 'session-storage',
         })
@@ -205,13 +219,17 @@ export const useIdentityStore = create<IdentityState>()((set, get) => ({
     return backendReachable
   },
 
-  setSigner: async (signatureHex, walletAddress) => {
+  setSigner: async (signatureHex, walletAddress, account) => {
     const signer = createSignerFromSecret(signatureHex)
-    set({ signer, walletAddress, deriving: false, error: null })
+    set({ signer, walletAddress, swarmIdAccount: account ?? null, deriving: false, error: null })
+
+    const persisted: PersistedShape = account
+      ? { signatureHex, walletAddress, sid: account.address, sidName: account.name }
+      : { signatureHex, walletAddress }
 
     // Try safeStorage; fall back to sessionStorage if unavailable or call fails
     try {
-      const result = await serverApi.writeIdentityCache(JSON.stringify({ signatureHex, walletAddress }))
+      const result = await serverApi.writeIdentityCache(JSON.stringify(persisted))
 
       if (result.stored) {
         set({ backend: 'safe-storage' })
@@ -221,7 +239,7 @@ export const useIdentityStore = create<IdentityState>()((set, get) => ({
     } catch {
       // fall through
     }
-    writeSession({ signatureHex, walletAddress })
+    writeSession(persisted)
     set({ backend: 'session-storage' })
   },
 
@@ -235,6 +253,6 @@ export const useIdentityStore = create<IdentityState>()((set, get) => ({
     } catch {
       // ignore — best effort
     }
-    set({ signer: null, walletAddress: null, deriving: false, error: null })
+    set({ signer: null, walletAddress: null, swarmIdAccount: null, deriving: false, error: null })
   },
 }))

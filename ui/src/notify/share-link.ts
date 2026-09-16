@@ -41,6 +41,12 @@ export interface ShareLinkPayload {
   beePublicKey: string
   /** Suggested nickname (from sender) */
   nickname?: string
+  /**
+   * Swarm ID account address (spike/swarm-id-only) — the sender's user-visible
+   * identity. Display-only: NOT cryptographically bound to the messaging keys
+   * (the account key can't sign for us), so it must never gate crypto decisions.
+   */
+  swarmId?: string
 }
 
 export interface DecodeResult {
@@ -82,6 +88,8 @@ export function encodeShareLink(payload: ShareLinkPayload): string {
 
   if (payload.nickname) params.set('name', payload.nickname)
 
+  if (payload.swarmId) params.set('sid', payload.swarmId.toLowerCase())
+
   return `nook://contact/v1?${params.toString()}`
 }
 
@@ -109,6 +117,7 @@ export function decodeShareLink(input: string): DecodeResult | DecodeError {
   const wpub = params.get('wpub')
   const bpub = params.get('bpub')
   const name = params.get('name') ?? undefined
+  const sid = params.get('sid')
 
   if (!addr || !wpub || !bpub) {
     return { ok: false, error: 'Missing required field (addr, wpub, or bpub)' }
@@ -144,7 +153,13 @@ export function decodeShareLink(input: string): DecodeResult | DecodeError {
     // only accept contact links from a trusted channel for drive sharing.
     return {
       ok: true,
-      payload: { ethAddress, walletPublicKey, beePublicKey, nickname: name },
+      payload: {
+        ethAddress,
+        walletPublicKey,
+        beePublicKey,
+        nickname: name,
+        swarmId: sid ? '0x' + normalizeHex(sid, 40, 'sid') : undefined,
+      },
     }
   } catch (e) {
     return { ok: false, error: (e as Error).message }

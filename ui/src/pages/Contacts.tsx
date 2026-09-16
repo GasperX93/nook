@@ -308,6 +308,7 @@ export default function Contacts() {
         nickname,
         walletPublicKey: decoded.payload.walletPublicKey,
         beePublicKey: decoded.payload.beePublicKey,
+        swarmId: decoded.payload.swarmId,
         source: 'share-link',
         addedAt: Date.now(),
       }
@@ -358,6 +359,7 @@ export default function Contacts() {
       walletPublicKey: c.walletPublicKey,
       beePublicKey: c.beePublicKey,
       nickname: c.nickname,
+      swarmId: c.swarmId,
     })
 
     void handleCopy(link, 'detail-share')
@@ -503,18 +505,18 @@ export default function Contacts() {
                       </span>
                       <div className="flex items-center gap-1.5 min-w-0">
                         <span className="text-xs font-mono truncate" style={{ color: 'rgb(var(--fg-muted))' }}>
-                          {short(c.id, 4)}
+                          {short(c.swarmId ?? c.id, 4)}
                         </span>
                         <button
                           onClick={async e => {
                             e.stopPropagation()
-                            await navigator.clipboard.writeText(c.id)
+                            await navigator.clipboard.writeText(c.swarmId ?? c.id)
                             setCopiedRowId(c.id)
                             setTimeout(() => setCopiedRowId(curr => (curr === c.id ? null : curr)), 1500)
                           }}
                           className="shrink-0 p-1 rounded hover:bg-white/10"
-                          aria-label={`Copy Nook address for ${c.nickname}`}
-                          title="Copy Nook address"
+                          aria-label={`Copy Swarm ID for ${c.nickname}`}
+                          title="Copy Swarm ID"
                         >
                           {isCopied ? (
                             <Check size={12} style={{ color: 'rgb(74,222,128)' }} />

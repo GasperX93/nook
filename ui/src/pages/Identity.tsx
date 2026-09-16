@@ -21,6 +21,7 @@ export default function Identity() {
     error: identityError,
     walletConnected,
     isSwarmIdIdentity,
+    swarmIdAccount,
   } = useDerivedKey()
   const { data: addresses } = useAddresses()
   const { data: stamps } = useStamps()
@@ -49,8 +50,10 @@ export default function Identity() {
       ethAddress: signer.getAddress(),
       walletPublicKey: bytesToHex(signer.getPublicKey()),
       beePublicKey: addresses.publicKey,
+      nickname: swarmIdAccount?.name || undefined,
+      swarmId: swarmIdAccount?.address,
     })
-  }, [signer, addresses])
+  }, [signer, addresses, swarmIdAccount])
 
   async function handlePublish() {
     if (!signer) return setPublishError('Derive your key first')
@@ -139,25 +142,28 @@ export default function Identity() {
 
         {signer && myAddress && (
           <>
-            {/* Nook address row */}
+            {/* Your Swarm ID — THE identity users see and share (spike/swarm-id-only).
+                The app-level messaging key still exists but is plumbing: carried
+                inside contact links, never shown as "an address" again. */}
             <div className="space-y-2">
-              <p className="text-xs font-semibold">Nook address</p>
+              <p className="text-xs font-semibold">Your Swarm ID</p>
               <p className="text-xs leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
-                Your unique ID on Nook. Publish it so others can add you as a contact just by typing your address — no
-                link needed.
+                One identity for every Swarm app, on all your devices. Share your contact link below so people can
+                message you and receive your drives.
               </p>
               <div className="flex items-center gap-2 flex-wrap">
                 <code
                   className="flex-1 text-xs font-mono px-3 py-2 rounded-lg border truncate"
                   style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
                 >
-                  {myAddress}
+                  {swarmIdAccount?.name ? `${swarmIdAccount.name} · ` : ''}
+                  {swarmIdAccount?.address ?? myAddress}
                 </code>
                 <button
-                  onClick={async () => handleCopy(myAddress, 'address')}
+                  onClick={async () => handleCopy(swarmIdAccount?.address ?? myAddress, 'address')}
                   className="shrink-0 px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1 border"
                   style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
-                  aria-label="Copy address"
+                  aria-label="Copy Swarm ID"
                 >
                   {copied === 'address' ? <Check size={11} /> : <Copy size={11} />}
                   {copied === 'address' ? 'Copied' : 'Copy'}

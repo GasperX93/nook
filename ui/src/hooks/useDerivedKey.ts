@@ -33,8 +33,19 @@ import { wagmiConfig } from '../wagmi'
 export function useDerivedKey() {
   const { address, isConnected, status } = useAccount()
   const { signMessageAsync } = useSignMessage()
-  const { signer, deriving, error, walletAddress, hydrated, setSigner, setDeriving, setError, clear, hydrate } =
-    useIdentityStore()
+  const {
+    signer,
+    deriving,
+    error,
+    walletAddress,
+    swarmIdAccount,
+    hydrated,
+    setSigner,
+    setDeriving,
+    setError,
+    clear,
+    hydrate,
+  } = useIdentityStore()
 
   // Hydrate the identity store from safeStorage on first mount. hydrate()
   // returns false on a transient failure (Koa not up yet at boot); retry a
@@ -110,9 +121,12 @@ export function useDerivedKey() {
     setError(null)
 
     try {
-      const { seedHex } = await signInWithSwarmId()
+      const { seedHex, identity } = await signInWithSwarmId()
 
-      await setSigner(`${SWARM_ID_SECRET_PREFIX}${seedHex}`, SWARM_ID_WALLET_MARKER)
+      await setSigner(`${SWARM_ID_SECRET_PREFIX}${seedHex}`, SWARM_ID_WALLET_MARKER, {
+        address: identity.address,
+        name: identity.name,
+      })
 
       return useIdentityStore.getState().signer
     } catch (e: unknown) {
@@ -268,6 +282,9 @@ export function useDerivedKey() {
 
     /** True when the active identity came from Swarm ID rather than a wallet. */
     isSwarmIdIdentity: walletAddress === SWARM_ID_WALLET_MARKER,
+
+    /** The Swarm ID account (address + name) — THE user-visible identity. */
+    swarmIdAccount: safeSigner ? swarmIdAccount : null,
 
     /** Clear the derived key manually */
     clear,
