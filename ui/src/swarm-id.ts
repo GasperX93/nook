@@ -11,6 +11,18 @@ import { SwarmIdClient } from '@snaha/swarm-id'
 
 const IFRAME_ORIGIN = 'https://swarm-id.snaha.net'
 
+/**
+ * DOM host for the SDK's iframe + its "Login with Swarm ID" button. Without a
+ * containerId the SDK pins a floating widget bottom-right; with it, the button
+ * renders where we put the div — inside SwarmIdDialog. The container must stay
+ * MOUNTED for the app's lifetime (remounting loses the popup's receiver), and
+ * the connect click must happen on the SDK's own button: a popup opened from
+ * inside the iframe keeps the iframe as window.opener, which is what makes
+ * session handover work under partitioned storage (Brave, Safari ITP).
+ * Pattern from the apiritivo reference integration.
+ */
+export const SWARM_ID_FRAME_CONTAINER_ID = 'swarm-id-frame'
+
 /** Domain separator for Nook's identity seed. NEVER change — a different label is a different identity. */
 export const NOOK_IDENTITY_LABEL = 'nook-identity-v1'
 
@@ -32,6 +44,7 @@ export async function getSwarmId(): Promise<SwarmIdClient> {
   initPromise = (async () => {
     const c = new SwarmIdClient({
       iframeOrigin: IFRAME_ORIGIN,
+      containerId: SWARM_ID_FRAME_CONTAINER_ID,
       metadata: {
         name: 'Nook',
         description: 'Swarm desktop node manager',
@@ -46,6 +59,24 @@ export async function getSwarmId(): Promise<SwarmIdClient> {
   })()
 
   return initPromise
+}
+
+let signInDialogOpen = false
+const DIALOG_LISTENERS = new Set<(open: boolean) => void>()
+
+export function isSignInDialogOpen(): boolean {
+  return signInDialogOpen
+}
+
+export function onSignInDialog(listener: (open: boolean) => void): () => void {
+  DIALOG_LISTENERS.add(listener)
+
+  return () => DIALOG_LISTENERS.delete(listener)
+}
+
+export function setSignInDialogOpen(open: boolean): void {
+  signInDialogOpen = open
+  DIALOG_LISTENERS.forEach(fn => fn(open))
 }
 
 export interface SwarmIdIdentity {
@@ -64,8 +95,9 @@ export function swarmIdIdentity(): SwarmIdIdentity | null {
 }
 
 /**
- * connect() only OPENS the auth page — authentication arrives later through
- * onConnectionChange when the user completes it. Wait for that, bounded.
+ * The connect click happens on the SDK's button inside the dialog (see
+ * SWARM_ID_FRAME_CONTAINER_ID) — authentication then arrives through
+ * onConnectionChange. Wait for identity, dialog dismissal, or timeout.
  */
 async function waitForIdentity(timeoutMs = 180_000): Promise<SwarmIdIdentity> {
   const existing = swarmIdIdentity()
@@ -73,32 +105,47 @@ async function waitForIdentity(timeoutMs = 180_000): Promise<SwarmIdIdentity> {
   if (existing) return existing
 
   return new Promise((resolve, reject) => {
+    let settled = false
+    const finish = (fn: () => void) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      unsubscribeId()
+      unsubscribeDialog()
+      fn()
+    }
     const timer = setTimeout(() => {
-      unsubscribe()
-      reject(new Error('Sign-in timed out — finish logging in in the Swarm ID window, then try again'))
+      finish(() => reject(new Error('Sign-in timed out — finish logging in in the Swarm ID window, then try again')))
     }, timeoutMs)
-    const unsubscribe = onSwarmIdChange(() => {
+    const unsubscribeId = onSwarmIdChange(() => {
       const identity = swarmIdIdentity()
 
-      if (identity) {
-        clearTimeout(timer)
-        unsubscribe()
-        resolve(identity)
-      }
+      if (identity) finish(() => resolve(identity))
+    })
+    const unsubscribeDialog = onSignInDialog(open => {
+      if (!open) finish(() => reject(new Error('Sign-in cancelled')))
     })
   })
 }
 
 /**
- * Full sign-in: open the popup if needed, wait for the user to complete it,
- * then derive Nook's identity seed. The seed is deterministic per account —
- * signing in with the same Swarm ID anywhere yields the same Nook identity.
+ * Full sign-in: reveal the dialog holding the SDK's button, wait for the user
+ * to complete the flow, then derive Nook's identity seed. The seed is
+ * deterministic per account — signing in with the same Swarm ID anywhere
+ * yields the same Nook identity.
  */
 export async function signInWithSwarmId(): Promise<{ seedHex: string; identity: SwarmIdIdentity }> {
   const c = await getSwarmId()
+  let identity = swarmIdIdentity()
 
-  if (!swarmIdIdentity()) await c.connect()
-  const identity = await waitForIdentity()
+  if (!identity) {
+    setSignInDialogOpen(true)
+    try {
+      identity = await waitForIdentity()
+    } finally {
+      setSignInDialogOpen(false)
+    }
+  }
   const seed = await c.deriveAppSecret(NOOK_IDENTITY_LABEL)
   const seedHex = Array.from(seed)
     .map(b => b.toString(16).padStart(2, '0'))

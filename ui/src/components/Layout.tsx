@@ -30,6 +30,7 @@ import { loadContacts } from '../notify/storage'
 import { useRegistryPolling } from '../hooks/useRegistryPolling'
 import { useAppStore } from '../store/app'
 import NotificationBell from './NotificationBell'
+import SwarmIdDialog from './SwarmIdDialog'
 import Onboarding from './Onboarding'
 import {
   Sidebar,
@@ -328,6 +329,8 @@ export default function Layout() {
             </h1>
             <div className="flex items-center gap-2">
               <NotificationBell />
+              {/* spike/swarm-id-only: permanently mounted SDK host (see SwarmIdDialog) */}
+              <SwarmIdDialog />
               <ConnectButton.Custom>
                 {({ account, chain, openConnectModal, mounted }) => {
                   if (!mounted) return null
