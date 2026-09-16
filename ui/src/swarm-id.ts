@@ -64,17 +64,41 @@ export function swarmIdIdentity(): SwarmIdIdentity | null {
 }
 
 /**
- * Full sign-in: open the popup if needed, then derive Nook's identity seed.
- * The seed is deterministic per account — signing in with the same Swarm ID
- * anywhere yields the same Nook identity.
+ * connect() only OPENS the auth page — authentication arrives later through
+ * onConnectionChange when the user completes it. Wait for that, bounded.
+ */
+async function waitForIdentity(timeoutMs = 180_000): Promise<SwarmIdIdentity> {
+  const existing = swarmIdIdentity()
+
+  if (existing) return existing
+
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      unsubscribe()
+      reject(new Error('Sign-in timed out — finish logging in in the Swarm ID window, then try again'))
+    }, timeoutMs)
+    const unsubscribe = onSwarmIdChange(() => {
+      const identity = swarmIdIdentity()
+
+      if (identity) {
+        clearTimeout(timer)
+        unsubscribe()
+        resolve(identity)
+      }
+    })
+  })
+}
+
+/**
+ * Full sign-in: open the popup if needed, wait for the user to complete it,
+ * then derive Nook's identity seed. The seed is deterministic per account —
+ * signing in with the same Swarm ID anywhere yields the same Nook identity.
  */
 export async function signInWithSwarmId(): Promise<{ seedHex: string; identity: SwarmIdIdentity }> {
   const c = await getSwarmId()
 
   if (!swarmIdIdentity()) await c.connect()
-  const identity = swarmIdIdentity()
-
-  if (!identity) throw new Error('Swarm ID sign-in was not completed')
+  const identity = await waitForIdentity()
   const seed = await c.deriveAppSecret(NOOK_IDENTITY_LABEL)
   const seedHex = Array.from(seed)
     .map(b => b.toString(16).padStart(2, '0'))

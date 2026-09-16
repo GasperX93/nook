@@ -13,7 +13,15 @@ import { isIdentityPublished, isOnboardingDismissed, markOnboardingDismissed } f
 const BEE_URL = `${window.location.origin}/bee-api`
 
 export default function Identity() {
-  const { signer, derive, deriveViaSwarmId, deriving, walletConnected, isSwarmIdIdentity } = useDerivedKey()
+  const {
+    signer,
+    derive,
+    deriveViaSwarmId,
+    deriving,
+    error: identityError,
+    walletConnected,
+    isSwarmIdIdentity,
+  } = useDerivedKey()
   const { data: addresses } = useAddresses()
   const { data: stamps } = useStamps()
 
@@ -114,6 +122,12 @@ export default function Identity() {
               </Button>
             )}
           </div>
+        )}
+
+        {!signer && identityError && (
+          <p className="text-xs" style={{ color: 'rgb(248,113,113)' }}>
+            {identityError}
+          </p>
         )}
 
         {!walletConnected && !signer && (
