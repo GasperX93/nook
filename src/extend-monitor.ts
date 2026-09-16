@@ -3,6 +3,7 @@ import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { readConfigYaml } from './config'
 import { fetchWithTimeout } from './fetch-timeout'
 import { logger } from './logger'
+import { pushNotification } from './notifications'
 import { getPath } from './path'
 
 /**
@@ -33,6 +34,10 @@ export interface AutoExtendEntry {
   lastExtendedAt?: number
   /** Present while the last attempt failed; cleared on success. */
   lastFailure?: { at: number; reason: string }
+  /** Unix ms — 'upcoming-charge' was sent for the current lead window (#138). */
+  notifiedUpcomingAt?: number
+  /** Unix ms — 'charge-blocked' was sent for the current failure (#138). */
+  notifiedBlockedAt?: number
 }
 
 export interface AutoExtendFailure {
@@ -48,9 +53,12 @@ const DAY_SECONDS = 86_400
 /** Extend when live TTL drops below this. Env override for live testing. */
 export const THRESHOLD_SECONDS = (Number(process.env.NOOK_AUTOEXTEND_THRESHOLD_DAYS) || 10) * DAY_SECONDS
 
-const CHECK_INTERVAL_MS = 6 * 60 * 60_000
-/** While any failure persists, retry hourly — TTL keeps falling. */
-const FAILURE_RETRY_MS = 60 * 60_000
+/** Check cadence. Env override (minutes) for live testing — like the
+ * threshold override, it only applies when set at launch; normal launches
+ * always get the production value. */
+const CHECK_INTERVAL_MS = (Number(process.env.NOOK_AUTOEXTEND_CHECK_MINUTES) || 6 * 60) * 60_000
+/** While any failure persists, retry hourly (never slower than the cadence). */
+const FAILURE_RETRY_MS = Math.min(60 * 60_000, CHECK_INTERVAL_MS)
 /** First check shortly after startup, once Bee has had time to come up. */
 const INITIAL_DELAY_MS = 3 * 60_000
 
@@ -144,6 +152,20 @@ export function topupAmount(months: number, currentPrice: string): bigint {
   return BigInt(currentPrice) * BLOCKS_PER_MONTH * BigInt(months)
 }
 
+/**
+ * Advance-notice window (#138): warn before the charge, scaled so short
+ * drives get proportionate notice instead of nagging — a 1-month auto-extend
+ * warns ~10 days after purchase with a flat 10-day lead, which reads as noise.
+ */
+export function leadSeconds(months: number): number {
+  return Math.min(10 * DAY_SECONDS, Math.floor((months * 30 * DAY_SECONDS) / 3))
+}
+
+/** PLUR → xBZZ display string with 4 decimals (BigInt-literal-free for ES5). */
+export function formatXbzz(totalPlur: bigint): string {
+  return (Number(totalPlur / BigInt('1000000000000')) / 10_000).toFixed(2)
+}
+
 // ─── The check ───────────────────────────────────────────────────────────────
 
 const inFlight = new Set<string>()
@@ -198,11 +220,40 @@ export async function runExtendCheck(beeFetch: BeeFetch = realBeeFetch): Promise
     return getAutoExtendFailures().length > 0
   }
 
+  // Drive names for notification copy — Bee's stamp list carries the labels
+  // for every locally-issued batch (both drive types). Best-effort.
+  const labels = new Map<string, string>()
+
+  try {
+    const stampsRes = await beeFetch('/stamps')
+
+    if (stampsRes.ok) {
+      const { stamps } = (await stampsRes.json()) as { stamps?: { batchID: string; label?: string }[] }
+
+      for (const s of stamps ?? []) {
+        if (s.label) labels.set(s.batchID.toLowerCase(), s.label)
+      }
+    }
+  } catch {
+    // Labels degrade to short batch ids.
+  }
+
   for (const [batchId, entry] of enabled) {
     if (inFlight.has(batchId)) continue
     inFlight.add(batchId)
     try {
-      await checkOneBatch(beeFetch, batchId, entry, currentPrice, bzzBalance)
+      const spent = await checkOneBatch(
+        beeFetch,
+        batchId,
+        entry,
+        currentPrice,
+        bzzBalance,
+        labels.get(batchId) ?? `${batchId.slice(0, 8)}…`,
+      )
+
+      // What one drive spent is gone for the next — judge each against the
+      // wallet as it actually is, not as it was when the pass started.
+      bzzBalance -= spent
     } finally {
       inFlight.delete(batchId)
     }
@@ -229,6 +280,22 @@ function recordSuccess(batchId: string): void {
   if (!entry) return
   entry.lastExtendedAt = Date.now()
   delete entry.lastFailure
+  // The charge cycle is over — the next lead window notifies afresh.
+  delete entry.notifiedUpcomingAt
+  delete entry.notifiedBlockedAt
+  settings[batchId] = entry
+  saveSettings(settings)
+}
+
+/** Set or clear the per-cycle notification flags (#138 dedupe). */
+function setNotifyFlag(batchId: string, flag: 'notifiedUpcomingAt' | 'notifiedBlockedAt', value: number | null): void {
+  const settings = getAutoExtendSettings()
+  const entry = settings[batchId]
+
+  if (!entry) return
+
+  if (value === null) delete entry[flag]
+  else entry[flag] = value
   settings[batchId] = entry
   saveSettings(settings)
 }
@@ -252,7 +319,12 @@ async function checkOneBatch(
   entry: AutoExtendEntry,
   currentPrice: string,
   bzzBalance: bigint,
-): Promise<void> {
+  label: string,
+): Promise<bigint> {
+  // Returns the PLUR actually spent, so the caller can decrement its running
+  // balance — two drives due in one pass must not both be judged against the
+  // same starting balance (the second charge would fail with a raw chain
+  // error instead of the honest 'balance too low' notice).
   try {
     const batch = await readTtl(beeFetch, batchId)
 
@@ -261,39 +333,95 @@ async function checkOneBatch(
       // extend anymore. Record once; the UI shows the drive's own tombstone.
       recordFailure(batchId, 'The drive has already expired — it can no longer be extended')
 
-      return
+      return BigInt(0)
     }
 
     if (batch === null) {
       recordFailure(batchId, 'Could not read the drive from the node')
 
-      return
+      return BigInt(0)
     }
+
+    const amount = topupAmount(entry.months, currentPrice)
+    const totalCost = amount << BigInt(batch.depth)
+    const costXbzz = formatXbzz(totalCost)
 
     if (!shouldExtend(entry, batch.ttl)) {
       // Healthy — make sure no stale failure keeps a banner alive.
       if (entry.lastFailure) recordSuccessLikeClear(batchId)
 
-      return
+      const lead = leadSeconds(entry.months)
+
+      if (batch.ttl < THRESHOLD_SECONDS + lead) {
+        // Lead window (#138): the charge is coming — say so once per cycle,
+        // with enough time to disable or fund. Estimates are marked ~ (the
+        // network price moves between now and the charge).
+        if (!entry.notifiedUpcomingAt) {
+          const daysUntil = Math.max(1, Math.ceil((batch.ttl - THRESHOLD_SECONDS) / DAY_SECONDS))
+
+          pushNotification({
+            type: 'upcoming-charge',
+            title: `Drive "${label}" will extend automatically`,
+            body: `In about ${daysUntil} day${daysUntil === 1 ? '' : 's'}: +${entry.months} month${
+              entry.months === 1 ? '' : 's'
+            } for ~${costXbzz} xBZZ from your wallet. Turn it off under Extend storage if you don't want this.`,
+            link: `/drive?extend=${batchId}`,
+            data: { batchId, months: entry.months, estXbzz: costXbzz },
+            desktop: true,
+          })
+          setNotifyFlag(batchId, 'notifiedUpcomingAt', Date.now())
+        }
+
+        // Early balance check: warn NOW if the wallet can't cover the coming
+        // charge — waiting for the charge to fail wastes the whole lead time.
+        if (totalCost > bzzBalance && !entry.notifiedBlockedAt) {
+          pushNotification({
+            type: 'charge-blocked',
+            title: `Drive "${label}" can't be extended — balance too low`,
+            body: `The automatic extension (~${costXbzz} xBZZ) is due in about ${Math.max(
+              1,
+              Math.ceil((batch.ttl - THRESHOLD_SECONDS) / DAY_SECONDS),
+            )} days but your wallet doesn't cover it. Add xBZZ or the drive will expire.`,
+            link: '/account',
+            data: { batchId, estXbzz: costXbzz },
+            desktop: true,
+          })
+          setNotifyFlag(batchId, 'notifiedBlockedAt', Date.now())
+        }
+      } else if (entry.notifiedUpcomingAt || entry.notifiedBlockedAt) {
+        // Left the window (manual extend, settings change) — reset the cycle.
+        setNotifyFlag(batchId, 'notifiedUpcomingAt', null)
+        setNotifyFlag(batchId, 'notifiedBlockedAt', null)
+      }
+
+      return BigInt(0)
     }
 
-    const amount = topupAmount(entry.months, currentPrice)
-    const totalCost = amount << BigInt(batch.depth)
-
     if (totalCost > bzzBalance) {
-      // PLUR → xBZZ with 4 decimals, avoiding BigInt literals (ES5 target)
-      const needed = Number(totalCost / BigInt('1000000000000')) / 10_000
+      recordFailure(batchId, `Not enough xBZZ (needs ~${costXbzz} xBZZ)`)
 
-      recordFailure(batchId, `Not enough xBZZ (needs ~${needed.toFixed(2)} xBZZ)`)
+      if (!entry.notifiedBlockedAt) {
+        pushNotification({
+          type: 'charge-blocked',
+          title: `Drive "${label}" couldn't be extended — balance too low`,
+          body: `The automatic extension needs ~${costXbzz} xBZZ. Add funds before the drive expires (${Math.floor(
+            batch.ttl / DAY_SECONDS,
+          )} days left) — Nook keeps retrying hourly.`,
+          link: '/account',
+          data: { batchId, estXbzz: costXbzz },
+          desktop: true,
+        })
+        setNotifyFlag(batchId, 'notifiedBlockedAt', Date.now())
+      }
 
-      return
+      return BigInt(0)
     }
 
     // Re-read right before paying — a manual extend may have just landed, and
     // a double topup would silently double-spend.
     const fresh = await readTtl(beeFetch, batchId)
 
-    if (fresh === 'gone' || fresh === null || !shouldExtend(entry, fresh.ttl)) return
+    if (fresh === 'gone' || fresh === null || !shouldExtend(entry, fresh.ttl)) return BigInt(0)
 
     // Chain transaction — generous timeout, mined before Bee responds.
     const topup = await beeFetch(`/stamps/topup/${batchId}/${amount.toString()}`, { method: 'PATCH' }, 180_000)
@@ -301,16 +429,36 @@ async function checkOneBatch(
     if (!topup.ok) {
       recordFailure(batchId, `Extension transaction failed (${topup.status})`)
 
-      return
+      return BigInt(0)
     }
     recordSuccess(batchId)
+    // The permanent record of the charge (#138) — also the ledger entry the
+    // wallet Activity list consumes (#139).
+    pushNotification({
+      type: 'charge-executed',
+      title: `Extended drive "${label}" by ${entry.months} month${entry.months === 1 ? '' : 's'}`,
+      body: `${costXbzz} xBZZ was spent from your wallet to keep this drive alive.`,
+      link: '/drive',
+      data: {
+        batchId,
+        driveLabel: label,
+        months: entry.months,
+        amountXbzz: costXbzz,
+        amountPlur: totalCost.toString(),
+      },
+      desktop: true,
+    })
     logger.info(
       `auto-extend: extended ${batchId.slice(0, 8)} by ${entry.months} month(s) (ttl was ${Math.floor(
         batch.ttl / DAY_SECONDS,
       )}d)`,
     )
+
+    return totalCost
   } catch (error) {
     recordFailure(batchId, String((error as Error)?.message ?? error))
+
+    return BigInt(0)
   }
 }
 
