@@ -132,90 +132,6 @@ export default function Settings() {
 
       {tab === 'general' && (
         <>
-          {/* Blockchain RPC URL */}
-          <div className="rounded-xl border p-5 space-y-4" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
-            <div>
-              <p className="text-sm mb-1" style={{ color: 'rgb(var(--fg-muted))' }}>
-                Blockchain RPC URL
-              </p>
-              <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-                Gnosis Chain RPC endpoint used for wallet and swap.
-              </p>
-            </div>
-            {isLoading ? (
-              <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-                Loading…
-              </p>
-            ) : configError ? (
-              <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-                Nook backend not available.
-              </p>
-            ) : (
-              <div className="flex gap-3">
-                <Input
-                  value={rpcDraft}
-                  onChange={e => setRpcDraft(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && saveRpc()}
-                  placeholder={DEFAULT_RPC}
-                  className="font-mono text-xs"
-                />
-                <Button
-                  onClick={saveRpc}
-                  disabled={updateConfig.isPending}
-                  variant={rpcSaved ? 'secondary' : 'default'}
-                  size="sm"
-                >
-                  {rpcSaved ? 'Saved' : 'Save'}
-                </Button>
-              </div>
-            )}
-          </div>
-
-          {/* Appearance */}
-          <div className="rounded-xl border p-5 space-y-3" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
-            <div>
-              <p className="text-sm mb-1" style={{ color: 'rgb(var(--fg-muted))' }}>
-                Appearance
-              </p>
-              <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-                Toggle between dark and light theme. Light theme is a preview — final polish coming with the redesign.
-              </p>
-            </div>
-            <div className="flex gap-2">
-              {(['dark', 'light'] as const).map(t => {
-                const active = theme === t
-                const Icon = t === 'dark' ? Moon : Sun
-
-                return (
-                  <Button key={t} onClick={() => setTheme(t)} variant={active ? 'default' : 'outline'} size="sm">
-                    <Icon />
-                    {t === 'dark' ? 'Dark' : 'Light'}
-                  </Button>
-                )
-              })}
-            </div>
-          </div>
-
-          {/* Notifications */}
-          <div className="rounded-xl border p-5 space-y-3" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
-            <div>
-              <p className="text-sm mb-1" style={{ color: 'rgb(var(--fg-muted))' }}>
-                Notifications
-              </p>
-              <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-                Play a short chirp when a new message arrives. Stays quiet while you're on the Contacts page.
-              </p>
-            </div>
-            <Button
-              onClick={() => setNotificationSound(!notificationSound)}
-              variant={notificationSound ? 'default' : 'outline'}
-              size="sm"
-            >
-              {notificationSound ? <Bell /> : <BellOff />}
-              {notificationSound ? 'Sound on' : 'Sound off'}
-            </Button>
-          </div>
-
           {/* Identity & messages — the reserved network space (#130) */}
           <div className="rounded-xl border p-5 space-y-3" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
             <p className="text-sm mb-1" style={{ color: 'rgb(var(--fg-muted))' }}>
@@ -279,6 +195,90 @@ export default function Settings() {
                 Nook reserves a small network space for your identity and messages automatically once your node is
                 funded.
               </p>
+            )}
+          </div>
+
+          {/* Appearance */}
+          <div className="rounded-xl border p-5 space-y-3" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
+            <div>
+              <p className="text-sm mb-1" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Appearance
+              </p>
+              <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Toggle between dark and light theme. Light theme is a preview — final polish coming with the redesign.
+              </p>
+            </div>
+            <div className="flex gap-2">
+              {(['dark', 'light'] as const).map(t => {
+                const active = theme === t
+                const Icon = t === 'dark' ? Moon : Sun
+
+                return (
+                  <Button key={t} onClick={() => setTheme(t)} variant={active ? 'default' : 'outline'} size="sm">
+                    <Icon />
+                    {t === 'dark' ? 'Dark' : 'Light'}
+                  </Button>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* Notifications */}
+          <div className="rounded-xl border p-5 space-y-3" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
+            <div>
+              <p className="text-sm mb-1" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Notifications
+              </p>
+              <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Play a short chirp when a new message arrives. Stays quiet while you're on the Contacts page.
+              </p>
+            </div>
+            <Button
+              onClick={() => setNotificationSound(!notificationSound)}
+              variant={notificationSound ? 'default' : 'outline'}
+              size="sm"
+            >
+              {notificationSound ? <Bell /> : <BellOff />}
+              {notificationSound ? 'Sound on' : 'Sound off'}
+            </Button>
+          </div>
+
+          {/* Blockchain RPC URL */}
+          <div className="rounded-xl border p-5 space-y-4" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
+            <div>
+              <p className="text-sm mb-1" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Blockchain RPC URL
+              </p>
+              <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Gnosis Chain RPC endpoint used for wallet and swap.
+              </p>
+            </div>
+            {isLoading ? (
+              <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Loading…
+              </p>
+            ) : configError ? (
+              <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Nook backend not available.
+              </p>
+            ) : (
+              <div className="flex gap-3">
+                <Input
+                  value={rpcDraft}
+                  onChange={e => setRpcDraft(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && saveRpc()}
+                  placeholder={DEFAULT_RPC}
+                  className="font-mono text-xs"
+                />
+                <Button
+                  onClick={saveRpc}
+                  disabled={updateConfig.isPending}
+                  variant={rpcSaved ? 'secondary' : 'default'}
+                  size="sm"
+                >
+                  {rpcSaved ? 'Saved' : 'Save'}
+                </Button>
+              </div>
             )}
           </div>
 
