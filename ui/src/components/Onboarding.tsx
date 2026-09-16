@@ -240,7 +240,7 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
               <p className="text-xs leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
                 Nook has no accounts and no servers. Your name and your messages live on the Swarm network itself — and
                 network storage is prepaid, like postage on a letter. Nook reserves a small space for your identity and
-                messages (about 1.5 xBZZ for 3 months) and renews it automatically. Everything else you add funds for
+                messages (about 2 xBZZ for 3 months) and renews it automatically. Everything else you add funds for
                 stays yours to spend.
               </p>
             </div>
