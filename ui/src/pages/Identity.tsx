@@ -116,11 +116,6 @@ export default function Identity() {
             <Button onClick={async () => deriveViaSwarmId()} disabled={deriving}>
               {deriving ? 'Setting up…' : 'Sign in with Swarm ID'}
             </Button>
-            {walletConnected && (
-              <Button variant="outline" onClick={async () => derive()} disabled={deriving}>
-                Use wallet instead
-              </Button>
-            )}
           </div>
         )}
 

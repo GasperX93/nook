@@ -200,7 +200,13 @@ export function useDerivedKey() {
   )
 
   // Auto-derive on wallet connect if we don't already have a signer cached.
+  // spike/swarm-id-only: DISABLED — a wallet is a payment tool here; connecting
+  // one must never create or change an identity. Swarm ID is the identity path.
+  const AUTO_DERIVE_ON_WALLET = false
+
   useEffect(() => {
+    if (!AUTO_DERIVE_ON_WALLET) return
+
     if (!hydrated) return
 
     if (status !== 'connected' || !address) return
