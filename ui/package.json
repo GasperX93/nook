@@ -17,6 +17,7 @@
     "@radix-ui/react-switch": "^1.2.6",
     "@radix-ui/react-tabs": "^1.1.13",
     "@rainbow-me/rainbowkit": "^2.2.10",
+    "@snaha/swarm-id": "^0.4.1",
     "@swarm-notify/sdk": "github:GasperX93/swarm-notify#c3be281624d9f42775f1f52df521c1632929e387",
     "@tanstack/react-query": "^5.90.21",
     "@upcoming/multichain-widget": "^0.12.0",

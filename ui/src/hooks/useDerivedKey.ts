@@ -17,7 +17,8 @@ import { getAccount } from '@wagmi/core'
 import { useCallback, useEffect } from 'react'
 import { useAccount, useSignMessage } from 'wagmi'
 
-import { SIGN_MESSAGE } from '../crypto/signer'
+import { SIGN_MESSAGE, SWARM_ID_SECRET_PREFIX, SWARM_ID_WALLET_MARKER } from '../crypto/signer'
+import { signInWithSwarmId } from '../swarm-id'
 import { setActiveIdentity } from '../notify/active-identity'
 import { migrateMessagesToV2 } from '../notify/messages'
 import {
@@ -90,11 +91,39 @@ export function useDerivedKey() {
     // different wallet's cache during the 'connecting'/'reconnecting' boot
     // window. We only clear on a confirmed mismatch, never when `address` is
     // merely not-yet-known.
+    // Swarm ID identities have no wagmi wallet to mismatch against —
+    // connecting/switching a wallet (a payment tool in that mode) must not
+    // wipe the identity (spike/swarm-id-only).
+    if (walletAddress === SWARM_ID_WALLET_MARKER) return
+
     if (walletAddress && address && walletAddress.toLowerCase() !== address.toLowerCase()) {
       void clear()
       setAutoDeriveDeclined(false)
     }
   }, [status, address, walletAddress, clear])
+
+  // Sign in with Swarm ID (spike/swarm-id-only): popup → deriveAppSecret →
+  // the same NookSigner chain, persisted through the same identity cache.
+  const deriveViaSwarmId = useCallback(async () => {
+    if (!acquireDeriveLock()) return null
+    setDeriving(true)
+    setError(null)
+
+    try {
+      const { seedHex } = await signInWithSwarmId()
+
+      await setSigner(`${SWARM_ID_SECRET_PREFIX}${seedHex}`, SWARM_ID_WALLET_MARKER)
+
+      return useIdentityStore.getState().signer
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Swarm ID sign-in failed')
+
+      return null
+    } finally {
+      releaseDeriveLock()
+      setDeriving(false)
+    }
+  }, [setSigner, setDeriving, setError])
 
   const derive = useCallback(
     async (opts?: { auto?: boolean }) => {
@@ -190,7 +219,10 @@ export function useDerivedKey() {
   // value on an address match guarantees no consumer can perform feed/ACT
   // operations under a stale identity, independent of effect timing.
   const signerMatchesWallet = Boolean(
-    signer && walletAddress && address && walletAddress.toLowerCase() === address.toLowerCase(),
+    signer &&
+    walletAddress &&
+    // Swarm ID identities are wallet-independent — always "matching".
+    (walletAddress === SWARM_ID_WALLET_MARKER || (address && walletAddress.toLowerCase() === address.toLowerCase())),
   )
   const safeSigner = signerMatchesWallet ? signer : null
 
@@ -224,6 +256,12 @@ export function useDerivedKey() {
 
     /** Manually trigger the signMessage popup (used by the Identity CTA after a user-declined auto-derive). */
     derive: async () => derive(),
+
+    /** Sign in with Swarm ID instead of a wallet (spike/swarm-id-only). */
+    deriveViaSwarmId,
+
+    /** True when the active identity came from Swarm ID rather than a wallet. */
+    isSwarmIdIdentity: walletAddress === SWARM_ID_WALLET_MARKER,
 
     /** Clear the derived key manually */
     clear,

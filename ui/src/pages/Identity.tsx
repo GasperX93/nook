@@ -13,7 +13,7 @@ import { isIdentityPublished, isOnboardingDismissed, markOnboardingDismissed } f
 const BEE_URL = `${window.location.origin}/bee-api`
 
 export default function Identity() {
-  const { signer, derive, deriving, walletConnected } = useDerivedKey()
+  const { signer, derive, deriveViaSwarmId, deriving, walletConnected, isSwarmIdIdentity } = useDerivedKey()
   const { data: addresses } = useAddresses()
   const { data: stamps } = useStamps()
 
@@ -101,16 +101,31 @@ export default function Identity() {
           How others connect with you
         </p>
 
-        {!walletConnected && (
+        {/* spike/swarm-id-only: Swarm ID is the primary identity path; the
+            wallet derive button survives as the comparison/legacy path. */}
+        {!signer && (
+          <div className="flex items-center gap-3 flex-wrap">
+            <Button onClick={async () => deriveViaSwarmId()} disabled={deriving}>
+              {deriving ? 'Setting up…' : 'Sign in with Swarm ID'}
+            </Button>
+            {walletConnected && (
+              <Button variant="outline" onClick={async () => derive()} disabled={deriving}>
+                Use wallet instead
+              </Button>
+            )}
+          </div>
+        )}
+
+        {!walletConnected && !signer && (
           <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
-            Connect your wallet (top right) to set up your Nook identity.
+            Swarm ID works without a wallet — one identity for every Swarm app, on all your devices.
           </p>
         )}
 
-        {walletConnected && !signer && (
-          <Button onClick={async () => derive()} disabled={deriving}>
-            {deriving ? 'Setting up… (check your wallet)' : 'Set up Nook identity'}
-          </Button>
+        {signer && isSwarmIdIdentity && (
+          <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+            Signed in with Swarm ID — the same identity is available in every Swarm app and on all your devices.
+          </p>
         )}
 
         {signer && myAddress && (

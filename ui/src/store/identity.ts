@@ -14,7 +14,7 @@
 import { create } from 'zustand'
 
 import { serverApi } from '../api/server'
-import { createWalletSigner, type NookSigner } from '../crypto/signer'
+import { createSignerFromSecret, type NookSigner } from '../crypto/signer'
 
 const SESSION_STORAGE_KEY = 'nook.derivedKey.v1'
 
@@ -159,7 +159,7 @@ export const useIdentityStore = create<IdentityState>()((set, get) => ({
 
         if (parsed) {
           try {
-            const signer = createWalletSigner(parsed.signatureHex)
+            const signer = createSignerFromSecret(parsed.signatureHex)
             set({
               signer,
               walletAddress: parsed.walletAddress,
@@ -187,7 +187,7 @@ export const useIdentityStore = create<IdentityState>()((set, get) => ({
 
     if (persisted) {
       try {
-        const signer = createWalletSigner(persisted.signatureHex)
+        const signer = createSignerFromSecret(persisted.signatureHex)
         set({
           signer,
           walletAddress: persisted.walletAddress,
@@ -206,7 +206,7 @@ export const useIdentityStore = create<IdentityState>()((set, get) => ({
   },
 
   setSigner: async (signatureHex, walletAddress) => {
-    const signer = createWalletSigner(signatureHex)
+    const signer = createSignerFromSecret(signatureHex)
     set({ signer, walletAddress, deriving: false, error: null })
 
     // Try safeStorage; fall back to sessionStorage if unavailable or call fails
