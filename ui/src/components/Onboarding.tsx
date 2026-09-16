@@ -212,7 +212,7 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
               Your node is syncing with the Swarm network. It discovers peers and catches up with the latest state.
             </p>
             <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-              This can take 1–5 minutes.
+              This can take 1–5 minutes. Nook is also reserving space for your identity &amp; messages.
             </p>
           </div>
         )}
@@ -228,6 +228,20 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
               <p className="text-sm leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
                 You can fund it from any EVM-compatible chain using any token — it will be swapped to the required
                 assets.
+              </p>
+            </div>
+
+            {/* Why storage costs money — the web2-contrast explanation (#130) */}
+            <div
+              className="rounded-lg px-4 py-3 text-left space-y-1"
+              style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
+            >
+              <p className="text-xs font-semibold">Why does this cost anything?</p>
+              <p className="text-xs leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Nook has no accounts and no servers. Your name and your messages live on the Swarm network itself — and
+                network storage is prepaid, like postage on a letter. Nook reserves a small space for your identity and
+                messages (about 1.5 xBZZ for 3 months) and renews it automatically. Everything else you add funds for
+                stays yours to spend.
               </p>
             </div>
 

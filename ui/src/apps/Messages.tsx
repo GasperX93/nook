@@ -5,13 +5,14 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { getWalletClient, switchChain, waitForTransactionReceipt } from '@wagmi/core'
 import { useWalletClient } from 'wagmi'
 
-import { useAddresses, useStamps } from '../api/queries'
+import { useReclaimableDrives, useAddresses, useStamps } from '../api/queries'
 import AddSharedDriveModal from '../components/AddSharedDriveModal'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Textarea } from '../components/ui/textarea'
 import { useSharedDrives } from '../hooks/useSharedDrives'
 import { useDerivedKey } from '../hooks/useDerivedKey'
+import { pickMessagingStamp } from '../lib/system-stamp'
 import { hexToBytes } from '../lib/hex'
 import { GNOSIS_CHAIN_ID, REGISTRY_ADDRESS } from '../notify/constants'
 import {
@@ -139,7 +140,8 @@ export default function Messages({ initialContactId, hideContactList, hideThread
     return pendingInvitations(invitations).filter(i => !known.has(i.senderAddr))
   }, [invitations, contacts])
 
-  const stampId = (stamps ?? []).find(s => s.usable)?.batchID ?? ''
+  const { data: reclaimableForStamp } = useReclaimableDrives()
+  const stampId = pickMessagingStamp(stamps, new Set((reclaimableForStamp ?? []).map(d => d.batchId)))?.batchID ?? ''
   const selected = contacts.find(c => c.id === selectedId) ?? null
   const selectedThread = selected ? (threads[selected.id.toLowerCase()] ?? []) : []
   const hasInbound = selectedThread.some(m => m.direction === 'received')

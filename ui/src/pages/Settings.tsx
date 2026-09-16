@@ -1,10 +1,21 @@
 import { Bell, BellOff, ExternalLink, Moon, Sun } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { useAddresses, useBeeHealth, useConfig, useInfo, usePeers, useTopology, useUpdateConfig } from '../api/queries'
+import {
+  useAddresses,
+  useBeeHealth,
+  useConfig,
+  useInfo,
+  usePeers,
+  useStamps,
+  useTopology,
+  useUpdateConfig,
+} from '../api/queries'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Switch } from '../components/ui/switch'
+import { serverApi } from '../api/server'
+import { isSystemStamp } from '../lib/system-stamp'
 import { useAppStore } from '../store/app'
 
 type SettingsTab = 'general' | 'network'
@@ -30,6 +41,48 @@ export default function Settings() {
   const { data: addresses } = useAddresses()
 
   const [rpcDraft, setRpcDraft] = useState('')
+  const { data: stamps } = useStamps()
+  const systemStamp = (stamps ?? []).find(isSystemStamp)
+  const anyDriveUsable = (stamps ?? []).some(st => st.usable && !isSystemStamp(st))
+  const [autoRenewOn, setAutoRenewOn] = useState<boolean | null>(null)
+  const [renewSaving, setRenewSaving] = useState(false)
+  const [confirmingRenewOff, setConfirmingRenewOff] = useState(false)
+
+  useEffect(() => {
+    if (!systemStamp) return
+    serverApi
+      .getAutoExtend()
+      .then(r => setAutoRenewOn(Boolean(r.settings[systemStamp.batchID.toLowerCase()]?.enabled)))
+      .catch(() => setAutoRenewOn(null))
+  }, [systemStamp?.batchID])
+
+  async function setAutoRenew(next: boolean) {
+    if (!systemStamp || renewSaving) return
+    setRenewSaving(true)
+    try {
+      await serverApi.setAutoExtend(systemStamp.batchID, next, 3)
+      setAutoRenewOn(next)
+    } catch {
+      // keep old state
+    } finally {
+      setRenewSaving(false)
+      setConfirmingRenewOff(false)
+    }
+  }
+
+  function toggleAutoRenew() {
+    const next = !(autoRenewOn ?? false)
+
+    // Turning OFF gets an inline confirm — expiry here means an unreachable
+    // identity and lost unsent messages.
+    if (!next && !confirmingRenewOff) {
+      setConfirmingRenewOff(true)
+
+      return
+    }
+    void setAutoRenew(next)
+  }
+
   const [rpcSaved, setRpcSaved] = useState(false)
 
   const { devMode, setDevMode, theme, setTheme, notificationSound, setNotificationSound } = useAppStore()
@@ -161,6 +214,72 @@ export default function Settings() {
               {notificationSound ? <Bell /> : <BellOff />}
               {notificationSound ? 'Sound on' : 'Sound off'}
             </Button>
+          </div>
+
+          {/* Identity & messages — the reserved network space (#130) */}
+          <div className="rounded-xl border p-5 space-y-3" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
+            <p className="text-sm mb-1" style={{ color: 'rgb(var(--fg-muted))' }}>
+              Identity &amp; messages
+            </p>
+            {systemStamp ? (
+              <>
+                <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  Reserved network space for your name and messages
+                  {systemStamp.usable && systemStamp.batchTTL > 0
+                    ? ` · ${Math.floor(systemStamp.batchTTL / 86400)} days left`
+                    : ' · preparing…'}
+                  {autoRenewOn ? ' · renews automatically' : ''}
+                </p>
+                <div className="flex items-center gap-3">
+                  <Switch
+                    checked={Boolean(autoRenewOn)}
+                    onCheckedChange={toggleAutoRenew}
+                    disabled={renewSaving || autoRenewOn === null}
+                    aria-label="Renew automatically"
+                  />
+                  <span className="text-xs" style={{ color: 'rgb(var(--fg))' }}>
+                    Renew automatically
+                  </span>
+                </div>
+                {confirmingRenewOff && (
+                  <div className="space-y-2">
+                    <p className="text-xs" style={{ color: '#f59e0b' }}>
+                      Turn off automatic renewal? Without it, new people won't be able to find you and unsent messages
+                      may be lost when the space expires.
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void setAutoRenew(false)}
+                        disabled={renewSaving}
+                      >
+                        Turn off anyway
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={() => setConfirmingRenewOff(false)}>
+                        Keep renewing
+                      </Button>
+                    </div>
+                  </div>
+                )}
+                {autoRenewOn === false && (
+                  <p className="text-xs" style={{ color: '#f59e0b' }}>
+                    Without renewal, new people won't be able to find you and unsent messages may be lost when the space
+                    expires.
+                  </p>
+                )}
+              </>
+            ) : anyDriveUsable ? (
+              <p className="text-xs" style={{ color: '#f59e0b' }}>
+                Temporarily using space from your drives for messages — Nook will reserve dedicated space automatically
+                when your wallet has enough xBZZ (about 1.5 xBZZ for 3 months).
+              </p>
+            ) : (
+              <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Nook reserves a small network space for your identity and messages automatically once your node is
+                funded.
+              </p>
+            )}
           </div>
 
           {/* Version info */}

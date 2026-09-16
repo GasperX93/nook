@@ -9,6 +9,7 @@ import { EXPECTED_BEE_VERSION, getInstalledBeeVersion, runDownloader } from './d
 import { runElectronTray } from './electron'
 import { startChequebookMonitor } from './chequebook-monitor'
 import { startExtendMonitor } from './extend-monitor'
+import { startSystemStampMonitor } from './system-stamp'
 import { startMonitorIfNeeded } from './funding-monitor'
 import { initializeBee, runKeepAliveLoop, runLauncher } from './launcher'
 import { logger } from './logger'
@@ -117,6 +118,7 @@ async function main() {
   startMonitorIfNeeded()
   startChequebookMonitor()
   startExtendMonitor()
+  startSystemStampMonitor()
   runElectronTray()
 
   if (process.env.NODE_ENV !== 'development') openDashboardInBrowser()
