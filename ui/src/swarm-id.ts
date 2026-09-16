@@ -42,12 +42,24 @@ export function onSwarmIdChange(listener: () => void): () => void {
 export async function getSwarmId(): Promise<SwarmIdClient> {
   if (initPromise) return initPromise
   initPromise = (async () => {
+    // The button renders inside the SDK iframe, so CSS variables can't reach
+    // it — read the active theme once at init and pass concrete colors
+    // matching Nook's primary button (dark-on-light / light-on-dark).
+    const dark = document.documentElement.classList.contains('dark')
+
     const c = new SwarmIdClient({
       iframeOrigin: IFRAME_ORIGIN,
       containerId: SWARM_ID_FRAME_CONTAINER_ID,
       metadata: {
         name: 'Nook',
         description: 'Swarm desktop node manager',
+      },
+      buttonConfig: {
+        connectText: 'Sign in with Swarm ID',
+        loadingText: 'Signing in…',
+        backgroundColor: dark ? '#fafafa' : '#171717',
+        color: dark ? '#171717' : '#fafafa',
+        borderRadius: '8px',
       },
       onConnectionChange: () => LISTENERS.forEach(fn => fn()),
     })
