@@ -230,7 +230,17 @@ export default function Layout() {
 
   // Auto-complete onboarding for existing users upgrading from v0.2.0 (they never had the flag).
   // Once stamps or wallet data loads and shows existing activity, mark onboarding done.
-  if (!onboardingCompleted && stampsLoaded && stamps && stamps.length > 0) setOnboardingCompleted()
+  // Existing users (they own stamps) never get re-onboarded — unless the
+  // debug step-lock is set, which must keep the preview on screen.
+  if (
+    !onboardingCompleted &&
+    stampsLoaded &&
+    stamps &&
+    stamps.length > 0 &&
+    !localStorage.getItem('nook:onboarding-step')
+  ) {
+    setOnboardingCompleted()
+  }
 
   if (!onboardingCompleted && walletLoaded && wallet && Number(weiToDai(wallet.nativeTokenBalance)) > 0) {
     setOnboardingCompleted()
