@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 
 import Identity from './Identity'
 import Wallet from './Wallet'
@@ -7,6 +8,16 @@ type AccountTab = 'wallet' | 'identity'
 
 export default function Account() {
   const [tab, setTab] = useState<AccountTab>('wallet')
+  const location = useLocation()
+
+  // 'Open wallet' links land here as /account?tab=wallet — honor the tab on
+  // every navigation, incl. when the page is already mounted (a plain
+  // navigate('/account') from within Account is otherwise a visible no-op).
+  useEffect(() => {
+    const requested = new URLSearchParams(location.search).get('tab')
+
+    if (requested === 'wallet' || requested === 'identity') setTab(requested)
+  }, [location.key, location.search])
 
   return (
     <div className="p-6 max-w-4xl">

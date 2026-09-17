@@ -526,7 +526,7 @@ export default function Messages({ initialContactId, hideContactList, hideThread
           Sending messages needs a small reserved space on the network. Add about 3 xBZZ on the Wallet page and Nook
           sets it up automatically.
         </p>
-        <Button onClick={() => navigate('/account')} className="self-start uppercase tracking-widest">
+        <Button onClick={() => navigate('/account?tab=wallet')} className="self-start uppercase tracking-widest">
           Open wallet
         </Button>
       </div>

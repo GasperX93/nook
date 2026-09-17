@@ -436,7 +436,7 @@ export default function Layout() {
               <span style={{ color: 'rgb(var(--accent))' }}>
                 Fund your node wallet to start.{' '}
                 <button
-                  onClick={() => navigate('/account')}
+                  onClick={() => navigate('/account?tab=wallet')}
                   className="underline font-semibold"
                   style={{ color: 'rgb(var(--accent))' }}
                 >
@@ -466,7 +466,7 @@ export default function Layout() {
                   return `Couldn't extend "${label}"${extra}: ${failure.reason} `
                 })()}
                 <button
-                  onClick={() => navigate('/account')}
+                  onClick={() => navigate('/account?tab=wallet')}
                   className="underline font-semibold"
                   style={{ color: '#ef4444' }}
                 >
@@ -496,9 +496,9 @@ export default function Layout() {
               <AlertTriangle size={12} className="shrink-0" style={{ color: '#f59e0b' }} />
               <span style={{ color: 'rgb(var(--fg))' }}>
                 Messages and your identity need a small reserved space — add about 3 xBZZ and Nook sets it up
-                automatically.{' '}
+                automatically within a few minutes.{' '}
                 <button
-                  onClick={() => navigate('/account')}
+                  onClick={() => navigate('/account?tab=wallet')}
                   className="underline font-semibold"
                   style={{ color: '#f59e0b' }}
                 >
