@@ -162,7 +162,7 @@ export default function Identity() {
                 </Button>
                 {!stampId && (
                   <span className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-                    No stamp — publishing needs a drive
+                    Publishing needs a small reserved space — add about 2 xBZZ on the Wallet page
                   </span>
                 )}
               </div>

@@ -1,3 +1,5 @@
+import { existsSync, readFileSync, writeFileSync, rmSync } from 'fs'
+
 import { readConfigYaml } from './config'
 import { setAutoExtendSetting, topupAmount } from './extend-monitor'
 import { fetchWithTimeout } from './fetch-timeout'
@@ -54,6 +56,39 @@ const realBeeFetch: BeeFetch = async (path, init, timeoutMs = 15_000) =>
 
 let inFlight = false
 
+const STATE_FILE = 'system-stamp.json'
+
+function lowFundsAlreadyNotified(): boolean {
+  try {
+    return existsSync(getPath(STATE_FILE)) && Boolean(JSON.parse(readFileSync(getPath(STATE_FILE), 'utf-8')).lowFundsNotifiedAt)
+  } catch {
+    return false
+  }
+}
+
+function notifyLowFundsOnce(): void {
+  if (lowFundsAlreadyNotified()) return
+  pushNotification({
+    type: 'charge-blocked',
+    title: 'Add about 2 xBZZ to activate identity & messages',
+    body: 'Your node needs about 2 xBZZ to reserve the network space that makes you findable and lets you message. Top up on the Wallet page — Nook does the rest automatically.',
+    link: '/account',
+  })
+  try {
+    writeFileSync(getPath(STATE_FILE), JSON.stringify({ lowFundsNotifiedAt: Date.now() }))
+  } catch {
+    // best effort — worst case the notice repeats after a restart
+  }
+}
+
+function clearLowFundsFlag(): void {
+  try {
+    rmSync(getPath(STATE_FILE), { force: true })
+  } catch {
+    // ignore
+  }
+}
+
 export type SystemStampResult = 'exists' | 'bought' | 'skipped' | 'failed'
 
 /**
@@ -99,7 +134,14 @@ export async function runSystemStampCheck(beeFetch: BeeFetch = realBeeFetch): Pr
     if (!walletRes.ok) return 'skipped'
     const bzzBalance = BigInt(((await walletRes.json()) as { bzzBalance: string }).bzzBalance)
 
-    if (bzzBalance < totalCost) return 'skipped'
+    if (bzzBalance < totalCost) {
+      // The user funded SOMETHING but not enough for the reserve — without a
+      // word, identity and messaging silently never activate and the user has
+      // no way to know why (fresh-install finding, 2026-09-17). Tell them once.
+      if (bzzBalance > BigInt(0)) notifyLowFundsOnce()
+
+      return 'skipped'
+    }
 
     // Chain transaction — generous timeout, mined before Bee responds.
     const buyRes = await beeFetch(
@@ -131,6 +173,7 @@ export async function runSystemStampCheck(beeFetch: BeeFetch = realBeeFetch): Pr
       link: '/settings',
     })
     logger.info(`system-stamp: bought ${batchID.slice(0, 8)} (depth ${SYSTEM_STAMP_DEPTH}, ${SYSTEM_STAMP_MONTHS}mo)`)
+    clearLowFundsFlag()
 
     return 'bought'
   } catch (error) {
