@@ -126,7 +126,7 @@ describe('system stamp (#130)', () => {
     const notices = loadNotifications().filter(n => n.type === 'charge-blocked')
 
     expect(notices).toHaveLength(1)
-    expect(notices[0].title).toContain('2 xBZZ')
+    expect(notices[0].title).toContain('3 xBZZ')
     expect(notices[0].link).toBe('/account')
 
     // Zero balance means "not funded yet" — no nagging before any money exists.

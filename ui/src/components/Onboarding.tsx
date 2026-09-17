@@ -255,9 +255,9 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
               <p className="text-xs font-semibold">Why does this cost anything?</p>
               <p className="text-xs leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
                 Nook has no accounts and no servers. Your name and your messages live on the Swarm network itself — and
-                network storage is prepaid, like postage on a letter. Nook reserves a small space for your identity and
-                messages (about 2 xBZZ for 3 months) and renews it automatically. Everything else you add funds for
-                stays yours to spend.
+                network storage is prepaid, like postage on a letter. Nook reserves a small space for your identity
+                and messages, plus a little for message delivery — about 3 xBZZ covers both for 3 months, renewed
+                automatically. Everything else you add funds for stays yours to spend.
               </p>
             </div>
 

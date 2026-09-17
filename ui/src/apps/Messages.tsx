@@ -523,7 +523,7 @@ export default function Messages({ initialContactId, hideContactList, hideThread
       <div className="flex flex-col p-6 gap-4 max-w-3xl">
         <h2 className="text-2xl font-semibold">Messages</h2>
         <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
-          Sending messages needs a small reserved space on the network. Add about 2 xBZZ on the Wallet page and Nook
+          Sending messages needs a small reserved space on the network. Add about 3 xBZZ on the Wallet page and Nook
           sets it up automatically.
         </p>
         <Button onClick={() => navigate('/account')} className="self-start uppercase tracking-widest">
