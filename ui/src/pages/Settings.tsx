@@ -195,7 +195,7 @@ export default function Settings() {
             ) : anyDriveUsable ? (
               <p className="text-xs" style={{ color: '#f59e0b' }}>
                 Temporarily using space from your drives for messages — Nook will reserve dedicated space automatically
-                when your wallet has enough xBZZ (about 2 xBZZ for 3 months).
+                when your wallet has enough xBZZ (about 3 xBZZ for 3 months).
               </p>
             ) : (
               <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>

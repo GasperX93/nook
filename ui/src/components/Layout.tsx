@@ -482,7 +482,7 @@ export default function Layout() {
             >
               <AlertTriangle size={12} className="shrink-0" style={{ color: '#f59e0b' }} />
               <span style={{ color: 'rgb(var(--fg))' }}>
-                Messages and your identity need a small reserved space — add about 2 xBZZ and Nook sets it up
+                Messages and your identity need a small reserved space — add about 3 xBZZ and Nook sets it up
                 automatically.{' '}
                 <button
                   onClick={() => navigate('/account')}

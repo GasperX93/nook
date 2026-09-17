@@ -73,8 +73,8 @@ function notifyLowFundsOnce(): void {
   if (lowFundsAlreadyNotified()) return
   pushNotification({
     type: 'charge-blocked',
-    title: 'Add about 2 xBZZ to activate identity & messages',
-    body: 'Your node needs about 2 xBZZ to reserve the network space that makes you findable and lets you message. Top up on the Wallet page — Nook does the rest automatically.',
+    title: 'Add about 3 xBZZ to activate identity & messages',
+    body: 'Your node needs about 3 xBZZ to reserve the network space that makes you findable and lets you message. Top up on the Wallet page — Nook does the rest automatically.',
     link: '/account',
   })
   try {
