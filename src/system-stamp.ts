@@ -60,7 +60,10 @@ const STATE_FILE = 'system-stamp.json'
 
 function lowFundsAlreadyNotified(): boolean {
   try {
-    return existsSync(getPath(STATE_FILE)) && Boolean(JSON.parse(readFileSync(getPath(STATE_FILE), 'utf-8')).lowFundsNotifiedAt)
+    return (
+      existsSync(getPath(STATE_FILE)) &&
+      Boolean(JSON.parse(readFileSync(getPath(STATE_FILE), 'utf-8')).lowFundsNotifiedAt)
+    )
   } catch {
     return false
   }
