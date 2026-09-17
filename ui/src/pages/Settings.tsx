@@ -41,7 +41,14 @@ export default function Settings() {
   const { data: addresses } = useAddresses()
 
   const [rpcDraft, setRpcDraft] = useState('')
-  const { data: stamps } = useStamps()
+  const { data: stamps, refetch: refetchStamps } = useStamps()
+
+  // A reserve bought while this page is open should appear without a manual
+  // reload (fresh-install feedback) — refetch once on mount.
+  useEffect(() => {
+    void refetchStamps()
+    // eslint-disable-next-line
+  }, [])
   const systemStamp = (stamps ?? []).find(isSystemStamp)
   const anyDriveUsable = (stamps ?? []).some(st => st.usable && !isSystemStamp(st))
   const [autoRenewOn, setAutoRenewOn] = useState<boolean | null>(null)

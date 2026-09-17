@@ -117,6 +117,27 @@ describe('system stamp (#130)', () => {
     expect(lagging.buys).toHaveLength(0)
   })
 
+  it('funded-but-short tells the user ONCE how much unlocks identity & messages', async () => {
+    const poor = makeBee({ bzz: '1' })
+
+    await runSystemStampCheck(poor.fetch)
+    await runSystemStampCheck(poor.fetch)
+
+    const notices = loadNotifications().filter(n => n.type === 'charge-blocked')
+
+    expect(notices).toHaveLength(1)
+    expect(notices[0].title).toContain('2 xBZZ')
+    expect(notices[0].link).toBe('/account')
+
+    // Zero balance means "not funded yet" — no nagging before any money exists.
+    // (fresh state dir so the once-flag from above doesn't interfere)
+    cleanUp()
+    const broke = makeBee({ bzz: '0' })
+
+    await runSystemStampCheck(broke.fetch)
+    expect(loadNotifications()).toHaveLength(0)
+  })
+
   it('reports a failed buy without recording anything', async () => {
     const bee = makeBee({ buyStatus: 500 })
 

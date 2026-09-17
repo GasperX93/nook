@@ -11,6 +11,8 @@ import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Textarea } from '../components/ui/textarea'
 import { useSharedDrives } from '../hooks/useSharedDrives'
+import { useNavigate } from 'react-router-dom'
+
 import { useDerivedKey } from '../hooks/useDerivedKey'
 import { pickMessagingStamp } from '../lib/system-stamp'
 import { hexToBytes } from '../lib/hex'
@@ -81,6 +83,7 @@ interface MessagesProps {
 
 export default function Messages({ initialContactId, hideContactList, hideThreadHeader }: MessagesProps = {}) {
   const { signer, derive, deriving, walletConnected } = useDerivedKey()
+  const navigate = useNavigate()
   const { data: stamps } = useStamps()
   const { data: addresses } = useAddresses()
 
@@ -510,6 +513,21 @@ export default function Messages({ initialContactId, hideContactList, hideThread
         </p>
         <Button onClick={async () => derive()} disabled={deriving} className="self-start uppercase tracking-widest">
           {deriving ? 'Setting up…' : 'Set up Nook identity'}
+        </Button>
+      </div>
+    )
+  }
+
+  if (!stampId) {
+    return (
+      <div className="flex flex-col p-6 gap-4 max-w-3xl">
+        <h2 className="text-2xl font-semibold">Messages</h2>
+        <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
+          Sending messages needs a small reserved space on the network. Add about 2 xBZZ on the Wallet page and Nook
+          sets it up automatically.
+        </p>
+        <Button onClick={() => navigate('/account')} className="self-start uppercase tracking-widest">
+          Open wallet
         </Button>
       </div>
     )

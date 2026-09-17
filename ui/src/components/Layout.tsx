@@ -18,9 +18,18 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useDisconnect } from 'wagmi'
 import { weiToDai } from '../api/bee'
-import { useBeeHealth, usePeers, useRestart, useStamps, useStatus, useWallet } from '../api/queries'
+import {
+  useReclaimableDrives,
+  useBeeHealth,
+  usePeers,
+  useRestart,
+  useStamps,
+  useStatus,
+  useWallet,
+} from '../api/queries'
 import { useDerivedKey } from '../hooks/useDerivedKey'
 import { useInboxPolling } from '../hooks/useInboxPolling'
+import { pickMessagingStamp } from '../lib/system-stamp'
 import { useOutboxDrain } from '../hooks/useOutboxDrain'
 import { hasKnownIdentity } from '../notify/active-identity'
 import { primeCricketAudio } from '../lib/cricket'
@@ -130,6 +139,13 @@ export default function Layout() {
   const { data: status } = useStatus()
   const restartBee = useRestart()
   const { data: stamps, isSuccess: stampsLoaded } = useStamps()
+  const { data: reclaimableForPick } = useReclaimableDrives()
+  // No network space AT ALL in light mode → identity & messages are dead and
+  // nothing on screen says why (fresh-install finding). Ongoing state → banner.
+  const noMessagingSpace =
+    status?.mode === 'light' &&
+    stampsLoaded &&
+    pickMessagingStamp(stamps, new Set((reclaimableForPick ?? []).map(d => d.batchId))) === null
   const { data: wallet, isSuccess: walletLoaded } = useWallet()
   const { devMode, onboardingCompleted, setOnboardingCompleted } = useAppStore()
   const navigate = useNavigate()
@@ -457,6 +473,28 @@ export default function Layout() {
           )}
 
           {/* Messages paused — identity not derived this session (#65) */}
+          {/* No reserved space, light mode (#130) — the money-shaped unlock,
+              said in user terms with the action attached. */}
+          {noMessagingSpace && !showOnboarding && (
+            <div
+              className="flex items-center gap-2.5 px-4 py-2.5 text-xs shrink-0"
+              style={{ backgroundColor: 'rgba(245,158,11,0.08)', borderBottom: '1px solid rgba(245,158,11,0.25)' }}
+            >
+              <AlertTriangle size={12} className="shrink-0" style={{ color: '#f59e0b' }} />
+              <span style={{ color: 'rgb(var(--fg))' }}>
+                Messages and your identity need a small reserved space — add about 2 xBZZ and Nook sets it up
+                automatically.{' '}
+                <button
+                  onClick={() => navigate('/account')}
+                  className="underline font-semibold"
+                  style={{ color: '#f59e0b' }}
+                >
+                  Open wallet →
+                </button>
+              </span>
+            </div>
+          )}
+
           {showMessagesPaused && !showOnboarding && (
             <div
               className="flex items-center gap-2.5 px-4 py-2.5 text-xs shrink-0"

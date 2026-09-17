@@ -21,7 +21,7 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
   const { isSuccess: beeOnline } = useBeeHealth()
   const { data: status } = useStatus()
   const { isSuccess: stampsReady } = useStamps()
-  const { data: wallet } = useWallet()
+  const { data: wallet, refetch: refetchWallet, isFetching: walletChecking } = useWallet()
   const { data: addresses } = useAddresses()
   const restart = useRestart()
 
@@ -228,6 +228,22 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
               <p className="text-sm leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
                 You can fund it from any EVM-compatible chain using any token — it will be swapped to the required
                 assets.
+              </p>
+            </div>
+
+            {/* Manual re-check + wallet hint (fresh-install feedback 2026-09-17):
+                waiting silently on the 15s poll reads as "stuck". */}
+            <div className="text-center space-y-2">
+              <button
+                onClick={() => void refetchWallet()}
+                disabled={walletChecking}
+                className="text-xs underline transition-colors"
+                style={{ color: 'rgb(var(--fg-muted))' }}
+              >
+                {walletChecking ? 'Checking…' : "I've sent funds — check now"}
+              </button>
+              <p className="text-[11px]" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Using MetaMask? Unlock it first — if it doesn't show up in the box above, refresh this page.
               </p>
             </div>
 
