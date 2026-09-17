@@ -8,6 +8,7 @@ import { weiToDai } from '../api/bee'
 import { api } from '../api/client'
 import { useAddresses, useBeeHealth, useRestart, useStamps, useStatus, useWallet } from '../api/queries'
 import { useAppStore } from '../store/app'
+import OnboardingIdentityCard from './OnboardingIdentityCard'
 import { WIDGET_THEME } from '../theme'
 
 type Step = 'starting' | 'info' | 'funding' | 'syncing' | 'ready'
@@ -214,6 +215,11 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
             <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
               This can take 1–5 minutes. Nook is also reserving space for your identity &amp; messages.
             </p>
+            {!skipReady && (
+              <div className="text-left">
+                <OnboardingIdentityCard />
+              </div>
+            )}
           </div>
         )}
 
@@ -247,6 +253,9 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
               </p>
             </div>
 
+            {/* Parallel identity setup — uses the funding wait (#131) */}
+            {!skipReady && <OnboardingIdentityCard />}
+
             {/* Why storage costs money — the web2-contrast explanation (#130) */}
             <div
               className="rounded-lg px-4 py-3 text-left space-y-1"
@@ -255,8 +264,8 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
               <p className="text-xs font-semibold">Why does this cost anything?</p>
               <p className="text-xs leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
                 Nook has no accounts and no servers. Your name and your messages live on the Swarm network itself — and
-                network storage is prepaid, like postage on a letter. Nook reserves a small space for your identity
-                and messages, plus a little for message delivery — about 3 xBZZ covers both for 3 months, renewed
+                network storage is prepaid, like postage on a letter. Nook reserves a small space for your identity and
+                messages, plus a little for message delivery — about 3 xBZZ covers both for 3 months, renewed
                 automatically. Everything else you add funds for stays yours to spend.
               </p>
             </div>
@@ -370,6 +379,11 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
               Your Bee node is connected and funded. You can now create a drive and start uploading files to the Swarm
               network.
             </p>
+            {!skipReady && (
+              <div className="text-left">
+                <OnboardingIdentityCard />
+              </div>
+            )}
             <button
               onClick={finish}
               className="px-6 py-3 rounded-lg text-sm font-semibold transition-opacity"

@@ -28,6 +28,7 @@ import {
   useWallet,
 } from '../api/queries'
 import { useDerivedKey } from '../hooks/useDerivedKey'
+import { useAutoPublish } from '../hooks/useAutoPublish'
 import { useInboxPolling } from '../hooks/useInboxPolling'
 import { pickMessagingStamp } from '../lib/system-stamp'
 import { useOutboxDrain } from '../hooks/useOutboxDrain'
@@ -172,6 +173,8 @@ export default function Layout() {
   // Background inbox polling — keeps unread badge fresh whether or not the
   // Messages page is mounted. Side-effect hook; writes to localStorage threads.
   useInboxPolling()
+  // Completes 'make me findable' once signer + reserved space coexist (#130/#131)
+  useAutoPublish()
   // Background on-chain notification polling — surfaces wake-up pings from
   // senders who aren't yet in our contact list (see #62/#63).
   useRegistryPolling()
