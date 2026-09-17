@@ -382,7 +382,7 @@ async function checkOneBatch(
               1,
               Math.ceil((batch.ttl - THRESHOLD_SECONDS) / DAY_SECONDS),
             )} days but your wallet doesn't cover it. Add xBZZ or the drive will expire.`,
-            link: '/account',
+            link: '/account?tab=wallet',
             data: { batchId, estXbzz: costXbzz },
             desktop: true,
           })
@@ -407,7 +407,7 @@ async function checkOneBatch(
           body: `The automatic extension needs ~${costXbzz} xBZZ. Add funds before the drive expires (${Math.floor(
             batch.ttl / DAY_SECONDS,
           )} days left) — Nook keeps retrying hourly.`,
-          link: '/account',
+          link: '/account?tab=wallet',
           data: { batchId, estXbzz: costXbzz },
           desktop: true,
         })

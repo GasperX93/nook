@@ -75,7 +75,7 @@ function notifyLowFundsOnce(): void {
     type: 'charge-blocked',
     title: 'Add about 3 xBZZ to activate identity & messages',
     body: 'Your node needs about 3 xBZZ to reserve the network space that makes you findable and lets you message. Top up on the Wallet page — Nook does the rest automatically.',
-    link: '/account',
+    link: '/account?tab=wallet',
   })
   try {
     writeFileSync(getPath(STATE_FILE), JSON.stringify({ lowFundsNotifiedAt: Date.now() }))

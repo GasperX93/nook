@@ -28,6 +28,7 @@ import {
   useWallet,
 } from '../api/queries'
 import { useDerivedKey } from '../hooks/useDerivedKey'
+import { useAutoPublish } from '../hooks/useAutoPublish'
 import { useInboxPolling } from '../hooks/useInboxPolling'
 import { pickMessagingStamp } from '../lib/system-stamp'
 import { useOutboxDrain } from '../hooks/useOutboxDrain'
@@ -172,6 +173,8 @@ export default function Layout() {
   // Background inbox polling — keeps unread badge fresh whether or not the
   // Messages page is mounted. Side-effect hook; writes to localStorage threads.
   useInboxPolling()
+  // Completes 'make me findable' once signer + reserved space coexist (#130/#131)
+  useAutoPublish()
   // Background on-chain notification polling — surfaces wake-up pings from
   // senders who aren't yet in our contact list (see #62/#63).
   useRegistryPolling()
@@ -227,7 +230,17 @@ export default function Layout() {
 
   // Auto-complete onboarding for existing users upgrading from v0.2.0 (they never had the flag).
   // Once stamps or wallet data loads and shows existing activity, mark onboarding done.
-  if (!onboardingCompleted && stampsLoaded && stamps && stamps.length > 0) setOnboardingCompleted()
+  // Existing users (they own stamps) never get re-onboarded — unless the
+  // debug step-lock is set, which must keep the preview on screen.
+  if (
+    !onboardingCompleted &&
+    stampsLoaded &&
+    stamps &&
+    stamps.length > 0 &&
+    !localStorage.getItem('nook:onboarding-step')
+  ) {
+    setOnboardingCompleted()
+  }
 
   if (!onboardingCompleted && walletLoaded && wallet && Number(weiToDai(wallet.nativeTokenBalance)) > 0) {
     setOnboardingCompleted()
@@ -423,7 +436,7 @@ export default function Layout() {
               <span style={{ color: 'rgb(var(--accent))' }}>
                 Fund your node wallet to start.{' '}
                 <button
-                  onClick={() => navigate('/account')}
+                  onClick={() => navigate('/account?tab=wallet')}
                   className="underline font-semibold"
                   style={{ color: 'rgb(var(--accent))' }}
                 >
@@ -453,7 +466,7 @@ export default function Layout() {
                   return `Couldn't extend "${label}"${extra}: ${failure.reason} `
                 })()}
                 <button
-                  onClick={() => navigate('/account')}
+                  onClick={() => navigate('/account?tab=wallet')}
                   className="underline font-semibold"
                   style={{ color: '#ef4444' }}
                 >
@@ -483,9 +496,9 @@ export default function Layout() {
               <AlertTriangle size={12} className="shrink-0" style={{ color: '#f59e0b' }} />
               <span style={{ color: 'rgb(var(--fg))' }}>
                 Messages and your identity need a small reserved space — add about 3 xBZZ and Nook sets it up
-                automatically.{' '}
+                automatically within a few minutes.{' '}
                 <button
-                  onClick={() => navigate('/account')}
+                  onClick={() => navigate('/account?tab=wallet')}
                   className="underline font-semibold"
                   style={{ color: '#f59e0b' }}
                 >
