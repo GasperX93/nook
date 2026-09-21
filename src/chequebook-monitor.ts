@@ -1,13 +1,24 @@
 import { fetchWithTimeout } from './fetch-timeout'
 import { logger } from './logger'
-import { pushNotification } from './notifications'
+import { dismissNotification, loadNotifications, pushNotification } from './notifications'
 import { getMode } from './funding-monitor'
 import { readConfigYaml } from './config'
 
 const POLL_INTERVAL_MS = 60_000
 const REFILL_THRESHOLD_PLUR = '5000000000000000' // 0.5 BZZ in PLUR (1 BZZ = 1e16 PLUR)
-const TARGET_DEPOSIT_PLUR = '7000000000000000' // 0.7 BZZ in PLUR
+/**
+ * Refill targets (user feedback 2026-09-21: refill churn during heavy
+ * bandwidth use — the 0.5→0.7 hysteresis re-triggered every ~0.2 xBZZ).
+ * Once the identity reserve exists we can afford real headroom (funds stay
+ * withdrawable); BEFORE it exists the small legacy target keeps the
+ * onboarding promise honest — "about 3 xBZZ" must still cover the reserve.
+ */
+const TARGET_DEPOSIT_PLUR = '7000000000000000' // 0.7 BZZ — pre-reserve (onboarding)
+const TARGET_DEPOSIT_ESTABLISHED_PLUR = '20000000000000000' // 2.0 BZZ — post-reserve
 const WALLET_RESERVE_PLUR = BigInt('5000000000000000') // 0.5 BZZ — never go below this
+
+/** Repeat "topped up" bells within a day are churn-noise; the Activity list keeps the full audit trail. */
+const NOTIFY_SUPPRESS_MS = 24 * 60 * 60_000
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let initialFundDone = false
@@ -69,8 +80,19 @@ async function checkAndFundChequebook() {
       return
     }
 
-    // Deposit up to TARGET, but never drop wallet below reserve
-    const target = BigInt(TARGET_DEPOSIT_PLUR)
+    // Deposit up to TARGET, but never drop wallet below reserve. Headroom
+    // only once the identity reserve exists — its ~2 xBZZ purchase must not
+    // lose the race for a fresh node's first funds (#130).
+    let reserveExists = false
+
+    try {
+      const { stamps } = await beeGet<{ stamps?: { label?: string }[] }>('/stamps')
+
+      reserveExists = (stamps ?? []).some(st => st.label === 'nook-system')
+    } catch {
+      // stamps unreadable — assume pre-reserve, stay conservative
+    }
+    const target = BigInt(reserveExists ? TARGET_DEPOSIT_ESTABLISHED_PLUR : TARGET_DEPOSIT_PLUR)
     const maxDeposit = walletBzz - WALLET_RESERVE_PLUR
     const depositAmount = maxDeposit < target ? maxDeposit : target
 
@@ -80,18 +102,39 @@ async function checkAndFundChequebook() {
     await beePost(`/chequebook/deposit?amount=${depositAmount}`)
     logger.info('Chequebook deposit successful')
     // Feed-only record (#138): internal rebalancing the bell should remember
-    // without interrupting anyone — no desktop notification.
-    pushNotification({
+    // without interrupting anyone — no desktop notification, and repeats
+    // within a day stay out of the bell (the Activity list still shows every
+    // deposit via the ledger match).
+    const lastFunded = loadNotifications().find(n => n.type === 'chequebook-funded')
+    const suppressBell = Boolean(lastFunded && Date.now() - lastFunded.createdAt <= NOTIFY_SUPPRESS_MS)
+    const notification = pushNotification({
       type: 'chequebook-funded',
       title: 'Bandwidth chequebook topped up',
       body: `${(Number(depositAmount / BigInt('1000000000000')) / 10_000).toFixed(2)} xBZZ moved from your wallet to the bandwidth chequebook.`,
       data: { amountPlur: depositAmount.toString() },
     })
+
+    // Repeat within a day: keep the record (the Activity ledger reads it for
+    // labels) but born-dismissed, so the bell stays quiet.
+    if (suppressBell) {
+      dismissNotification(notification.id)
+      logger.info('Chequebook refill bell suppressed (previous within 24h)')
+    }
   } catch (err) {
-    // Non-fatal — retry next interval. Chequebook may not be deployed yet during early startup.
-    logger.debug(`Chequebook monitor: ${err}`)
+    // Non-fatal — retry next interval. Chequebook may not be deployed yet
+    // during early startup, and Bee returns transient 500s while cheques
+    // settle. Log loudly once per streak so silent skips are visible.
+    if (!failureLogged) {
+      failureLogged = true
+      logger.warn(`Chequebook monitor check failed (will keep retrying quietly): ${err}`)
+    }
+
+    return
   }
+  failureLogged = false
 }
+
+let failureLogged = false
 
 /**
  * Start the chequebook monitor. Called after Bee launches.
