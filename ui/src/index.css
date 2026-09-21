@@ -118,6 +118,15 @@
 }
 
 /* Hide the multichain-widget intent description banner (info icon + text row) */
+/* Token dropdown: the widget ships the menu without a height limit, so a
+   long token list overflows the page and wheel-scrolling moves the page
+   instead of the list. Give it its own scroll, contained. */
+.multichain__select-menu {
+  max-height: 320px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 .multichain__wrapper > .multichain__row:first-child {
   display: none !important;
 }
