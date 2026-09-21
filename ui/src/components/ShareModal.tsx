@@ -19,7 +19,7 @@ import { GNOSIS_CHAIN_ID, REGISTRY_ADDRESS } from '../notify/constants'
 import { queueAndDeliver } from '../notify/deliver'
 import { createNotifyProvider } from '../notify/provider'
 import { decodeShareLink } from '../notify/share-link'
-import { addContact, isIdentityPublished, loadContacts } from '../notify/storage'
+import { addContact, isIdentityPublished, loadContacts, updateContactKeys } from '../notify/storage'
 import { type NookContact } from '../notify/types'
 import { buildShareLink } from '../hooks/useSharedDrives'
 import { wagmiConfig } from '../wagmi'
@@ -125,6 +125,9 @@ export default function ShareModal({
   const [notifyOnGrant, setNotifyOnGrant] = useState(true)
   const [onChainStatus, setOnChainStatus] = useState<Record<string, NotifyStatus>>({})
   const [pingSkippedNote, setPingSkippedNote] = useState<string | null>(null)
+  // A grant silently switched to the contact's CURRENT sharing key (their
+  // cached one was stale — reinstall). Info, never an error.
+  const [keyRefreshNote, setKeyRefreshNote] = useState<string | null>(null)
   // Legacy: older grantees were saved with manual labels before contacts existed.
   // Read-only fallback for displaying their names; new grants pull from contacts.
   const [labels, setLabels] = useState<Record<string, string>>(() => {
@@ -198,6 +201,32 @@ export default function ShareModal({
         onGranteeCount?.(result.grantees.filter(g => !isMyKey(g)).length + 1)
       })
       .catch(() => setGrantees([]))
+  }
+
+  /**
+   * Re-resolve a cached contact's identity and, if their sharing key changed
+   * (reinstall regenerates the bee node key), persist the fresh keys and
+   * return the updated contact. Returns null when the key is current or the
+   * lookup fails — the caller keeps the cached key.
+   */
+  async function refreshStaleContactKey(cached: NookContact, cachedKey: string): Promise<NookContact | null> {
+    try {
+      const fresh = await identity.resolve(bee, cached.id)
+
+      if (!fresh || stripKeyPrefix(fresh.beePublicKey) === stripKeyPrefix(cachedKey)) return null
+      updateContactKeys(contacts, cached.id, {
+        walletPublicKey: fresh.walletPublicKey,
+        beePublicKey: fresh.beePublicKey,
+      })
+      setContacts(loadContacts())
+      setKeyRefreshNote(
+        `${cached.nickname}'s sharing key changed (they probably reinstalled) — shared to their current key.`,
+      )
+
+      return { ...cached, walletPublicKey: fresh.walletPublicKey, beePublicKey: fresh.beePublicKey }
+    } catch {
+      return null
+    }
   }
 
   async function handleGrant() {
@@ -302,6 +331,20 @@ export default function ShareModal({
         setError('Paste a Nook address, a contact link (nook://contact…), or a hex sharing key.')
 
         return
+      } else {
+        // Raw sharing key — usually a click on a contact suggestion. Cached
+        // keys go stale when the contact reinstalls (wallet-derived id
+        // survives, bee node key is regenerated), and a grant to a dead key
+        // fails silently for the recipient. Re-resolve their identity and
+        // prefer the network's current key; best-effort — the cached key
+        // still grants if the lookup fails.
+        const cached = contactsForNodeKey(contacts, key)[0]
+        const refreshed = cached && isEthAddress(cached.id) ? await refreshStaleContactKey(cached, key) : null
+
+        if (refreshed) {
+          key = refreshed.beePublicKey
+          grantedContact = refreshed
+        }
       }
 
       // Already has access — don't re-grant (avoids a redundant ACT op and a
@@ -937,6 +980,11 @@ export default function ShareModal({
         {pingSkippedNote && !error && (
           <p className="text-xs" style={{ color: '#f59e0b' }}>
             {pingSkippedNote}
+          </p>
+        )}
+        {keyRefreshNote && !error && (
+          <p className="text-xs" style={{ color: '#f59e0b' }}>
+            {keyRefreshNote}
           </p>
         )}
 

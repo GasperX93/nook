@@ -66,6 +66,23 @@ export function renameContact(contacts: NookContact[], id: string, nickname: str
   return updated
 }
 
+/**
+ * Update a contact's public keys after a fresh identity resolution. Keys go
+ * stale when the contact reinstalls: the wallet-derived id survives but the
+ * bee node key is regenerated, so grants against the cached key are dead.
+ */
+export function updateContactKeys(
+  contacts: NookContact[],
+  id: string,
+  keys: { walletPublicKey: string; beePublicKey: string },
+): NookContact[] {
+  const updated = contacts.map(c => (c.id.toLowerCase() === id.toLowerCase() ? { ...c, ...keys } : c))
+
+  saveContacts(updated)
+
+  return updated
+}
+
 /** Remove a contact by id (case-insensitive). */
 export function removeContact(contacts: NookContact[], id: string): NookContact[] {
   const updated = contacts.filter(c => c.id.toLowerCase() !== id.toLowerCase())
