@@ -648,9 +648,15 @@ function FileRow({
           </a>
         )}
         {downloadPct !== null ? (
-          <span className="text-[10px] tabular-nums px-1" style={{ color: 'rgb(var(--fg-muted))' }}>
-            {downloadPct}%
-          </span>
+          downloadPct > 0 ? (
+            <span className="text-[10px] tabular-nums px-1" style={{ color: 'rgb(var(--fg-muted))' }}>
+              {downloadPct}%
+            </span>
+          ) : (
+            <span title="Preparing download…" className="w-6 h-6 flex items-center justify-center shrink-0">
+              <RefreshCw size={12} className="animate-spin" style={{ color: 'rgb(var(--accent))' }} />
+            </span>
+          )
         ) : (
           <button
             onClick={() => void handleDownload()}

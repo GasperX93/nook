@@ -6,8 +6,8 @@
 import { Bee } from '@ethersphere/bee-js'
 import { identity, registry } from '@swarm-notify/sdk'
 import { Bell, Copy, Check, Lock, RefreshCw, Trash2, Users, X } from 'lucide-react'
-import { useMemo, useState } from 'react'
-import { getWalletClient, switchChain } from '@wagmi/core'
+import { useEffect, useRef, useMemo, useState } from 'react'
+import { getBalance, getWalletClient, switchChain } from '@wagmi/core'
 import { useWalletClient } from 'wagmi'
 
 import { topicFromString, waitForRetrievable } from '../api/bee'
@@ -65,6 +65,12 @@ interface ShareModalProps {
    * grant/revoke math can drift when operations race the async list load.
    */
   onGranteeCount?: (n: number) => void
+  /**
+   * Fire the bulk update-notification automatically once the grantee list is
+   * loaded (#135 — the drive's "Notify recipients" prompt lands here so the
+   * whole flow is one click, with the per-recipient badges as feedback).
+   */
+  autoNotify?: boolean
 }
 
 function isValidPublicKey(key: string): boolean {
@@ -95,6 +101,7 @@ export default function ShareModal({
   onRepublish,
   onWrapperRef,
   onGranteeCount,
+  autoNotify,
 }: ShareModalProps) {
   const { signer } = useDerivedKey()
   const { data: walletClient } = useWalletClient()
@@ -117,6 +124,7 @@ export default function ShareModal({
   // Notify the recipient in Messages as part of granting (one-step share).
   const [notifyOnGrant, setNotifyOnGrant] = useState(true)
   const [onChainStatus, setOnChainStatus] = useState<Record<string, NotifyStatus>>({})
+  const [pingSkippedNote, setPingSkippedNote] = useState<string | null>(null)
   // Legacy: older grantees were saved with manual labels before contacts existed.
   // Read-only fallback for displaying their names; new grants pull from contacts.
   const [labels, setLabels] = useState<Record<string, string>>(() => {
@@ -481,6 +489,48 @@ export default function ShareModal({
     return contactsForNodeKey(contacts, granteeKey).length > 1
   }
 
+  /** Every notifiable grantee (in contacts, has ECDH key, not me), deduped. */
+  function collectNotifyTargets(): NookContact[] {
+    const seen = new Set<string>()
+    const targets: NookContact[] = []
+
+    for (const key of grantees) {
+      if (isMyKey(key)) continue
+      const contact = contactForGrantee(key)
+
+      if (!contact?.walletPublicKey || seen.has(contact.id)) continue
+      seen.add(contact.id)
+      targets.push(contact)
+    }
+
+    return targets
+  }
+
+  const anySending = Object.values(notifyStatus).includes('sending')
+
+  async function notifyEveryone() {
+    const targets = collectNotifyTargets()
+
+    if (targets.length === 0 || anySending) return
+    setError(null)
+    const fail = await notifyContacts(targets, sendOnChain)
+
+    if (fail) setError(fail)
+  }
+
+  // One-click flow from the drive's "Notify recipients" prompt (#135):
+  // fire the bulk send as soon as the grantee list has loaded.
+  const autoNotifyFired = useRef(false)
+
+  useEffect(() => {
+    if (!autoNotify || autoNotifyFired.current) return
+
+    if (grantees.length === 0 || !signer) return
+    autoNotifyFired.current = true
+    void notifyEveryone()
+    // eslint-disable-next-line
+  }, [autoNotify, grantees, signer])
+
   /**
    * Send the drive-share to an explicit set of contacts (each must carry a
    * walletPublicKey for ECDH). Refreshes the feed once, then per-recipient
@@ -512,15 +562,41 @@ export default function ShareModal({
 
     // For the on-chain wake-up, switch to Gnosis just-in-time and re-fetch the
     // wallet client (stale across a chain switch — same pattern as ENSModal).
+    // The ping is OPTIONAL (#132): the mailbox share needs no gas and must
+    // complete regardless — a cancelled chain switch, a missing wallet, or an
+    // empty xDAI balance skips the ping with a note, never blocks the share.
     let provider = null
+    let pingSkipReason: string | null = null
 
     if (doOnChain && walletClient) {
-      if (walletClient.chain?.id !== GNOSIS_CHAIN_ID) {
-        await switchChain(wagmiConfig, { chainId: GNOSIS_CHAIN_ID })
-      }
-      const gnosisClient = await getWalletClient(wagmiConfig, { chainId: GNOSIS_CHAIN_ID })
+      try {
+        if (walletClient.chain?.id !== GNOSIS_CHAIN_ID) {
+          await switchChain(wagmiConfig, { chainId: GNOSIS_CHAIN_ID })
+        }
+        const gnosisClient = await getWalletClient(wagmiConfig, { chainId: GNOSIS_CHAIN_ID })
+        const balance = await getBalance(wagmiConfig, {
+          address: gnosisClient.account.address,
+          chainId: GNOSIS_CHAIN_ID,
+        })
 
-      provider = createNotifyProvider(gnosisClient)
+        // Rough gas need for the registry call — skip cleanly instead of
+        // letting the wallet prompt a transaction that cannot be paid.
+        if (balance.value < BigInt('200000000000000')) {
+          pingSkipReason = 'Your wallet has no xDAI for the on-chain heads-up.'
+        } else {
+          provider = createNotifyProvider(gnosisClient)
+        }
+      } catch {
+        pingSkipReason = 'Wallet not ready for the on-chain heads-up (chain switch declined or unavailable).'
+      }
+    } else if (doOnChain && !walletClient) {
+      pingSkipReason = 'Connect a wallet to also send on-chain heads-ups.'
+    }
+
+    if (pingSkipReason) {
+      setPingSkippedNote(
+        `Shared without the on-chain heads-up: ${pingSkipReason} Recipients still receive everything in Nook.`,
+      )
     }
 
     let lastFailMsg: string | null = null
@@ -561,7 +637,7 @@ export default function ShareModal({
         } catch (e) {
           // eslint-disable-next-line no-console
           console.error(`On-chain notify ${contact.nickname} failed:`, e)
-          lastFailMsg = (e as Error).message ?? 'on-chain send failed'
+          lastFailMsg = `Drive shared, but the on-chain heads-up failed (${(e as Error).message ?? 'send failed'}) — recipients still receive it in Nook.`
           setOnChainStatus(prev => ({ ...prev, [contact.id]: 'failed' }))
         }
       }
@@ -598,6 +674,18 @@ export default function ShareModal({
             <Users size={10} className="inline mr-1" />
             People with access
           </p>
+          {collectNotifyTargets().length > 0 && (
+            <button
+              onClick={async () => notifyEveryone()}
+              disabled={anySending}
+              className="mb-2 flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors hover:bg-white/5"
+              style={{ borderColor: 'rgb(var(--border))', color: 'rgb(var(--fg))' }}
+              title="Send the updated drive to everyone with access, in one step"
+            >
+              {anySending ? <RefreshCw size={11} className="animate-spin" /> : <Bell size={11} />}
+              Notify everyone of updates
+            </button>
+          )}
           <div
             className="rounded-lg border divide-y max-h-40 overflow-auto"
             style={{ borderColor: 'rgb(var(--border))' }}
@@ -842,6 +930,13 @@ export default function ShareModal({
         {error && (
           <p className="text-xs" style={{ color: '#ef4444' }}>
             {error}
+          </p>
+        )}
+        {/* The share succeeded; only the optional on-chain heads-up was
+            skipped (#132) — amber info, never an error. */}
+        {pingSkippedNote && !error && (
+          <p className="text-xs" style={{ color: '#f59e0b' }}>
+            {pingSkippedNote}
           </p>
         )}
 
