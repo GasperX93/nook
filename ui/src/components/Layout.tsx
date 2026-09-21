@@ -18,6 +18,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useDisconnect } from 'wagmi'
 import { weiToDai } from '../api/bee'
+import { resumePendingPropagation } from '../store/transfers'
+import TransferIndicator from './TransferIndicator'
 import {
   useReclaimableDrives,
   useBeeHealth,
@@ -188,6 +190,12 @@ export default function Layout() {
   // and keeps retrying failed ones, whichever page is open.
   useOutboxDrain()
 
+  // Re-attach to propagations interrupted by a quit — tags live on the Bee
+  // node, so an unfinished network push resumes visibly (#5).
+  useEffect(() => {
+    resumePendingPropagation()
+  }, [])
+
   // Unlock notification audio on the first user gesture so a background chirp
   // (e.g. an incoming invitation) isn't silently blocked by autoplay policy.
   useEffect(() => {
@@ -343,6 +351,8 @@ export default function Layout() {
           </SidebarSection>
 
           <SidebarSpacer />
+          {/* Active uploads/downloads — visible from every page (#5) */}
+          <TransferIndicator />
           <SidebarSeparator />
           <SidebarFooter>
             <SidebarSection>

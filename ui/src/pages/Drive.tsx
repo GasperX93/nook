@@ -43,7 +43,6 @@ import {
   stampFillRatio,
   topicFromString,
   waitForRetrievable,
-  waitForTagPropagation,
   type Stamp,
 } from '../api/bee'
 import { type AutoExtendEntry, serverApi } from '../api/server'
@@ -57,6 +56,8 @@ import {
   useWallet,
 } from '../api/queries'
 import { useAppStore } from '../store/app'
+import { followTagPropagation, useTransfersStore } from '../store/transfers'
+import PropagationVisual from '../components/PropagationVisual'
 import { useDerivedKey } from '../hooks/useDerivedKey'
 import { useDriveMetadata } from '../hooks/useDriveMetadata'
 import { useSharedDrives } from '../hooks/useSharedDrives'
@@ -1844,6 +1845,12 @@ function AddFilePanel({
   const [error, setError] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
   const [dragging, setDragging] = useState(false)
+  // Stage-2 propagation is tracked in the global transfers store (#4/#5) —
+  // this only remembers WHICH entry belongs to this panel's current upload.
+  const [propagationTagUid, setPropagationTagUid] = useState<number | null>(null)
+  const propagationTransfer = useTransfersStore(state =>
+    propagationTagUid === null ? undefined : state.transfers.find(t => t.id === `tag:${propagationTagUid}`),
+  )
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const dirInputRef = useRef<HTMLInputElement>(null)
@@ -1937,10 +1944,16 @@ function AddFilePanel({
       // check for encrypted drives happens on the public metadata WRAPPER
       // below (the first thing recipients resolve).
       if (!encrypted && uploadTagUid !== undefined) {
-        // #92 stage 2: follow the tag until the content is on the network.
+        // #92 stage 2: follow the tag until the content is on the network —
+        // through the global tracker (#4/#5), so the progress survives
+        // navigation, feeds the sidebar indicator + propagation visual, and
+        // rings the bell on completion.
         setPhase('Propagating to network…')
         setProgress(0)
-        const { complete } = await waitForTagPropagation(uploadTagUid, pct => setProgress(pct))
+        setPropagationTagUid(uploadTagUid)
+        const { complete } = await followTagPropagation(uploadTagUid, name, driveId, pct => setProgress(pct))
+
+        setPropagationTagUid(null)
 
         if (!complete) setPhase('Still propagating in the background…')
       }
@@ -2080,13 +2093,19 @@ function AddFilePanel({
             {phase || 'Preparing…'}
           </p>
         </div>
-        {progress !== null && (
-          <div className="h-1 rounded-full" style={{ backgroundColor: 'rgb(var(--border))' }}>
-            <div
-              className="h-1 rounded-full transition-all"
-              style={{ width: `${progress}%`, backgroundColor: 'rgb(var(--accent))' }}
-            />
-          </div>
+        {/* Stage 2 (#4): the propagation gets the full honest visual — real
+            chunk counts, coarse ETA, dots moving at the network's real pace. */}
+        {propagationTransfer ? (
+          <PropagationVisual transfer={propagationTransfer} />
+        ) : (
+          progress !== null && (
+            <div className="h-1 rounded-full" style={{ backgroundColor: 'rgb(var(--border))' }}>
+              <div
+                className="h-1 rounded-full transition-all"
+                style={{ width: `${progress}%`, backgroundColor: 'rgb(var(--accent))' }}
+              />
+            </div>
+          )
         )}
       </div>
     )
@@ -2499,8 +2518,14 @@ export default function Drive() {
   const [addingFile, setAddingFile] = useState(false)
   const [search, setSearch] = useState('')
   const [copiedId, setCopiedId] = useState<string | null>(null)
-  const [downloadingId, setDownloadingId] = useState<string | null>(null)
-  const [downloadPct, setDownloadPct] = useState<number | null>(null)
+  // Downloads live in the global transfers store (#5): the fetch keeps
+  // updating the store after navigation, so a revisit re-attaches instead of
+  // showing an idle row while bytes are still flowing.
+  const activeDownload = useTransfersStore(state =>
+    state.transfers.find(t => t.kind === 'download' && t.status === 'active' && t.id.startsWith('dl:')),
+  )
+  const downloadingId = activeDownload ? activeDownload.id.slice(3) : null
+  const downloadPct = activeDownload ? activeDownload.pct : null
   const [updatingId, setUpdatingId] = useState<string | null>(null)
   const [ensRecordId, setEnsRecordId] = useState<string | null>(null)
 
@@ -2619,8 +2644,11 @@ export default function Drive() {
   }
 
   async function handleDownload(id: string, hash: string, name: string) {
-    setDownloadingId(id)
-    setDownloadPct(0)
+    const transferId = `dl:${id}`
+    const transfers = useTransfersStore.getState()
+
+    transfers.begin({ id: transferId, kind: 'download', name, phase: 'Downloading…' })
+    transfers.update(transferId, { pct: 0 })
     try {
       // Check if file is encrypted — find the record and its drive metadata
       const record = records.find(r => r.id === id)
@@ -2629,15 +2657,14 @@ export default function Drive() {
           ? { actPublisher: record.actPublisher, actHistoryRef: record.actHistoryRef }
           : undefined
 
-      await downloadFromSwarm(hash, name, pct => setDownloadPct(pct), actOptions)
+      await downloadFromSwarm(hash, name, pct => useTransfersStore.getState().update(transferId, { pct }), actOptions)
+      useTransfersStore.getState().finish(transferId)
     } catch (error) {
+      useTransfersStore.getState().finish(transferId, 'failed')
       // Surface failures (#105) — a silent catch here left users with no
       // feedback when a download stalled or errored mid-stream.
       // eslint-disable-next-line no-alert
       alert(error instanceof Error ? error.message : 'Download failed — please try again.')
-    } finally {
-      setDownloadingId(null)
-      setDownloadPct(null)
     }
   }
 

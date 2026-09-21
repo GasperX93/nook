@@ -1,5 +1,6 @@
-import { beeApi, topicFromString, waitForTagPropagation } from '../api/bee'
+import { beeApi, topicFromString } from '../api/bee'
 import { serverApi } from '../api/server'
+import { followTagPropagation } from '../store/transfers'
 import { detectIndexDocument, type FileEntry } from '../utils/directory'
 import { useUploadHistory } from './useUploadHistory'
 
@@ -169,7 +170,9 @@ export function useUpload() {
     if (uploadTagUid !== undefined && !encrypted) {
       onPhase?.('Propagating to network…')
       onProgress?.(0)
-      const { complete } = await waitForTagPropagation(uploadTagUid, pct => onProgress?.(pct))
+      // Global tracker (#4/#5): survives navigation, feeds the sidebar
+      // indicator, rings the bell on completion.
+      const { complete } = await followTagPropagation(uploadTagUid, name, driveId, pct => onProgress?.(pct))
 
       if (!complete) {
         onPhase?.('Still propagating in the background…')

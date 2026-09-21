@@ -166,3 +166,48 @@
 .multichain__button-icon svg [fill='white'] {
   fill: currentColor !important;
 }
+
+/* Propagation visual (#4 batch): dots streaming file → network. Speed is
+   driven inline by the real confirmed-chunk rate; paused = nothing landing.
+   Reduced-motion users get the numbers without the motion. */
+.nook-propagation-track {
+  border-bottom: 1px dashed rgb(var(--border));
+}
+.nook-propagation-dot {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 5px;
+  height: 5px;
+  margin-top: -2.5px;
+  border-radius: 9999px;
+  background-color: rgb(var(--accent));
+  opacity: 0;
+  animation-name: nook-propagate;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+@keyframes nook-propagate {
+  0% {
+    transform: translateX(0);
+    opacity: 0;
+  }
+  10% {
+    opacity: 0.9;
+  }
+  90% {
+    opacity: 0.9;
+  }
+  100% {
+    transform: translateX(calc(100cqw - 5px));
+    opacity: 0;
+  }
+}
+.nook-propagation-track {
+  container-type: inline-size;
+}
+@media (prefers-reduced-motion: reduce) {
+  .nook-propagation-dot {
+    display: none;
+  }
+}
