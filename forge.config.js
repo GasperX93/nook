@@ -22,7 +22,7 @@ const config = {
     // Inherited from the swarm-desktop fork but MUST NOT change: it is the
     // installed app's macOS identity — changing it breaks auto-update pairing
     // and Gatekeeper/notarization continuity for existing installs (#76).
-    appBundleId: 'org.ethswarm.nook',
+    appBundleId: 'si.nook.app',
     protocols: [
       {
         name: 'Nook Contact',
@@ -120,14 +120,6 @@ const config = {
       /^\/node_modules\/typescript/,
       /^\/node_modules\/undici-types/,
     ],
-    // TODO: Re-enable when Apple Developer certificate is available
-    // osxSign: {
-    //   identity: 'Developer ID Application: Swarm Association (9J9SPHU9RP)',
-    //   hardenedRuntime: true,
-    //   'gatekeeper-assess': false,
-    //   entitlements: 'assets/entitlements.plist',
-    //   'entitlements-inherit': 'assets/entitlements.plist',
-    // },
   },
   electronInstallerDebian: {
     bin: 'Nook',
@@ -190,31 +182,50 @@ const config = {
   ],
 }
 
-function notarizeMaybe() {
+// macOS signing + notarization (issue #9). Both are gated on the Developer ID
+// certificate being present in the keychain, so dev builds on machines
+// without it stay unsigned and fast. Notarization additionally needs the
+// one-time `xcrun notarytool store-credentials nook-notary …` setup; skip it
+// for a quick signed-only build with NOOK_SKIP_NOTARIZE=1.
+const SIGNING_IDENTITY = 'Developer ID Application: Gasper Zupan (6BYBR6VWCP)'
+
+function signAndNotarizeMaybe() {
   if (process.platform !== 'darwin') {
     return
   }
 
-  if (!process.env.CI) {
-    console.log(`Not in CI, skipping notarization`)
+  let hasCert = false
+  try {
+    const out = require('child_process').execSync('security find-identity -v -p codesigning', { encoding: 'utf-8' })
+    hasCert = out.includes(SIGNING_IDENTITY)
+  } catch {
+    // security not available — treat as no cert
+  }
+
+  if (!hasCert) {
+    console.log('No Developer ID certificate in keychain — building unsigned')
     return
   }
 
-  if (!process.env.APPLE_ID || !process.env.APPLE_ID_PASSWORD) {
-    console.warn('Should be notarizing, but environment variables APPLE_ID or APPLE_ID_PASSWORD are missing!')
+  config.packagerConfig.osxSign = {
+    identity: SIGNING_IDENTITY,
+    optionsForFile: () => ({
+      hardenedRuntime: true,
+      entitlements: 'assets/entitlements.plist',
+    }),
+  }
+
+  if (process.env.NOOK_SKIP_NOTARIZE) {
+    console.log('NOOK_SKIP_NOTARIZE set — signing only')
     return
   }
 
   config.packagerConfig.osxNotarize = {
     tool: 'notarytool',
-    appBundleId: 'org.ethswarm.nook',
-    appleId: process.env.APPLE_ID,
-    appleIdPassword: process.env.APPLE_ID_PASSWORD,
-    ascProvider: '9J9SPHU9RP',
-    teamId: '9J9SPHU9RP',
+    keychainProfile: 'nook-notary',
   }
 }
 
-notarizeMaybe()
+signAndNotarizeMaybe()
 
 module.exports = config
