@@ -1266,9 +1266,17 @@ function RecordRow({
           </a>
         )}
         {downloadingId === record.id && downloadPct !== null ? (
-          <span className="text-[10px] tabular-nums px-1 shrink-0" style={{ color: 'rgb(var(--accent))' }}>
-            {downloadPct}%
-          </span>
+          downloadPct > 0 ? (
+            <span className="text-[10px] tabular-nums px-1 shrink-0" style={{ color: 'rgb(var(--accent))' }}>
+              {downloadPct}%
+            </span>
+          ) : (
+            // 0% = the gap before the first byte (Bee assembling the file) —
+            // a static "0%" reads as nothing happening; motion doesn't (#136).
+            <span title="Preparing download…" className="w-6 h-6 flex items-center justify-center shrink-0">
+              <RefreshCw size={12} className="animate-spin" style={{ color: 'rgb(var(--accent))' }} />
+            </span>
+          )
         ) : (
           <button
             onClick={() => onDownload(record.id, record.hash, record.name)}
