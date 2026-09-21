@@ -7,7 +7,7 @@ import { Bee } from '@ethersphere/bee-js'
 import { identity, registry } from '@swarm-notify/sdk'
 import { Bell, Copy, Check, Lock, RefreshCw, Trash2, Users, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import { getWalletClient, switchChain } from '@wagmi/core'
+import { getBalance, getWalletClient, switchChain } from '@wagmi/core'
 import { useWalletClient } from 'wagmi'
 
 import { topicFromString, waitForRetrievable } from '../api/bee'
@@ -117,6 +117,7 @@ export default function ShareModal({
   // Notify the recipient in Messages as part of granting (one-step share).
   const [notifyOnGrant, setNotifyOnGrant] = useState(true)
   const [onChainStatus, setOnChainStatus] = useState<Record<string, NotifyStatus>>({})
+  const [pingSkippedNote, setPingSkippedNote] = useState<string | null>(null)
   // Legacy: older grantees were saved with manual labels before contacts existed.
   // Read-only fallback for displaying their names; new grants pull from contacts.
   const [labels, setLabels] = useState<Record<string, string>>(() => {
@@ -512,15 +513,41 @@ export default function ShareModal({
 
     // For the on-chain wake-up, switch to Gnosis just-in-time and re-fetch the
     // wallet client (stale across a chain switch — same pattern as ENSModal).
+    // The ping is OPTIONAL (#132): the mailbox share needs no gas and must
+    // complete regardless — a cancelled chain switch, a missing wallet, or an
+    // empty xDAI balance skips the ping with a note, never blocks the share.
     let provider = null
+    let pingSkipReason: string | null = null
 
     if (doOnChain && walletClient) {
-      if (walletClient.chain?.id !== GNOSIS_CHAIN_ID) {
-        await switchChain(wagmiConfig, { chainId: GNOSIS_CHAIN_ID })
-      }
-      const gnosisClient = await getWalletClient(wagmiConfig, { chainId: GNOSIS_CHAIN_ID })
+      try {
+        if (walletClient.chain?.id !== GNOSIS_CHAIN_ID) {
+          await switchChain(wagmiConfig, { chainId: GNOSIS_CHAIN_ID })
+        }
+        const gnosisClient = await getWalletClient(wagmiConfig, { chainId: GNOSIS_CHAIN_ID })
+        const balance = await getBalance(wagmiConfig, {
+          address: gnosisClient.account.address,
+          chainId: GNOSIS_CHAIN_ID,
+        })
 
-      provider = createNotifyProvider(gnosisClient)
+        // Rough gas need for the registry call — skip cleanly instead of
+        // letting the wallet prompt a transaction that cannot be paid.
+        if (balance.value < BigInt('200000000000000')) {
+          pingSkipReason = 'Your wallet has no xDAI for the on-chain heads-up.'
+        } else {
+          provider = createNotifyProvider(gnosisClient)
+        }
+      } catch {
+        pingSkipReason = 'Wallet not ready for the on-chain heads-up (chain switch declined or unavailable).'
+      }
+    } else if (doOnChain && !walletClient) {
+      pingSkipReason = 'Connect a wallet to also send on-chain heads-ups.'
+    }
+
+    if (pingSkipReason) {
+      setPingSkippedNote(
+        `Shared without the on-chain heads-up: ${pingSkipReason} Recipients still receive everything in Nook.`,
+      )
     }
 
     let lastFailMsg: string | null = null
@@ -561,7 +588,7 @@ export default function ShareModal({
         } catch (e) {
           // eslint-disable-next-line no-console
           console.error(`On-chain notify ${contact.nickname} failed:`, e)
-          lastFailMsg = (e as Error).message ?? 'on-chain send failed'
+          lastFailMsg = `Drive shared, but the on-chain heads-up failed (${(e as Error).message ?? 'send failed'}) — recipients still receive it in Nook.`
           setOnChainStatus(prev => ({ ...prev, [contact.id]: 'failed' }))
         }
       }
@@ -842,6 +869,13 @@ export default function ShareModal({
         {error && (
           <p className="text-xs" style={{ color: '#ef4444' }}>
             {error}
+          </p>
+        )}
+        {/* The share succeeded; only the optional on-chain heads-up was
+            skipped (#132) — amber info, never an error. */}
+        {pingSkippedNote && !error && (
+          <p className="text-xs" style={{ color: '#f59e0b' }}>
+            {pingSkippedNote}
           </p>
         )}
 
