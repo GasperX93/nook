@@ -2467,6 +2467,9 @@ export default function Drive() {
   const [expiredOpen, setExpiredOpen] = useState(false)
   const [showExtendModal, setShowExtendModal] = useState<string | null>(null) // batchID
   const [showShareModal, setShowShareModal] = useState<string | null>(null) // batchID
+  // #135: when the "Notify recipients" prompt opens the modal, the bulk
+  // update-notification fires automatically — one click, badges as feedback.
+  const [shareAutoNotify, setShareAutoNotify] = useState(false)
   // After adding a file to a drive that's shared with others, prompt to notify them.
   const [updatedSharedDrive, setUpdatedSharedDrive] = useState(false)
   // Re-publish (re-encrypt under current ACT) progress, keyed nowhere — only one runs at a time.
@@ -2879,6 +2882,7 @@ export default function Drive() {
 
             return (
               <ShareModal
+                autoNotify={shareAutoNotify}
                 driveName={stamp?.label || customDriveLabels[showShareModal] || 'Encrypted drive'}
                 stampId={showShareModal}
                 actPublisher={meta?.actPublisher || firstRef?.actPublisher}
@@ -2889,7 +2893,10 @@ export default function Drive() {
                 files={driveRecordsForShare
                   .filter(r => r.actHistoryRef && r.actPublisher)
                   .map(r => ({ name: r.name, reference: r.hash, historyRef: r.actHistoryRef!, size: r.size }))}
-                onClose={() => setShowShareModal(null)}
+                onClose={() => {
+                  setShowShareModal(null)
+                  setShareAutoNotify(false)
+                }}
                 onWrapperRef={ref => driveMetadata.update(showShareModal, { lastWrapperRef: ref })}
                 onGranteeCount={n => driveMetadata.update(showShareModal, { granteeCount: n })}
                 onUpdate={({ granteeRef, historyRef, granteeCount, keyRotated }) => {
@@ -3255,6 +3262,7 @@ export default function Drive() {
           <div className="flex items-center gap-3 shrink-0">
             <button
               onClick={() => {
+                setShareAutoNotify(true)
                 setShowShareModal(activeDriveId)
                 setUpdatedSharedDrive(false)
               }}
@@ -3473,6 +3481,7 @@ export default function Drive() {
 
           return (
             <ShareModal
+              autoNotify={shareAutoNotify}
               driveName={stamp?.label || customDriveLabels[showShareModal] || 'Encrypted drive'}
               stampId={showShareModal}
               actPublisher={meta?.actPublisher || firstRef?.actPublisher}
@@ -3483,7 +3492,10 @@ export default function Drive() {
               files={driveRecordsForShare
                 .filter(r => r.actHistoryRef && r.actPublisher)
                 .map(r => ({ name: r.name, reference: r.hash, historyRef: r.actHistoryRef!, size: r.size }))}
-              onClose={() => setShowShareModal(null)}
+              onClose={() => {
+                setShowShareModal(null)
+                setShareAutoNotify(false)
+              }}
               onWrapperRef={ref => driveMetadata.update(showShareModal, { lastWrapperRef: ref })}
               onGranteeCount={n => driveMetadata.update(showShareModal, { granteeCount: n })}
               onUpdate={({ granteeRef, historyRef, granteeCount, keyRotated }) => {

@@ -6,7 +6,7 @@
 import { Bee } from '@ethersphere/bee-js'
 import { identity, registry } from '@swarm-notify/sdk'
 import { Bell, Copy, Check, Lock, RefreshCw, Trash2, Users, X } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useRef, useMemo, useState } from 'react'
 import { getBalance, getWalletClient, switchChain } from '@wagmi/core'
 import { useWalletClient } from 'wagmi'
 
@@ -65,6 +65,12 @@ interface ShareModalProps {
    * grant/revoke math can drift when operations race the async list load.
    */
   onGranteeCount?: (n: number) => void
+  /**
+   * Fire the bulk update-notification automatically once the grantee list is
+   * loaded (#135 — the drive's "Notify recipients" prompt lands here so the
+   * whole flow is one click, with the per-recipient badges as feedback).
+   */
+  autoNotify?: boolean
 }
 
 function isValidPublicKey(key: string): boolean {
@@ -95,6 +101,7 @@ export default function ShareModal({
   onRepublish,
   onWrapperRef,
   onGranteeCount,
+  autoNotify,
 }: ShareModalProps) {
   const { signer } = useDerivedKey()
   const { data: walletClient } = useWalletClient()
@@ -482,6 +489,48 @@ export default function ShareModal({
     return contactsForNodeKey(contacts, granteeKey).length > 1
   }
 
+  /** Every notifiable grantee (in contacts, has ECDH key, not me), deduped. */
+  function collectNotifyTargets(): NookContact[] {
+    const seen = new Set<string>()
+    const targets: NookContact[] = []
+
+    for (const key of grantees) {
+      if (isMyKey(key)) continue
+      const contact = contactForGrantee(key)
+
+      if (!contact?.walletPublicKey || seen.has(contact.id)) continue
+      seen.add(contact.id)
+      targets.push(contact)
+    }
+
+    return targets
+  }
+
+  const anySending = Object.values(notifyStatus).includes('sending')
+
+  async function notifyEveryone() {
+    const targets = collectNotifyTargets()
+
+    if (targets.length === 0 || anySending) return
+    setError(null)
+    const fail = await notifyContacts(targets, sendOnChain)
+
+    if (fail) setError(fail)
+  }
+
+  // One-click flow from the drive's "Notify recipients" prompt (#135):
+  // fire the bulk send as soon as the grantee list has loaded.
+  const autoNotifyFired = useRef(false)
+
+  useEffect(() => {
+    if (!autoNotify || autoNotifyFired.current) return
+
+    if (grantees.length === 0 || !signer) return
+    autoNotifyFired.current = true
+    void notifyEveryone()
+    // eslint-disable-next-line
+  }, [autoNotify, grantees, signer])
+
   /**
    * Send the drive-share to an explicit set of contacts (each must carry a
    * walletPublicKey for ECDH). Refreshes the feed once, then per-recipient
@@ -625,6 +674,18 @@ export default function ShareModal({
             <Users size={10} className="inline mr-1" />
             People with access
           </p>
+          {collectNotifyTargets().length > 0 && (
+            <button
+              onClick={async () => notifyEveryone()}
+              disabled={anySending}
+              className="mb-2 flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors hover:bg-white/5"
+              style={{ borderColor: 'rgb(var(--border))', color: 'rgb(var(--fg))' }}
+              title="Send the updated drive to everyone with access, in one step"
+            >
+              {anySending ? <RefreshCw size={11} className="animate-spin" /> : <Bell size={11} />}
+              Notify everyone of updates
+            </button>
+          )}
           <div
             className="rounded-lg border divide-y max-h-40 overflow-auto"
             style={{ borderColor: 'rgb(var(--border))' }}
