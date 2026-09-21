@@ -312,6 +312,9 @@ export const serverApi = {
 
   getNotifications: async () => serverGet<{ notifications: NookNotification[] }>('/notifications'),
 
+  getUpdateInfo: async () =>
+    serverGet<{ current: string; latest: string | null; url: string | null; updateAvailable: boolean }>('/update'),
+
   markNotificationsRead: async (ids?: string[]) => {
     const response = await fetch('/notifications/read', {
       method: 'POST',

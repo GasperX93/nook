@@ -1,8 +1,9 @@
 /**
- * "Make me findable" consent (#130/#131) — collected during onboarding's
- * identity card, honored by useAutoPublish once the reserved space exists.
- * Defaults to ON (pre-ticked): being findable is the point of an identity,
- * and the checkbox is the explicit opt-out.
+ * "Keep me findable" consent (#130/#131) — honored by useAutoPublish once
+ * the reserved space exists. Defaults to ON: being findable is the point of
+ * an identity; onboarding says so in a sentence, and the explicit opt-out
+ * toggle lives on Account → Identity (post-test feedback: no checkbox at
+ * creation time).
  */
 
 const KEY = 'nook:auto-publish-consent'
