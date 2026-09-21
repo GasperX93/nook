@@ -2527,15 +2527,23 @@ export default function Drive() {
   // Re-encrypt + re-upload a drive's files under its current ACT, then refresh
   // the shared metadata feed. Fixes access after a revoke rotated the key, and
   // pushes any deferred-only content onto the network. Clears the keyRotated flag.
-  async function handleRepublish(driveId: string) {
+  async function handleRepublish(driveId: string, historyOverride?: string) {
     const meta = driveMetadata.get(driveId)
     const driveRecords = records.filter(r => r.driveId === driveId)
+
+    // Auto-run after a revoke: an empty drive has nothing to re-encrypt —
+    // skip silently instead of surfacing "nothing to re-publish" as an error.
+    if (historyOverride && !driveRecords.some(r => r.isEncrypted && r.actHistoryRef)) return
     // actPublisher isn't stored on driveMetadata — it lives on the file records
     // (and equals this node's publicKey). Source it the same way the Share modal
     // does, falling back to the record / current node.
     const firstRec = driveRecords.find(r => r.actHistoryRef && r.actPublisher)
     const actPublisher = meta?.actPublisher || firstRec?.actPublisher || nodeAddresses?.publicKey
-    const currentHistoryRef = meta?.actHistoryRef || firstRec?.actHistoryRef
+    // After a revoke the fresh history ref hasn't flushed into metadata state
+    // yet — the caller passes it explicitly so re-publish chains from the
+    // POST-rotation history (chaining from the old one would re-encrypt under
+    // the revoked key).
+    const currentHistoryRef = historyOverride || meta?.actHistoryRef || firstRec?.actHistoryRef
 
     if (!actPublisher || !currentHistoryRef) {
       setRepublishMsg('This drive isn’t ready to re-publish yet.')
@@ -2906,6 +2914,13 @@ export default function Drive() {
                     granteeCount,
                     ...(keyRotated ? { keyRotated: true } : {}),
                   })
+
+                  // A revoke rotated the key: without a re-publish, EVERY
+                  // grantee (remaining or re-added) is locked out of the
+                  // existing content. Run it automatically — the manual
+                  // button stays as the retry path. historyRef is passed
+                  // explicitly because the metadata state hasn't flushed yet.
+                  if (keyRotated && !republishing) void handleRepublish(showShareModal, historyRef)
                 }}
                 keyRotated={driveMetadata.get(showShareModal)?.keyRotated}
                 republishing={republishing}
@@ -3505,6 +3520,10 @@ export default function Drive() {
                   granteeCount,
                   ...(keyRotated ? { keyRotated: true } : {}),
                 })
+
+                // Auto re-publish after a revoke — see the drive-detail modal's
+                // onUpdate for the reasoning.
+                if (keyRotated && !republishing) void handleRepublish(showShareModal, historyRef)
               }}
               keyRotated={driveMetadata.get(showShareModal)?.keyRotated}
               republishing={republishing}
