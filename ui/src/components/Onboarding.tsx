@@ -12,12 +12,15 @@ import { useDerivedKey } from '../hooks/useDerivedKey'
 import { WIDGET_THEME } from '../theme'
 import { ConnectButton } from '@rainbow-me/rainbowkit'
 
-type Step = 'starting' | 'info' | 'identity' | 'funding' | 'syncing' | 'ready'
+type Step = 'starting' | 'identity' | 'funding' | 'syncing' | 'ready'
 
 // Identity comes BEFORE funding (post-test feedback 2026-09-21): it's free
 // and takes seconds, so it happens while the user is engaged — and the
 // funding screen stays a single-purpose screen instead of stacking two jobs.
-const STEPS: Step[] = ['starting', 'info', 'identity', 'funding', 'syncing', 'ready']
+// The old 'info' step is gone (its funding copy duplicated the funding
+// screen word-for-word once identity moved between them); its one unique
+// piece — the beta disclaimer — lives on the funding screen now.
+const STEPS: Step[] = ['starting', 'identity', 'funding', 'syncing', 'ready']
 
 export default function Onboarding({ skipReady = false }: { skipReady?: boolean }) {
   const navigate = useNavigate()
@@ -52,8 +55,8 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
   }, [])
 
   // Unified auto-advance logic (disabled when step is locked for testing)
-  // starting → info (manual continue) → funding → syncing → ready
-  // Returning users (skipReady): skip info+funding, go straight to syncing
+  // starting → identity (manual continue) → funding → syncing → ready
+  // Returning users (skipReady): skip identity+funding, go straight to syncing
   useEffect(() => {
     if (lockedStep) return
 
@@ -65,8 +68,8 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
       return
     }
 
-    // Once Bee is online or mode is known, advance to info step
-    if (status?.mode === 'ultra-light' || beeOnline) setStep('info')
+    // Once Bee is online or mode is known, advance to the identity step
+    if (status?.mode === 'ultra-light' || beeOnline) setStep('identity')
   }, [step, beeOnline, status?.mode, lockedStep, startingMinElapsed, skipReady])
 
   useEffect(() => {
@@ -181,40 +184,13 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
           </div>
         )}
 
-        {/* Step 2 — Info / disclaimer */}
-        {step === 'info' && (
-          <div className="text-center space-y-5">
-            <h2 className="text-lg font-semibold">Next, fund your node wallet.</h2>
-            <p className="text-sm leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
-              Your node needs xDAI for transaction fees and xBZZ for storage space on the Swarm network.
-            </p>
-            <div
-              className="flex items-start gap-3 rounded-xl border px-5 py-4 text-left"
-              style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
-            >
-              <AlertTriangle size={16} className="shrink-0 mt-0.5" style={{ color: '#f97316' }} />
-              <p className="text-xs leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
-                Nook is beta software. Use small amounts only — features may change, bugs may exist, and stored data may
-                need to be re-uploaded after updates.
-              </p>
-            </div>
-            <button
-              onClick={() => setStep('identity')}
-              className="px-6 py-3 rounded-lg text-sm font-semibold transition-opacity"
-              style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
-            >
-              Continue →
-            </button>
-          </div>
-        )}
-
-        {/* Step 3 — Identity (own screen; free, fast, before any waiting).
+        {/* Step 2 — Identity (own screen; free, fast, before any waiting).
             No consent checkbox (post-test feedback): being findable is the
             point of an identity — the sentence says so, and the opt-out
             toggle lives in Account → Identity. */}
         {step === 'identity' && <OnboardingIdentityStep onContinue={() => setStep('funding')} />}
 
-        {/* Step 3 — Syncing */}
+        {/* Step 4 — Syncing */}
         {step === 'syncing' && (
           <div className="text-center space-y-4">
             <Loader2 size={32} className="animate-spin mx-auto" style={{ color: '#f97316' }} />
@@ -228,7 +204,7 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
           </div>
         )}
 
-        {/* Step 4 — Fund wallet */}
+        {/* Step 3 — Fund wallet */}
         {step === 'funding' && (
           <div className="space-y-5">
             <div className="text-center space-y-3">
@@ -293,6 +269,19 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
                 </button>
               </div>
             )}
+
+            {/* Beta disclaimer — lived on the removed 'info' step; it's a
+                warning about money, so the money screen is its home. */}
+            <div
+              className="flex items-start gap-3 rounded-xl border px-5 py-4 text-left"
+              style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
+            >
+              <AlertTriangle size={16} className="shrink-0 mt-0.5" style={{ color: '#f97316' }} />
+              <p className="text-xs leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Nook is beta software. Use small amounts only — features may change, bugs may exist, and stored data may
+                need to be re-uploaded after updates.
+              </p>
+            </div>
 
             {/* Multichain widget */}
             <div className="rounded-xl border p-5" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
@@ -367,7 +356,7 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
           </div>
         )}
 
-        {/* Step 4 — Ready */}
+        {/* Step 5 — Ready */}
         {step === 'ready' && (
           <div className="text-center space-y-6">
             <div
