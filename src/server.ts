@@ -7,6 +7,7 @@ import koaBodyparser from 'koa-bodyparser'
 import mount from 'koa-mount'
 import serve from 'koa-static'
 import * as path from 'path'
+import { Readable } from 'stream'
 
 import { ethers } from 'ethers'
 
@@ -139,29 +140,38 @@ export function runServer() {
     for (const [k, v] of Object.entries(context.headers)) {
       if (typeof v === 'string') headers[k.toLowerCase()] = v
     }
-    // Strip headers Koa / fetch will recompute or that confuse Bee
+    // Strip headers Koa / fetch will recompute or that confuse Bee.
     delete headers.host
     delete headers['content-length']
     delete headers.connection
     delete headers['accept-encoding']
+    // undici refuses requests carrying Expect (curl adds '100-continue' on
+    // large bodies) — browsers never send it, CLI clients always do.
+    delete headers.expect
     const hasBody = ['POST', 'PUT', 'PATCH'].includes(context.method)
-    // Buffer the request body — avoids edge cases with streaming + duplex: 'half'
-    let body: Uint8Array | undefined
 
-    if (hasBody) {
-      const chunks: Buffer[] = []
+    // STREAM both directions (big-file findings, 2026-09-21): buffering the
+    // whole body peaked at ~3.5× the file size in RSS and hit a hard
+    // RangeError wall at 2GB (`new Uint8Array` allocation), while Bee itself
+    // ingests 2GB happily. Streaming keeps memory flat regardless of size.
+    const body = hasBody ? (Readable.toWeb(context.req) as unknown as BodyInit) : undefined
 
-      for await (const chunk of context.req) chunks.push(chunk as Buffer)
-      body = chunks.length > 0 ? new Uint8Array(Buffer.concat(chunks)) : undefined
-    }
+    // Long deadline for content transfers (a 5-minute cap killed a stalled
+    // 100MB download and would kill any big upload on a home uplink); short
+    // for control-plane calls, so nothing hangs forever (#94).
+    const isTransfer = /^\/(bzz|bytes|chunks|soc)\b/.test(beePath)
+    const timeoutMs = isTransfer ? 60 * 60_000 : 5 * 60_000
 
     try {
-      // Generous deadline: uploads/downloads through the proxy can be large,
-      // but nothing should hang forever (#94).
       const res = await fetchWithTimeout(
         url,
-        { method: context.method, headers, body: body as BodyInit | undefined },
-        5 * 60_000,
+        {
+          method: context.method,
+          headers,
+          body,
+          ...(hasBody ? { duplex: 'half' } : {}),
+        } as RequestInit,
+        timeoutMs,
       )
 
       context.status = res.status
@@ -178,9 +188,8 @@ export function runServer() {
         if (key.startsWith('access-control-')) return
         context.set(key, value)
       })
-      // Buffer response too — Bee API responses are small enough and this
-      // avoids Web Stream / Node Stream conversion issues
-      context.body = Buffer.from(await res.arrayBuffer())
+      // Stream the response back — Koa serves Node Readables natively.
+      context.body = res.body ? Readable.fromWeb(res.body as Parameters<typeof Readable.fromWeb>[0]) : null
 
       // #139: a successful topup through the proxy moved BZZ on-chain —
       // record it (fire-and-forget) so the Activity list can name the drive.
