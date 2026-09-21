@@ -30,7 +30,7 @@ import {
 import { useDerivedKey } from '../hooks/useDerivedKey'
 import { useAutoPublish } from '../hooks/useAutoPublish'
 import { useInboxPolling } from '../hooks/useInboxPolling'
-import { pickMessagingStamp } from '../lib/system-stamp'
+import { isSystemStamp, pickMessagingStamp } from '../lib/system-stamp'
 import { useOutboxDrain } from '../hooks/useOutboxDrain'
 import { hasKnownIdentity } from '../notify/active-identity'
 import { primeCricketAudio } from '../lib/cricket'
@@ -143,10 +143,16 @@ export default function Layout() {
   const { data: reclaimableForPick } = useReclaimableDrives()
   // No network space AT ALL in light mode → identity & messages are dead and
   // nothing on screen says why (fresh-install finding). Ongoing state → banner.
-  const noMessagingSpace =
+  const noUsableMessagingSpace =
     status?.mode === 'light' &&
     stampsLoaded &&
     pickMessagingStamp(stamps, new Set((reclaimableForPick ?? []).map(d => d.batchId))) === null
+  // The reserve was just bought but Bee hasn't confirmed it usable yet
+  // (~2 min of blocks). Asking for money that's already spent contradicts
+  // the "reserved space set aside" bell — show a neutral settling state
+  // instead of the amber funding ask (test-run finding #1).
+  const reserveSettingUp = noUsableMessagingSpace && (stamps ?? []).some(s => isSystemStamp(s) && !s.usable)
+  const noMessagingSpace = noUsableMessagingSpace && !reserveSettingUp
   const { data: wallet, isSuccess: walletLoaded } = useWallet()
   const { devMode, onboardingCompleted, setOnboardingCompleted } = useAppStore()
   const navigate = useNavigate()
@@ -504,6 +510,18 @@ export default function Layout() {
                 >
                   Open wallet →
                 </button>
+              </span>
+            </div>
+          )}
+
+          {reserveSettingUp && !showOnboarding && (
+            <div
+              className="flex items-center gap-2.5 px-4 py-2.5 text-xs shrink-0"
+              style={{ backgroundColor: 'rgba(96,165,250,0.08)', borderBottom: '1px solid rgba(96,165,250,0.2)' }}
+            >
+              <RefreshCw size={12} className="animate-spin shrink-0" style={{ color: '#60a5fa' }} />
+              <span style={{ color: 'rgb(var(--fg))' }}>
+                Setting up your reserved space for identity &amp; messages — ready in a couple of minutes…
               </span>
             </div>
           )}

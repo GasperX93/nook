@@ -13,7 +13,7 @@ import { useWalletClient } from 'wagmi'
 import { topicFromString, waitForRetrievable } from '../api/bee'
 import { serverApi } from '../api/server'
 import { bytesToHex, hexToBytes } from '../lib/hex'
-import { contactsForNodeKey, stripKeyPrefix } from '../lib/node-key'
+import { contactForOldNodeKey, contactsForNodeKey, stripKeyPrefix } from '../lib/node-key'
 import { useDerivedKey } from '../hooks/useDerivedKey'
 import { GNOSIS_CHAIN_ID, REGISTRY_ADDRESS } from '../notify/constants'
 import { queueAndDeliver } from '../notify/deliver'
@@ -78,6 +78,20 @@ function isValidPublicKey(key: string): boolean {
 
   // Compressed (66 hex = 33 bytes) or uncompressed (130 hex = 65 bytes)
   return /^[0-9a-fA-F]+$/.test(clean) && (clean.length === 66 || clean.length === 130)
+}
+
+/** EIP-1193 user rejection (wallet Cancel) — an expected choice, not a failure. */
+function isUserRejection(e: unknown): boolean {
+  const err = e as { code?: number; message?: string; cause?: { code?: number } }
+
+  return err?.code === 4001 || err?.cause?.code === 4001 || /user (rejected|denied)/i.test(err?.message ?? '')
+}
+
+/** First line only, capped — wallet errors embed full RPC request dumps. */
+function shortErrorMessage(e: unknown): string {
+  const first = ((e as Error).message ?? 'send failed').split('\n')[0]
+
+  return first.length > 120 ? `${first.slice(0, 120)}…` : first
 }
 
 function isEthAddress(s: string): boolean {
@@ -193,14 +207,26 @@ export default function ShareModal({
     serverApi
       .getGrantees(granteeRef)
       .then(result => {
-        setGrantees(result.grantees)
+        // MERGE with local state instead of overwriting: a grant made while
+        // this request was in flight would otherwise vanish from the list and
+        // re-granting it would look like a fresh key (finding #8 race —
+        // "first Martin was not visible, then 2").
+        setGrantees(prev => {
+          const merged = [...result.grantees]
+
+          for (const k of prev) {
+            if (!merged.some(m => stripKeyPrefix(m) === stripKeyPrefix(k))) merged.push(k)
+          }
+
+          return merged
+        })
         // Server list is the truth — heal the drive card's cached count.
         // Count OTHER people explicitly: depending on how a drive was created
         // its list may or may not contain the owner's own key, so raw list
         // length is off-by-one for some drives. Stored convention: others + 1.
         onGranteeCount?.(result.grantees.filter(g => !isMyKey(g)).length + 1)
       })
-      .catch(() => setGrantees([]))
+      .catch(() => undefined)
   }
 
   /**
@@ -680,8 +706,15 @@ export default function ShareModal({
         } catch (e) {
           // eslint-disable-next-line no-console
           console.error(`On-chain notify ${contact.nickname} failed:`, e)
-          lastFailMsg = `Drive shared, but the on-chain heads-up failed (${(e as Error).message ?? 'send failed'}) — recipients still receive it in Nook.`
           setOnChainStatus(prev => ({ ...prev, [contact.id]: 'failed' }))
+
+          if (isUserRejection(e)) {
+            // Cancelling in the wallet is an expected choice, not a failure —
+            // amber FYI, never a red error with the raw RPC dump (#14 retest).
+            setPingSkippedNote('Shared without the on-chain heads-up — they still receive everything in Nook.')
+          } else {
+            lastFailMsg = `Drive shared, but the on-chain heads-up failed (${shortErrorMessage(e)}) — recipients still receive it in Nook.`
+          }
         }
       }
     }
@@ -742,6 +775,7 @@ export default function ShareModal({
                 const isMe = isMyKey(key)
                 const label = findLabel(key)
                 const contact = contactForGrantee(key)
+                const oldKeyOwner = contact ? undefined : contactForOldNodeKey(contacts, key)
                 const status = contact ? notifyStatus[contact.id] : undefined
 
                 return (
@@ -750,6 +784,28 @@ export default function ShareModal({
                       <span className="font-medium mr-2" style={{ color: 'rgb(var(--fg))' }}>
                         {isMe ? 'You' : label || `${key.slice(0, 6)}…${key.slice(-4)}`}
                       </span>
+                      {/* Key fingerprint — the same person can appear twice
+                          (old + new key after a reinstall); the label alone
+                          can't tell the rows apart (finding #8). Flag keys
+                          that no longer match their contact's current key. */}
+                      {!isMe && (
+                        <span
+                          className="text-[10px] font-mono"
+                          title={key}
+                          style={{ color: 'rgb(var(--fg-muted))', opacity: 0.7 }}
+                        >
+                          …{stripKeyPrefix(key).slice(-6)}
+                        </span>
+                      )}
+                      {!isMe && !contact && oldKeyOwner && (
+                        <span
+                          className="ml-2 text-[10px] font-sans font-medium px-1.5 py-0.5 rounded"
+                          title={`This grant targets ${oldKeyOwner.nickname}'s previous sharing key (from before a reinstall) — they can't open the drive with it. You can revoke this row; sharing again already uses their current key.`}
+                          style={{ backgroundColor: 'rgba(245,158,11,0.12)', color: '#f59e0b' }}
+                        >
+                          {oldKeyOwner.nickname} · old key
+                        </span>
+                      )}
                       {!isMe && status === 'sent' && (
                         <span
                           className="ml-2 text-[10px] font-sans font-medium px-1.5 py-0.5 rounded"
@@ -808,7 +864,7 @@ export default function ShareModal({
                           failed
                         </span>
                       )}
-                      {!isMe && !contact && (
+                      {!isMe && !contact && !oldKeyOwner && (
                         <span
                           className="ml-2 text-[10px] font-sans px-1.5 py-0.5 rounded"
                           style={{ color: 'rgb(var(--fg-muted))' }}
