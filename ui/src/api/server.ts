@@ -324,6 +324,19 @@ export const serverApi = {
     return response.json() as Promise<{ marked: number }>
   },
 
+  /** Client-created bell event (e.g. "upload reached the network", #4/#5). */
+  createNotification: async (input: { type: string; title: string; body: string; link?: string }) => {
+    const response = await fetch('/notifications', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify(input),
+    })
+
+    if (!response.ok) throw new Error(`${response.status} error`)
+
+    return response.json() as Promise<{ notification: NookNotification }>
+  },
+
   dismissNotification: async (id: string) => {
     const response = await fetch('/notifications/dismiss', {
       method: 'POST',

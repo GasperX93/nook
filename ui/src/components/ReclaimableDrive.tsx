@@ -21,6 +21,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { beeApi, getBeeUrl, type Stamp, depthToBytes } from '../api/bee'
 import { serverApi, type ReclaimableDrive, type ReclaimableFile } from '../api/server'
 import { fileListToEntries, readDroppedDirectory, type FileEntry } from '../utils/directory'
+import { useTransfersStore } from '../store/transfers'
 
 // Reclaimable drives (#99): the server stamps chunks client-side and keeps a
 // slot ledger, so deleting a file really frees its capacity. Files come from
@@ -793,14 +794,25 @@ export function ReclaimableDriveView({
     queryClient.invalidateQueries({ queryKey: ['server', 'reclaimable'] })
   }
 
-  function pollJob(uploadId: string, assignFolderId: string | null) {
+  function pollJob(uploadId: string, assignFolderId: string | null, jobName = 'Upload', jobEstimate = 0) {
+    // Mirror the job into the global tracker (#5) so the sidebar shows it
+    // from any page. The job itself is server-side and survives navigation
+    // regardless — this is purely visibility.
+    const transferId = `rjob:${uploadId}`
+
+    useTransfersStore.getState().begin({ id: transferId, kind: 'upload', name: jobName, phase: 'Uploading…' })
     pollRef.current = window.setInterval(async () => {
       try {
         const job = await serverApi.getReclaimableUpload(uploadId)
         setChunks(job.chunksUploaded)
 
+        if (jobEstimate > 0) {
+          useTransfersStore.getState().chunkProgress(transferId, job.chunksUploaded, jobEstimate)
+        }
+
         if (job.status !== 'uploading') {
           if (pollRef.current) window.clearInterval(pollRef.current)
+          useTransfersStore.getState().finish(transferId, job.status === 'error' ? 'failed' : 'done')
 
           if (job.status === 'error') {
             setUploading(null)
@@ -852,7 +864,7 @@ export function ReclaimableDriveView({
     setUploading({ name: uploadFile.name, estimate: estimateChunks(uploadFile.size) })
     try {
       const { uploadId } = await serverApi.uploadReclaimableFile(drive.batchId, uploadFile)
-      pollJob(uploadId, openFolderId)
+      pollJob(uploadId, openFolderId, uploadFile.name, estimateChunks(uploadFile.size))
     } catch (err) {
       setUploading(null)
       setUploadError(err instanceof Error ? err.message : 'Upload failed')
@@ -876,7 +888,7 @@ export function ReclaimableDriveView({
       setStaging(null)
       setUploading({ name: folderName, estimate: estimateChunks(totalBytes) + entries.length })
       const { uploadId } = await serverApi.commitReclaimableStage(stageId, folderName)
-      pollJob(uploadId, openFolderId)
+      pollJob(uploadId, openFolderId, folderName, estimateChunks(totalBytes) + entries.length)
     } catch (err) {
       setStaging(null)
       setUploading(null)

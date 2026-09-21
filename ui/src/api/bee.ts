@@ -72,7 +72,7 @@ export interface UploadTag {
 export async function waitForTagPropagation(
   uid: number,
   onProgress?: (pct: number) => void,
-  opts: { pollMs?: number; maxStalledPolls?: number } = {},
+  opts: { pollMs?: number; maxStalledPolls?: number; onTag?: (tag: UploadTag) => void } = {},
 ): Promise<{ complete: boolean; tag: UploadTag | null }> {
   const pollMs = opts.pollMs ?? 1000
   const maxStalledPolls = opts.maxStalledPolls ?? 60
@@ -83,6 +83,7 @@ export async function waitForTagPropagation(
   while (stalled < maxStalledPolls) {
     try {
       tag = await beeRequest<UploadTag>(`/tags/${uid}`)
+      opts.onTag?.(tag)
       const done = tag.seen + tag.synced
 
       if (tag.split > 0) {
