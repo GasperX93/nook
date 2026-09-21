@@ -50,6 +50,7 @@ import {
   type NotificationType,
   pushNotification,
 } from './notifications'
+import { getUpdateInfo } from './update-checker'
 import { purchaseCostPlur, recordPurchase } from './purchases'
 import { getWalletActivity } from './wallet-activity'
 import { getStatus } from './status'
@@ -517,6 +518,11 @@ export function runServer() {
   })
 
   // ─── Notifications (#138) — the bell's event feed ─────────────────────────
+  // Update availability (phase 1): the Settings row renders from this.
+  router.get('/update', context => {
+    context.body = getUpdateInfo()
+  })
+
   router.get('/notifications', context => {
     // Dismissed events stay in the store (the Activity list labels from
     // them) but are the user's "done with this" — the panel never re-shows.

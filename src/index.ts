@@ -10,6 +10,7 @@ import { runElectronTray } from './electron'
 import { startChequebookMonitor } from './chequebook-monitor'
 import { startExtendMonitor } from './extend-monitor'
 import { startSystemStampMonitor } from './system-stamp'
+import { startUpdateChecker } from './update-checker'
 import { startMonitorIfNeeded } from './funding-monitor'
 import { initializeBee, runKeepAliveLoop, runLauncher } from './launcher'
 import { logger } from './logger'
@@ -119,6 +120,7 @@ async function main() {
   startChequebookMonitor()
   startExtendMonitor()
   startSystemStampMonitor()
+  startUpdateChecker()
   runElectronTray()
 
   if (process.env.NODE_ENV !== 'development') openDashboardInBrowser()

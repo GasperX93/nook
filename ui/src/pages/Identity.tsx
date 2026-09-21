@@ -6,6 +6,7 @@ import { useAddresses, useReclaimableDrives, useStamps } from '../api/queries'
 import { Button } from '../components/ui/button'
 import { useDerivedKey } from '../hooks/useDerivedKey'
 import { bytesToHex } from '../lib/hex'
+import { getPublishConsent, setPublishConsent } from '../lib/publish-consent'
 import { pickMessagingStamp } from '../lib/system-stamp'
 import { publishIdentity } from '../notify/publish-identity'
 import { encodeShareLink } from '../notify/share-link'
@@ -25,6 +26,7 @@ export default function Identity() {
   const [publishedTick, setPublishedTick] = useState(0)
   const [copied, setCopied] = useState<'address' | 'share-link' | null>(null)
   const [hintDismissed, setHintDismissed] = useState(() => isOnboardingDismissed())
+  const [autoPublishConsent, setAutoPublishConsent] = useState(getPublishConsent)
 
   const { data: reclaimable } = useReclaimableDrives()
   const reclaimableIds = new Set((reclaimable ?? []).map(d => d.batchId))
@@ -172,6 +174,28 @@ export default function Identity() {
                   {publishError}
                 </p>
               )}
+
+              {/* Findability opt-out — moved here from onboarding (post-test
+                  feedback: no checkbox at creation time; the sentence there
+                  points to this toggle). Governs useAutoPublish only. */}
+              <label className="flex items-start gap-2 pt-1 text-xs cursor-pointer" style={{ color: 'rgb(var(--fg))' }}>
+                <input
+                  type="checkbox"
+                  checked={autoPublishConsent}
+                  onChange={e => {
+                    setPublishConsent(e.target.checked)
+                    setAutoPublishConsent(e.target.checked)
+                  }}
+                  className="mt-0.5 accent-orange-500"
+                />
+                <span>
+                  Keep me findable automatically
+                  <span className="block" style={{ color: 'rgb(var(--fg-muted))' }}>
+                    Nook publishes your address (and republishes after changes, like a reinstall) without asking.
+                    {published && ' Turning this off does not remove an already-published identity from the network.'}
+                  </span>
+                </span>
+              </label>
             </div>
 
             {/* Divider */}

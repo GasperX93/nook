@@ -1,4 +1,5 @@
 import { Bell, BellOff, ExternalLink, Moon, Sun } from 'lucide-react'
+import { useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
@@ -33,6 +34,12 @@ export default function Settings() {
 
   const { data: config, isLoading, isError: configError } = useConfig()
   const { data: info } = useInfo()
+  const { data: updateInfo } = useQuery({
+    queryKey: ['server', 'update'],
+    queryFn: serverApi.getUpdateInfo,
+    refetchInterval: 60 * 60_000,
+    retry: false,
+  })
   const updateConfig = useUpdateConfig()
 
   const { data: health } = useBeeHealth()
@@ -298,6 +305,27 @@ export default function Settings() {
               <span>Nook</span>
               <span className="font-mono">{info?.version ?? '—'}</span>
             </div>
+            {/* Update offer (phase 1) — notify + link only; self-update is a
+                later phase. The bell rings once per version; this row stays. */}
+            {updateInfo?.updateAvailable && updateInfo.url && (
+              <div
+                className="flex items-center justify-between gap-3 rounded-lg px-3 py-2 text-xs"
+                style={{ backgroundColor: 'rgba(247,104,8,0.08)', border: '1px solid rgba(247,104,8,0.25)' }}
+              >
+                <span style={{ color: 'rgb(var(--fg))' }}>
+                  Nook {updateInfo.latest} is available — you're on {updateInfo.current}.
+                </span>
+                <a
+                  href={updateInfo.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="shrink-0 font-semibold underline"
+                  style={{ color: 'rgb(var(--accent))' }}
+                >
+                  Download →
+                </a>
+              </div>
+            )}
             <div className="flex flex-col gap-2 pt-1">
               <a
                 href="https://github.com/GasperX93/nook"

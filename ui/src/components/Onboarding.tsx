@@ -8,12 +8,16 @@ import { weiToDai } from '../api/bee'
 import { api } from '../api/client'
 import { useAddresses, useBeeHealth, useRestart, useStamps, useStatus, useWallet } from '../api/queries'
 import { useAppStore } from '../store/app'
-import OnboardingIdentityCard from './OnboardingIdentityCard'
+import { useDerivedKey } from '../hooks/useDerivedKey'
 import { WIDGET_THEME } from '../theme'
+import { ConnectButton } from '@rainbow-me/rainbowkit'
 
-type Step = 'starting' | 'info' | 'funding' | 'syncing' | 'ready'
+type Step = 'starting' | 'info' | 'identity' | 'funding' | 'syncing' | 'ready'
 
-const STEPS: Step[] = ['starting', 'info', 'funding', 'syncing', 'ready']
+// Identity comes BEFORE funding (post-test feedback 2026-09-21): it's free
+// and takes seconds, so it happens while the user is engaged — and the
+// funding screen stays a single-purpose screen instead of stacking two jobs.
+const STEPS: Step[] = ['starting', 'info', 'identity', 'funding', 'syncing', 'ready']
 
 export default function Onboarding({ skipReady = false }: { skipReady?: boolean }) {
   const navigate = useNavigate()
@@ -195,7 +199,7 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
               </p>
             </div>
             <button
-              onClick={() => setStep('funding')}
+              onClick={() => setStep('identity')}
               className="px-6 py-3 rounded-lg text-sm font-semibold transition-opacity"
               style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
             >
@@ -203,6 +207,12 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
             </button>
           </div>
         )}
+
+        {/* Step 3 — Identity (own screen; free, fast, before any waiting).
+            No consent checkbox (post-test feedback): being findable is the
+            point of an identity — the sentence says so, and the opt-out
+            toggle lives in Account → Identity. */}
+        {step === 'identity' && <OnboardingIdentityStep onContinue={() => setStep('funding')} />}
 
         {/* Step 3 — Syncing */}
         {step === 'syncing' && (
@@ -215,11 +225,6 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
             <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
               This can take 1–5 minutes. Nook is also reserving space for your identity &amp; messages.
             </p>
-            {!skipReady && (
-              <div className="text-left">
-                <OnboardingIdentityCard />
-              </div>
-            )}
           </div>
         )}
 
@@ -252,9 +257,6 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
                 Using MetaMask? Unlock it first — if it doesn't show up in the box above, refresh this page.
               </p>
             </div>
-
-            {/* Parallel identity setup — uses the funding wait (#131) */}
-            {!skipReady && <OnboardingIdentityCard />}
 
             {/* Why storage costs money — the web2-contrast explanation (#130) */}
             <div
@@ -379,11 +381,6 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
               Your Bee node is connected and funded. You can now create a drive and start uploading files to the Swarm
               network.
             </p>
-            {!skipReady && (
-              <div className="text-left">
-                <OnboardingIdentityCard />
-              </div>
-            )}
             <button
               onClick={finish}
               className="px-6 py-3 rounded-lg text-sm font-semibold transition-opacity"
@@ -394,8 +391,8 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
           </div>
         )}
 
-        {/* Skip link — new users only */}
-        {!skipReady && step !== 'ready' && (
+        {/* Skip link — new users only (the identity step has its own skip) */}
+        {!skipReady && step !== 'ready' && step !== 'identity' && (
           <div className="text-center mt-8">
             <button
               onClick={skip}
@@ -409,6 +406,92 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
             </p>
           </div>
         )}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Identity step — connect wallet, derive the Nook identity, done. Free and
+ * instant, so it runs BEFORE funding (nothing to wait for here). The actual
+ * network publish still happens automatically once the reserved space exists
+ * (useAutoPublish) — the setup≠publish split is unchanged. Skipping is quiet
+ * and always possible; the Identity tab is the recovery path.
+ */
+function OnboardingIdentityStep({ onContinue }: { onContinue: () => void }) {
+  const { signer, derive, deriving, error, walletConnected } = useDerivedKey()
+
+  if (signer) {
+    return (
+      <div className="text-center space-y-5">
+        <div
+          className="w-14 h-14 rounded-full mx-auto flex items-center justify-center"
+          style={{ backgroundColor: 'rgba(74,222,128,0.15)' }}
+        >
+          <Check size={28} style={{ color: '#4ade80' }} />
+        </div>
+        <h2 className="text-lg font-semibold">Identity created</h2>
+        <p className="text-sm leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
+          You'll be findable by your Nook address, so contacts can message you and share drives with you. You can change
+          this anytime in Account → Identity.
+        </p>
+        <button
+          onClick={onContinue}
+          className="px-6 py-3 rounded-lg text-sm font-semibold transition-opacity"
+          style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
+        >
+          Continue →
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="text-center space-y-5">
+      <h2 className="text-lg font-semibold">Create your identity</h2>
+      <p className="text-sm leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
+        Your identity is how contacts message you and share drives with you. It's derived from your wallet with two
+        signatures — free, no transaction, and nothing leaves your device.
+      </p>
+      {!walletConnected ? (
+        <ConnectButton.Custom>
+          {({ openConnectModal, connectModalOpen }) => (
+            <button
+              onClick={openConnectModal}
+              disabled={connectModalOpen}
+              className="px-6 py-3 rounded-lg text-sm font-semibold transition-opacity"
+              style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
+            >
+              Connect wallet &amp; create
+            </button>
+          )}
+        </ConnectButton.Custom>
+      ) : (
+        <button
+          onClick={async () => derive()}
+          disabled={deriving}
+          className="px-6 py-3 rounded-lg text-sm font-semibold transition-opacity disabled:opacity-60"
+          style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
+        >
+          {deriving ? 'Check your wallet — approve the signatures…' : 'Create identity'}
+        </button>
+      )}
+      {error && (
+        <p className="text-xs" style={{ color: '#ef4444' }}>
+          {error}
+        </p>
+      )}
+      <div>
+        <button
+          onClick={onContinue}
+          className="text-xs underline transition-colors"
+          style={{ color: 'rgb(var(--fg-muted))' }}
+        >
+          Skip for now
+        </button>
+        <p className="text-[10px] mt-1" style={{ color: 'rgb(var(--fg-muted))' }}>
+          Messaging and sharing stay off until you create one — Account → Identity picks this up later.
+        </p>
       </div>
     </div>
   )
