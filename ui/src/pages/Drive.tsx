@@ -325,136 +325,141 @@ function BuyDriveModal({
       >
         <p className="text-sm font-semibold">New drive</p>
 
-        {/* Name */}
-        <div>
-          <p className="text-xs uppercase tracking-widest mb-2" style={{ color: 'rgb(var(--fg-muted))' }}>
-            Drive name <span style={{ color: '#ef4444' }}>*</span>
-          </p>
-          <input
-            type="text"
-            value={driveName}
-            onChange={e => setDriveName(e.target.value)}
-            placeholder="e.g. Website backup, Photos 2024…"
-            className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-none"
-            style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
-            autoFocus
-          />
-        </div>
-
-        {/* Size */}
-        <div>
-          <p className="text-xs uppercase tracking-widest mb-2" style={{ color: 'rgb(var(--fg-muted))' }}>
-            Size
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {SIZE_PRESETS.map((s, i) => (
-              <PlanButton key={s.label} label={s.label} selected={sizeIdx === i} onClick={() => setSizeIdx(i)} />
-            ))}
-          </div>
-        </div>
-
-        {/* Duration */}
-        <div>
-          <p className="text-xs uppercase tracking-widest mb-2" style={{ color: 'rgb(var(--fg-muted))' }}>
-            Duration
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {DURATION_PRESETS.map((d, i) => (
-              <PlanButton
-                key={d.label}
-                label={d.label}
-                selected={durationIdx === i}
-                onClick={() => setDurationIdx(i)}
-              />
-            ))}
-          </div>
-        </div>
-
-        {/* Encrypt */}
-        <label className="flex items-start gap-2 cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={isEncrypted}
-            onChange={e => setIsEncrypted(e.target.checked)}
-            className="mt-0.5 accent-orange-500"
-          />
+        {/* Freeze every input once the purchase is running — the drive is
+            created with the values from the moment Create was pressed, and a
+            live checkbox mid-"Creating…" suggests otherwise (finding #10). */}
+        <fieldset disabled={buying || buyDone} className="space-y-5 border-0 m-0 p-0 min-w-0">
+          {/* Name */}
           <div>
-            <p className="text-xs font-medium">Encrypt this drive</p>
-            <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-              {isReclaimable
-                ? 'Files on this drive are encrypted so only your node can read them.'
-                : 'Files on this drive are encrypted. You can share access with others.'}
+            <p className="text-xs uppercase tracking-widest mb-2" style={{ color: 'rgb(var(--fg-muted))' }}>
+              Drive name <span style={{ color: '#ef4444' }}>*</span>
             </p>
+            <input
+              type="text"
+              value={driveName}
+              onChange={e => setDriveName(e.target.value)}
+              placeholder="e.g. Website backup, Photos 2024…"
+              className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-none"
+              style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
+              autoFocus
+            />
           </div>
-        </label>
 
-        {/* Reclaimable (#99) */}
-        <label className="flex items-start gap-2 cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={isReclaimable}
-            onChange={e => setIsReclaimable(e.target.checked)}
-            className="mt-0.5 accent-orange-500"
-          />
+          {/* Size */}
           <div>
-            <p className="text-xs font-medium">
-              Deletable files{' '}
-              <span
-                className="px-1 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide align-middle"
-                style={{ backgroundColor: 'rgba(74,222,128,0.12)', color: '#4ade80' }}
-              >
-                Beta
-              </span>
+            <p className="text-xs uppercase tracking-widest mb-2" style={{ color: 'rgb(var(--fg-muted))' }}>
+              Size
             </p>
-            <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-              Deleting a file gives you its space back. These drives can't be shared with others (yet).
-            </p>
+            <div className="flex flex-wrap gap-2">
+              {SIZE_PRESETS.map((s, i) => (
+                <PlanButton key={s.label} label={s.label} selected={sizeIdx === i} onClick={() => setSizeIdx(i)} />
+              ))}
+            </div>
           </div>
-        </label>
 
-        {/* Auto-extend (#129) */}
-        <label className="flex items-start gap-2 cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={keepAlive}
-            onChange={e => setKeepAlive(e.target.checked)}
-            className="mt-0.5 accent-orange-500"
-          />
-          <div className="flex-1">
-            <p className="text-xs font-medium">Keep this drive alive automatically</p>
-            <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-              {keepAlive
-                ? `Extends by ${keepAliveDuration.label.toLowerCase()} whenever less than 10 days remain, paid from your wallet. Change anytime under Extend storage.`
-                : 'Extends the drive before it expires, paid from your wallet.'}
+          {/* Duration */}
+          <div>
+            <p className="text-xs uppercase tracking-widest mb-2" style={{ color: 'rgb(var(--fg-muted))' }}>
+              Duration
             </p>
-            {keepAlive && (
-              <div className="grid grid-cols-4 gap-2 mt-2">
-                {DURATION_PRESETS.map((d, i) => {
-                  const selected = (keepAliveIdx === null ? durationIdx : keepAliveIdx) === i
-
-                  return (
-                    <button
-                      key={d.label}
-                      type="button"
-                      onClick={e => {
-                        e.preventDefault()
-                        setKeepAliveIdx(i)
-                      }}
-                      className="px-2 py-1.5 rounded-lg border text-xs transition-all"
-                      style={{
-                        borderColor: selected ? 'rgb(var(--accent))' : 'rgb(var(--border))',
-                        backgroundColor: selected ? 'rgba(247,104,8,0.08)' : 'transparent',
-                        color: selected ? 'rgb(var(--fg))' : 'rgb(var(--fg-muted))',
-                      }}
-                    >
-                      {d.label}
-                    </button>
-                  )
-                })}
-              </div>
-            )}
+            <div className="flex flex-wrap gap-2">
+              {DURATION_PRESETS.map((d, i) => (
+                <PlanButton
+                  key={d.label}
+                  label={d.label}
+                  selected={durationIdx === i}
+                  onClick={() => setDurationIdx(i)}
+                />
+              ))}
+            </div>
           </div>
-        </label>
+
+          {/* Encrypt */}
+          <label className="flex items-start gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={isEncrypted}
+              onChange={e => setIsEncrypted(e.target.checked)}
+              className="mt-0.5 accent-orange-500"
+            />
+            <div>
+              <p className="text-xs font-medium">Encrypt this drive</p>
+              <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                {isReclaimable
+                  ? 'Files on this drive are encrypted so only your node can read them.'
+                  : 'Files on this drive are encrypted. You can share access with others.'}
+              </p>
+            </div>
+          </label>
+
+          {/* Reclaimable (#99) */}
+          <label className="flex items-start gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={isReclaimable}
+              onChange={e => setIsReclaimable(e.target.checked)}
+              className="mt-0.5 accent-orange-500"
+            />
+            <div>
+              <p className="text-xs font-medium">
+                Deletable files{' '}
+                <span
+                  className="px-1 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide align-middle"
+                  style={{ backgroundColor: 'rgba(74,222,128,0.12)', color: '#4ade80' }}
+                >
+                  Beta
+                </span>
+              </p>
+              <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Deleting a file gives you its space back. These drives can't be shared with others (yet).
+              </p>
+            </div>
+          </label>
+
+          {/* Auto-extend (#129) */}
+          <label className="flex items-start gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={keepAlive}
+              onChange={e => setKeepAlive(e.target.checked)}
+              className="mt-0.5 accent-orange-500"
+            />
+            <div className="flex-1">
+              <p className="text-xs font-medium">Keep this drive alive automatically</p>
+              <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                {keepAlive
+                  ? `Extends by ${keepAliveDuration.label.toLowerCase()} whenever less than 10 days remain, paid from your wallet. Change anytime under Extend storage.`
+                  : 'Extends the drive before it expires, paid from your wallet.'}
+              </p>
+              {keepAlive && (
+                <div className="grid grid-cols-4 gap-2 mt-2">
+                  {DURATION_PRESETS.map((d, i) => {
+                    const selected = (keepAliveIdx === null ? durationIdx : keepAliveIdx) === i
+
+                    return (
+                      <button
+                        key={d.label}
+                        type="button"
+                        onClick={e => {
+                          e.preventDefault()
+                          setKeepAliveIdx(i)
+                        }}
+                        className="px-2 py-1.5 rounded-lg border text-xs transition-all"
+                        style={{
+                          borderColor: selected ? 'rgb(var(--accent))' : 'rgb(var(--border))',
+                          backgroundColor: selected ? 'rgba(247,104,8,0.08)' : 'transparent',
+                          color: selected ? 'rgb(var(--fg))' : 'rgb(var(--fg-muted))',
+                        }}
+                      >
+                        {d.label}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          </label>
+        </fieldset>
 
         {/* TODO: re-enable when metadata feeds are wired up */}
         {/* {isEncrypted && !isConnected && <WalletGate />} */}
@@ -485,7 +490,8 @@ function BuyDriveModal({
         <div className="flex gap-3">
           <button
             onClick={onClose}
-            className="flex-1 py-2 rounded-lg text-sm"
+            disabled={buying}
+            className="flex-1 py-2 rounded-lg text-sm disabled:opacity-40"
             style={{ color: 'rgb(var(--fg-muted))' }}
           >
             Cancel
@@ -1219,16 +1225,35 @@ function RecordRow({
         {formatBytes(record.size)}
       </span>
 
-      {/* Expiry */}
-      <div className="flex items-center gap-2 shrink-0">
-        <ExpiryBar expiresAt={expiresAt} uploadedAt={record.uploadedAt} />
-        <span
-          className="text-[10px] uppercase tracking-widest font-semibold w-16 text-right whitespace-nowrap"
-          style={{ color: urgent ? '#ef4444' : 'rgb(var(--fg-muted))' }}
-        >
-          {expiry}
-        </span>
-      </div>
+      {/* Expiry — while a download runs, this status area is taken over by
+          prominent download progress: a % squeezed between action icons was
+          nearly invisible (finding #7). */}
+      {downloadingId === record.id && downloadPct !== null ? (
+        <div className="flex items-center gap-2 shrink-0">
+          <div className="w-24 h-1 rounded-full overflow-hidden" style={{ backgroundColor: 'rgb(var(--border))' }}>
+            <div
+              className="h-full rounded-full transition-all"
+              style={{ width: `${Math.max(downloadPct, 2)}%`, backgroundColor: 'rgb(var(--accent))' }}
+            />
+          </div>
+          <span
+            className="text-[10px] uppercase tracking-widest font-semibold w-24 text-right whitespace-nowrap tabular-nums"
+            style={{ color: 'rgb(var(--accent))' }}
+          >
+            {downloadPct > 0 ? `Saving ${downloadPct}%` : 'Preparing…'}
+          </span>
+        </div>
+      ) : (
+        <div className="flex items-center gap-2 shrink-0">
+          <ExpiryBar expiresAt={expiresAt} uploadedAt={record.uploadedAt} />
+          <span
+            className="text-[10px] uppercase tracking-widest font-semibold w-16 text-right whitespace-nowrap"
+            style={{ color: urgent ? '#ef4444' : 'rgb(var(--fg-muted))' }}
+          >
+            {expiry}
+          </span>
+        </div>
+      )}
 
       {/* Actions */}
       <div className="flex items-center gap-0.5 shrink-0">
@@ -1266,17 +1291,11 @@ function RecordRow({
           </a>
         )}
         {downloadingId === record.id && downloadPct !== null ? (
-          downloadPct > 0 ? (
-            <span className="text-[10px] tabular-nums px-1 shrink-0" style={{ color: 'rgb(var(--accent))' }}>
-              {downloadPct}%
-            </span>
-          ) : (
-            // 0% = the gap before the first byte (Bee assembling the file) —
-            // a static "0%" reads as nothing happening; motion doesn't (#136).
-            <span title="Preparing download…" className="w-6 h-6 flex items-center justify-center shrink-0">
-              <RefreshCw size={12} className="animate-spin" style={{ color: 'rgb(var(--accent))' }} />
-            </span>
-          )
+          // Progress lives in the row's status area now; keep the icon slot
+          // as a spinner so the layout doesn't jump (#136).
+          <span title="Downloading…" className="w-6 h-6 flex items-center justify-center shrink-0">
+            <RefreshCw size={12} className="animate-spin" style={{ color: 'rgb(var(--accent))' }} />
+          </span>
         ) : (
           <button
             onClick={() => onDownload(record.id, record.hash, record.name)}

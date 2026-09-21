@@ -76,7 +76,17 @@ export function updateContactKeys(
   id: string,
   keys: { walletPublicKey: string; beePublicKey: string },
 ): NookContact[] {
-  const updated = contacts.map(c => (c.id.toLowerCase() === id.toLowerCase() ? { ...c, ...keys } : c))
+  const updated = contacts.map(c => {
+    if (c.id.toLowerCase() !== id.toLowerCase()) return c
+    // Remember the superseded node key so existing grants against it can be
+    // labeled as this person's OLD key instead of an unknown stranger.
+    const previous =
+      c.beePublicKey && c.beePublicKey !== keys.beePublicKey
+        ? [...(c.previousBeeKeys ?? []), c.beePublicKey]
+        : c.previousBeeKeys
+
+    return { ...c, ...keys, ...(previous?.length ? { previousBeeKeys: previous } : {}) }
+  })
 
   saveContacts(updated)
 

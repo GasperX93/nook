@@ -600,25 +600,44 @@ function FileRow({
         ~{formatBytes(file.chunkCount * 4096)}
       </span>
 
-      {/* Expiry (the drive's TTL — all files on a drive expire together) */}
-      {ttlSeconds !== undefined && (
+      {/* Expiry (the drive's TTL — all files on a drive expire together).
+          While a download runs the same area shows prominent progress instead
+          (finding #7 — a % between action icons was nearly invisible). */}
+      {downloadPct !== null ? (
         <div className="flex items-center gap-2 shrink-0">
           <div className="h-1 rounded-full overflow-hidden w-24" style={{ backgroundColor: 'rgb(var(--border))' }}>
             <div
               className="h-full rounded-full transition-all"
-              style={{
-                width: `${Math.max(2, Math.min(100, ((ttlDays ?? 0) / 365) * 100))}%`,
-                backgroundColor: urgent ? '#ef4444' : '#4ade80',
-              }}
+              style={{ width: `${Math.max(downloadPct, 2)}%`, backgroundColor: 'rgb(var(--accent))' }}
             />
           </div>
           <span
-            className="text-[10px] uppercase tracking-widest font-semibold w-16 text-right whitespace-nowrap"
-            style={{ color: urgent ? '#ef4444' : 'rgb(var(--fg-muted))' }}
+            className="text-[10px] uppercase tracking-widest font-semibold w-24 text-right whitespace-nowrap tabular-nums"
+            style={{ color: 'rgb(var(--accent))' }}
           >
-            {ttlToDays(ttlSeconds)} left
+            {downloadPct > 0 ? `Saving ${downloadPct}%` : 'Preparing…'}
           </span>
         </div>
+      ) : (
+        ttlSeconds !== undefined && (
+          <div className="flex items-center gap-2 shrink-0">
+            <div className="h-1 rounded-full overflow-hidden w-24" style={{ backgroundColor: 'rgb(var(--border))' }}>
+              <div
+                className="h-full rounded-full transition-all"
+                style={{
+                  width: `${Math.max(2, Math.min(100, ((ttlDays ?? 0) / 365) * 100))}%`,
+                  backgroundColor: urgent ? '#ef4444' : '#4ade80',
+                }}
+              />
+            </div>
+            <span
+              className="text-[10px] uppercase tracking-widest font-semibold w-16 text-right whitespace-nowrap"
+              style={{ color: urgent ? '#ef4444' : 'rgb(var(--fg-muted))' }}
+            >
+              {ttlToDays(ttlSeconds)} left
+            </span>
+          </div>
+        )
       )}
 
       {/* Actions */}
@@ -648,15 +667,11 @@ function FileRow({
           </a>
         )}
         {downloadPct !== null ? (
-          downloadPct > 0 ? (
-            <span className="text-[10px] tabular-nums px-1" style={{ color: 'rgb(var(--fg-muted))' }}>
-              {downloadPct}%
-            </span>
-          ) : (
-            <span title="Preparing download…" className="w-6 h-6 flex items-center justify-center shrink-0">
-              <RefreshCw size={12} className="animate-spin" style={{ color: 'rgb(var(--accent))' }} />
-            </span>
-          )
+          // Progress lives in the row's status area now; keep the icon slot
+          // as a spinner so the layout doesn't jump.
+          <span title="Downloading…" className="w-6 h-6 flex items-center justify-center shrink-0">
+            <RefreshCw size={12} className="animate-spin" style={{ color: 'rgb(var(--accent))' }} />
+          </span>
         ) : (
           <button
             onClick={() => void handleDownload()}

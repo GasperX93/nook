@@ -42,3 +42,13 @@ export function contactsForNodeKey(contacts: NookContact[], nodeKey: string): No
 
   return contacts.filter(c => stripKeyPrefix(c.beePublicKey) === keyX).sort((a, b) => b.addedAt - a.addedAt)
 }
+
+/**
+ * The contact whose SUPERSEDED node key matches (see NookContact.previousBeeKeys)
+ * — identifies a stale grant as "this person's old key" after their reinstall.
+ */
+export function contactForOldNodeKey(contacts: NookContact[], nodeKey: string): NookContact | undefined {
+  const keyX = stripKeyPrefix(nodeKey)
+
+  return contacts.find(c => (c.previousBeeKeys ?? []).some(k => stripKeyPrefix(k) === keyX))
+}
