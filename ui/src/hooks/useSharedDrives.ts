@@ -27,6 +27,13 @@ export interface SharedDrive {
   /** Feed-based sharing (live file list) */
   feedTopic?: string
   feedOwner?: string
+  /**
+   * Set when a refresh got a definitive 403 — the owner revoked access
+   * (#16). Cached rows stay visible (pre-revoke content remains readable on
+   * an immutable network); auto-sync pauses; a successful refresh after a
+   * re-grant clears it (#17 self-heal).
+   */
+  revokedAt?: number
 }
 
 function load(): SharedDrive[] {
