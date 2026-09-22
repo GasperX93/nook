@@ -1,4 +1,4 @@
-import { AlertTriangle, Check, Copy, Gift, Loader2 } from 'lucide-react'
+import { AlertTriangle, Check, Copy, Loader2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import '@rainbow-me/rainbowkit/styles.css'
@@ -274,12 +274,9 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
 
             {/* Gift code */}
             <div className="rounded-xl border p-5" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
-              <div className="flex items-center gap-2 mb-1">
-                <Gift size={13} style={{ color: 'rgb(var(--accent))' }} />
-                <p className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
-                  Redeem gift code
-                </p>
-              </div>
+              <p className="text-xs uppercase tracking-widest mb-1" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Redeem gift code
+              </p>
               <p className="text-xs mb-3" style={{ color: 'rgb(var(--fg-muted))' }}>
                 Have a gift code? Paste it to receive xBZZ and xDAI instantly.
               </p>
