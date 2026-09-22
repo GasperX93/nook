@@ -2240,6 +2240,11 @@ function SharedDriveCard({
   const [fromInput, setFromInput] = useState('')
   const [refreshing, setRefreshing] = useState(false)
   const [refreshNote, setRefreshNote] = useState<string | null>(null)
+  // Active downloads from this card, for per-file progress + re-attach (#18).
+  // Select the stable array, filter outside (unstable selector snapshots
+  // trip useSyncExternalStore's caching).
+  const allTransfers = useTransfersStore(state => state.transfers)
+  const sharedDownloads = allTransfers.filter(t => t.id.startsWith('dl:shared:'))
 
   // Auto-sync every 5 minutes for feed-based shared drives. Paused while
   // revoked (#16) — retrying an access we know is gone just makes noise; the
@@ -2337,10 +2342,19 @@ function SharedDriveCard({
   }
 
   async function downloadFile(ref: string, _fileHistoryRef: string, fileName: string) {
+    // Tracked globally (#18): shared downloads get the same sidebar presence
+    // and re-attach behavior as the other row types.
+    const transferId = `dl:shared:${ref}`
+    const transfers = useTransfersStore.getState()
+
+    transfers.begin({ id: transferId, kind: 'download', name: fileName, phase: 'Downloading…' })
+    transfers.update(transferId, { pct: 0 })
     try {
       // Use the drive's latest ACT history ref (from share link), not the file's individual history.
       // The drive history includes all grantees added after file upload.
-      const blob = await beeApi.downloadFileWithACT(ref, drive.actPublisher, drive.actHistoryRef)
+      const blob = await beeApi.downloadFileWithACT(ref, drive.actPublisher, drive.actHistoryRef, pct =>
+        useTransfersStore.getState().update(transferId, { pct }),
+      )
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
@@ -2349,7 +2363,9 @@ function SharedDriveCard({
       a.click()
       document.body.removeChild(a)
       URL.revokeObjectURL(url)
+      useTransfersStore.getState().finish(transferId)
     } catch {
+      useTransfersStore.getState().finish(transferId, 'failed')
       setRefreshNote(`Couldn't download “${fileName}” — access may have been removed or the content is unreachable.`)
     }
   }
@@ -2504,23 +2520,37 @@ function SharedDriveCard({
 
       {expanded && drive.files && (
         <div className="border-t py-2 px-6" style={{ borderColor: 'rgb(var(--border))' }}>
-          {drive.files.map(file => (
-            <div key={file.reference} className="flex items-center gap-3 px-2 py-2">
-              <Lock size={12} style={{ color: 'rgb(var(--accent))' }} />
-              <span className="text-xs font-medium flex-1 truncate">{file.name}</span>
-              <span className="text-xs shrink-0" style={{ color: 'rgb(var(--fg-muted))' }}>
-                {formatBytes(file.size)}
-              </span>
-              <button
-                onClick={async () => downloadFile(file.reference, file.historyRef, file.name)}
-                className="shrink-0 w-6 h-6 flex items-center justify-center rounded transition-colors"
-                style={{ color: 'rgb(var(--fg-muted))' }}
-                title="Download"
-              >
-                <Download size={12} />
-              </button>
-            </div>
-          ))}
+          {drive.files.map(file => {
+            const dl = sharedDownloads.find(t => t.id === `dl:shared:${file.reference}`)
+
+            return (
+              <div key={file.reference} className="flex items-center gap-3 px-2 py-2">
+                <Lock size={12} style={{ color: 'rgb(var(--accent))' }} />
+                <span className="text-xs font-medium flex-1 truncate">{file.name}</span>
+                <span className="text-xs shrink-0" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  {formatBytes(file.size)}
+                </span>
+                {/* Live progress (#18) — same treatment family as owner rows */}
+                {dl && dl.status === 'active' ? (
+                  <span
+                    className="text-[10px] uppercase tracking-widest font-semibold shrink-0 whitespace-nowrap tabular-nums"
+                    style={{ color: 'rgb(var(--accent))' }}
+                  >
+                    {dl.pct !== null && dl.pct > 0 ? `Saving ${dl.pct}%` : 'Preparing…'}
+                  </span>
+                ) : (
+                  <button
+                    onClick={async () => downloadFile(file.reference, file.historyRef, file.name)}
+                    className="shrink-0 w-6 h-6 flex items-center justify-center rounded transition-colors"
+                    style={{ color: 'rgb(var(--fg-muted))' }}
+                    title="Download"
+                  >
+                    <Download size={12} />
+                  </button>
+                )}
+              </div>
+            )
+          })}
         </div>
       )}
     </div>

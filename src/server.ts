@@ -902,11 +902,20 @@ export function runServer() {
         return
       }
 
-      const buffer = await response.arrayBuffer()
+      // STREAM (#18): buffering the whole file here meant a silent multi-GB
+      // wait (and matching RSS) before the browser saw byte one. Forward
+      // content-length so the client can render real progress.
       const contentType = response.headers.get('content-type')
+      const contentLength = response.headers.get('content-length')
+      const disposition = response.headers.get('content-disposition')
 
       if (contentType) context.type = contentType
-      context.body = Buffer.from(buffer)
+
+      if (contentLength) context.set('Content-Length', contentLength)
+
+      if (disposition) context.set('Content-Disposition', disposition)
+      context.status = 200
+      context.body = response.body ? Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]) : null
     } catch (error) {
       logger.error(error)
       context.status = 500
