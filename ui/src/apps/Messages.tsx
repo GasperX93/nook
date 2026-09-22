@@ -21,6 +21,7 @@ import {
   defaultInviteMessage,
   deriveConnectionState,
   getMyDisplayName,
+  markInviteAccepted,
   recordInviteSent,
   setMyDisplayName,
   type ConnectionState,
@@ -181,6 +182,10 @@ export default function Messages({ initialContactId, hideContactList, hideThread
       setInvitations(prev => markInvitationProcessed(prev, selectedInvite.senderAddr))
       setSelectedId(selectedInvite.senderAddr) // switch into the new conversation
       setInviteNickname('')
+
+      // Accepting establishes the connection on OUR side too (#14) — the
+      // composer must not offer the invite path into this thread.
+      markInviteAccepted(senderContact.id)
 
       // Tell the sender we accepted — flips their side from "waiting" to
       // "connected" (best-effort; no on-chain cost, we're mutual contacts now).

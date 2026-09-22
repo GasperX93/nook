@@ -29,6 +29,7 @@ import {
   useStatus,
   useWallet,
 } from '../api/queries'
+import { serverApi } from '../api/server'
 import { useDerivedKey } from '../hooks/useDerivedKey'
 import { useAutoPublish } from '../hooks/useAutoPublish'
 import { useInboxPolling } from '../hooks/useInboxPolling'
@@ -155,6 +156,37 @@ export default function Layout() {
   // instead of the amber funding ask (test-run finding #1).
   const reserveSettingUp = noUsableMessagingSpace && (stamps ?? []).some(s => isSystemStamp(s) && !s.usable)
   const noMessagingSpace = noUsableMessagingSpace && !reserveSettingUp
+  const { data: walletForReserve } = useWallet()
+  // Enough xBZZ already in the wallet for the reserve (#13)? Then the banner
+  // offers the purchase directly instead of asking for money that's there.
+  // Rough client-side gate (~2 xBZZ); the endpoint re-checks the exact cost.
+  const canCreateReserve =
+    noMessagingSpace && walletForReserve !== undefined && BigInt(walletForReserve.bzzBalance) >= 20000000000000000n
+  const [creatingReserve, setCreatingReserve] = useState(false)
+  const [reserveNote, setReserveNote] = useState<string | null>(null)
+
+  async function handleCreateReserve() {
+    setCreatingReserve(true)
+    setReserveNote(null)
+    try {
+      const { result } = await serverApi.createSystemStamp()
+
+      if (result === 'bought' || result === 'exists') {
+        // The stamps refetch flips this banner to the blue "setting up" state.
+        setReserveNote(null)
+      } else {
+        setReserveNote(
+          result === 'skipped'
+            ? 'Not quite ready (node still syncing or funds short) — Nook keeps trying automatically.'
+            : 'That didn’t work — Nook will retry automatically.',
+        )
+      }
+    } catch {
+      setReserveNote('That didn’t work — Nook will retry automatically.')
+    } finally {
+      setCreatingReserve(false)
+    }
+  }
   const { data: wallet, isSuccess: walletLoaded } = useWallet()
   const { devMode, onboardingCompleted, setOnboardingCompleted } = useAppStore()
   const navigate = useNavigate()
@@ -510,17 +542,35 @@ export default function Layout() {
               style={{ backgroundColor: 'rgba(245,158,11,0.08)', borderBottom: '1px solid rgba(245,158,11,0.25)' }}
             >
               <AlertTriangle size={12} className="shrink-0" style={{ color: '#f59e0b' }} />
-              <span style={{ color: 'rgb(var(--fg))' }}>
-                Messages and your identity need a small reserved space — add about 3 xBZZ and Nook sets it up
-                automatically within a few minutes.{' '}
-                <button
-                  onClick={() => navigate('/account?tab=wallet')}
-                  className="underline font-semibold"
-                  style={{ color: '#f59e0b' }}
-                >
-                  Open wallet →
-                </button>
-              </span>
+              {canCreateReserve ? (
+                // Funds are already there (#13) — asking the user to "add
+                // about 3 xBZZ" they already sent reads as a failure. Offer
+                // the action instead; the endpoint re-checks every guard.
+                <span style={{ color: 'rgb(var(--fg))' }}>
+                  Messages &amp; identity need a small reserved space.{' '}
+                  <button
+                    onClick={() => void handleCreateReserve()}
+                    disabled={creatingReserve}
+                    className="underline font-semibold disabled:opacity-60"
+                    style={{ color: '#f59e0b' }}
+                  >
+                    {creatingReserve ? 'Creating…' : 'Create it now →'}
+                  </button>
+                  {reserveNote && <span style={{ color: 'rgb(var(--fg-muted))' }}> {reserveNote}</span>}
+                </span>
+              ) : (
+                <span style={{ color: 'rgb(var(--fg))' }}>
+                  Messages and your identity need a small reserved space — add about 3 xBZZ and Nook sets it up
+                  automatically within a few minutes.{' '}
+                  <button
+                    onClick={() => navigate('/account?tab=wallet')}
+                    className="underline font-semibold"
+                    style={{ color: '#f59e0b' }}
+                  >
+                    Open wallet →
+                  </button>
+                </span>
+              )}
             </div>
           )}
 

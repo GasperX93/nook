@@ -51,6 +51,7 @@ import {
   pushNotification,
 } from './notifications'
 import { getUpdateInfo } from './update-checker'
+import { runSystemStampCheck } from './system-stamp'
 import { purchaseCostPlur, recordPurchase } from './purchases'
 import { getWalletActivity } from './wallet-activity'
 import { getStatus } from './status'
@@ -521,6 +522,16 @@ export function runServer() {
   // Update availability (phase 1): the Settings row renders from this.
   router.get('/update', context => {
     context.body = getUpdateInfo()
+  })
+
+  // Manual reserve creation (#13): the banner's "Create it now" — runs the
+  // same guarded purchase pass the monitor uses (light mode, chain synced,
+  // no existing batch, funds cover cost), immediately instead of on the next
+  // 60s tick. Safe to spam: every guard re-checks server-side.
+  router.post('/system-stamp/create', async context => {
+    const result = await runSystemStampCheck()
+
+    context.body = { result, created: result === 'bought' }
   })
 
   router.get('/notifications', context => {

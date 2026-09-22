@@ -6,7 +6,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Messages, { ConnectionStatusBadge } from '../apps/Messages'
 import { useStamps } from '../api/queries'
 import { useDerivedKey } from '../hooks/useDerivedKey'
-import { deriveConnectionState, getMyDisplayName } from '../notify/contact-state'
+import { deriveConnectionState, getMyDisplayName, markInviteAccepted } from '../notify/contact-state'
 import { sendInviteAck } from '../notify/invite-ack'
 import { loadReadCursors, loadThreads, unreadCount } from '../notify/messages'
 import { Button } from '../components/ui/button'
@@ -209,6 +209,10 @@ export default function Contacts() {
 
       setInvitations(nextInvs)
       selectContact(selectedInvite.senderAddr) // drop into the new conversation
+
+      // Accepting establishes the connection on OUR side too (#14) — the
+      // composer must not offer the invite path into this thread.
+      markInviteAccepted(senderContact.id)
 
       // Tell the sender we accepted — flips their side from "waiting" to
       // "connected" (best-effort; no on-chain cost, we're mutual contacts now).

@@ -312,6 +312,15 @@ export const serverApi = {
 
   getNotifications: async () => serverGet<{ notifications: NookNotification[] }>('/notifications'),
 
+  /** Manual reserve creation (#13) — same guarded purchase pass as the monitor, right now. */
+  createSystemStamp: async () => {
+    const response = await fetch('/system-stamp/create', { method: 'POST', headers: authHeaders() })
+
+    if (!response.ok) throw new Error(`${response.status} error`)
+
+    return response.json() as Promise<{ result: 'exists' | 'bought' | 'skipped' | 'failed'; created: boolean }>
+  },
+
   getUpdateInfo: async () =>
     serverGet<{ current: string; latest: string | null; url: string | null; updateAvailable: boolean }>('/update'),
 
