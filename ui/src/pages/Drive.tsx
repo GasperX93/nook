@@ -2202,10 +2202,13 @@ function SharedDriveCard({
   const [editingFrom, setEditingFrom] = useState(false)
   const [fromInput, setFromInput] = useState('')
   const [refreshing, setRefreshing] = useState(false)
+  const [refreshNote, setRefreshNote] = useState<string | null>(null)
 
-  // Auto-sync every 5 minutes for feed-based shared drives
+  // Auto-sync every 5 minutes for feed-based shared drives. Paused while
+  // revoked (#16) — retrying an access we know is gone just makes noise; the
+  // manual button remains the recovery path after a re-grant (#17).
   useEffect(() => {
-    if (!drive.feedTopic || !drive.feedOwner || !onRefresh) return
+    if (!drive.feedTopic || !drive.feedOwner || !onRefresh || drive.revokedAt) return
 
     const interval = setInterval(
       () => {
@@ -2215,29 +2218,48 @@ function SharedDriveCard({
     )
 
     return () => clearInterval(interval)
-  }, [drive.feedTopic, drive.feedOwner])
+  }, [drive.feedTopic, drive.feedOwner, drive.revokedAt])
+
+  /** Persist changes to this drive's entry and re-render the list. */
+  function persistDrive(changes: Partial<import('../hooks/useSharedDrives').SharedDrive>) {
+    const drives: import('../hooks/useSharedDrives').SharedDrive[] = JSON.parse(
+      localStorage.getItem('nook-shared-drives') ?? '[]',
+    )
+    const updated = drives.map(d => (d.id === drive.id ? { ...d, ...changes } : d))
+
+    localStorage.setItem('nook-shared-drives', JSON.stringify(updated))
+    onRefresh?.()
+  }
 
   async function handleRefresh() {
     if (!drive.feedTopic || !drive.feedOwner || !onRefresh) return
     setRefreshing(true)
+    setRefreshNote(null)
     try {
+      // Full re-read (#17): the wrapper carries its own (possibly rotated)
+      // history — refresh must adopt it, exactly like re-adding the share
+      // link does. A successful read after a re-grant self-heals the entry.
       const wrapperText = await serverApi.readFeed(drive.feedTopic, drive.feedOwner)
       const wrapper = JSON.parse(wrapperText) as { ref: string; history: string }
       const blob = await beeApi.downloadFileWithACT(wrapper.ref, drive.actPublisher, wrapper.history)
       const metadata = JSON.parse(await blob.text())
 
-      // Update localStorage with new files
-      const drives: import('../hooks/useSharedDrives').SharedDrive[] = JSON.parse(
-        localStorage.getItem('nook-shared-drives') ?? '[]',
-      )
-      const updated = drives.map(d =>
-        d.id === drive.id ? { ...d, files: metadata.files, actHistoryRef: wrapper.history } : d,
-      )
-      localStorage.setItem('nook-shared-drives', JSON.stringify(updated))
-      onRefresh()
-    } catch {
-      // eslint-disable-next-line no-alert
-      alert('Could not refresh. Access may have been revoked.')
+      persistDrive({
+        files: metadata.files,
+        reference: wrapper.ref,
+        actHistoryRef: wrapper.history,
+        revokedAt: undefined,
+      })
+    } catch (e) {
+      // A definitive 403 means the owner revoked us (#16) — a state, not an
+      // event: badge the card, pause auto-sync, never a blocking alert
+      // (which the 5-minute timer used to fire repeatedly). Anything else is
+      // transient — an inline note on manual refresh, silence from the timer.
+      if (/403/.test((e as Error).message ?? '')) {
+        persistDrive({ revokedAt: Date.now() })
+      } else {
+        setRefreshNote("Couldn't reach the drive right now — will retry.")
+      }
     } finally {
       setRefreshing(false)
     }
@@ -2291,8 +2313,7 @@ function SharedDriveCard({
       document.body.removeChild(a)
       URL.revokeObjectURL(url)
     } catch {
-      // eslint-disable-next-line no-alert
-      alert('Access revoked or content unavailable.')
+      setRefreshNote(`Couldn't download “${fileName}” — access may have been removed or the content is unreachable.`)
     }
   }
 
@@ -2336,6 +2357,15 @@ function SharedDriveCard({
         ) : (
           <span className="text-sm font-medium truncate flex-1 group/name flex items-center gap-1 min-w-0">
             <span className="truncate">{drive.name}</span>
+            {drive.revokedAt && (
+              <span
+                className="ml-1 text-[10px] font-sans font-medium px-1.5 py-0.5 rounded whitespace-nowrap"
+                title="The owner removed your access. Files you could already open may still open (they were shared before the change). If you're re-invited, press refresh."
+                style={{ backgroundColor: 'rgba(239,68,68,0.12)', color: '#ef4444' }}
+              >
+                access removed
+              </span>
+            )}
             <button
               onClick={e => {
                 e.stopPropagation()
@@ -2422,6 +2452,18 @@ function SharedDriveCard({
           <X size={12} />
         </button>
       </div>
+
+      {refreshNote && (
+        <p className="px-11 pb-2 text-[11px]" style={{ color: 'rgb(var(--fg-muted))' }}>
+          {refreshNote}
+        </p>
+      )}
+      {drive.revokedAt && (
+        <p className="px-11 pb-2 text-[11px]" style={{ color: 'rgb(var(--fg-muted))' }}>
+          The owner removed your access. Files below were shared before the change and may still open. If you're
+          re-invited, press the sync button.
+        </p>
+      )}
 
       {expanded && drive.files && (
         <div className="border-t py-2 px-6" style={{ borderColor: 'rgb(var(--border))' }}>
