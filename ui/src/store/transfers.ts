@@ -14,6 +14,7 @@ import { create } from 'zustand'
 
 import { waitForTagPropagation } from '../api/bee'
 import { serverApi } from '../api/server'
+import { clearPendingTagUid, pendingPropagationRecords } from '../hooks/useUploadHistory'
 
 export interface TransferEntry {
   id: string
@@ -111,36 +112,15 @@ export function etaText(t: TransferEntry): string | null {
 
 // ─── Propagation following (uploads) ─────────────────────────────────────────
 
-interface PendingPropagation {
-  tagUid: number
-  name: string
-  driveId?: string
-}
-
-const PENDING_KEY = 'nook:pending-propagation'
-
-function loadPending(): PendingPropagation[] {
-  try {
-    return JSON.parse(localStorage.getItem(PENDING_KEY) ?? '[]')
-  } catch {
-    return []
-  }
-}
-
-function savePending(list: PendingPropagation[]) {
-  localStorage.setItem(PENDING_KEY, JSON.stringify(list))
-}
-
-function clearPending(tagUid: number) {
-  savePending(loadPending().filter(p => p.tagUid !== tagUid))
-}
-
 /**
  * Follow a Bee tag until the upload is on the network, feeding this store
- * (and the caller's optional pct callback). Rings the bell on completion and
- * keeps a localStorage marker so a reopened dashboard can resume following.
+ * (and the caller's optional pct callback). Rings the bell on completion.
+ * Persistence rides the upload RECORD (#23: pendingTagUid is set when the
+ * record is written, BEFORE this wait — a navigation or quit can no longer
+ * lose the file's address) and is cleared here centrally on completion.
  * Same stall semantics as waitForTagPropagation: `complete: false` is a soft
- * outcome — Bee's background pusher keeps working.
+ * outcome — Bee's background pusher keeps working and the next app start
+ * resumes following via the still-marked record.
  */
 export async function followTagPropagation(
   tagUid: number,
@@ -152,22 +132,21 @@ export async function followTagPropagation(
   const store = useTransfersStore.getState()
 
   store.begin({ id, kind: 'upload', name, driveId, phase: 'Propagating to network…' })
-  savePending([...loadPending().filter(p => p.tagUid !== tagUid), { tagUid, name, driveId }])
 
   const { complete } = await waitForTagPropagation(tagUid, onPct, {
     onTag: tag => useTransfersStore.getState().chunkProgress(id, tag.seen + tag.synced, tag.split),
   })
 
-  clearPending(tagUid)
-
   if (complete) {
+    clearPendingTagUid(tagUid)
     useTransfersStore.getState().finish(id)
     serverApi
       .createNotification({
         type: 'info',
         title: 'Stored on the network',
         body: `“${name}” has reached the network — every piece is confirmed stored.`,
-        link: '/drive',
+        // Land inside the drive (#24), not on the generic list.
+        link: driveId ? `/drive?open=${driveId}` : '/drive',
       })
       .catch(() => undefined)
   } else {
@@ -180,10 +159,16 @@ export async function followTagPropagation(
 
 /**
  * Re-attach to propagations that were still running when the dashboard was
- * last closed (tags persist on the Bee node). Mounted once from Layout.
+ * last closed (tags persist on the Bee node; marked records persist in
+ * localStorage). Mounted once from Layout. A tag that finished while the app
+ * was closed completes on the first poll and clears its record's marker.
  */
 export function resumePendingPropagation(): void {
-  for (const p of loadPending()) {
+  const seen = new Set<number>()
+
+  for (const p of pendingPropagationRecords()) {
+    if (seen.has(p.tagUid)) continue
+    seen.add(p.tagUid)
     void followTagPropagation(p.tagUid, p.name, p.driveId)
   }
 }

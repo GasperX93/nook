@@ -1139,6 +1139,13 @@ function RecordRow({
   const { label: expiry, urgent } = timeUntil(expiresAt)
   const linkHash = record.feedManifestAddress ?? record.hash
   const isEnc = record.isEncrypted && record.actPublisher && record.actHistoryRef
+  // Still propagating (#23): the record exists from the moment the local
+  // upload lands; while its tag is unfinished the row shows the live network
+  // push instead of expiry. Falls back to a static hint when no follower is
+  // attached yet (resume runs shortly after app start).
+  const propagating = useTransfersStore(state =>
+    record.pendingTagUid !== undefined ? state.transfers.find(t => t.id === `tag:${record.pendingTagUid}`) : undefined,
+  )
 
   // For encrypted files, build a proxy URL that includes ACT headers
   const actProxyUrl = isEnc
@@ -1242,6 +1249,25 @@ function RecordRow({
             style={{ color: 'rgb(var(--accent))' }}
           >
             {downloadPct > 0 ? `Saving ${downloadPct}%` : 'Preparing…'}
+          </span>
+        </div>
+      ) : record.pendingTagUid !== undefined ? (
+        // Still spreading to the network (#23) — same prominent treatment as
+        // downloads, driven by the tracker entry this record's tag feeds.
+        <div className="flex items-center gap-2 shrink-0">
+          <div className="w-24 h-1 rounded-full overflow-hidden" style={{ backgroundColor: 'rgb(var(--border))' }}>
+            <div
+              className="h-full rounded-full transition-all"
+              style={{ width: `${Math.max(propagating?.pct ?? 0, 2)}%`, backgroundColor: 'rgb(var(--accent))' }}
+            />
+          </div>
+          <span
+            className="text-[10px] uppercase tracking-widest font-semibold w-24 text-right whitespace-nowrap tabular-nums"
+            style={{ color: 'rgb(var(--accent))' }}
+          >
+            {propagating?.pct !== null && propagating?.pct !== undefined
+              ? `To network ${propagating.pct}%`
+              : 'To network…'}
           </span>
         </div>
       ) : (
@@ -1943,6 +1969,38 @@ function AddFilePanel({
       // content addresses — stewardship can't verify them. The availability
       // check for encrypted drives happens on the public metadata WRAPPER
       // below (the first thing recipients resolve).
+      let expiresAt: number
+      try {
+        const stamp = await beeApi.getStamp(driveId)
+        expiresAt = Date.now() + stamp.batchTTL * 1000
+      } catch {
+        expiresAt = Date.now() + 3 * 30 * 24 * 60 * 60 * 1000
+      }
+
+      // Record FIRST, propagation after (#23): the local upload succeeded, so
+      // the file's address must be persisted before the long network wait —
+      // navigating away (or quitting) during propagation used to lose the
+      // record entirely. pendingTagUid marks the row as still spreading; the
+      // transfer tracker clears it centrally on completion.
+      const pendingTag = !encrypted && uploadTagUid !== undefined ? uploadTagUid : undefined
+      const newRecord: UploadRecord = {
+        id: crypto.randomUUID(),
+        name,
+        hash: reference,
+        size: entries.reduce((sum, e) => sum + e.file.size, 0),
+        type,
+        driveId,
+        expiresAt,
+        uploadedAt: Date.now(),
+        hasFeed: false,
+        isEncrypted: encrypted || undefined,
+        actPublisher: encrypted ? addresses?.publicKey : undefined,
+        actHistoryRef: uploadHistoryAddress || undefined,
+        ...(pendingTag !== undefined ? { pendingTagUid: pendingTag } : {}),
+      }
+
+      onAdd(newRecord)
+
       if (!encrypted && uploadTagUid !== undefined) {
         // #92 stage 2: follow the tag until the content is on the network —
         // through the global tracker (#4/#5), so the progress survives
@@ -1959,31 +2017,6 @@ function AddFilePanel({
       }
 
       setProgress(null)
-
-      let expiresAt: number
-      try {
-        const stamp = await beeApi.getStamp(driveId)
-        expiresAt = Date.now() + stamp.batchTTL * 1000
-      } catch {
-        expiresAt = Date.now() + 3 * 30 * 24 * 60 * 60 * 1000
-      }
-
-      const newRecord: UploadRecord = {
-        id: crypto.randomUUID(),
-        name,
-        hash: reference,
-        size: entries.reduce((sum, e) => sum + e.file.size, 0),
-        type,
-        driveId,
-        expiresAt,
-        uploadedAt: Date.now(),
-        hasFeed: false,
-        isEncrypted: encrypted || undefined,
-        actPublisher: encrypted ? addresses?.publicKey : undefined,
-        actHistoryRef: uploadHistoryAddress || undefined,
-      }
-
-      onAdd(newRecord)
 
       // Update metadata feed for encrypted drives (enables live shared drive access)
       if (encrypted && addresses?.publicKey && uploadHistoryAddress) {
@@ -2559,6 +2592,15 @@ export default function Drive() {
       setActiveDriveId(extendId)
       setShowExtendModal(extendId)
     }
+    // eslint-disable-next-line
+  }, [location.key])
+
+  // Deep link from the bell (#24): /drive?open=<batchId> lands INSIDE the
+  // drive (e.g. "Stored on the network" completion), no modal on top.
+  useEffect(() => {
+    const openId = new URLSearchParams(location.search).get('open')
+
+    if (openId) setActiveDriveId(openId)
     // eslint-disable-next-line
   }, [location.key])
 

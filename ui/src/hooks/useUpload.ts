@@ -163,6 +163,36 @@ export function useUpload() {
       }
     }
 
+    // Fetch current stamp TTL to set accurate expiry
+    let expiresAt: number
+    try {
+      const stamp = await beeApi.getStamp(driveId)
+      expiresAt = Date.now() + stamp.batchTTL * 1000
+    } catch {
+      // fallback: 3 months
+      expiresAt = Date.now() + 3 * 30 * 24 * 60 * 60 * 1000
+    }
+
+    // Record FIRST (#23): the local upload succeeded — persist the address
+    // before the long propagation wait so leaving the wizard can't lose it.
+    // Feed details are patched in below once created.
+    const pendingTag = uploadTagUid !== undefined && !encrypted ? uploadTagUid : undefined
+    const recordId = crypto.randomUUID()
+    addRecord({
+      id: recordId,
+      name,
+      hash: reference,
+      size: entries.reduce((sum, e) => sum + e.file.size, 0),
+      type,
+      driveId,
+      expiresAt,
+      uploadedAt: Date.now(),
+      hasFeed: false,
+      isEncrypted: encrypted || undefined,
+      actHistoryRef: uploadHistoryAddress || undefined,
+      ...(pendingTag !== undefined ? { pendingTagUid: pendingTag } : {}),
+    })
+
     // Stage 2 (#92): the XHR bar only measured bytes reaching the LOCAL node.
     // For deferred uploads, follow the tag until the content is actually on the
     // network. A stall is a soft outcome — the background pusher keeps working,
@@ -191,34 +221,12 @@ export function useUpload() {
       const topicHex = await topicFromString(topicName)
       const result = await serverApi.createFeedUpdate(topicHex, reference, driveId)
       feedManifestAddress = result.feedManifestAddress
+      updateRecord(recordId, {
+        hasFeed: true,
+        feedTopic: feedTopic?.trim() || name,
+        feedManifestAddress,
+      })
     }
-
-    // Fetch current stamp TTL to set accurate expiry
-    let expiresAt: number
-    try {
-      const stamp = await beeApi.getStamp(driveId)
-      expiresAt = Date.now() + stamp.batchTTL * 1000
-    } catch {
-      // fallback: 3 months
-      expiresAt = Date.now() + 3 * 30 * 24 * 60 * 60 * 1000
-    }
-
-    const recordId = crypto.randomUUID()
-    addRecord({
-      id: recordId,
-      name,
-      hash: reference,
-      size: entries.reduce((sum, e) => sum + e.file.size, 0),
-      type,
-      driveId,
-      expiresAt,
-      uploadedAt: Date.now(),
-      hasFeed: feedEnabled,
-      feedTopic: feedEnabled ? feedTopic?.trim() || name : undefined,
-      feedManifestAddress,
-      isEncrypted: encrypted || undefined,
-      actHistoryRef: uploadHistoryAddress || undefined,
-    })
 
     return { hash: reference, expiresAt, feedManifestAddress, recordId, actHistoryRef: uploadHistoryAddress }
   }

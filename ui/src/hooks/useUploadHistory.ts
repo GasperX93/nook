@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 export interface DriveFolder {
   id: string
@@ -36,6 +36,13 @@ export interface UploadRecord {
   actPublisher?: string
   /** ACT history reference (needed for ACT download) */
   actHistoryRef?: string
+  /**
+   * Bee tag uid while the upload is still propagating to the network (#23).
+   * Set at record creation (records are written BEFORE the propagation wait —
+   * navigating away must never lose a file's address), cleared centrally by
+   * the transfer tracker when the tag completes. Presence = "still spreading".
+   */
+  pendingTagUid?: number
 }
 
 const STORAGE_KEY = 'swarm-drive'
@@ -55,6 +62,46 @@ function saveFolders(folders: DriveFolder[]) {
 
 function save(records: UploadRecord[]) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(records))
+}
+
+/**
+ * Records still waiting on network propagation (#23) — the transfer tracker
+ * re-follows these on app start. Standalone (non-hook) because the tracker
+ * lives outside React.
+ */
+export function pendingPropagationRecords(): { tagUid: number; name: string; driveId: string }[] {
+  try {
+    const records: UploadRecord[] = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '[]')
+
+    return records
+      .filter(r => r.pendingTagUid !== undefined)
+      .map(r => ({ tagUid: r.pendingTagUid!, name: r.name, driveId: r.driveId }))
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Clear the propagation marker once a tag completes — called by the transfer
+ * tracker, which may outlive the page that created the record. Direct
+ * localStorage write; mounted hooks re-read on next interaction.
+ */
+export function clearPendingTagUid(tagUid: number): void {
+  try {
+    const records: UploadRecord[] = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '[]')
+    const next = records.map(r => {
+      if (r.pendingTagUid !== tagUid) return r
+      const { pendingTagUid: _cleared, ...rest } = r
+
+      return rest as UploadRecord
+    })
+
+    save(next)
+    // Mounted hook instances hold records in React state — poke them.
+    window.dispatchEvent(new Event('nook:records-changed'))
+  } catch {
+    // nothing to clear
+  }
 }
 
 /** Load and repair records: migrate stampId→driveId and clear orphaned folderIds */
@@ -104,6 +151,21 @@ export function useUploadHistory() {
   const [init] = useState(loadAll)
   const [records, setRecords] = useState(init.records)
   const [folders, setFolders] = useState(init.folders)
+
+  // Out-of-band writes (the transfer tracker clearing pendingTagUid) poke
+  // mounted instances via this event so rows update without a remount.
+  useEffect(() => {
+    const reload = () => {
+      const all = loadAll()
+
+      setRecords(all.records)
+      setFolders(all.folders)
+    }
+
+    window.addEventListener('nook:records-changed', reload)
+
+    return () => window.removeEventListener('nook:records-changed', reload)
+  }, [])
 
   function add(record: UploadRecord) {
     setRecords(prev => {
