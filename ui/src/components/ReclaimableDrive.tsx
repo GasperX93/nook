@@ -255,20 +255,10 @@ export function ReclaimableDriveCard({
             </span>
           )}
 
-          {/* Right-side actions */}
+          {/* Right-side actions — same treatment as classic cards (#22b):
+              no teleporting extend button; the TTL pill is the affordance
+              and the kebab always carries "Extend drive…". */}
           <div className="ml-auto flex items-center gap-2 shrink-0">
-            {needsExtend && (
-              <button
-                onClick={e => {
-                  e.stopPropagation()
-                  onExtend()
-                }}
-                className="px-3 py-1.5 rounded-lg border text-xs font-semibold transition-colors hover:bg-white/5"
-                style={{ borderColor: 'rgb(var(--border))', color: 'rgb(var(--fg))' }}
-              >
-                Extend storage
-              </button>
-            )}
             <div className="relative" ref={kebabRef} onClick={e => e.stopPropagation()}>
               <button
                 onClick={() => setKebabOpen(v => !v)}
@@ -292,7 +282,7 @@ export function ReclaimableDriveCard({
                     style={{ color: 'rgb(var(--fg))' }}
                   >
                     <Clock size={13} style={{ color: 'rgb(var(--fg-muted))' }} />
-                    Extend storage
+                    Extend drive…
                   </button>
                   {onAutoExtend && (
                     <button
@@ -304,7 +294,7 @@ export function ReclaimableDriveCard({
                       style={{ color: 'rgb(var(--fg))' }}
                     >
                       <RefreshCw size={13} style={{ color: 'rgb(var(--fg-muted))' }} />
-                      Extend automatically…
+                      Auto-renew…
                     </button>
                   )}
                   <button
@@ -362,8 +352,14 @@ export function ReclaimableDriveCard({
             </span>
           )}
           {!expired && ttlSeconds !== null && (
-            <span
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full"
+            // Clickable extend affordance (#22b) — same as classic cards.
+            <button
+              onClick={e => {
+                e.stopPropagation()
+                onExtend()
+              }}
+              title="Extend drive — add space or time"
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full transition-colors hover:ring-1"
               style={
                 isCriticalTtl
                   ? { backgroundColor: 'rgba(239,68,68,0.1)', color: '#ef4444' }
@@ -371,8 +367,8 @@ export function ReclaimableDriveCard({
               }
             >
               <Clock size={11} />
-              {ttlToDays(ttlSeconds)}
-            </span>
+              <span className={needsExtend ? 'underline underline-offset-2' : undefined}>{ttlToDays(ttlSeconds)}</span>
+            </button>
           )}
           <span style={{ color: 'rgb(var(--border))' }}>|</span>
           <span style={{ color: 'rgb(var(--fg-muted))' }}>
