@@ -1,4 +1,4 @@
-import { FileBox, Globe } from 'lucide-react'
+import { FileBox } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
 import { etaText, type TransferEntry } from '../store/transfers'
@@ -12,11 +12,14 @@ import { etaText, type TransferEntry } from '../store/transfers'
  * the ETA is the coarse rolling-rate estimate. Nothing here animates a lie.
  */
 
+// Node vocabulary throughout (#15, user-corrected): Nook runs a LIGHT node
+// that doesn't store others' data — never claim "computers like yours".
 const FACTS = [
   'Your file is split into thousands of encrypted pieces…',
-  'Each piece is stored by a different computer on the Swarm network…',
-  'No single machine ever holds your whole file…',
+  'Each piece is stored by a different Bee node on the Swarm network…',
+  'No single node ever holds your whole file…',
   'Once every piece is confirmed, anyone you share with can fetch it…',
+  'Storage nodes earn xBZZ for keeping your pieces — that’s what your drive pays for…',
 ]
 
 /** Chunks/second from the entry's recent samples — drives the dot speed. */
@@ -52,15 +55,17 @@ export default function PropagationVisual({ transfer }: { transfer: TransferEntr
 
   return (
     <div className="space-y-2">
-      {/* File → network dot stream. Dots pause when no chunks are landing —
-          motion means real progress. Hidden for reduced-motion users. */}
+      {/* File → nodes dot stream. Dots pause when no chunks are landing —
+          motion means real progress — and each dot fans to a DIFFERENT node
+          in the cluster (#25: one globe read as "one node gets everything").
+          Hidden for reduced-motion users. */}
       <div className="flex items-center gap-3">
         <FileBox size={16} className="shrink-0" style={{ color: 'rgb(var(--fg-muted))' }} />
-        <div className="relative flex-1 h-4 overflow-hidden nook-propagation-track" aria-hidden="true">
+        <div className="relative flex-1 h-6 overflow-hidden nook-propagation-track" aria-hidden="true">
           {[0, 1, 2, 3, 4].map(i => (
             <span
               key={i}
-              className="nook-propagation-dot"
+              className={`nook-propagation-dot nook-propagation-dot-${i % 3}`}
               style={{
                 animationDuration: duration ? `${duration}s` : undefined,
                 animationDelay: duration ? `${(i * duration) / 5}s` : undefined,
@@ -69,7 +74,24 @@ export default function PropagationVisual({ transfer }: { transfer: TransferEntr
             />
           ))}
         </div>
-        <Globe size={16} className="shrink-0" style={{ color: 'rgb(var(--accent))' }} />
+        {/* Mini network cluster — many small nodes, faint edges */}
+        <svg width="34" height="30" viewBox="0 0 34 30" className="shrink-0" aria-hidden="true">
+          <g stroke="rgb(var(--fg-muted))" strokeOpacity="0.35" strokeWidth="1">
+            <line x1="7" y1="5" x2="24" y2="9" />
+            <line x1="24" y1="9" x2="12" y2="16" />
+            <line x1="12" y1="16" x2="27" y2="23" />
+            <line x1="7" y1="5" x2="12" y2="16" />
+            <line x1="12" y1="16" x2="6" y2="25" />
+            <line x1="24" y1="9" x2="27" y2="23" />
+          </g>
+          <g fill="rgb(var(--accent))">
+            <circle cx="7" cy="5" r="3" />
+            <circle cx="24" cy="9" r="3.5" />
+            <circle cx="12" cy="16" r="3" />
+            <circle cx="27" cy="23" r="3" />
+            <circle cx="6" cy="25" r="2.5" />
+          </g>
+        </svg>
       </div>
 
       {/* Real numbers: % · piece counts · coarse ETA */}

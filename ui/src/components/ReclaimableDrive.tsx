@@ -186,8 +186,8 @@ export function ReclaimableDriveCard({
           {/* Encrypted pill (private, no sharing on reclaimable drives yet) */}
           {drive.encrypted && (
             <span
-              className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-semibold shrink-0"
-              style={{ backgroundColor: '#3b82f6', color: 'white' }}
+              className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium shrink-0"
+              style={{ backgroundColor: 'rgba(96,165,250,0.12)', color: '#60a5fa' }}
             >
               <Lock size={12} />
               Encrypted
