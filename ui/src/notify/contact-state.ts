@@ -81,6 +81,38 @@ export function setMyDisplayName(name: string): void {
 
 export type ConnectionState = 'not-connected' | 'invite-sent-fresh' | 'invite-sent-stale' | 'connected'
 
+const ACCEPTED_KEY = 'nook-accepted-invites'
+
+function loadAccepted(): Record<string, number> {
+  try {
+    return JSON.parse(localStorage.getItem(nsKey(ACCEPTED_KEY)) ?? '{}')
+  } catch {
+    return {}
+  }
+}
+
+/**
+ * Record that WE accepted this contact's invitation (#14). Accepting proves
+ * the peer initiated — the relationship is established even before their
+ * first regular message lands, so the composer must not fall into the
+ * invite path (which would send a redundant "would like to connect" bubble
+ * plus a pointless paid on-chain ping into an already-connected thread).
+ */
+export function markInviteAccepted(contactId: string): void {
+  try {
+    const map = loadAccepted()
+
+    map[contactId.toLowerCase()] = Date.now()
+    localStorage.setItem(nsKey(ACCEPTED_KEY), JSON.stringify(map))
+  } catch {
+    // storage unavailable — worst case the composer offers an invite once
+  }
+}
+
+export function wasInviteAccepted(contactId: string): boolean {
+  return contactId.toLowerCase() in loadAccepted()
+}
+
 /**
  * Derive the connection state for a contact.
  *
@@ -89,7 +121,9 @@ export type ConnectionState = 'not-connected' | 'invite-sent-fresh' | 'invite-se
  * @param now - current timestamp (parameterizable for tests)
  */
 export function deriveConnectionState(contactId: string, hasInbound: boolean, now = Date.now()): ConnectionState {
-  if (hasInbound) return 'connected'
+  // Accepting their invitation establishes the connection (#14) — don't wait
+  // for their first regular message to flip the composer out of invite mode.
+  if (hasInbound || wasInviteAccepted(contactId)) return 'connected'
   const sentAt = getInviteSentAt(contactId)
 
   if (sentAt === null) return 'not-connected'

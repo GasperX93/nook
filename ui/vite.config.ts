@@ -28,6 +28,8 @@ export default defineConfig(({ command }) => ({
       '/reclaimable': 'http://localhost:3054',
       '/auto-extend': 'http://localhost:3054',
       '/notifications': 'http://localhost:3054',
+      '/update': 'http://localhost:3054',
+      '/system-stamp': 'http://localhost:3054',
       '/wallet-activity': 'http://localhost:3054',
       '/identity-cache': 'http://localhost:3054',
       // Bee node API — proxied to avoid CORS issues in dev
