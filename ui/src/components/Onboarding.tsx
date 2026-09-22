@@ -213,7 +213,7 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
             <div className="text-center space-y-3">
               <h2 className="text-lg font-semibold">Top up your node wallet</h2>
               <p className="text-sm leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
-                Nook doesn't use servers — your files and messages live on the decentralized Swarm network, and you pay
+                Nook doesn't use servers — your files and messages live on Swarm, a decentralized network. You pay
                 upfront for the space you use. To finish setup, top up your node wallet with 5 xBZZ.
               </p>
             </div>
@@ -265,9 +265,11 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
                     {copiedAddr ? <Check size={12} /> : <Copy size={12} />}
                   </button>
                 </div>
-                <p className="text-xs" style={{ color: '#f59e0b' }}>
-                  ⚠ Gnosis Chain only. Funds sent on Ethereum or another network won't appear in Nook and are difficult
-                  to recover.
+                {/* Always visible, never a tooltip: irreversible-loss class,
+                    and the user who needs it won't hover. Compact under the
+                    address (user-picked placement). */}
+                <p className="text-[11px]" style={{ color: '#f59e0b' }}>
+                  ⚠ Gnosis Chain only — funds sent from other networks won't appear in Nook and are hard to recover.
                 </p>
               </div>
             )}
