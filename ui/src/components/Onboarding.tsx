@@ -204,89 +204,27 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
           </div>
         )}
 
-        {/* Step 3 — Fund wallet */}
+        {/* Step 3 — Fund wallet (rev C, user-approved 2026-09-22: one short
+            "why" up top, the any-chain line inside the widget card, the
+            address as a Gnosis-Chain instruction, check-now merged with the
+            auto-advance note at the bottom). */}
         {step === 'funding' && (
           <div className="space-y-5">
             <div className="text-center space-y-3">
-              <h2 className="text-lg font-semibold">Fund your node wallet.</h2>
+              <h2 className="text-lg font-semibold">Top up your node wallet</h2>
               <p className="text-sm leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
-                Your node needs xDAI for transaction fees and xBZZ for storage space on the Swarm network.
-              </p>
-              <p className="text-sm leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
-                You can fund it from any EVM-compatible chain using any token — it will be swapped to the required
-                assets.
-              </p>
-            </div>
-
-            {/* Manual re-check + wallet hint (fresh-install feedback 2026-09-17):
-                waiting silently on the 15s poll reads as "stuck". */}
-            <div className="text-center space-y-2">
-              <button
-                onClick={() => void refetchWallet()}
-                disabled={walletChecking}
-                className="text-xs underline transition-colors"
-                style={{ color: 'rgb(var(--fg-muted))' }}
-              >
-                {walletChecking ? 'Checking…' : "I've sent funds — check now"}
-              </button>
-              <p className="text-[11px]" style={{ color: 'rgb(var(--fg-muted))' }}>
-                Using MetaMask? Unlock it first — if it doesn't show up in the box above, refresh this page.
-              </p>
-            </div>
-
-            {/* Why storage costs money — the web2-contrast explanation (#130) */}
-            <div
-              className="rounded-lg px-4 py-3 text-left space-y-1"
-              style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
-            >
-              <p className="text-xs font-semibold">Why does this cost anything?</p>
-              <p className="text-xs leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
-                Nook has no accounts and no servers. Your name and your messages live on the Swarm network itself — and
-                network storage is prepaid, like postage on a letter. Nook reserves a small space for your identity and
-                messages, plus a little for message delivery — about 3 xBZZ covers both for 3 months, renewed
-                automatically. Everything else you add funds for stays yours to spend.
-              </p>
-            </div>
-
-            {/* Wallet address */}
-            {address && (
-              <div
-                className="flex items-center gap-2 rounded-lg px-4 py-3"
-                style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
-              >
-                <span className="text-xs uppercase tracking-widest shrink-0" style={{ color: 'rgb(var(--fg-muted))' }}>
-                  Your node address
-                </span>
-                <p className="font-mono text-xs min-w-0 truncate flex-1" style={{ color: 'rgb(var(--fg-muted))' }}>
-                  {address}
-                </p>
-                <button
-                  onClick={copyAddress}
-                  className="w-6 h-6 flex items-center justify-center rounded shrink-0 transition-colors"
-                  style={{ color: copiedAddr ? '#4ade80' : 'rgb(var(--fg-muted))' }}
-                >
-                  {copiedAddr ? <Check size={12} /> : <Copy size={12} />}
-                </button>
-              </div>
-            )}
-
-            {/* Beta disclaimer — lived on the removed 'info' step; it's a
-                warning about money, so the money screen is its home. */}
-            <div
-              className="flex items-start gap-3 rounded-xl border px-5 py-4 text-left"
-              style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
-            >
-              <AlertTriangle size={16} className="shrink-0 mt-0.5" style={{ color: '#f97316' }} />
-              <p className="text-xs leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
-                Nook is beta software. Use small amounts only — features may change, bugs may exist, and stored data may
-                need to be re-uploaded after updates.
+                Nook doesn't use servers — your files and messages live on the decentralized Swarm network, and you pay
+                upfront for the space you use. To finish setup, top up your node wallet with 5 xBZZ.
               </p>
             </div>
 
             {/* Multichain widget */}
             <div className="rounded-xl border p-5" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
-              <p className="text-xs uppercase tracking-widest mb-3" style={{ color: 'rgb(var(--fg-muted))' }}>
+              <p className="text-xs uppercase tracking-widest mb-1" style={{ color: 'rgb(var(--fg-muted))' }}>
                 Top up
+              </p>
+              <p className="text-xs mb-3" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Fund from any EVM-compatible chain using any token — it's swapped automatically.
               </p>
               {address ? (
                 <MultichainWidget
@@ -305,6 +243,35 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
               )}
             </div>
 
+            {/* Or send directly — the address as a concrete instruction, with
+                the wrong-chain warning (irreversible-loss class). */}
+            {address && (
+              <div className="rounded-xl border p-5 space-y-2" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
+                <p className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  Or send directly
+                </p>
+                <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  Send xDAI and xBZZ to your node address on <b style={{ color: 'rgb(var(--fg))' }}>Gnosis Chain</b>:
+                </p>
+                <div className="flex items-center gap-2">
+                  <p className="font-mono text-xs min-w-0 truncate flex-1" style={{ color: 'rgb(var(--fg))' }}>
+                    {address}
+                  </p>
+                  <button
+                    onClick={copyAddress}
+                    className="w-6 h-6 flex items-center justify-center rounded shrink-0 transition-colors"
+                    style={{ color: copiedAddr ? '#4ade80' : 'rgb(var(--fg-muted))' }}
+                  >
+                    {copiedAddr ? <Check size={12} /> : <Copy size={12} />}
+                  </button>
+                </div>
+                <p className="text-xs" style={{ color: '#f59e0b' }}>
+                  ⚠ Gnosis Chain only. Funds sent on Ethereum or another network won't appear in Nook and are difficult
+                  to recover.
+                </p>
+              </div>
+            )}
+
             {/* Gift code */}
             <div className="rounded-xl border p-5" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
               <div className="flex items-center gap-2 mb-1">
@@ -314,7 +281,7 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
                 </p>
               </div>
               <p className="text-xs mb-3" style={{ color: 'rgb(var(--fg-muted))' }}>
-                Have a gift code? Paste it to receive BZZ and xDAI instantly.
+                Have a gift code? Paste it to receive xBZZ and xDAI instantly.
               </p>
               <div className="flex gap-3">
                 <input
@@ -350,8 +317,32 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
               )}
             </div>
 
+            {/* Beta disclaimer — short form (rev C). */}
+            <div
+              className="flex items-start gap-3 rounded-xl border px-5 py-3 text-left"
+              style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
+            >
+              <AlertTriangle size={14} className="shrink-0 mt-0.5" style={{ color: '#f97316' }} />
+              <p className="text-xs leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Nook is beta software. Use small amounts only.
+              </p>
+            </div>
+
+            {/* Auto-advance + manual re-check, one line (fresh-install
+                feedback 2026-09-17 + rev C: silent polling reads as stuck). */}
             <p className="text-xs text-center" style={{ color: 'rgb(var(--fg-muted))' }}>
-              This step will advance automatically once xDAI is detected in your wallet.
+              Nook checks your wallet every 15 seconds and moves on automatically — or{' '}
+              <button
+                onClick={() => void refetchWallet()}
+                disabled={walletChecking}
+                className="underline transition-colors"
+                style={{ color: 'rgb(var(--fg-muted))' }}
+              >
+                {walletChecking ? 'checking…' : "I've sent funds — check now"}
+              </button>
+            </p>
+            <p className="text-[11px] text-center" style={{ color: 'rgb(var(--fg-muted))' }}>
+              Using MetaMask? Unlock it first — if it doesn't show up in the box above, refresh this page.
             </p>
           </div>
         )}
