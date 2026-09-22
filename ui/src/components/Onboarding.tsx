@@ -248,7 +248,7 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
             {address && (
               <div className="rounded-xl border p-5 space-y-2" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
                 <p className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
-                  Or send directly
+                  Send directly to node address
                 </p>
                 <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
                   Send xDAI and xBZZ to your node address on <b style={{ color: 'rgb(var(--fg))' }}>Gnosis Chain</b>:
