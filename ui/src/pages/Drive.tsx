@@ -426,10 +426,10 @@ function BuyDriveModal({
               className="mt-0.5 accent-orange-500"
             />
             <div className="flex-1">
-              <p className="text-xs font-medium">Keep this drive alive automatically</p>
+              <p className="text-xs font-medium">Auto-renew</p>
               <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
                 {keepAlive
-                  ? `Extends by ${keepAliveDuration.label.toLowerCase()} whenever less than 10 days remain, paid from your wallet. Change anytime under Extend storage.`
+                  ? `Extends by ${keepAliveDuration.label.toLowerCase()} whenever less than 10 days remain, paid from your wallet. Change anytime under Extend drive.`
                   : 'Extends the drive before it expires, paid from your wallet.'}
               </p>
               {keepAlive && (
@@ -695,7 +695,7 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
         <div>
           <label className="flex items-center justify-between mb-2 cursor-pointer">
             <span className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
-              Extend capacity
+              Add space
             </span>
             <Switch
               checked={capacityEnabled}
@@ -731,7 +731,7 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
         <div>
           <label className="flex items-center justify-between mb-2 cursor-pointer">
             <span className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
-              Extend duration
+              Add time
             </span>
             <Switch checked={durationEnabled} onCheckedChange={setDurationEnabled} />
           </label>
@@ -755,11 +755,14 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
           )}
         </div>
 
-        {/* Auto-extend (#129) — staged with the rest, applied by the button */}
+        {/* Auto-renew (#129) — staged with the rest, applied by the button.
+            Divider (#19): the two above are one-time actions; this is a
+            standing arrangement. */}
+        <div className="h-px" style={{ backgroundColor: 'rgb(var(--border))' }} />
         <div>
           <label className="flex items-center justify-between mb-2 cursor-pointer">
             <span className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
-              Extend automatically
+              Auto-renew
             </span>
             <Switch checked={autoEnabled} onCheckedChange={setAutoEnabled} disabled={!autoLoaded} />
           </label>
@@ -1621,8 +1624,8 @@ function DriveCard({
           {/* Encrypted pill */}
           {encrypted && (
             <span
-              className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-semibold shrink-0"
-              style={{ backgroundColor: '#3b82f6', color: 'white' }}
+              className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium shrink-0"
+              style={{ backgroundColor: 'rgba(96,165,250,0.12)', color: '#60a5fa' }}
             >
               <Lock size={12} />
               Encrypted{granteeCount && granteeCount > 1 ? ` · ${granteeCount - 1} shared` : ''}
@@ -1657,11 +1660,12 @@ function DriveCard({
             </span>
           )}
 
-          {/* Website pill */}
+          {/* Website pill — neutral (#22c): it's a content type, not a state;
+              green stays reserved for active policies (auto-renew). */}
           {hasWebsite && (
             <span
               className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium shrink-0"
-              style={{ backgroundColor: 'rgba(74,222,128,0.1)', color: '#4ade80' }}
+              style={{ backgroundColor: 'rgba(150,150,150,0.12)', color: 'rgb(var(--fg-muted))' }}
             >
               <Globe size={11} />
               Website
@@ -1693,25 +1697,15 @@ function DriveCard({
               }
             >
               <RefreshCw size={11} />
-              auto-extend
+              auto-renew
             </button>
           )}
 
-          {/* Right-side actions */}
+          {/* Right-side actions. The conditional "Extend storage" button is
+              gone (#22b) — a button teleporting in near expiry made rows feel
+              unstable; the urgent TTL pill is clickable instead, and the
+              kebab always carries "Extend drive…". */}
           <div className="ml-auto flex items-center gap-2 shrink-0">
-            {needsExtend && (
-              <button
-                onClick={e => {
-                  e.stopPropagation()
-                  onExtend()
-                }}
-                className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors border hover:bg-white/[0.04]"
-                style={{ borderColor: 'rgb(var(--border))', color: 'rgb(var(--fg))' }}
-              >
-                Extend storage
-              </button>
-            )}
-
             <div ref={kebabRef} className="relative">
               <button
                 onClick={e => {
@@ -1740,7 +1734,7 @@ function DriveCard({
                     style={{ color: 'rgb(var(--fg))' }}
                   >
                     <Clock size={13} style={{ color: 'rgb(var(--fg-muted))' }} />
-                    Extend storage
+                    Extend drive…
                   </button>
                   {onAutoExtend && (
                     <button
@@ -1753,7 +1747,7 @@ function DriveCard({
                       style={{ color: 'rgb(var(--fg))' }}
                     >
                       <RefreshCw size={13} style={{ color: 'rgb(var(--fg-muted))' }} />
-                      Extend automatically…
+                      Auto-renew…
                     </button>
                   )}
                   {encrypted && onShare && (
@@ -1807,8 +1801,16 @@ function DriveCard({
             {usedBytes > 0 ? `${formatBytes(usedBytes)} / ${formatBytes(capacityBytes)}` : formatBytes(capacityBytes)}
           </span>
           {stamp.usable && (
-            <span
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full"
+            // The TTL pill is the extend affordance (#22b): where urgency
+            // shows is where the action lives. Replaces the conditional
+            // "Extend storage" button that popped in near expiry.
+            <button
+              onClick={e => {
+                e.stopPropagation()
+                onExtend()
+              }}
+              title="Extend drive — add space or time"
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full transition-colors hover:ring-1"
               style={
                 isCriticalTtl
                   ? { backgroundColor: 'rgba(239,68,68,0.1)', color: '#ef4444' }
@@ -1816,8 +1818,10 @@ function DriveCard({
               }
             >
               <Clock size={11} />
-              {ttlToDays(stamp.batchTTL)}
-            </span>
+              <span className={needsExtend ? 'underline underline-offset-2' : undefined}>
+                {ttlToDays(stamp.batchTTL)}
+              </span>
+            </button>
           )}
           <span style={{ color: 'rgb(var(--border))' }}>|</span>
           <span style={{ color: 'rgb(var(--fg-muted))' }}>{itemSummary}</span>

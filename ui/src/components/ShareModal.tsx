@@ -246,7 +246,8 @@ export default function ShareModal({
       })
       setContacts(loadContacts())
       setKeyRefreshNote(
-        `${cached.nickname}'s sharing key changed (they probably reinstalled) — shared to their current key.`,
+        `${cached.nickname}'s sharing key changed (they probably reinstalled) — shared to their current key. ` +
+          'Nothing else needed — they’ve been notified.',
       )
 
       return { ...cached, walletPublicKey: fresh.walletPublicKey, beePublicKey: fresh.beePublicKey }

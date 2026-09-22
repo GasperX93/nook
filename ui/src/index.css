@@ -189,7 +189,7 @@
 }
 @keyframes nook-propagate {
   0% {
-    transform: translateX(0);
+    transform: translate(0, 0);
     opacity: 0;
   }
   10% {
@@ -199,7 +199,7 @@
     opacity: 0.9;
   }
   100% {
-    transform: translateX(calc(100cqw - 5px));
+    transform: translate(calc(100cqw - 5px), var(--fan-y, 0px));
     opacity: 0;
   }
 }
@@ -210,4 +210,16 @@
   .nook-propagation-dot {
     display: none;
   }
+}
+
+/* #25: dots fan out to different nodes in the end cluster — three end
+   heights so the stream visibly splits instead of aiming at one point. */
+.nook-propagation-dot-0 {
+  --fan-y: -7px;
+}
+.nook-propagation-dot-1 {
+  --fan-y: 0px;
+}
+.nook-propagation-dot-2 {
+  --fan-y: 7px;
 }
