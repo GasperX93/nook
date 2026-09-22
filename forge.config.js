@@ -34,7 +34,14 @@ const config = {
     // transient fs error mid-run (see #80). Electron resolves reads through
     // the app.asar path transparently either way. NOTE: verify on next
     // `npm run make` that /dashboard serves from the packaged app.
-    asar: { unpack: '**/dist/ui/**' },
+    //
+    // Native modules (*.node) MUST be unpacked too (round-3 finding, 2026-09-22):
+    // inside the asar they get temp-extracted at load time, and the extracted
+    // copy keeps its build-time ADHOC signature — the hardened, Developer-ID-
+    // signed process refuses to dlopen it ("different Team IDs"), which broke
+    // the deletable-drive engine (better-sqlite3) on every signed build.
+    // Unpacked, they're signed with the app by osxSign and load in place.
+    asar: { unpack: '{**/dist/ui/**,**/*.node}' },
     ignore: [
       // Build output / release artifacts — must never be packaged into the app.
       // forge does NOT read .gitignore, so these need listing here even though
