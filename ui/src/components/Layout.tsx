@@ -157,36 +157,23 @@ export default function Layout() {
   const reserveSettingUp = noUsableMessagingSpace && (stamps ?? []).some(s => isSystemStamp(s) && !s.usable)
   const noMessagingSpace = noUsableMessagingSpace && !reserveSettingUp
   const { data: walletForReserve } = useWallet()
-  // Enough xBZZ already in the wallet for the reserve (#13)? Then the banner
-  // offers the purchase directly instead of asking for money that's there.
-  // Rough client-side gate (~2 xBZZ); the endpoint re-checks the exact cost.
-  const canCreateReserve =
+  // Funds present for the reserve (#13, reworked per round-3 feedback): the
+  // purchase is AUTOMATIC — no button, no machinery states. The UI just
+  // nudges the server check immediately (instead of its next 60s tick) and
+  // shows one calm informational banner until the reserve is usable. Rough
+  // client-side gate (~2 xBZZ); the endpoint re-checks every guard.
+  const fundsReadyForReserve =
     noMessagingSpace && walletForReserve !== undefined && BigInt(walletForReserve.bzzBalance) >= 20000000000000000n
-  const [creatingReserve, setCreatingReserve] = useState(false)
-  const [reserveNote, setReserveNote] = useState<string | null>(null)
+  const reserveNudged = useRef(false)
 
-  async function handleCreateReserve() {
-    setCreatingReserve(true)
-    setReserveNote(null)
-    try {
-      const { result } = await serverApi.createSystemStamp()
-
-      if (result === 'bought' || result === 'exists') {
-        // The stamps refetch flips this banner to the blue "setting up" state.
-        setReserveNote(null)
-      } else {
-        setReserveNote(
-          result === 'skipped'
-            ? 'Not quite ready (node still syncing or funds short) — Nook keeps trying automatically.'
-            : 'That didn’t work — Nook will retry automatically.',
-        )
-      }
-    } catch {
-      setReserveNote('That didn’t work — Nook will retry automatically.')
-    } finally {
-      setCreatingReserve(false)
-    }
-  }
+  useEffect(() => {
+    if (!fundsReadyForReserve || reserveNudged.current) return
+    reserveNudged.current = true
+    // Fire-and-forget: the server monitor is the backstop either way.
+    serverApi.createSystemStamp().catch(() => undefined)
+  }, [fundsReadyForReserve])
+  // One blue state from "funds arrived" through "bought, confirming":
+  const reserveInProgress = reserveSettingUp || fundsReadyForReserve
   const { data: wallet, isSuccess: walletLoaded } = useWallet()
   const { devMode, onboardingCompleted, setOnboardingCompleted } = useAppStore()
   const navigate = useNavigate()
@@ -536,52 +523,38 @@ export default function Layout() {
           {/* Messages paused — identity not derived this session (#65) */}
           {/* No reserved space, light mode (#130) — the money-shaped unlock,
               said in user terms with the action attached. */}
-          {noMessagingSpace && !showOnboarding && (
+          {noMessagingSpace && !fundsReadyForReserve && !showOnboarding && (
             <div
               className="flex items-center gap-2.5 px-4 py-2.5 text-xs shrink-0"
               style={{ backgroundColor: 'rgba(245,158,11,0.08)', borderBottom: '1px solid rgba(245,158,11,0.25)' }}
             >
               <AlertTriangle size={12} className="shrink-0" style={{ color: '#f59e0b' }} />
-              {canCreateReserve ? (
-                // Funds are already there (#13) — asking the user to "add
-                // about 3 xBZZ" they already sent reads as a failure. Offer
-                // the action instead; the endpoint re-checks every guard.
-                <span style={{ color: 'rgb(var(--fg))' }}>
-                  Messages &amp; identity need a small reserved space.{' '}
-                  <button
-                    onClick={() => void handleCreateReserve()}
-                    disabled={creatingReserve}
-                    className="underline font-semibold disabled:opacity-60"
-                    style={{ color: '#f59e0b' }}
-                  >
-                    {creatingReserve ? 'Creating…' : 'Create it now →'}
-                  </button>
-                  {reserveNote && <span style={{ color: 'rgb(var(--fg-muted))' }}> {reserveNote}</span>}
-                </span>
-              ) : (
-                <span style={{ color: 'rgb(var(--fg))' }}>
-                  Messages and your identity need a small reserved space — add about 3 xBZZ and Nook sets it up
-                  automatically within a few minutes.{' '}
-                  <button
-                    onClick={() => navigate('/account?tab=wallet')}
-                    className="underline font-semibold"
-                    style={{ color: '#f59e0b' }}
-                  >
-                    Open wallet →
-                  </button>
-                </span>
-              )}
+              <span style={{ color: 'rgb(var(--fg))' }}>
+                Messages and your identity need a small reserved space — add about 3 xBZZ and Nook sets it up
+                automatically within a few minutes.{' '}
+                <button
+                  onClick={() => navigate('/account?tab=wallet')}
+                  className="underline font-semibold"
+                  style={{ color: '#f59e0b' }}
+                >
+                  Open wallet →
+                </button>
+              </span>
             </div>
           )}
 
-          {reserveSettingUp && !showOnboarding && (
+          {/* Funds present → bought → confirming: one calm automatic state,
+              closed by the "Reserved space…" bell (round-3 wording, user-
+              approved — no button, no machinery). */}
+          {reserveInProgress && !showOnboarding && (
             <div
               className="flex items-center gap-2.5 px-4 py-2.5 text-xs shrink-0"
               style={{ backgroundColor: 'rgba(96,165,250,0.08)', borderBottom: '1px solid rgba(96,165,250,0.2)' }}
             >
               <RefreshCw size={12} className="animate-spin shrink-0" style={{ color: '#60a5fa' }} />
               <span style={{ color: 'rgb(var(--fg))' }}>
-                Setting up your reserved space for identity &amp; messages — ready in a couple of minutes…
+                Setting up your reserved space for messages &amp; identity — this happens automatically. You'll get a
+                notification when it's ready.
               </span>
             </div>
           )}
