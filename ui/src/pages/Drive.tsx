@@ -2293,11 +2293,15 @@ function SharedDriveCard({
         revokedAt: undefined,
       })
     } catch (e) {
-      // A definitive 403 means the owner revoked us (#16) — a state, not an
-      // event: badge the card, pause auto-sync, never a blocking alert
-      // (which the 5-minute timer used to fire repeatedly). Anything else is
-      // transient — an inline note on manual refresh, silence from the timer.
-      if (/403/.test((e as Error).message ?? '')) {
+      // Revoked-vs-transient (#16, round-3 refinement): the status code is
+      // unreliable (Bee reports the decrypt failure as 404/500 depending on
+      // path, not a clean 403). The reliable discriminator is the SHAPE of
+      // the failure: the feed read already succeeded — network fine, wrapper
+      // exists — so an HTTP failure on the encrypted download means we can't
+      // DECRYPT: the owner rotated us out. A pure network/parse throw stays
+      // transient. False positives self-heal: any later successful sync
+      // clears the badge.
+      if (/ACT download failed:/.test((e as Error).message ?? '')) {
         persistDrive({ revokedAt: Date.now() })
       } else {
         setRefreshNote("Couldn't reach the drive right now — will retry.")
