@@ -482,58 +482,53 @@ export const beeApi = {
     return xhrUpload(`${getBeeUrl()}/bzz`, tar as XMLHttpRequestBodyInit, headers, onProgress)
   },
 
+  /**
+   * Classic (public) file download. Fetch-reader, not XHR (round-3b finding:
+   * the legacy XHR path failed with a bare network error while fetch of the
+   * SAME url from the SAME page succeeded — proven live in-console). Progress
+   * comes from content-length; the per-read stall timeout keeps #105's
+   * protection: Bee can hang mid-stream while chunks are still propagating.
+   */
   downloadFile: async (hash: string, onProgress?: (pct: number) => void): Promise<Blob> => {
     // Trailing slash matters: /bzz/<ref> answers 308 → /bzz/<ref>/, and in dev
     // that Location escapes the /bee-api proxy prefix, so the browser lands on
     // the SPA fallback and "downloads" index.html instead of the file.
     const url = `${getBeeUrl()}/bzz/${hash.endsWith('/') ? hash : `${hash}/`}`
+    const r = await fetch(url)
 
-    if (!onProgress) {
-      const r = await fetch(url)
+    if (!r.ok) throw new Error(`Download failed: ${r.status}`)
 
-      if (!r.ok) throw new Error(`Download failed: ${r.status}`)
+    if (!r.body) return r.blob()
+    const total = Number(r.headers.get('content-length') ?? 0)
+    const reader = r.body.getReader()
+    const chunks: BlobPart[] = []
+    let received = 0
 
-      return r.blob()
+    for (;;) {
+      // Stall guard (#105): 30s without a single byte = give up loudly
+      // instead of a frozen percentage with no way to retry.
+      const result = await Promise.race([
+        reader.read(),
+        new Promise<'stall'>(res => setTimeout(() => res('stall'), 30_000)),
+      ])
+
+      if (result === 'stall') {
+        reader.cancel().catch(() => undefined)
+        throw new Error('Download stalled — content may still be propagating. Try again in a moment.')
+      }
+
+      const { done, value } = result
+
+      if (done) break
+      chunks.push(value)
+      received += value.byteLength
+
+      if (total > 0) onProgress?.(Math.min(99, Math.round((received / total) * 100)))
     }
 
-    return new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest()
-      xhr.open('GET', url)
-      xhr.responseType = 'blob'
-      // Stall guard (#105): Bee can hang mid-stream while chunks are still
-      // propagating — without this the XHR waits forever and the UI shows a
-      // frozen percentage with no way to retry.
-      let stallTimer: ReturnType<typeof setTimeout>
-      let stalled = false
-      const armStallGuard = () => {
-        clearTimeout(stallTimer)
-        stallTimer = setTimeout(() => {
-          stalled = true
-          xhr.abort()
-        }, 30_000)
-      }
-      armStallGuard()
-      xhr.onprogress = e => {
-        armStallGuard()
+    onProgress?.(100)
 
-        if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100))
-      }
-      xhr.onload = () => {
-        clearTimeout(stallTimer)
-
-        if (xhr.status >= 200 && xhr.status < 300) resolve(xhr.response as Blob)
-        else reject(new Error(`Download failed: ${xhr.status}`))
-      }
-      xhr.onerror = () => {
-        clearTimeout(stallTimer)
-        reject(new Error('Download failed'))
-      }
-      xhr.onabort = () => {
-        clearTimeout(stallTimer)
-        reject(new Error(stalled ? 'Download stalled — content may still be propagating' : 'Download cancelled'))
-      }
-      xhr.send()
-    })
+    return new Blob(chunks, { type: r.headers.get('content-type') ?? undefined })
   },
 
   downloadBytes: async (hash: string): Promise<Blob> => {
