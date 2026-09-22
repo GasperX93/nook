@@ -648,12 +648,16 @@ export const beeApi = {
     return result as ACTUploadResult
   },
 
-  /** Download a file from an ACT-encrypted drive (proxied through Koa to avoid CORS) */
+  /**
+   * Download a file from an ACT-encrypted drive (proxied through Koa to
+   * avoid CORS). The route streams with Content-Length (#18), so progress
+   * here is real — read the body incrementally instead of one silent blob.
+   */
   downloadFileWithACT: async (
     hash: string,
     actPublisher: string,
     historyRef: string,
-    _onProgress?: (pct: number) => void,
+    onProgress?: (pct: number) => void,
   ): Promise<Blob> => {
     const params = new URLSearchParams({ publisher: actPublisher, history: historyRef })
     const r = await fetch(`/act/download/${hash}?${params}`, {
@@ -662,6 +666,24 @@ export const beeApi = {
 
     if (!r.ok) throw new Error(`ACT download failed: ${r.status}`)
 
-    return r.blob()
+    if (!r.body) return r.blob()
+    const total = Number(r.headers.get('content-length') ?? 0)
+    const reader = r.body.getReader()
+    const chunks: BlobPart[] = []
+    let received = 0
+
+    for (;;) {
+      const { done, value } = await reader.read()
+
+      if (done) break
+      chunks.push(value)
+      received += value.byteLength
+
+      if (total > 0) onProgress?.(Math.min(99, Math.round((received / total) * 100)))
+    }
+
+    onProgress?.(100)
+
+    return new Blob(chunks, { type: r.headers.get('content-type') ?? undefined })
   },
 }
