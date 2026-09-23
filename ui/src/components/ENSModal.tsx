@@ -5,6 +5,7 @@ import { namehash } from 'viem'
 import { useAccount, usePublicClient, useSwitchChain, useWalletClient } from 'wagmi'
 import { getWalletClient } from '@wagmi/core'
 import { mainnet } from 'wagmi/chains'
+import { bzzLinkHost } from '../lib/ens-gateway'
 import { wagmiConfig } from '../wagmi'
 import { Button } from './ui/button'
 
@@ -235,7 +236,7 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
     <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={onClose}>
       <div className="absolute inset-0 bg-black/60" />
       <div
-        className="relative rounded-xl border p-6 w-full max-w-md space-y-5"
+        className="relative rounded-xl border p-6 w-full max-w-md space-y-5 max-h-[calc(100vh-2rem)] max-w-[calc(100vw-2rem)] overflow-y-auto"
         style={{ backgroundColor: 'rgb(var(--bg-surface))', borderColor: 'rgb(var(--border))' }}
         onClick={e => e.stopPropagation()}
       >
@@ -499,17 +500,19 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
                   {ensName}.limo
                   <ExternalLink size={10} />
                 </a>
-                <a
-                  href={`https://${ensName}.bzz.link`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1.5 text-xs font-medium transition-colors hover:underline"
-                  style={{ color: 'rgb(var(--accent))' }}
-                >
-                  <Globe size={12} />
-                  {ensName}.bzz.link
-                  <ExternalLink size={10} />
-                </a>
+                {bzzLinkHost(ensName) && (
+                  <a
+                    href={`https://${bzzLinkHost(ensName)}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 text-xs font-medium transition-colors hover:underline"
+                    style={{ color: 'rgb(var(--accent))' }}
+                  >
+                    <Globe size={12} />
+                    {bzzLinkHost(ensName)}
+                    <ExternalLink size={10} />
+                  </a>
+                )}
                 {txHash && (
                   <div>
                     <a

@@ -23,6 +23,7 @@ import { serverApi, type ReclaimableDrive, type ReclaimableFile } from '../api/s
 import { fileListToEntries, readDroppedDirectory, type FileEntry } from '../utils/directory'
 import { useTransfersStore } from '../store/transfers'
 import { friendlyError } from '../lib/friendly-error'
+import { savingLabel } from '../lib/transfer-labels'
 
 // Reclaimable drives (#99): the server stamps chunks client-side and keeps a
 // slot ledger, so deleting a file really frees its capacity. Files come from
@@ -613,7 +614,7 @@ function FileRow({
             className="text-[10px] uppercase tracking-widest font-semibold w-24 text-right whitespace-nowrap tabular-nums"
             style={{ color: 'rgb(var(--accent))' }}
           >
-            {downloadPct > 0 ? `Saving ${downloadPct}%` : 'Preparing…'}
+            {savingLabel(downloadPct)}
           </span>
         </div>
       ) : (
@@ -712,7 +713,7 @@ function DeleteFileModal({
       onClick={onClose}
     >
       <div
-        className="rounded-xl border p-6 w-96 space-y-4"
+        className="rounded-xl border p-6 w-96 space-y-4 max-h-[calc(100vh-2rem)] max-w-[calc(100vw-2rem)] overflow-y-auto"
         style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
         onClick={e => e.stopPropagation()}
       >

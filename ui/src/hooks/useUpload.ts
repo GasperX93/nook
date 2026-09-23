@@ -2,6 +2,7 @@ import { beeApi, topicFromString } from '../api/bee'
 import { serverApi } from '../api/server'
 import { followTagPropagation } from '../store/transfers'
 import { detectIndexDocument, type FileEntry } from '../utils/directory'
+import { UPLOAD_ENCRYPTED, UPLOAD_STEP_LOCAL, UPLOAD_STEP_NETWORK } from '../lib/transfer-labels'
 import { useUploadHistory } from './useUploadHistory'
 
 export interface UploadOptions {
@@ -91,7 +92,7 @@ export function useUpload() {
         await new Promise(r => setTimeout(r, 10000))
       }
 
-      onPhase?.(encrypted ? 'Encrypting & uploading…' : 'Uploading…')
+      onPhase?.(encrypted ? UPLOAD_ENCRYPTED : UPLOAD_STEP_LOCAL)
       onProgress?.(0)
 
       if (encrypted) {
@@ -198,7 +199,7 @@ export function useUpload() {
     // network. A stall is a soft outcome — the background pusher keeps working,
     // so warn in the phase text but never fail the upload here.
     if (uploadTagUid !== undefined && !encrypted) {
-      onPhase?.('Storing on the network…')
+      onPhase?.(UPLOAD_STEP_NETWORK)
       onProgress?.(0)
       // Global tracker (#4/#5): survives navigation, feeds the sidebar
       // indicator, rings the bell on completion.

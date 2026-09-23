@@ -50,6 +50,12 @@ export default function SwarmIdDialog() {
       </p>
       {/* The SDK renders its login button into this host. Keep it mounted. */}
       <div id={SWARM_ID_FRAME_CONTAINER_ID} className="my-5 h-20 w-full" />
+      {/* R4-1: Swarm ID's "connected" page stays open (its own window, their
+          site) and pitches a Swarm ID drive to accounts without one. */}
+      <p className="mb-4 text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+        Once it says you're connected, click <b>Go to app</b> to close that window. You don't need a Swarm ID drive —
+        Nook keeps your files in its own drives.
+      </p>
       <div className="flex justify-end">
         <button
           onClick={() => setSignInDialogOpen(false)}

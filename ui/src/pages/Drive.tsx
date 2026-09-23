@@ -79,6 +79,7 @@ import { Switch } from '../components/ui/switch'
 import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { useSidebar } from '../components/ui/sidebar'
 import { friendlyError } from '../lib/friendly-error'
+import { savingLabel, UPLOAD_ENCRYPTED, UPLOAD_STEP_LOCAL, UPLOAD_STEP_NETWORK } from '../lib/transfer-labels'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -321,7 +322,7 @@ function BuyDriveModal({
       }}
     >
       <div
-        className="rounded-xl border p-6 w-96 space-y-5"
+        className="rounded-xl border p-6 w-96 space-y-5 max-h-[calc(100vh-2rem)] max-w-[calc(100vw-2rem)] overflow-y-auto"
         style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
         onClick={e => e.stopPropagation()}
       >
@@ -679,7 +680,7 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
       }}
     >
       <div
-        className="rounded-xl border p-6 w-96 space-y-5"
+        className="rounded-xl border p-6 w-96 space-y-5 max-h-[calc(100vh-2rem)] max-w-[calc(100vw-2rem)] overflow-y-auto"
         style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
         onClick={e => e.stopPropagation()}
       >
@@ -942,7 +943,7 @@ function UpdateFeedModal({ record, onClose }: { record: UploadRecord; onClose: (
       }}
     >
       <div
-        className="rounded-xl border p-6 w-96 space-y-5"
+        className="rounded-xl border p-6 w-96 space-y-5 max-h-[calc(100vh-2rem)] max-w-[calc(100vw-2rem)] overflow-y-auto"
         style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
         onClick={e => e.stopPropagation()}
       >
@@ -1112,8 +1113,6 @@ interface RecordRowProps {
   // the stamp.
   liveExpiresAt?: number
   copiedId: string | null
-  downloadingId: string | null
-  downloadPct: number | null
   /** Last download failure for a record (R3b-1b) — shown inline with a retry, never an alert */
   downloadErrors: Record<string, string>
   gatewayUrl: string
@@ -1130,8 +1129,6 @@ function RecordRow({
   record,
   liveExpiresAt,
   copiedId,
-  downloadingId,
-  downloadPct,
   downloadErrors,
   gatewayUrl,
   onCopy,
@@ -1153,6 +1150,13 @@ function RecordRow({
   const propagating = useTransfersStore(state =>
     record.pendingTagUid !== undefined ? state.transfers.find(t => t.id === `tag:${record.pendingTagUid}`) : undefined,
   )
+  // This row's own download (R4-14): several can run at once, so each row
+  // reads its own tracker entry instead of one page-wide "active download".
+  const downloadPct = useTransfersStore(state => {
+    const t = state.transfers.find(x => x.id === `dl:${record.id}` && x.status === 'active')
+
+    return t ? (t.pct ?? 0) : null
+  })
 
   // For encrypted files, build a proxy URL that includes ACT headers
   const actProxyUrl = isEnc
@@ -1243,7 +1247,7 @@ function RecordRow({
       {/* Expiry — while a download runs, this status area is taken over by
           prominent download progress: a % squeezed between action icons was
           nearly invisible (finding #7). */}
-      {downloadingId === record.id && downloadPct !== null ? (
+      {downloadPct !== null ? (
         <div className="flex items-center gap-2 shrink-0">
           <div className="w-24 h-1 rounded-full overflow-hidden" style={{ backgroundColor: 'rgb(var(--border))' }}>
             <div
@@ -1255,7 +1259,7 @@ function RecordRow({
             className="text-[10px] uppercase tracking-widest font-semibold w-24 text-right whitespace-nowrap tabular-nums"
             style={{ color: 'rgb(var(--accent))' }}
           >
-            {downloadPct > 0 ? `Saving ${downloadPct}%` : 'Preparing…'}
+            {savingLabel(downloadPct)}
           </span>
         </div>
       ) : downloadErrors[record.id] ? (
@@ -1340,7 +1344,7 @@ function RecordRow({
             <ExternalLink size={12} />
           </a>
         )}
-        {downloadingId === record.id && downloadPct !== null ? (
+        {downloadPct !== null ? (
           // Progress lives in the row's status area now; keep the icon slot
           // as a spinner so the layout doesn't jump (#136).
           <span title="Downloading…" className="w-6 h-6 flex items-center justify-center shrink-0">
@@ -1353,7 +1357,7 @@ function RecordRow({
             className="w-6 h-6 flex items-center justify-center rounded transition-colors"
             style={{ color: 'rgb(var(--fg-muted))' }}
           >
-            {downloadingId === record.id ? <RefreshCw size={12} className="animate-spin" /> : <Download size={12} />}
+            <Download size={12} />
           </button>
         )}
         {/* Forget, not delete: classic drives can't remove content from Swarm —
@@ -1380,8 +1384,6 @@ interface DriveCardProps {
   folders: DriveFolder[]
   gatewayUrl: string
   copiedId: string | null
-  downloadingId: string | null
-  downloadPct: number | null
   customName?: string
   /** Auto-extend enabled for this drive (#129) — shows the card badge. */
   autoExtendOn?: boolean
@@ -1417,8 +1419,6 @@ function DriveCard({
   folders,
   gatewayUrl,
   copiedId,
-  downloadingId,
-  downloadPct,
   customName,
   onOpen,
   onExtend,
@@ -1926,7 +1926,7 @@ function AddFilePanel({
           setPhase(`Finalising storage… (retry ${attempt - 1})`)
           await new Promise(r => setTimeout(r, 5000))
         }
-        setPhase(encrypted ? 'Encrypting & uploading…' : 'Uploading…')
+        setPhase(encrypted ? UPLOAD_ENCRYPTED : UPLOAD_STEP_LOCAL)
         setProgress(0)
 
         if (encrypted) {
@@ -2030,7 +2030,7 @@ function AddFilePanel({
         // through the global tracker (#4/#5), so the progress survives
         // navigation, feeds the sidebar indicator + propagation visual, and
         // rings the bell on completion.
-        setPhase('Storing on the network…')
+        setPhase(UPLOAD_STEP_NETWORK)
         setProgress(0)
         setPropagationTagUid(uploadTagUid)
         const { complete } = await followTagPropagation(uploadTagUid, name, driveId, pct => setProgress(pct))
@@ -2146,8 +2146,10 @@ function AddFilePanel({
       >
         <div className="flex items-center gap-2">
           <RefreshCw size={13} className="animate-spin shrink-0" style={{ color: 'rgb(var(--accent))' }} />
-          <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
+          <p className="text-sm tabular-nums" style={{ color: 'rgb(var(--fg-muted))' }}>
             {phase || 'Preparing…'}
+            {/* Step 2 shows its own numbers in the visual below. */}
+            {!propagationTransfer && progress !== null && progress > 0 && ` — ${progress}%`}
           </p>
         </div>
         {/* Stage 2 (#4): the propagation gets the full honest visual — real
@@ -2560,7 +2562,7 @@ function SharedDriveCard({
                     className="text-[10px] uppercase tracking-widest font-semibold shrink-0 whitespace-nowrap tabular-nums"
                     style={{ color: 'rgb(var(--accent))' }}
                   >
-                    {dl.pct !== null && dl.pct > 0 ? `Saving ${dl.pct}%` : 'Preparing…'}
+                    {savingLabel(dl.pct ?? 0)}
                   </span>
                 ) : (
                   <button
@@ -2655,11 +2657,6 @@ export default function Drive() {
   // Downloads live in the global transfers store (#5): the fetch keeps
   // updating the store after navigation, so a revisit re-attaches instead of
   // showing an idle row while bytes are still flowing.
-  const activeDownload = useTransfersStore(state =>
-    state.transfers.find(t => t.kind === 'download' && t.status === 'active' && t.id.startsWith('dl:')),
-  )
-  const downloadingId = activeDownload ? activeDownload.id.slice(3) : null
-  const downloadPct = activeDownload ? activeDownload.pct : null
   const [updatingId, setUpdatingId] = useState<string | null>(null)
   const [ensRecordId, setEnsRecordId] = useState<string | null>(null)
 
@@ -2910,8 +2907,6 @@ export default function Drive() {
                     record={record}
                     liveExpiresAt={liveExpiresAt(record)}
                     copiedId={copiedId}
-                    downloadingId={downloadingId}
-                    downloadPct={downloadPct}
                     downloadErrors={downloadErrors}
                     gatewayUrl={gatewayUrl}
                     onCopy={copyHash}
@@ -2993,8 +2988,6 @@ export default function Drive() {
                 folders={folders.filter(f => f.driveId === stamp.batchID)}
                 gatewayUrl={gatewayUrl}
                 copiedId={copiedId}
-                downloadingId={downloadingId}
-                downloadPct={downloadPct}
                 autoExtendOn={autoExtendSettings[stamp.batchID.toLowerCase()]?.enabled}
                 autoExtendMonths={autoExtendSettings[stamp.batchID.toLowerCase()]?.months}
                 autoExtendUpcoming={Boolean(autoExtendSettings[stamp.batchID.toLowerCase()]?.notifiedUpcomingAt)}
@@ -3222,8 +3215,6 @@ export default function Drive() {
 
   const commonRowProps = {
     copiedId,
-    downloadingId,
-    downloadPct,
     downloadErrors,
     gatewayUrl,
     onCopy: copyHash,

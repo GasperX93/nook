@@ -1,96 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useBeeLogs, useConfig, useNookLogs, useUpdateConfig } from '../api/queries'
-import { SwarmNotifyTest } from '../components/SwarmNotifyTest'
+import { useConfig, useUpdateConfig } from '../api/queries'
+import LogViewer from '../components/LogViewer'
 import { useAppStore } from '../store/app'
-import { useDerivedKey } from '../hooks/useDerivedKey'
-import { bytesToHex } from '../lib/hex'
-
-function KeyDerivationTest() {
-  const { signer, deriving, error, signIn, clear } = useDerivedKey()
-  const [log, setLog] = useState<string[]>([])
-
-  function addLog(msg: string) {
-    setLog(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`])
-  }
-
-  async function handleDerive() {
-    addLog('Signing in with Swarm ID...')
-    const result = await signIn()
-
-    if (result) {
-      addLog(`Derived! Address: ${result.getAddress()}`)
-      addLog(`Public key: ${bytesToHex(result.getPublicKey()).slice(0, 32)}...`)
-      addLog(`Signing key (first 8): ${bytesToHex(result.getSigningKey()).slice(0, 16)}...`)
-      addLog(`Encryption key (first 8): ${bytesToHex(result.getEncryptionKey()).slice(0, 16)}...`)
-    } else {
-      addLog('Derivation failed or rejected')
-    }
-  }
-
-  async function handleDeriveAgain() {
-    addLog('Deriving again (should match)...')
-    const result = await signIn()
-
-    if (result) {
-      addLog(`Address: ${result.getAddress()}`)
-      addLog('Compare with previous — should be identical')
-    }
-  }
-
-  function handleClear() {
-    clear()
-    addLog('Signer cleared')
-  }
-
-  const btnClass =
-    'px-3 py-1.5 rounded text-xs font-semibold uppercase tracking-widest transition-opacity disabled:opacity-40'
-  const btnStyle = { backgroundColor: 'rgb(var(--bg))', border: '1px solid rgb(var(--border))' }
-  const accentStyle = { backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }
-
-  return (
-    <div className="rounded-xl border p-5 space-y-4 shrink-0" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
-      <div>
-        <p className="text-xs uppercase tracking-widest mb-1" style={{ color: 'rgb(var(--fg-muted))' }}>
-          Identity Key Derivation
-        </p>
-        <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-          Signer: {signer ? signer.getAddress().slice(0, 10) + '...' : 'None'}
-          {deriving ? ' | Deriving...' : ''}
-          {error ? ` | Error: ${error}` : ''}
-        </p>
-      </div>
-
-      <div className="flex flex-wrap gap-2">
-        <button onClick={handleDerive} disabled={deriving} className={btnClass} style={accentStyle}>
-          1. Derive Key
-        </button>
-        <button onClick={handleDeriveAgain} disabled={!signer} className={btnClass} style={btnStyle}>
-          2. Derive Again (compare)
-        </button>
-        <button onClick={handleClear} disabled={!signer} className={btnClass} style={{ color: 'rgb(var(--fg-muted))' }}>
-          Clear
-        </button>
-      </div>
-
-      {log.length > 0 && (
-        <div className="rounded-lg border p-3 max-h-48 overflow-auto" style={{ backgroundColor: 'rgb(var(--bg))' }}>
-          <pre className="text-xs whitespace-pre-wrap break-all" style={{ color: 'rgb(var(--fg-muted))' }}>
-            {log.join('\n')}
-          </pre>
-        </div>
-      )}
-    </div>
-  )
-}
-
-type LogTab = 'bee' | 'desktop'
 
 export default function Dev() {
-  const [logTab, setLogTab] = useState<LogTab>('bee')
-  const { data: beeLogs } = useBeeLogs()
-  const { data: nookLogs } = useNookLogs()
-  const bottomRef = useRef<HTMLDivElement>(null)
   const navigate = useNavigate()
   const { setDevMode } = useAppStore()
 
@@ -98,12 +12,6 @@ export default function Dev() {
   const updateConfig = useUpdateConfig()
   const [draft, setDraft] = useState<string>('')
   const [editMode, setEditMode] = useState(false)
-
-  const logs = logTab === 'bee' ? beeLogs : nookLogs
-
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [logs])
 
   function startEdit() {
     setDraft(JSON.stringify(config, null, 2))
@@ -134,39 +42,8 @@ export default function Dev() {
         </button>
       </div>
 
-      {/* Logs */}
-      <div className="flex flex-col shrink-0">
-        <div className="flex items-center justify-between mb-3 shrink-0">
-          <p className="text-xs uppercase tracking-widest font-semibold" style={{ color: 'rgb(var(--fg-muted))' }}>
-            Logs
-          </p>
-          <div className="flex gap-1">
-            {(['bee', 'desktop'] as LogTab[]).map(t => (
-              <button
-                key={t}
-                onClick={() => setLogTab(t)}
-                className="px-3 py-1.5 rounded text-xs font-semibold uppercase tracking-widest transition-colors"
-                style={
-                  logTab === t
-                    ? { backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }
-                    : { color: 'rgb(var(--fg-muted))' }
-                }
-              >
-                {t === 'bee' ? 'Bee' : 'Desktop'}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div
-          className="rounded-lg border p-4 overflow-auto max-h-64"
-          style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
-        >
-          <pre className="text-xs whitespace-pre-wrap break-all" style={{ color: 'rgb(var(--fg-muted))' }}>
-            {logs ?? 'No logs available.'}
-          </pre>
-          <div ref={bottomRef} />
-        </div>
-      </div>
+      {/* Logs (R4-18) — shared viewer, also at /logs for everyone */}
+      <LogViewer className="h-[70vh] shrink-0" />
 
       {/* Node config */}
       <div className="rounded-xl border p-5 space-y-4 shrink-0" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
@@ -234,12 +111,6 @@ export default function Dev() {
           </pre>
         )}
       </div>
-
-      {/* Key Derivation Test */}
-      <KeyDerivationTest />
-
-      {/* Swarm Notify smoke test */}
-      <SwarmNotifyTest />
     </div>
   )
 }

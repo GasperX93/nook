@@ -31,10 +31,12 @@ export default function TransferIndicator() {
             <ArrowDownToLine size={11} className="shrink-0 animate-pulse" style={{ color: 'rgb(var(--accent))' }} />
           )}
           <span className="flex-1 min-w-0">
-            <span className="block text-[11px] truncate" style={{ color: 'rgb(var(--fg))' }}>
+            {/* Sidebar tokens (R4-12): the sidebar is dark in both themes, so
+                the page's --fg rendered dark-on-dark here. */}
+            <span className="block text-[11px] truncate" style={{ color: 'rgb(var(--sidebar-fg))' }}>
               {t.name}
             </span>
-            <span className="block text-[10px] tabular-nums" style={{ color: 'rgb(var(--fg-muted))' }}>
+            <span className="block text-[10px] tabular-nums" style={{ color: 'rgb(var(--sidebar-fg-muted))' }}>
               {t.status === 'done'
                 ? t.kind === 'upload'
                   ? 'Stored'

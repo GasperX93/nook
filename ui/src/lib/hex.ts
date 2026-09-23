@@ -1,8 +1,8 @@
 /**
  * Hex <-> bytes conversion, centralized.
  *
- * Previously copy-pasted into 6 files (crypto/signer, components/ShareModal,
- * components/SwarmNotifyTest, pages/Dev, pages/Identity, apps/Messages). The
+ * Previously copy-pasted into several files (crypto/signer, components/ShareModal,
+ * pages/Identity, apps/Messages). The
  * old `hexToBytes` used `clean.match(/.{2}/g)!` — a non-null assertion that
  * threw an opaque TypeError on empty input and silently dropped the trailing
  * nibble on odd-length input. This version validates and throws a clear error

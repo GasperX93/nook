@@ -9,6 +9,7 @@ import { logger } from './logger'
 import { loadNotifications } from './notifications'
 import { getPath } from './path'
 import { loadPurchases } from './purchases'
+import { NOTIFY_REGISTRY_ADDRESS } from './blockchain'
 
 /**
  * Wallet activity (#139) — the audit surface for a wallet that Nook spends
@@ -55,6 +56,13 @@ export interface WalletActivity {
 
 const BZZ_DECIMALS = BigInt('10000000000000000')
 const DAI_DECIMALS = BigInt('1000000000000000000')
+
+/** Ping fees are tiny (~1e-12 xDAI): never render them as a misleading 0.0000. */
+function formatFee(wei: bigint): string {
+  const shown = formatUnits(wei, DAI_DECIMALS)
+
+  return wei > BigInt(0) && shown === '0.0000' ? '< 0.0001' : shown
+}
 
 function formatUnits(value: bigint, divisor: bigint): string {
   return (Number((value * BigInt(10000)) / divisor) / 10_000).toFixed(4)
@@ -216,6 +224,8 @@ interface ExplorerTx {
   to: { hash: string } | null
   method?: string | null
   decoded_input?: { parameters?: DecodedParam[] } | null
+  /** Gas actually paid, in wei (explorer v2 `fee: { type: 'actual', value }`) */
+  fee?: { value?: string } | null
 }
 
 interface ExplorerTransfer {
@@ -292,6 +302,26 @@ export async function getWalletActivity(
 
     for (const t of txs) {
       const value = BigInt(t.value || '0')
+
+      // First-contact pings (R4-4) move no xDAI — they cost only gas, paid by
+      // the node wallet via /notify-ping. The registry is a contract Nook
+      // KNOWS, so the row gets an honest label and the fee as its amount.
+      if (
+        value === BigInt(0) &&
+        t.from.hash.toLowerCase() === address &&
+        t.to?.hash.toLowerCase() === NOTIFY_REGISTRY_ADDRESS.toLowerCase()
+      ) {
+        rows.push({
+          hash: t.hash,
+          at: Date.parse(t.timestamp),
+          direction: 'out',
+          asset: 'xDAI',
+          amount: formatFee(BigInt(t.fee?.value || '0')),
+          counterparty: NOTIFY_REGISTRY_ADDRESS.toLowerCase(),
+          label: 'Contact notification (Gnosis)',
+        })
+        continue
+      }
 
       if (value === BigInt(0) || tokenHashes.has(t.hash)) continue
       const direction = t.from.hash.toLowerCase() === address ? 'out' : 'in'
