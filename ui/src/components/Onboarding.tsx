@@ -10,7 +10,6 @@ import { useAddresses, useBeeHealth, useRestart, useStamps, useStatus, useWallet
 import { useAppStore } from '../store/app'
 import { useDerivedKey } from '../hooks/useDerivedKey'
 import { WIDGET_THEME } from '../theme'
-import { ConnectButton } from '@rainbow-me/rainbowkit'
 
 type Step = 'starting' | 'identity' | 'funding' | 'syncing' | 'ready'
 
@@ -412,14 +411,14 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
 }
 
 /**
- * Identity step — connect wallet, derive the Nook identity, done. Free and
+ * Identity step — sign in with Swarm ID, done. Free and
  * instant, so it runs BEFORE funding (nothing to wait for here). The actual
  * network publish still happens automatically once the reserved space exists
  * (useAutoPublish) — the setup≠publish split is unchanged. Skipping is quiet
  * and always possible; the Identity tab is the recovery path.
  */
 function OnboardingIdentityStep({ onContinue }: { onContinue: () => void }) {
-  const { signer, derive, deriving, error, walletConnected } = useDerivedKey()
+  const { signer, signIn, deriving, error } = useDerivedKey()
 
   if (signer) {
     return (
@@ -450,32 +449,17 @@ function OnboardingIdentityStep({ onContinue }: { onContinue: () => void }) {
     <div className="text-center space-y-5">
       <h2 className="text-lg font-semibold">Create your identity</h2>
       <p className="text-sm leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
-        Your identity is how contacts message you and share drives with you. It's derived from your wallet with two
-        signatures — free, no transaction, and nothing leaves your device.
+        Your identity is how contacts message you and share drives with you. Swarm ID gives you one identity for every
+        Swarm app, on all your devices — free, and no wallet needed.
       </p>
-      {!walletConnected ? (
-        <ConnectButton.Custom>
-          {({ openConnectModal, connectModalOpen }) => (
-            <button
-              onClick={openConnectModal}
-              disabled={connectModalOpen}
-              className="px-6 py-3 rounded-lg text-sm font-semibold transition-opacity"
-              style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
-            >
-              Connect wallet &amp; create
-            </button>
-          )}
-        </ConnectButton.Custom>
-      ) : (
-        <button
-          onClick={async () => derive()}
-          disabled={deriving}
-          className="px-6 py-3 rounded-lg text-sm font-semibold transition-opacity disabled:opacity-60"
-          style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
-        >
-          {deriving ? 'Check your wallet — approve the signatures…' : 'Create identity'}
-        </button>
-      )}
+      <button
+        onClick={async () => signIn()}
+        disabled={deriving}
+        className="px-6 py-3 rounded-lg text-sm font-semibold transition-opacity disabled:opacity-60"
+        style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
+      >
+        {deriving ? 'Signing in…' : 'Sign in with Swarm ID'}
+      </button>
       {error && (
         <p className="text-xs" style={{ color: '#ef4444' }}>
           {error}

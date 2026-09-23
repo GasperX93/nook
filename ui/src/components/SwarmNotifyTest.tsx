@@ -24,7 +24,7 @@ function full(s: string): string {
 }
 
 export function SwarmNotifyTest() {
-  const { signer, derive, walletConnected } = useDerivedKey()
+  const { signer, signIn } = useDerivedKey()
   const { data: walletClient } = useWalletClient()
   const { data: addresses } = useAddresses()
   const { data: stamps } = useStamps()
@@ -348,12 +348,10 @@ export function SwarmNotifyTest() {
             <span style={{ color: 'rgb(var(--fg))' }}>
               {signer.getAddress()} · pubKey {bytesToHex(signer.getPublicKey())}
             </span>
-          ) : walletConnected ? (
-            <button onClick={derive} className="underline">
-              derive key
-            </button>
           ) : (
-            'connect wallet to derive Nook address'
+            <button onClick={async () => signIn()} className="underline">
+              sign in with Swarm ID
+            </button>
           )}
         </div>
         <div>Bee: {addresses ? <span style={{ color: 'rgb(var(--fg))' }}>overlay {addresses.overlay}</span> : '—'}</div>

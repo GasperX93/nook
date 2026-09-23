@@ -15,7 +15,7 @@ import { isIdentityPublished, isOnboardingDismissed, markOnboardingDismissed } f
 const BEE_URL = `${window.location.origin}/bee-api`
 
 export default function Identity() {
-  const { signer, derive, deriving, walletConnected } = useDerivedKey()
+  const { signer, signIn, deriving, error: identityError, swarmIdAccount } = useDerivedKey()
   const { data: addresses } = useAddresses()
   const { data: stamps } = useStamps()
 
@@ -46,8 +46,10 @@ export default function Identity() {
       ethAddress: signer.getAddress(),
       walletPublicKey: bytesToHex(signer.getPublicKey()),
       beePublicKey: addresses.publicKey,
+      nickname: swarmIdAccount?.name || undefined,
+      swarmId: swarmIdAccount?.address,
     })
-  }, [signer, addresses])
+  }, [signer, addresses, swarmIdAccount])
 
   async function handlePublish() {
     if (!signer) return setPublishError('Derive your key first')
@@ -106,44 +108,68 @@ export default function Identity() {
           How others connect with you
         </p>
 
-        {!walletConnected && (
-          <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
-            Connect your wallet (top right) to set up your Nook identity.
+        {!signer && (
+          <div className="flex items-center gap-3 flex-wrap">
+            <Button onClick={async () => signIn()} disabled={deriving}>
+              {deriving ? 'Setting up…' : 'Sign in with Swarm ID'}
+            </Button>
+          </div>
+        )}
+
+        {!signer && identityError && (
+          <p className="text-xs" style={{ color: 'rgb(248,113,113)' }}>
+            {identityError}
           </p>
         )}
 
-        {walletConnected && !signer && (
-          <Button onClick={async () => derive()} disabled={deriving}>
-            {deriving ? 'Setting up… (check your wallet)' : 'Set up Nook identity'}
-          </Button>
+        {!signer && (
+          <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
+            Swarm ID works without a wallet — one identity for every Swarm app, on all your devices.
+          </p>
+        )}
+
+        {signer && (
+          <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+            Signed in with Swarm ID — the same identity is available in every Swarm app and on all your devices.
+          </p>
         )}
 
         {signer && myAddress && (
           <>
-            {/* Nook address row */}
+            {/* Your Swarm ID — THE identity users see and share.
+                The app-level messaging key still exists but is plumbing: carried
+                inside contact links, never shown as "an address" again. */}
             <div className="space-y-2">
-              <p className="text-xs font-semibold">Nook address</p>
+              <p className="text-xs font-semibold">Your Swarm ID</p>
               <p className="text-xs leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
-                Your unique ID on Nook. Publish it so others can add you as a contact just by typing your address — no
-                link needed.
+                One identity for every Swarm app, on all your devices. Share your contact link below so people can
+                message you and receive your drives.
               </p>
-              <div className="flex items-center gap-2 flex-wrap">
-                <code
-                  className="flex-1 text-xs font-mono px-3 py-2 rounded-lg border truncate"
-                  style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
-                >
-                  {myAddress}
-                </code>
-                <button
-                  onClick={async () => handleCopy(myAddress, 'address')}
-                  className="shrink-0 px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1 border"
-                  style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
-                  aria-label="Copy address"
-                >
-                  {copied === 'address' ? <Check size={11} /> : <Copy size={11} />}
-                  {copied === 'address' ? 'Copied' : 'Copy'}
-                </button>
-              </div>
+              {swarmIdAccount ? (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <code
+                    className="flex-1 text-xs font-mono px-3 py-2 rounded-lg border truncate"
+                    style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
+                  >
+                    {swarmIdAccount.name ? `${swarmIdAccount.name} · ` : ''}
+                    {swarmIdAccount.address}
+                  </code>
+                  <button
+                    onClick={async () => handleCopy(swarmIdAccount.address, 'address')}
+                    className="shrink-0 px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1 border"
+                    style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
+                    aria-label="Copy Swarm ID"
+                  >
+                    {copied === 'address' ? <Check size={11} /> : <Copy size={11} />}
+                    {copied === 'address' ? 'Copied' : 'Copy'}
+                  </button>
+                </div>
+              ) : (
+                <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  Your account details aren't linked yet — sign out (top right) and sign in with Swarm ID again to show
+                  your account name and address here.
+                </p>
+              )}
 
               <div className="flex items-center gap-3 pt-1 flex-wrap">
                 <span

@@ -84,7 +84,7 @@ interface MessagesProps {
 }
 
 export default function Messages({ initialContactId, hideContactList, hideThreadHeader }: MessagesProps = {}) {
-  const { signer, derive, deriving, walletConnected } = useDerivedKey()
+  const { signer, signIn, deriving } = useDerivedKey()
   const navigate = useNavigate()
   const { data: stamps } = useStamps()
   const { data: addresses } = useAddresses()
@@ -497,28 +497,15 @@ export default function Messages({ initialContactId, hideContactList, hideThread
     }
   }
 
-  if (!walletConnected) {
-    return (
-      <div className="flex flex-col p-6 gap-4 max-w-3xl">
-        <h2 className="text-2xl font-semibold">Messages</h2>
-        <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
-          Connect your wallet to see messages.
-        </p>
-      </div>
-    )
-  }
-
   if (!signer) {
     return (
       <div className="flex flex-col p-6 gap-4 max-w-3xl">
         <h2 className="text-2xl font-semibold">Messages</h2>
         <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
-          {deriving
-            ? 'Check your wallet — approve the signature requests to finish setting up your Nook identity.'
-            : 'Set up your Nook identity to start messaging.'}
+          Sign in with Swarm ID to start messaging.
         </p>
-        <Button onClick={async () => derive()} disabled={deriving} className="self-start uppercase tracking-widest">
-          {deriving ? 'Setting up…' : 'Set up Nook identity'}
+        <Button onClick={async () => signIn()} disabled={deriving} className="self-start uppercase tracking-widest">
+          {deriving ? 'Signing in…' : 'Sign in with Swarm ID'}
         </Button>
       </div>
     )

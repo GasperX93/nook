@@ -26,6 +26,8 @@ export interface NookContact {
   previousBeeKeys?: string[]
   /** ENS name if known */
   ensName?: string
+  /** Swarm ID account address (display identity; not crypto-bound) */
+  swarmId?: string
   /** How this contact was added — for UX badges + future reasoning */
   source: 'identity-feed' | 'share-link' | 'drive-share'
   /** Unix timestamp ms */

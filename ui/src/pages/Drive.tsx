@@ -224,7 +224,6 @@ function BuyDriveModal({
   const buyStamp = useBuyStamp()
   const createReclaimable = useCreateReclaimable()
   const { isConnected } = useAccount()
-  const { derive } = useDerivedKey()
 
   const [driveName, setDriveName] = useState('')
   const [sizeIdx, setSizeIdx] = useState(0)
@@ -258,9 +257,9 @@ function BuyDriveModal({
 
     // TODO: re-enable when metadata feeds are wired up
     // if (isEncrypted) {
-    //   const derivedSigner = await derive()
+    //   const derivedSigner = await signIn()
     //   if (!derivedSigner) {
-    //     setBuyError('Wallet signature required for encrypted drives')
+    //     setBuyError('Sign in with Swarm ID to create encrypted drives')
     //     return
     //   }
     // }
