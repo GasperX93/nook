@@ -1,4 +1,4 @@
-import { Check, ChevronRight, Copy, ExternalLink, Globe, Link, RefreshCw } from 'lucide-react'
+import { Check, ChevronRight, Copy, ExternalLink, Globe, Link } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { calcStampCost, depthToBytes, DURATION_PRESETS, getBeeUrl, plurToBzz, SIZE_PRESETS } from '../api/bee'
@@ -7,6 +7,8 @@ import { useAppStore } from '../store/app'
 import { useUpload } from '../hooks/useUpload'
 import ENSModal from '../components/ENSModal'
 import { bzzLinkHost } from '../lib/ens-gateway'
+import PublishProgress from '../components/PublishProgress'
+import { useTransfersStore } from '../store/transfers'
 import {
   detectIndexDocument,
   fileListToEntries,
@@ -80,6 +82,13 @@ export default function WebsitePublisher() {
 
   // Publishing state
   const [publishPhase, setPublishPhase] = useState('')
+  // Progress view (R4-7): the upload's tag feeds the same honest propagation
+  // visual as Drive; steps without measurable progress show elapsed time.
+  const [publishTagUid, setPublishTagUid] = useState<number | null>(null)
+  const [skippedBuy, setSkippedBuy] = useState(false)
+  const propagationTransfer = useTransfersStore(state =>
+    publishTagUid === null ? undefined : state.transfers.find(t => t.id === `tag:${publishTagUid}`),
+  )
   const [publishError, setPublishError] = useState<string | null>(null)
   const [uploadProgress, setUploadProgress] = useState<number | null>(null)
 
@@ -169,6 +178,9 @@ export default function WebsitePublisher() {
     try {
       let batchID: string
 
+      setPublishTagUid(null)
+      setSkippedBuy(Boolean(reusableStamp))
+
       if (reusableStamp) {
         batchID = reusableStamp.batchID
       } else {
@@ -193,6 +205,7 @@ export default function WebsitePublisher() {
         feedTopic: feedTopic.trim() || driveName.trim() || content.name,
         onPhase: setPublishPhase,
         onProgress: setUploadProgress,
+        onTag: setPublishTagUid,
       })
 
       setResult(uploadResult)
@@ -533,31 +546,14 @@ export default function WebsitePublisher() {
 
       {/* ── Publishing ── */}
       {step === 'publishing' && (
-        <div className="flex flex-col items-center gap-4 py-16">
-          <RefreshCw size={24} className="animate-spin" style={{ color: 'rgb(var(--accent))' }} />
-          <div className="text-center space-y-3 w-full max-w-xs">
-            <p className="text-sm font-medium">{publishPhase || 'Publishing…'}</p>
-            <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-              {content ? `${content.entries.length} files` : ''}
-            </p>
-            {uploadProgress !== null && (
-              <div className="space-y-1.5">
-                <div
-                  className="h-1.5 rounded-full overflow-hidden w-full"
-                  style={{ backgroundColor: 'rgb(var(--border))' }}
-                >
-                  <div
-                    className="h-full rounded-full transition-all duration-200"
-                    style={{ width: `${uploadProgress}%`, backgroundColor: 'rgb(var(--accent))' }}
-                  />
-                </div>
-                <p className="text-xs tabular-nums" style={{ color: 'rgb(var(--fg-muted))' }}>
-                  {uploadProgress}%
-                </p>
-              </div>
-            )}
-          </div>
-        </div>
+        <PublishProgress
+          phase={publishPhase}
+          fileCount={content?.entries.length ?? 0}
+          uploadProgress={uploadProgress}
+          propagationTransfer={propagationTransfer}
+          skippedBuy={skippedBuy}
+          feedEnabled={feedEnabled}
+        />
       )}
 
       {/* ── Done ── */}

@@ -14,6 +14,7 @@ import { useEffect, useMemo } from 'react'
 
 import { playCricketChirp } from '../lib/cricket'
 import { appendReceived, loadThreads } from '../notify/messages'
+import { applyDriveMessages } from '../notify/drive-access'
 import { getReadCursor, recordRead } from '../notify/receive-cursor'
 import { loadContacts } from '../notify/storage'
 import { toLibraryContact } from '../notify/types'
@@ -84,10 +85,13 @@ export function useInboxPolling(): void {
             // (possibly long) poll ran must not be overwritten by a snapshot.
             const current = loadThreads()
             const key = lib.ethAddress.toLowerCase()
-            const before = current[key]?.length ?? 0
-            const after = appendReceived(current, lib.ethAddress, result.messages)[key]?.length ?? 0
+            const known = new Set((current[key] ?? []).map(m => m.id))
+            const thread = appendReceived(current, lib.ethAddress, result.messages)[key] ?? []
+            const added = thread.filter(m => !known.has(m.id))
 
-            newCount += Math.max(0, after - before)
+            newCount += added.length
+            // Access removed / restored reaches "Shared with me" right away (R4-15).
+            applyDriveMessages(added, contact.nickname)
           } catch {
             // One unreachable mailbox must not stop the others; the cursor is
             // unchanged, so the next tick retries from the same place.

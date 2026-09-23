@@ -19,6 +19,8 @@ export interface UploadOptions {
   actHistoryRef?: string
   onPhase?: (phase: string) => void
   onProgress?: (pct: number | null) => void
+  /** Called with the upload's Bee tag once known — lets the caller show the propagation visual (R4-7). */
+  onTag?: (tagUid: number) => void
 }
 
 export interface UploadResult {
@@ -69,6 +71,7 @@ export function useUpload() {
       actHistoryRef,
       onPhase,
       onProgress,
+      onTag,
     } = options
 
     // Poll stamp usability before uploading
@@ -201,6 +204,7 @@ export function useUpload() {
     if (uploadTagUid !== undefined && !encrypted) {
       onPhase?.(UPLOAD_STEP_NETWORK)
       onProgress?.(0)
+      onTag?.(uploadTagUid)
       // Global tracker (#4/#5): survives navigation, feeds the sidebar
       // indicator, rings the bell on completion.
       const { complete } = await followTagPropagation(uploadTagUid, name, driveId, pct => onProgress?.(pct))
@@ -217,7 +221,7 @@ export function useUpload() {
     let feedManifestAddress: string | undefined
 
     if (feedEnabled) {
-      onPhase?.('Creating feed…')
+      onPhase?.('Creating the permanent address…')
       const topicName = feedTopic?.trim() || name
       const topicHex = await topicFromString(topicName)
       const result = await serverApi.createFeedUpdate(topicHex, reference, driveId)
