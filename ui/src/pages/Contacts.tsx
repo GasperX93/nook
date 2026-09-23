@@ -4,8 +4,10 @@ import { Check, Copy, Mail, MessageSquare, Pencil, Plus, Search, Send, Share2, T
 import { useEffect, useMemo, useState } from 'react'
 
 import Messages, { ConnectionStatusBadge } from '../apps/Messages'
-import { useStamps } from '../api/queries'
+import { useAddresses, useStamps } from '../api/queries'
 import { useDerivedKey } from '../hooks/useDerivedKey'
+import { bytesToHex } from '../lib/hex'
+import { movedFromLegacyIdentity } from '../notify/active-identity'
 import { deriveConnectionState, getMyDisplayName, hasInboundSince, markInviteAccepted } from '../notify/contact-state'
 import { sendInviteAck } from '../notify/invite-ack'
 import { loadReadCursors, loadThreads, unreadCount } from '../notify/messages'
@@ -38,7 +40,9 @@ type SortMode = 'name' | 'date' | 'address'
 
 export default function Contacts() {
   const bee = useMemo(() => new Bee(BEE_URL), [])
-  const { signer } = useDerivedKey()
+  const { signer, signIn, deriving, swarmIdAccount } = useDerivedKey()
+  const { data: addresses } = useAddresses()
+  const [myLinkCopied, setMyLinkCopied] = useState(false)
   const { data: stamps } = useStamps()
   const [contacts, setContacts] = useState<NookContact[]>(() => loadContacts())
 
@@ -371,6 +375,20 @@ export default function Contacts() {
     void handleCopy(link, 'detail-share')
   }
 
+  if (!signer) {
+    return (
+      <div className="flex flex-col p-6 gap-4 max-w-3xl">
+        <h2 className="text-2xl font-semibold">Contacts</h2>
+        <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
+          Sign in with Swarm ID to see and add contacts.
+        </p>
+        <Button onClick={async () => signIn()} disabled={deriving} className="self-start uppercase tracking-widest">
+          {deriving ? 'Signing in…' : 'Sign in with Swarm ID'}
+        </Button>
+      </div>
+    )
+  }
+
   return (
     <div className="flex h-full">
       {/* LEFT PANE (50%) */}
@@ -460,7 +478,38 @@ export default function Contacts() {
         )}
 
         {/* Table */}
-        {sortedFilteredContacts.length === 0 ? (
+        {contacts.length === 0 && signer && movedFromLegacyIdentity() ? (
+          // Swarm ID transition (#21, mock E): old contacts belong to the old
+          // address's namespace — say why the list is empty and offer the
+          // fastest way back.
+          <div className="px-2 py-6 space-y-3 text-center">
+            <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+              Moved over from your old Nook address? Your contacts need your new one — send them your contact link, or
+              ask them for theirs.
+            </p>
+            <Button
+              size="sm"
+              disabled={!addresses}
+              onClick={async () => {
+                if (!addresses) return
+                await navigator.clipboard.writeText(
+                  encodeShareLink({
+                    ethAddress: signer.getAddress(),
+                    walletPublicKey: bytesToHex(signer.getPublicKey()),
+                    beePublicKey: addresses.publicKey,
+                    nickname: swarmIdAccount?.name || undefined,
+                  }),
+                )
+                setMyLinkCopied(true)
+                setTimeout(() => setMyLinkCopied(false), 1500)
+              }}
+              className="inline-flex items-center gap-1.5"
+            >
+              {myLinkCopied ? <Check size={12} /> : <Copy size={12} />}
+              {myLinkCopied ? 'Copied' : 'Copy my contact link'}
+            </Button>
+          </div>
+        ) : sortedFilteredContacts.length === 0 ? (
           <p className="text-xs px-2 py-6 text-center" style={{ color: 'rgb(var(--fg-muted))' }}>
             {contacts.length === 0
               ? 'No contacts yet. Click "Add contact" to begin.'
@@ -511,18 +560,18 @@ export default function Contacts() {
                       </span>
                       <div className="flex items-center gap-1.5 min-w-0">
                         <span className="text-xs font-mono truncate" style={{ color: 'rgb(var(--fg-muted))' }}>
-                          {short(c.swarmId ?? c.id, 4)}
+                          {short(c.id, 4)}
                         </span>
                         <button
                           onClick={async e => {
                             e.stopPropagation()
-                            await navigator.clipboard.writeText(c.swarmId ?? c.id)
+                            await navigator.clipboard.writeText(c.id)
                             setCopiedRowId(c.id)
                             setTimeout(() => setCopiedRowId(curr => (curr === c.id ? null : curr)), 1500)
                           }}
                           className="shrink-0 p-1 rounded hover:bg-white/10"
-                          aria-label={`Copy Swarm ID for ${c.nickname}`}
-                          title="Copy Swarm ID"
+                          aria-label={`Copy Nook address for ${c.nickname}`}
+                          title="Copy Nook address"
                         >
                           {isCopied ? (
                             <Check size={12} style={{ color: 'rgb(74,222,128)' }} />

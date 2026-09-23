@@ -1,7 +1,7 @@
 /**
  * Swarm ID integration.
  *
- * Wraps @snaha/swarm-id 0.4.x: a hidden iframe from the trusted origin holds
+ * Wraps @snaha/swarm-id 0.5.x: a hidden iframe from the trusted origin holds
  * the account, `connect()` opens the auth popup, and `deriveAppSecret(label)`
  * yields 32 bytes that are the SAME for this account+app+label on every
  * device — the property the MetaMask signature provides in the wallet path.
@@ -97,6 +97,8 @@ export interface SwarmIdIdentity {
   id: string
   name: string
   address: string
+  /** Generated avatar, resolved by the SDK on every connection snapshot */
+  avatar?: { url: string }
 }
 
 /** The connected Swarm ID identity, or null (not initialized / signed out). */

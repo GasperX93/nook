@@ -10,31 +10,20 @@
  * never creates, changes or wipes the identity.
  *
  * Installs from before Swarm ID may still hold a wallet-derived identity in
- * the cache. It is never activated — `hasLegacyIdentity` reports it so the UI
- * can explain the move; signing in with Swarm ID overwrites it.
+ * the cache. It is never activated; signing in with Swarm ID overwrites it.
+ * The UI explains the move via the markers in notify/active-identity (#21).
  */
 import { useCallback, useEffect } from 'react'
 
 import { SWARM_ID_SECRET_PREFIX, SWARM_ID_WALLET_MARKER } from '../crypto/signer'
-import { setActiveIdentity } from '../notify/active-identity'
+import { markSwarmIdIdentity, setActiveIdentity } from '../notify/active-identity'
 import { migrateMessagesToV2 } from '../notify/messages'
 import { acquireDeriveLock, releaseDeriveLock, useIdentityStore } from '../store/identity'
 import { signInWithSwarmId } from '../swarm-id'
 
 export function useDerivedKey() {
-  const {
-    signer,
-    deriving,
-    error,
-    walletAddress,
-    swarmIdAccount,
-    hydrated,
-    setSigner,
-    setDeriving,
-    setError,
-    clear,
-    hydrate,
-  } = useIdentityStore()
+  const { signer, deriving, error, walletAddress, swarmIdAccount, setSigner, setDeriving, setError, clear, hydrate } =
+    useIdentityStore()
 
   // Hydrate the identity store from safeStorage on first mount. hydrate()
   // returns false on a transient failure (Koa not up yet at boot); retry a
@@ -92,9 +81,8 @@ export function useDerivedKey() {
   }, [setSigner, setDeriving, setError])
 
   // Only a Swarm ID-seeded identity is ever exposed. A legacy wallet-derived
-  // cache entry stays dormant (see hasLegacyIdentity).
-  const isSwarmIdIdentity = walletAddress === SWARM_ID_WALLET_MARKER
-  const safeSigner = signer && isSwarmIdIdentity ? signer : null
+  // cache entry stays dormant.
+  const safeSigner = signer && walletAddress === SWARM_ID_WALLET_MARKER ? signer : null
 
   // Keep the per-identity storage namespace in sync. Contacts/messages/
   // invitations/display-name are keyed by this address; null (signed out /
@@ -102,6 +90,8 @@ export function useDerivedKey() {
   const safeAddress = safeSigner ? safeSigner.getAddress() : null
 
   useEffect(() => {
+    // Before setActiveIdentity overwrites the last-identity marker (#21).
+    if (safeAddress) markSwarmIdIdentity(safeAddress)
     setActiveIdentity(safeAddress)
 
     // Once the identity namespace is active, run the one-time v2 clean break
@@ -122,11 +112,8 @@ export function useDerivedKey() {
     /** Open the Swarm ID sign-in dialog and derive the Nook identity */
     signIn,
 
-    /** The Swarm ID account (address + name) — THE user-visible identity */
+    /** The Swarm ID account signed in (name shown in the UI; its address is display-only) */
     swarmIdAccount: safeSigner ? swarmIdAccount : null,
-
-    /** A pre-Swarm ID wallet-derived identity is still cached (never activated) */
-    hasLegacyIdentity: hydrated && Boolean(walletAddress) && !isSwarmIdIdentity,
 
     /** Wipe the persisted identity (sign-out) */
     clear,

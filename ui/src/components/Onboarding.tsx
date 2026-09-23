@@ -10,6 +10,7 @@ import { useAddresses, useBeeHealth, useRestart, useStamps, useStatus, useWallet
 import { useAppStore } from '../store/app'
 import { useDerivedKey } from '../hooks/useDerivedKey'
 import { WIDGET_THEME } from '../theme'
+import SwarmIdBadge from './SwarmIdBadge'
 
 type Step = 'starting' | 'identity' | 'funding' | 'syncing' | 'ready'
 
@@ -411,16 +412,19 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
 }
 
 /**
- * Identity step — sign in with Swarm ID, done. Free and
- * instant, so it runs BEFORE funding (nothing to wait for here). The actual
- * network publish still happens automatically once the reserved space exists
- * (useAutoPublish) — the setup≠publish split is unchanged. Skipping is quiet
- * and always possible; the Identity tab is the recovery path.
+ * Identity step — sign in with Swarm ID, done. Free and instant, so it runs
+ * BEFORE funding (nothing to wait for here). The actual network publish still
+ * happens automatically once the reserved space exists (useAutoPublish) — the
+ * setup≠publish split is unchanged. Skipping is quiet and always possible; the
+ * Identity tab is the recovery path.
  */
 function OnboardingIdentityStep({ onContinue }: { onContinue: () => void }) {
   const { signer, signIn, deriving, error } = useDerivedKey()
+  const [copied, setCopied] = useState(false)
 
   if (signer) {
+    const address = signer.getAddress()
+
     return (
       <div className="text-center space-y-5">
         <div
@@ -429,10 +433,34 @@ function OnboardingIdentityStep({ onContinue }: { onContinue: () => void }) {
         >
           <Check size={28} style={{ color: '#4ade80' }} />
         </div>
-        <h2 className="text-lg font-semibold">Identity created</h2>
+        <h2 className="text-lg font-semibold">You're signed in</h2>
+        <SwarmIdBadge />
+        <div
+          className="rounded-lg border px-4 py-3 text-left"
+          style={{ backgroundColor: 'rgb(var(--bg-surface))', borderColor: 'rgb(var(--border))' }}
+        >
+          <p className="text-xs font-semibold mb-1">Your Nook address</p>
+          <button
+            onClick={async () => {
+              await navigator.clipboard.writeText(address)
+              setCopied(true)
+              setTimeout(() => setCopied(false), 1500)
+            }}
+            className="flex items-center gap-2 text-[11px] font-mono break-all text-left"
+            style={{ color: 'rgb(var(--fg-muted))' }}
+            title="Copy Nook address"
+          >
+            {address}
+            {copied ? (
+              <Check size={12} className="shrink-0" style={{ color: '#4ade80' }} />
+            ) : (
+              <Copy size={12} className="shrink-0" />
+            )}
+          </button>
+        </div>
         <p className="text-sm leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
-          You'll be findable by your Nook address, so contacts can message you and share drives with you. You can change
-          this anytime in Account → Identity.
+          Once your node is set up, anyone can find you in Nook by this address — to message you and share drives with
+          you. Change this anytime in Account → Identity.
         </p>
         <button
           onClick={onContinue}
@@ -447,10 +475,9 @@ function OnboardingIdentityStep({ onContinue }: { onContinue: () => void }) {
 
   return (
     <div className="text-center space-y-5">
-      <h2 className="text-lg font-semibold">Create your identity</h2>
+      <h2 className="text-lg font-semibold">Sign in with Swarm ID</h2>
       <p className="text-sm leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
-        Your identity is how contacts message you and share drives with you. Swarm ID gives you one identity for every
-        Swarm app, on all your devices — free, and no wallet needed.
+        Your identity lets contacts message you and share drives with you.
       </p>
       <button
         onClick={async () => signIn()}
@@ -460,6 +487,10 @@ function OnboardingIdentityStep({ onContinue }: { onContinue: () => void }) {
       >
         {deriving ? 'Signing in…' : 'Sign in with Swarm ID'}
       </button>
+      <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+        New to Swarm ID? Create an account in the window that opens — and{' '}
+        <span className="font-semibold">save your recovery phrase</span>.
+      </p>
       {error && (
         <p className="text-xs" style={{ color: '#ef4444' }}>
           {error}
@@ -474,7 +505,7 @@ function OnboardingIdentityStep({ onContinue }: { onContinue: () => void }) {
           Skip for now
         </button>
         <p className="text-[10px] mt-1" style={{ color: 'rgb(var(--fg-muted))' }}>
-          Messaging and sharing stay off until you create one — Account → Identity picks this up later.
+          Messaging and sharing stay off until you sign in — Account → Identity picks this up later.
         </p>
       </div>
     </div>

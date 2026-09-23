@@ -31,7 +31,7 @@ import { useAutoPublish } from '../hooks/useAutoPublish'
 import { useInboxPolling } from '../hooks/useInboxPolling'
 import { isSystemStamp, pickMessagingStamp } from '../lib/system-stamp'
 import { useOutboxDrain } from '../hooks/useOutboxDrain'
-import { hasKnownIdentity } from '../notify/active-identity'
+import { hasKnownIdentity, hasLegacyIdentityPendingMove } from '../notify/active-identity'
 import { primeCricketAudio } from '../lib/cricket'
 import { loadReadCursors, loadThreads, totalUnread } from '../notify/messages'
 import { loadInvitations, pendingInvitations } from '../notify/invitations'
@@ -66,6 +66,8 @@ const youNavItems = [
 ]
 
 const settingsNavItem = { to: '/settings', icon: Settings, label: 'Settings' }
+
+const MOVE_NOTICE_DISMISSED_KEY = 'nook-swarm-id-move-notice-dismissed'
 
 const appNavItems = [{ to: '/apps/website-publisher', icon: Globe, label: 'Publish website' }]
 
@@ -190,8 +192,20 @@ export default function Layout() {
   // arriving messages look lost. The un-namespaced last-identity marker is
   // the one signal that there is an inbox worth unlocking; only users who
   // have actually used messaging ever see this.
-  const { signer: derivedSigner } = useDerivedKey()
+  const { signer: derivedSigner, signIn, deriving } = useDerivedKey()
   const showMessagesPaused = !derivedSigner && hasKnownIdentity()
+
+  // Swarm ID transition (#21): a pre-0.7 wallet-derived identity existed and
+  // nobody has signed in with Swarm ID yet. Replaces the paused banner until
+  // the user signs in or closes it (closing falls back to the paused banner).
+  const [moveNoticeDismissed, setMoveNoticeDismissed] = useState(() => {
+    try {
+      return localStorage.getItem(MOVE_NOTICE_DISMISSED_KEY) !== null
+    } catch {
+      return false
+    }
+  })
+  const showMoveNotice = !derivedSigner && !moveNoticeDismissed && hasLegacyIdentityPendingMove()
 
   // Auto-complete onboarding for existing users upgrading from v0.2.0 (they never had the flag).
   // Once stamps or wallet data loads and shows existing activity, mark onboarding done.
@@ -471,7 +485,45 @@ export default function Layout() {
             </div>
           )}
 
-          {showMessagesPaused && !showOnboarding && (
+          {showMoveNotice && !showOnboarding && (
+            <div
+              className="flex items-start gap-2.5 px-4 py-2.5 text-xs shrink-0"
+              style={{ backgroundColor: 'rgba(96,165,250,0.08)', borderBottom: '1px solid rgba(96,165,250,0.2)' }}
+            >
+              <Mail size={12} className="shrink-0 mt-0.5" style={{ color: '#60a5fa' }} />
+              <div className="flex-1 space-y-2" style={{ color: 'rgb(var(--fg))' }}>
+                <p>
+                  <span className="font-semibold">Messaging now uses Swarm ID.</span> Your drives, files and funds are
+                  untouched. Sign in to get your new Nook address, then share it with your contacts again — your old
+                  address stops receiving messages.
+                </p>
+                <button
+                  onClick={async () => signIn()}
+                  disabled={deriving}
+                  className="px-3 py-1.5 rounded-md text-xs font-semibold disabled:opacity-60"
+                  style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
+                >
+                  {deriving ? 'Signing in…' : 'Sign in with Swarm ID'}
+                </button>
+              </div>
+              <button
+                onClick={() => {
+                  try {
+                    localStorage.setItem(MOVE_NOTICE_DISMISSED_KEY, '1')
+                  } catch {
+                    // best-effort
+                  }
+                  setMoveNoticeDismissed(true)
+                }}
+                className="shrink-0 p-0.5 hover:opacity-60"
+                aria-label="Dismiss"
+              >
+                <X size={12} style={{ color: 'rgb(var(--fg-muted))' }} />
+              </button>
+            </div>
+          )}
+
+          {showMessagesPaused && !showMoveNotice && !showOnboarding && (
             <div
               className="flex items-center gap-2.5 px-4 py-2.5 text-xs shrink-0"
               style={{ backgroundColor: 'rgba(96,165,250,0.08)', borderBottom: '1px solid rgba(96,165,250,0.2)' }}

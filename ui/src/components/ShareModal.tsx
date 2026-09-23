@@ -495,7 +495,7 @@ export default function ShareModal({
     }
 
     if (!signer || !myPublicKey) {
-      throw new Error('Derive your Nook key first (Contacts page) so the link can carry your contact info.')
+      throw new Error('Sign in with Swarm ID first so the link can carry your contact info.')
     }
     const topic = await topicFromString(stampId + 'nook-drive-meta')
     const metadata = JSON.stringify({
