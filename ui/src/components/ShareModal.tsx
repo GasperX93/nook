@@ -7,22 +7,20 @@ import { Bee } from '@ethersphere/bee-js'
 import { identity, registry } from '@swarm-notify/sdk'
 import { Bell, Copy, Check, Lock, RefreshCw, Trash2, Users, X } from 'lucide-react'
 import { useEffect, useRef, useMemo, useState } from 'react'
-import { getBalance, getWalletClient, switchChain } from '@wagmi/core'
-import { useWalletClient } from 'wagmi'
 
 import { topicFromString, waitForRetrievable } from '../api/bee'
+import { useWallet } from '../api/queries'
 import { serverApi } from '../api/server'
 import { bytesToHex, hexToBytes } from '../lib/hex'
 import { contactForOldNodeKey, contactsForNodeKey, stripKeyPrefix } from '../lib/node-key'
 import { useDerivedKey } from '../hooks/useDerivedKey'
-import { GNOSIS_CHAIN_ID, REGISTRY_ADDRESS } from '../notify/constants'
+import { REGISTRY_ADDRESS } from '../notify/constants'
 import { queueAndDeliver } from '../notify/deliver'
-import { createNotifyProvider } from '../notify/provider'
+import { createNodeNotifyProvider } from '../notify/provider'
 import { decodeShareLink } from '../notify/share-link'
 import { addContact, isIdentityPublished, loadContacts, updateContactKeys } from '../notify/storage'
 import { type NookContact } from '../notify/types'
 import { buildShareLink } from '../hooks/useSharedDrives'
-import { wagmiConfig } from '../wagmi'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 
@@ -80,13 +78,6 @@ function isValidPublicKey(key: string): boolean {
   return /^[0-9a-fA-F]+$/.test(clean) && (clean.length === 66 || clean.length === 130)
 }
 
-/** EIP-1193 user rejection (wallet Cancel) — an expected choice, not a failure. */
-function isUserRejection(e: unknown): boolean {
-  const err = e as { code?: number; message?: string; cause?: { code?: number } }
-
-  return err?.code === 4001 || err?.cause?.code === 4001 || /user (rejected|denied)/i.test(err?.message ?? '')
-}
-
 /** First line only, capped — wallet errors embed full RPC request dumps. */
 function shortErrorMessage(e: unknown): string {
   const first = ((e as Error).message ?? 'send failed').split('\n')[0]
@@ -118,7 +109,7 @@ export default function ShareModal({
   autoNotify,
 }: ShareModalProps) {
   const { signer } = useDerivedKey()
-  const { data: walletClient } = useWalletClient()
+  const { data: nodeWallet } = useWallet()
   // State (not useMemo) so it refreshes after a grant adds a new contact —
   // otherwise the just-granted person isn't matched as notifiable.
   const [contacts, setContacts] = useState(() => loadContacts())
@@ -630,37 +621,21 @@ export default function ShareModal({
       : `"${driveName}" shared with you`
     const body = `Drive shared. Open in Nook to add it.`
 
-    // For the on-chain wake-up, switch to Gnosis just-in-time and re-fetch the
-    // wallet client (stale across a chain switch — same pattern as ENSModal).
+    // On-chain wake-up, signed + paid by the node wallet (no external wallet).
     // The ping is OPTIONAL (#132): the mailbox share needs no gas and must
-    // complete regardless — a cancelled chain switch, a missing wallet, or an
-    // empty xDAI balance skips the ping with a note, never blocks the share.
+    // complete regardless — an empty node xDAI balance skips the ping with a
+    // note, never blocks the share.
     let provider = null
     let pingSkipReason: string | null = null
 
-    if (doOnChain && walletClient) {
-      try {
-        if (walletClient.chain?.id !== GNOSIS_CHAIN_ID) {
-          await switchChain(wagmiConfig, { chainId: GNOSIS_CHAIN_ID })
-        }
-        const gnosisClient = await getWalletClient(wagmiConfig, { chainId: GNOSIS_CHAIN_ID })
-        const balance = await getBalance(wagmiConfig, {
-          address: gnosisClient.account.address,
-          chainId: GNOSIS_CHAIN_ID,
-        })
-
-        // Rough gas need for the registry call — skip cleanly instead of
-        // letting the wallet prompt a transaction that cannot be paid.
-        if (balance.value < BigInt('200000000000000')) {
-          pingSkipReason = 'Your wallet has no xDAI for the on-chain heads-up.'
-        } else {
-          provider = createNotifyProvider(gnosisClient)
-        }
-      } catch {
-        pingSkipReason = 'Wallet not ready for the on-chain heads-up (chain switch declined or unavailable).'
+    if (doOnChain) {
+      // Rough gas need for the registry call — skip cleanly instead of sending
+      // a transaction the node wallet cannot pay.
+      if (nodeWallet && BigInt(nodeWallet.nativeTokenBalance) < BigInt('200000000000000')) {
+        pingSkipReason = 'Your node wallet has no xDAI for the on-chain heads-up.'
+      } else {
+        provider = createNodeNotifyProvider()
       }
-    } else if (doOnChain && !walletClient) {
-      pingSkipReason = 'Connect a wallet to also send on-chain heads-ups.'
     }
 
     if (pingSkipReason) {
@@ -709,13 +684,7 @@ export default function ShareModal({
           console.error(`On-chain notify ${contact.nickname} failed:`, e)
           setOnChainStatus(prev => ({ ...prev, [contact.id]: 'failed' }))
 
-          if (isUserRejection(e)) {
-            // Cancelling in the wallet is an expected choice, not a failure —
-            // amber FYI, never a red error with the raw RPC dump (#14 retest).
-            setPingSkippedNote('Shared without the on-chain heads-up — they still receive everything in Nook.')
-          } else {
-            lastFailMsg = `Drive shared, but the on-chain heads-up failed (${shortErrorMessage(e)}) — recipients still receive it in Nook.`
-          }
+          lastFailMsg = `Drive shared, but the on-chain heads-up failed (${shortErrorMessage(e)}) — recipients still receive it in Nook.`
         }
       }
     }

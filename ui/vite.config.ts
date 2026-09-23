@@ -18,6 +18,7 @@ export default defineConfig(({ command }) => ({
       '/swap': 'http://localhost:3054',
       '/redeem': 'http://localhost:3054',
       '/withdraw': 'http://localhost:3054',
+      '/notify-ping': 'http://localhost:3054',
       '/feed-update': 'http://localhost:3054',
       '/feed-read': 'http://localhost:3054',
       '/upload-bytes': 'http://localhost:3054',

@@ -1,3 +1,4 @@
+import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { AlertTriangle, Check, ChevronDown, ExternalLink, Globe, RefreshCw, X } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { namehash } from 'viem'
@@ -94,6 +95,7 @@ interface ENSModalProps {
 
 export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, currentDomain, onLinked }: ENSModalProps) {
   const { address, isConnected, chainId } = useAccount()
+  const { openConnectModal } = useConnectModal()
   // ENS lives on Ethereum mainnet — pin reads to mainnet's RPC so lookups work
   // regardless of which chain the wallet is connected to (e.g. Gnosis). The wallet
   // is only switched to mainnet at write time, in linkDomain().
@@ -248,11 +250,16 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
         </div>
 
         {/* Not connected */}
+        {/* ENS lives on Ethereum mainnet, paid with ETH — the one place Nook
+            still needs an external wallet (the node wallet only holds xDAI). */}
         {!isConnected && (
-          <div className="text-center py-6">
+          <div className="text-center py-6 space-y-3">
             <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-              Connect your wallet first using the button in the top bar.
+              Linking an ENS domain needs the Ethereum wallet that owns it.
             </p>
+            <Button size="sm" onClick={openConnectModal} disabled={!openConnectModal}>
+              Connect wallet
+            </Button>
           </div>
         )}
 

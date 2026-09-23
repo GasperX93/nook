@@ -173,6 +173,9 @@ export const serverApi = {
   withdraw: async (token: 'bzz' | 'dai', amount: string, to: string) =>
     serverPost<{ success: boolean; txHash: string }>('/withdraw', { token, amount, to }),
 
+  /** First-contact ping on the swarm-notify registry, signed + paid by the node wallet. Resolves once confirmed. */
+  notifyPing: async (data: string) => serverPost<{ success: boolean; txHash: string }>('/notify-ping', { data }),
+
   chequebookWithdraw: async (amount: string) =>
     serverPost<{ success: boolean; transactionHash: string }>('/chequebook-withdraw', { amount }),
 

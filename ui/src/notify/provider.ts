@@ -1,7 +1,8 @@
 import type { NotifyProvider } from '@swarm-notify/sdk'
 import type { WalletClient } from 'viem'
 
-import { GNOSIS_RPC_URL } from './constants'
+import { serverApi } from '../api/server'
+import { GNOSIS_RPC_URL, REGISTRY_ADDRESS } from './constants'
 
 async function rpcCall<T>(method: string, params: unknown[]): Promise<T> {
   const res = await fetch(GNOSIS_RPC_URL, {
@@ -47,6 +48,29 @@ export function createNotifyProvider(walletClient?: WalletClient): NotifyProvide
         account: walletClient.account!,
         chain: walletClient.chain ?? null,
       })
+    },
+  }
+}
+
+/**
+ * Notify provider whose writes are signed + paid by the NODE wallet (Koa
+ * /notify-ping), so first-contact pings need no external wallet. The server
+ * only accepts registry.notify calls and resolves after one confirmation —
+ * a returned hash means the ping is on-chain, not merely broadcast.
+ */
+export function createNodeNotifyProvider(): NotifyProvider {
+  const reads = createNotifyProvider()
+
+  return {
+    ...reads,
+    async sendTransaction(tx) {
+      if (tx.to.toLowerCase() !== REGISTRY_ADDRESS.toLowerCase()) {
+        throw new Error('The node wallet only sends notifications to the swarm-notify registry')
+      }
+
+      const { txHash } = await serverApi.notifyPing(tx.data)
+
+      return txHash
     },
   }
 }

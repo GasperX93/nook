@@ -47,8 +47,8 @@ export default function Contacts() {
   const [contacts, setContacts] = useState<NookContact[]>(() => loadContacts())
 
   // Phase 4: contacts are namespaced per derived identity. When the identity
-  // changes (wallet switch/disconnect) the storage namespace flips, so re-read
-  // the list — otherwise the page would show the previous wallet's contacts
+  // changes (sign-in/sign-out) the storage namespace flips, so re-read
+  // the list — otherwise the page would show the previous identity's contacts
   // until navigated away. Keyed on the derived address.
   const myAddress = signer ? signer.getAddress() : null
 
@@ -895,7 +895,7 @@ export default function Contacts() {
                       <span style={{ color: 'rgb(var(--fg))' }}>Suggested nickname:</span>{' '}
                       {decoded.payload.nickname ?? '(none — provide one below)'}
                     </p>
-                    <p style={{ color: 'rgb(74,222,128)' }}>✓ All keys present (wallet + bee)</p>
+                    <p style={{ color: 'rgb(74,222,128)' }}>✓ All keys present (messaging + node)</p>
                   </div>
                 )}
                 {decoded && !decoded.ok && (
