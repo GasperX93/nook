@@ -1,4 +1,5 @@
 import { nsKey } from './active-identity'
+import { clearInviteAccepted, clearInviteSent } from './contact-state'
 import type { NookContact } from './types'
 
 /**
@@ -98,6 +99,10 @@ export function removeContact(contacts: NookContact[], id: string): NookContact[
   const updated = contacts.filter(c => c.id.toLowerCase() !== id.toLowerCase())
 
   saveContacts(updated)
+  // A re-added contact must start over at "not connected" so the invite (and
+  // its on-chain ping) fires again (R3b-3).
+  clearInviteSent(id)
+  clearInviteAccepted(id)
 
   return updated
 }
