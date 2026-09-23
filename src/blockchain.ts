@@ -25,6 +25,18 @@ export async function sendBzzTransaction(privateKey: string, to: string, value: 
   return { transaction, receipt }
 }
 
+/**
+ * Gas limit Nook sends with every batch purchase (R4-6). Bee's own estimate
+ * (+ buffer) can fall short: createBatch may have to expire a backlog of old
+ * batches first, and that backlog can grow between Bee's estimate and the
+ * block the transaction lands in — observed live: 534,120 limit, out of gas;
+ * the cleanup alone (expireLimited(25)) then used 511k. Bee 2.8.2 honours the
+ * `Gas-Limit` header on POST /stamps (limit = max(header, configured)). Only
+ * gas actually used is paid; the limit just needs xDAI cover up front
+ * (~0.002–0.008 xDAI at typical Gnosis gas prices).
+ */
+export const BATCH_CREATE_GAS_LIMIT = '1500000'
+
 /** swarm-notify on-chain registry on Gnosis — the ONLY contract the node key pings. */
 export const NOTIFY_REGISTRY_ADDRESS = '0x318aE190B77bA39fbcdFA4e84BB7CFD16b846Fcf'
 

@@ -6,6 +6,7 @@ import { useBeeHealth, useBuyStamp, useChainState, useWallet } from '../api/quer
 import { useAppStore } from '../store/app'
 import { useUpload } from '../hooks/useUpload'
 import ENSModal from '../components/ENSModal'
+import { bzzLinkHost } from '../lib/ens-gateway'
 import {
   detectIndexDocument,
   fileListToEntries,
@@ -678,7 +679,8 @@ export default function WebsitePublisher() {
             >
               <Globe size={13} style={{ color: '#4ade80' }} />
               {/* eth.limo and bzz.link are both ENS gateways — they resolve the
-                  ENS name (not a raw hash), so both take `${linkedDomain}`. */}
+                  ENS name (not a raw hash). bzz.link drops the .eth and has no
+                  address for subnames (R4-8, lib/ens-gateway). */}
               <a
                 href={`https://${linkedDomain}.limo`}
                 target="_blank"
@@ -688,15 +690,17 @@ export default function WebsitePublisher() {
               >
                 {linkedDomain}.limo
               </a>
-              <a
-                href={`https://${linkedDomain}.bzz.link`}
-                target="_blank"
-                rel="noreferrer"
-                className="text-xs font-medium transition-opacity hover:opacity-80"
-                style={{ color: '#4ade80' }}
-              >
-                {linkedDomain}.bzz.link
-              </a>
+              {bzzLinkHost(linkedDomain) && (
+                <a
+                  href={`https://${bzzLinkHost(linkedDomain)}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-xs font-medium transition-opacity hover:opacity-80"
+                  style={{ color: '#4ade80' }}
+                >
+                  {bzzLinkHost(linkedDomain)}
+                </a>
+              )}
             </div>
           )}
 

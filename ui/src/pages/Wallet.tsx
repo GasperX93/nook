@@ -446,7 +446,8 @@ export default function Wallet() {
                         <ArrowDownLeft size={13} className="shrink-0" style={{ color: '#4ade80' }} />
                       )}
                       <span className="font-medium shrink-0" style={{ color: 'rgb(var(--fg))' }}>
-                        {row.direction === 'out' ? '−' : '+'}
+                        {/* "< 0.0001" (gas-only pings, R4-4) reads wrong with a sign. */}
+                        {row.amount.startsWith('<') ? '' : row.direction === 'out' ? '−' : '+'}
                         {row.amount} {row.asset}
                       </span>
                       <span className="truncate flex-1" style={{ color: 'rgb(var(--fg-muted))' }}>
@@ -495,7 +496,7 @@ export default function Wallet() {
           onClick={() => !withdrawing && setShowWithdraw(false)}
         >
           <div
-            className="rounded-xl border p-6 w-96 space-y-4"
+            className="rounded-xl border p-6 w-96 space-y-4 max-h-[calc(100vh-2rem)] max-w-[calc(100vw-2rem)] overflow-y-auto"
             style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
             onClick={e => e.stopPropagation()}
           >

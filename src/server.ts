@@ -14,6 +14,7 @@ import { ethers } from 'ethers'
 import PACKAGE_JSON from '../package.json'
 import { getApiKey } from './api-key'
 import {
+  BATCH_CREATE_GAS_LIMIT,
   isNotifyCalldata,
   redeemGiftCode,
   sendBzzTransaction,
@@ -95,6 +96,13 @@ function friendlyBatchCreationError(error: unknown): string {
 
   if (errString.includes('ECONNREFUSED') || errString.includes('fetch failed')) {
     return 'Your node is still starting up. Please wait a moment and try again.'
+  }
+
+  // Bee's generic 500 for a purchase that failed on-chain (R4-6: e.g. out of
+  // gas while the network cleaned up expired batches). Bee returns it for
+  // several failure points, so don't promise what was or wasn't charged.
+  if (beeMessage.toLowerCase().includes('cannot create batch')) {
+    return 'The purchase failed on the network — this can happen when the network is busy. Check your balance on the Wallet page, then try again.'
   }
 
   return 'Failed to create drive. Please try again.'
@@ -449,7 +457,12 @@ export function runServer() {
     }
 
     try {
-      const batchID = await makeBee().createPostageBatch(amount, depth, { immutableFlag: Boolean(immutable), label })
+      const batchID = await makeBee().createPostageBatch(
+        amount,
+        depth,
+        { immutableFlag: Boolean(immutable), label },
+        { headers: { 'Gas-Limit': BATCH_CREATE_GAS_LIMIT } },
+      )
 
       recordPurchase({
         kind: 'create',
@@ -497,7 +510,14 @@ export function runServer() {
     try {
       // Always immutable: slot reuse works there (spike-verified) and it
       // matches the default drive type everywhere else in Nook.
-      const batchID = (await makeBee().createPostageBatch(amount, depth, { immutableFlag: true, label })).toString()
+      const batchID = (
+        await makeBee().createPostageBatch(
+          amount,
+          depth,
+          { immutableFlag: true, label },
+          { headers: { 'Gas-Limit': BATCH_CREATE_GAS_LIMIT } },
+        )
+      ).toString()
 
       recordPurchase({ kind: 'create', batchId: batchID, label, amountPlur: purchaseCostPlur(amount, depth) })
       registerReclaimableBatch({

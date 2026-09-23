@@ -70,7 +70,7 @@ interface MessagesProps {
 }
 
 export default function Messages({ initialContactId, hideContactList, hideThreadHeader }: MessagesProps = {}) {
-  const { signer, signIn, deriving } = useDerivedKey()
+  const { signer, signIn, deriving, swarmIdAccount } = useDerivedKey()
   const navigate = useNavigate()
   const { data: stamps } = useStamps()
   const { data: addresses } = useAddresses()
@@ -117,6 +117,11 @@ export default function Messages({ initialContactId, hideContactList, hideThread
   // invitation. Captured inline on first invite send, then reused.
   const [myDisplayName, setMyDisplayNameState] = useState<string>(() => getMyDisplayName())
   const [pendingNicknameInput, setPendingNicknameInput] = useState('')
+  // R4-9: no saved invite name yet → offer the Swarm ID account name (the same
+  // name contact links carry) so Send invite works right away; "change" opens
+  // the input pre-filled. Saved as the display name once an invite succeeds.
+  const suggestedName = swarmIdAccount?.name?.trim() ?? ''
+  const [editingName, setEditingName] = useState(false)
 
   // Hide invitations from senders who are already contacts. Otherwise an old
   // invitation row pinned to the top of the list (created before the contact
@@ -136,7 +141,9 @@ export default function Messages({ initialContactId, hideContactList, hideThread
   const selectedThread = selected ? (threads[selected.id.toLowerCase()] ?? []) : []
   const hasInbound = selected ? hasInboundSince(selectedThread, selected.addedAt) : false
   const connectionState: ConnectionState = selected ? deriveConnectionState(selected.id, hasInbound) : 'not-connected'
-  const needsNickname = connectionState !== 'connected' && !myDisplayName
+  const needsNickname = connectionState !== 'connected' && !myDisplayName && (!suggestedName || editingName)
+  const invitingAsSuggested =
+    connectionState !== 'connected' && !myDisplayName && Boolean(suggestedName) && !editingName
   // If the selected entry isn't a contact, it might be a pending invitation.
   const selectedInvite = !selected ? (pending.find(i => i.senderAddr === selectedId?.toLowerCase()) ?? null) : null
 
@@ -175,7 +182,7 @@ export default function Messages({ initialContactId, hideContactList, hideThread
 
       // Tell the sender we accepted — flips their side from "waiting" to
       // "connected" (best-effort; no on-chain cost, we're mutual contacts now).
-      if (signer) void sendInviteAck(bee, signer, stampId, senderContact, myDisplayName)
+      if (signer) void sendInviteAck(bee, signer, stampId, senderContact, myDisplayName || suggestedName)
     } catch (e) {
       setError((e as Error).message ?? 'Failed to add contact')
     } finally {
@@ -335,7 +342,7 @@ export default function Messages({ initialContactId, hideContactList, hideThread
     const nameIsNew = isInviteState && !name
 
     if (nameIsNew) {
-      const candidate = pendingNicknameInput.trim()
+      const candidate = (invitingAsSuggested ? suggestedName : pendingNicknameInput).trim()
 
       if (!candidate) {
         setError('Enter your name so the recipient knows who is reaching out.')
@@ -691,6 +698,26 @@ export default function Messages({ initialContactId, hideContactList, hideThread
                 </p>
               )}
 
+              {invitingAsSuggested && (
+                <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  Inviting as{' '}
+                  <span className="font-semibold" style={{ color: 'rgb(var(--fg))' }}>
+                    {suggestedName}
+                  </span>{' '}
+                  ·{' '}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPendingNicknameInput(suggestedName)
+                      setEditingName(true)
+                    }}
+                    className="underline"
+                  >
+                    change
+                  </button>
+                </p>
+              )}
+
               {needsNickname && (
                 <div
                   className="rounded-lg border p-3 space-y-2"
@@ -716,8 +743,8 @@ export default function Messages({ initialContactId, hideContactList, hideThread
                   placeholder={
                     connectionState === 'connected'
                       ? `Message ${selected.nickname}…`
-                      : myDisplayName
-                        ? `Optional — defaults to "${myDisplayName} would like to connect"`
+                      : myDisplayName || invitingAsSuggested
+                        ? `Optional — defaults to "${myDisplayName || suggestedName} would like to connect"`
                         : `Optional message — your name will be added`
                   }
                   rows={1}

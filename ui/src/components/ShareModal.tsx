@@ -699,7 +699,7 @@ export default function ShareModal({
       onClick={onClose}
     >
       <div
-        className="rounded-xl border p-6 w-[420px] space-y-5"
+        className="rounded-xl border p-6 w-[420px] space-y-5 max-h-[calc(100vh-2rem)] max-w-[calc(100vw-2rem)] overflow-y-auto"
         style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
         onClick={e => e.stopPropagation()}
       >

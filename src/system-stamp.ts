@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, writeFileSync, rmSync } from 'fs'
 
+import { BATCH_CREATE_GAS_LIMIT } from './blockchain'
 import { readConfigYaml } from './config'
 import { setAutoExtendSetting, topupAmount } from './extend-monitor'
 import { fetchWithTimeout } from './fetch-timeout'
@@ -149,7 +150,7 @@ export async function runSystemStampCheck(beeFetch: BeeFetch = realBeeFetch): Pr
     // Chain transaction — generous timeout, mined before Bee responds.
     const buyRes = await beeFetch(
       `/stamps/${amountPerChunk.toString()}/${SYSTEM_STAMP_DEPTH}?label=${SYSTEM_STAMP_LABEL}`,
-      { method: 'POST', headers: { immutable: 'true' } },
+      { method: 'POST', headers: { immutable: 'true', 'Gas-Limit': BATCH_CREATE_GAS_LIMIT } },
       300_000,
     )
 

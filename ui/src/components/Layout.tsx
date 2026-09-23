@@ -364,7 +364,15 @@ export default function Layout() {
             >
               <AlertTriangle size={13} className="shrink-0" style={{ color: '#ef4444' }} />
               <span style={{ color: '#ef4444' }}>
-                Bee keeps crashing — automatic restarts paused. Check the Logs tab.{' '}
+                Bee keeps crashing — automatic restarts paused.{' '}
+                <button
+                  onClick={() => navigate('/logs')}
+                  className="underline font-semibold"
+                  style={{ color: '#ef4444' }}
+                >
+                  View logs
+                </button>{' '}
+                ·{' '}
                 <button
                   onClick={() => restartBee.mutate()}
                   className="underline font-semibold"
@@ -383,7 +391,16 @@ export default function Layout() {
               style={{ backgroundColor: 'rgba(239,68,68,0.1)', borderBottom: '1px solid rgba(239,68,68,0.2)' }}
             >
               <AlertTriangle size={13} className="shrink-0" style={{ color: '#ef4444' }} />
-              <span style={{ color: '#ef4444' }}>Bee node is not running. Check the Logs tab for details.</span>
+              <span style={{ color: '#ef4444' }}>
+                Bee node is not running.{' '}
+                <button
+                  onClick={() => navigate('/logs')}
+                  className="underline font-semibold"
+                  style={{ color: '#ef4444' }}
+                >
+                  View logs
+                </button>
+              </span>
             </div>
           )}
 

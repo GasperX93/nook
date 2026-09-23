@@ -222,7 +222,9 @@ export default function Contacts() {
       // "connected" (best-effort; no on-chain cost, we're mutual contacts now).
       const stampId = (stamps ?? []).find(s => s.usable)?.batchID ?? ''
 
-      if (signer) void sendInviteAck(bee, signer, stampId, senderContact, getMyDisplayName())
+      if (signer) {
+        void sendInviteAck(bee, signer, stampId, senderContact, getMyDisplayName() || swarmIdAccount?.name || '')
+      }
     } catch (e) {
       setInviteError((e as Error).message ?? 'Failed to add contact')
     } finally {
@@ -821,7 +823,7 @@ export default function Contacts() {
           onClick={() => setAddOpen(false)}
         >
           <div
-            className="rounded-xl border p-6 w-[460px] space-y-5"
+            className="rounded-xl border p-6 w-[460px] space-y-5 max-h-[calc(100vh-2rem)] max-w-[calc(100vw-2rem)] overflow-y-auto"
             style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
             onClick={e => e.stopPropagation()}
           >

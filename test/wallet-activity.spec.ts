@@ -82,6 +82,34 @@ describe('wallet activity', () => {
     expect(activity.rows[0]).toMatchObject({ direction: 'out', asset: 'xBZZ', amount: '2.0000', hash })
   })
 
+  it('lists node-wallet contact pings to the notify registry with their gas fee (R4-4)', async () => {
+    const REGISTRY = '0x318aE190B77bA39fbcdFA4e84BB7CFD16b846Fcf'
+    const activity = await getWalletActivity(
+      explorer({
+        txs: [
+          {
+            hash: '0x' + 'ab'.repeat(32),
+            timestamp: T0,
+            value: '0',
+            from: { hash: '0x' + ME },
+            to: { hash: REGISTRY },
+            fee: { type: 'actual', value: '717500' },
+          },
+          // A zero-value call to some other contract stays hidden.
+          { hash: '0x' + 'cd'.repeat(32), timestamp: T0, value: '0', from: { hash: '0x' + ME }, to: { hash: PEER } },
+        ],
+      }),
+    )
+
+    expect(activity.rows).toHaveLength(1)
+    expect(activity.rows[0]).toMatchObject({
+      direction: 'out',
+      asset: 'xDAI',
+      amount: '< 0.0001',
+      label: 'Contact notification (Gnosis)',
+    })
+  })
+
   it('includes non-zero native xDAI movements', async () => {
     const activity = await getWalletActivity(
       explorer({
