@@ -78,6 +78,7 @@ import ShareModal from '../components/ShareModal'
 import { Switch } from '../components/ui/switch'
 import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { useSidebar } from '../components/ui/sidebar'
+import { friendlyError } from '../lib/friendly-error'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -1114,6 +1115,8 @@ interface RecordRowProps {
   copiedId: string | null
   downloadingId: string | null
   downloadPct: number | null
+  /** Last download failure for a record (R3b-1b) — shown inline with a retry, never an alert */
+  downloadErrors: Record<string, string>
   gatewayUrl: string
   onCopy: (id: string, hash: string) => void
   onUpdate: (id: string) => void
@@ -1130,6 +1133,7 @@ function RecordRow({
   copiedId,
   downloadingId,
   downloadPct,
+  downloadErrors,
   gatewayUrl,
   onCopy,
   onUpdate,
@@ -1254,6 +1258,24 @@ function RecordRow({
           >
             {downloadPct > 0 ? `Saving ${downloadPct}%` : 'Preparing…'}
           </span>
+        </div>
+      ) : downloadErrors[record.id] ? (
+        // Failed download (R3b-1b): inline, in the same status column, with a
+        // retry — the reason is on hover so the row keeps its layout.
+        <div className="flex items-center justify-end gap-2 shrink-0 w-[12.5rem]" title={downloadErrors[record.id]}>
+          <span
+            className="text-[10px] uppercase tracking-widest font-semibold whitespace-nowrap"
+            style={{ color: '#ef4444' }}
+          >
+            Download failed
+          </span>
+          <button
+            onClick={() => onDownload(record.id, record.hash, record.name)}
+            className="text-[10px] uppercase tracking-widest font-semibold underline whitespace-nowrap"
+            style={{ color: 'rgb(var(--fg))' }}
+          >
+            Retry
+          </button>
         </div>
       ) : record.pendingTagUid !== undefined ? (
         // Still spreading to the network (#23) — same prominent treatment as
@@ -2630,6 +2652,7 @@ export default function Drive() {
   const [addingFile, setAddingFile] = useState(false)
   const [search, setSearch] = useState('')
   const [copiedId, setCopiedId] = useState<string | null>(null)
+  const [downloadErrors, setDownloadErrors] = useState<Record<string, string>>({})
   // Downloads live in the global transfers store (#5): the fetch keeps
   // updating the store after navigation, so a revisit re-attaches instead of
   // showing an idle row while bytes are still flowing.
@@ -2770,6 +2793,7 @@ export default function Drive() {
 
     transfers.begin({ id: transferId, kind: 'download', name, phase: 'Downloading…' })
     transfers.update(transferId, { pct: 0 })
+    setDownloadErrors(({ [id]: _cleared, ...rest }) => rest)
     try {
       // Check if file is encrypted — find the record and its drive metadata
       const record = records.find(r => r.id === id)
@@ -2782,10 +2806,9 @@ export default function Drive() {
       useTransfersStore.getState().finish(transferId)
     } catch (error) {
       useTransfersStore.getState().finish(transferId, 'failed')
-      // Surface failures (#105) — a silent catch here left users with no
-      // feedback when a download stalled or errored mid-stream.
-      // eslint-disable-next-line no-alert
-      alert(error instanceof Error ? error.message : 'Download failed — please try again.')
+      // Surface failures (#105) inline on the row with a retry (R3b-1b) — a
+      // silent catch left users with no feedback, and an alert blocked the page.
+      setDownloadErrors(prev => ({ ...prev, [id]: friendlyError(error, 'Download failed — please try again.') }))
     }
   }
 
@@ -2890,6 +2913,7 @@ export default function Drive() {
                     copiedId={copiedId}
                     downloadingId={downloadingId}
                     downloadPct={downloadPct}
+                    downloadErrors={downloadErrors}
                     gatewayUrl={gatewayUrl}
                     onCopy={copyHash}
                     onUpdate={setUpdatingId}
@@ -3201,6 +3225,7 @@ export default function Drive() {
     copiedId,
     downloadingId,
     downloadPct,
+    downloadErrors,
     gatewayUrl,
     onCopy: copyHash,
     onUpdate: setUpdatingId,

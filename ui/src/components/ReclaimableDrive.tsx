@@ -22,6 +22,7 @@ import { beeApi, getBeeUrl, type Stamp, depthToBytes } from '../api/bee'
 import { serverApi, type ReclaimableDrive, type ReclaimableFile } from '../api/server'
 import { fileListToEntries, readDroppedDirectory, type FileEntry } from '../utils/directory'
 import { useTransfersStore } from '../store/transfers'
+import { friendlyError } from '../lib/friendly-error'
 
 // Reclaimable drives (#99): the server stamps chunks client-side and keeps a
 // slot ledger, so deleting a file really frees its capacity. Files come from
@@ -408,7 +409,7 @@ export function ExpiredDriveRow({
       await serverApi.removeReclaimableDrive(drive.batchId)
       await queryClient.invalidateQueries({ queryKey: ['server', 'reclaimable'] })
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not remove the drive')
+      setError(friendlyError(err, 'Could not remove the drive'))
       setRemoving(false)
     }
   }
@@ -535,7 +536,7 @@ function FileRow({
       // the browser hasn't started reading yet.
       setTimeout(() => URL.revokeObjectURL(url), 10_000)
     } catch (error) {
-      setDownloadError(error instanceof Error ? error.message : 'Download failed')
+      setDownloadError(friendlyError(error, 'Download failed'))
     } finally {
       inFlightDownloads.delete(file.reference)
       notifyDownloadListeners()
@@ -812,7 +813,7 @@ export function ReclaimableDriveView({
 
           if (job.status === 'error') {
             setUploading(null)
-            setUploadError(job.error ?? 'Upload failed')
+            setUploadError(friendlyError(job.error, 'Upload failed'))
           } else {
             // Uploaded while a folder was open → it lives there
             if (assignFolderId && job.reference) {
@@ -840,7 +841,7 @@ export function ReclaimableDriveView({
       await serverApi.createReclaimableFolder(drive.batchId, trimmed)
       refreshDrives()
     } catch (err) {
-      setUploadError(err instanceof Error ? err.message : 'Could not create the folder')
+      setUploadError(friendlyError(err, 'Could not create the folder'))
     }
   }
 
@@ -863,7 +864,7 @@ export function ReclaimableDriveView({
       pollJob(uploadId, openFolderId, uploadFile.name, estimateChunks(uploadFile.size))
     } catch (err) {
       setUploading(null)
-      setUploadError(err instanceof Error ? err.message : 'Upload failed')
+      setUploadError(friendlyError(err, 'Upload failed'))
     }
   }
 
@@ -888,7 +889,7 @@ export function ReclaimableDriveView({
     } catch (err) {
       setStaging(null)
       setUploading(null)
-      setUploadError(err instanceof Error ? err.message : 'Folder upload failed')
+      setUploadError(friendlyError(err, 'Folder upload failed'))
     }
   }
 
@@ -923,7 +924,7 @@ export function ReclaimableDriveView({
       await serverApi.deleteReclaimableFile(drive.batchId, reference)
       await queryClient.invalidateQueries({ queryKey: ['server', 'reclaimable'] })
     } catch (err) {
-      setDeleteError(err instanceof Error ? err.message : 'Could not delete the file')
+      setDeleteError(friendlyError(err, 'Could not delete the file'))
     } finally {
       setDeletingRef(null)
     }
