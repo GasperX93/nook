@@ -37,9 +37,9 @@ export default function TransferIndicator() {
             <span className="block text-[10px] tabular-nums" style={{ color: 'rgb(var(--fg-muted))' }}>
               {t.status === 'done'
                 ? t.kind === 'upload'
-                  ? 'On the network'
+                  ? 'Stored'
                   : 'Saved'
-                : `${t.kind === 'upload' ? 'To network' : 'Downloading'}${t.pct !== null ? ` · ${t.pct}%` : '…'}`}
+                : `${t.kind === 'upload' ? 'Storing' : 'Saving'}${t.pct !== null ? ` · ${t.pct}%` : '…'}`}
             </span>
           </span>
         </button>

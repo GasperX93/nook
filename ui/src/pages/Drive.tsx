@@ -189,20 +189,21 @@ function PlanButton({ label, selected, onClick }: { label: string; selected: boo
 
 // ─── ExpiryBar ────────────────────────────────────────────────────────────────
 
-function ExpiryBar({ expiresAt, uploadedAt }: { expiresAt: number; uploadedAt: number }) {
-  const total = expiresAt - uploadedAt
-  const remaining = expiresAt - Date.now()
-  const pct = Math.max(0, Math.min(100, (remaining / total) * 100))
-  const urgent = remaining < 7 * 86_400_000
+/**
+ * Time left on a FIXED one-year scale (R3-6), matching the deletable-drive
+ * card: same time left ⇒ same bar, whatever the file's upload date. Files on
+ * a drive expire together, so a per-file lifetime ratio only confused.
+ */
+function ExpiryBar({ expiresAt }: { expiresAt: number }) {
+  const daysLeft = (expiresAt - Date.now()) / 86_400_000
+  const pct = Math.max(2, Math.min(100, (daysLeft / 365) * 100))
+  const urgent = daysLeft <= 7
 
   return (
     <div className="h-1 rounded-full overflow-hidden w-24" style={{ backgroundColor: 'rgb(var(--border))' }}>
       <div
         className="h-full rounded-full transition-all"
-        style={{
-          width: `${pct}%`,
-          backgroundColor: urgent ? '#ef4444' : pct < 30 ? '#facc15' : '#4ade80',
-        }}
+        style={{ width: `${pct}%`, backgroundColor: urgent ? '#ef4444' : '#4ade80' }}
       />
     </div>
   )
@@ -1268,16 +1269,14 @@ function RecordRow({
             className="text-[10px] uppercase tracking-widest font-semibold w-24 text-right whitespace-nowrap tabular-nums"
             style={{ color: 'rgb(var(--accent))' }}
           >
-            {propagating?.pct !== null && propagating?.pct !== undefined
-              ? `To network ${propagating.pct}%`
-              : 'To network…'}
+            {propagating?.pct !== null && propagating?.pct !== undefined ? `Storing ${propagating.pct}%` : 'Storing…'}
           </span>
         </div>
       ) : (
         <div className="flex items-center gap-2 shrink-0">
-          <ExpiryBar expiresAt={expiresAt} uploadedAt={record.uploadedAt} />
+          <ExpiryBar expiresAt={expiresAt} />
           <span
-            className="text-[10px] uppercase tracking-widest font-semibold w-16 text-right whitespace-nowrap"
+            className="text-[10px] uppercase tracking-widest font-semibold w-24 text-right whitespace-nowrap"
             style={{ color: urgent ? '#ef4444' : 'rgb(var(--fg-muted))' }}
           >
             {expiry}
@@ -2010,14 +2009,14 @@ function AddFilePanel({
         // through the global tracker (#4/#5), so the progress survives
         // navigation, feeds the sidebar indicator + propagation visual, and
         // rings the bell on completion.
-        setPhase('Propagating to network…')
+        setPhase('Storing on the network…')
         setProgress(0)
         setPropagationTagUid(uploadTagUid)
         const { complete } = await followTagPropagation(uploadTagUid, name, driveId, pct => setProgress(pct))
 
         setPropagationTagUid(null)
 
-        if (!complete) setPhase('Still propagating in the background…')
+        if (!complete) setPhase('Still storing in the background…')
       }
 
       setProgress(null)

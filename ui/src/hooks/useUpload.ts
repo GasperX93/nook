@@ -198,14 +198,14 @@ export function useUpload() {
     // network. A stall is a soft outcome — the background pusher keeps working,
     // so warn in the phase text but never fail the upload here.
     if (uploadTagUid !== undefined && !encrypted) {
-      onPhase?.('Propagating to network…')
+      onPhase?.('Storing on the network…')
       onProgress?.(0)
       // Global tracker (#4/#5): survives navigation, feeds the sidebar
       // indicator, rings the bell on completion.
       const { complete } = await followTagPropagation(uploadTagUid, name, driveId, pct => onProgress?.(pct))
 
       if (!complete) {
-        onPhase?.('Still propagating in the background…')
+        onPhase?.('Still storing in the background…')
         await new Promise(r => setTimeout(r, 1500))
       }
     }

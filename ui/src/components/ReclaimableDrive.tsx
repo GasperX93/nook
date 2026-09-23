@@ -628,7 +628,7 @@ function FileRow({
               />
             </div>
             <span
-              className="text-[10px] uppercase tracking-widest font-semibold w-16 text-right whitespace-nowrap"
+              className="text-[10px] uppercase tracking-widest font-semibold w-24 text-right whitespace-nowrap"
               style={{ color: urgent ? '#ef4444' : 'rgb(var(--fg-muted))' }}
             >
               {ttlToDays(ttlSeconds)} left

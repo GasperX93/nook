@@ -159,7 +159,7 @@ export async function followTagPropagation(
   const store = useTransfersStore.getState()
 
   following.add(tagUid)
-  store.begin({ id, kind: 'upload', name, driveId, phase: 'Propagating to network…' })
+  store.begin({ id, kind: 'upload', name, driveId, phase: 'Storing on the network…' })
 
   try {
     const { complete, tag } = await waitForTagPropagation(tagUid, onPct, {
@@ -169,7 +169,7 @@ export async function followTagPropagation(
     if (complete) {
       markPropagated(id, tagUid, name, driveId)
     } else {
-      useTransfersStore.getState().update(id, { phase: 'Still propagating in the background…' })
+      useTransfersStore.getState().update(id, { phase: 'Still storing in the background…' })
       useTransfersStore.getState().finish(id)
       scheduleResume()
     }
