@@ -1,6 +1,6 @@
 import { Bee } from '@ethersphere/bee-js'
 import { identity, mailbox, registry } from '@swarm-notify/sdk'
-import { FileText, Mail, Send } from 'lucide-react'
+import { Mail, Send } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { useReclaimableDrives, useAddresses, useStamps } from '../api/queries'
@@ -8,6 +8,7 @@ import AddSharedDriveModal from '../components/AddSharedDriveModal'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Textarea } from '../components/ui/textarea'
+import DriveMessageCard from '../components/DriveMessageCard'
 import { useSharedDrives } from '../hooks/useSharedDrives'
 import { useNavigate } from 'react-router-dom'
 
@@ -620,41 +621,17 @@ export default function Messages({ initialContactId, hideContactList, hideThread
                 </p>
               ) : (
                 selectedThread.map(m => {
-                  if (m.kind === 'drive-share' && m.driveShareLink) {
-                    const isSent = m.direction === 'sent'
-
+                  if (m.kind && m.kind !== 'message' && m.driveShareLink) {
                     return (
-                      <div
+                      <DriveMessageCard
                         key={m.id}
-                        className={`max-w-[80%] rounded-2xl border px-4 py-3 space-y-2 ${isSent ? 'self-end' : 'self-start'}`}
-                        style={{
-                          backgroundColor: 'rgb(var(--bg-surface))',
-                          borderColor: 'rgb(var(--accent))',
-                          color: 'rgb(var(--fg))',
-                        }}
-                      >
-                        <div className="flex items-center gap-2">
-                          <FileText size={14} style={{ color: 'rgb(var(--accent))' }} />
-                          <span className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--accent))' }}>
-                            {isSent ? 'Drive shared' : 'Drive shared with you'}
-                          </span>
-                        </div>
-                        <div>
-                          <p className="text-sm font-semibold">{m.driveName ?? 'Encrypted drive'}</p>
-                          <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-                            {m.fileCount ?? 0} file{m.fileCount === 1 ? '' : 's'}
-                          </p>
-                        </div>
-                        {!isSent && (
-                          <Button onClick={() => setImportingLink(m.driveShareLink!)} size="sm" className="w-full">
-                            Add drive
-                          </Button>
-                        )}
-                        <p className="text-[10px]" style={{ color: 'rgb(var(--fg-muted))' }}>
-                          {formatTime(m.ts)}
-                        </p>
-                        {renderDeliveryStatus(m)}
-                      </div>
+                        m={m}
+                        counterpartName={selected.nickname}
+                        time={formatTime(m.ts)}
+                        onAdd={link => setImportingLink(link)}
+                        onOpen={() => navigate('/drive?tab=shared')}
+                        status={renderDeliveryStatus(m)}
+                      />
                     )
                   }
 

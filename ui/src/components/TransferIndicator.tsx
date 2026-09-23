@@ -1,7 +1,7 @@
 import { ArrowDownToLine, ArrowUpFromLine, Check } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 
-import { useTransfersStore } from '../store/transfers'
+import { etaText, useTransfersStore } from '../store/transfers'
 
 /**
  * Sidebar transfer indicator (#5): running uploads/downloads stay visible
@@ -41,7 +41,10 @@ export default function TransferIndicator() {
                 ? t.kind === 'upload'
                   ? 'Stored'
                   : 'Saved'
-                : `${t.kind === 'upload' ? 'Storing' : 'Saving'}${t.pct !== null ? ` · ${t.pct}%` : '…'}`}
+                : `${t.kind === 'upload' ? 'Storing' : 'Saving'}${t.pct !== null ? ` · ${t.pct}%` : '…'}${
+                    // Coarse, honest estimate (R4-13) — absent until it's meaningful.
+                    etaText(t) ? ` · ${etaText(t)}` : ''
+                  }`}
             </span>
           </span>
         </button>

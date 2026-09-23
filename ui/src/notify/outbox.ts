@@ -1,5 +1,5 @@
 import { nsKey } from './active-identity'
-import type { DriveShareExtras } from './messages'
+import type { DriveMessageKind, DriveShareExtras } from './messages'
 
 /**
  * Persistent outbox (#117).
@@ -25,10 +25,10 @@ export interface OutboxEntry {
   recipientId: string
   /** Unix ms when the user hit send — bubble timestamp and drain order */
   ts: number
-  kind: 'message' | 'drive-share' | 'invite-ack'
+  kind: 'message' | DriveMessageKind | 'invite-ack'
   body: string
   subject?: string
-  /** Present when kind === 'drive-share' */
+  /** Present for the drive kinds */
   driveShare?: DriveShareExtras
   /** Completed delivery attempts that failed */
   attempts: number

@@ -56,7 +56,7 @@ import {
   useWallet,
 } from '../api/queries'
 import { useAppStore } from '../store/app'
-import { followTagPropagation, useTransfersStore } from '../store/transfers'
+import { etaText, followTagPropagation, useTransfersStore } from '../store/transfers'
 import PropagationVisual from '../components/PropagationVisual'
 import { useDerivedKey } from '../hooks/useDerivedKey'
 import { useDriveMetadata } from '../hooks/useDriveMetadata'
@@ -1157,6 +1157,17 @@ function RecordRow({
 
     return t ? (t.pct ?? 0) : null
   })
+  // Time left as a hover hint on the row's status (R4-13) — the column itself
+  // stays fixed-width; strings are stable snapshots for the store selector.
+  const transferEta = useTransfersStore(state => {
+    const t =
+      state.transfers.find(x => x.id === `dl:${record.id}` && x.status === 'active') ??
+      (record.pendingTagUid !== undefined
+        ? state.transfers.find(x => x.id === `tag:${record.pendingTagUid}`)
+        : undefined)
+
+    return t ? etaText(t) : null
+  })
 
   // For encrypted files, build a proxy URL that includes ACT headers
   const actProxyUrl = isEnc
@@ -1256,6 +1267,7 @@ function RecordRow({
             />
           </div>
           <span
+            title={transferEta ?? undefined}
             className="text-[10px] uppercase tracking-widest font-semibold w-24 text-right whitespace-nowrap tabular-nums"
             style={{ color: 'rgb(var(--accent))' }}
           >
@@ -1291,6 +1303,7 @@ function RecordRow({
             />
           </div>
           <span
+            title={transferEta ?? undefined}
             className="text-[10px] uppercase tracking-widest font-semibold w-24 text-right whitespace-nowrap tabular-nums"
             style={{ color: 'rgb(var(--accent))' }}
           >
@@ -2284,6 +2297,14 @@ function SharedDriveCard({
     return () => clearInterval(interval)
   }, [drive.feedTopic, drive.feedOwner, drive.revokedAt])
 
+  // A drive message (access restored / an update, R4-15) asked for a sync —
+  // run it now instead of waiting for the 5-minute timer or a manual click.
+  useEffect(() => {
+    if (!drive.syncRequestedAt || drive.revokedAt || refreshing) return
+    handleRefresh()
+    // eslint-disable-next-line
+  }, [drive.syncRequestedAt])
+
   /** Persist changes to this drive's entry and re-render the list. */
   function persistDrive(changes: Partial<import('../hooks/useSharedDrives').SharedDrive>) {
     const drives: import('../hooks/useSharedDrives').SharedDrive[] = JSON.parse(
@@ -2313,6 +2334,7 @@ function SharedDriveCard({
         reference: wrapper.ref,
         actHistoryRef: wrapper.history,
         revokedAt: undefined,
+        syncRequestedAt: undefined,
       })
     } catch (e) {
       // Revoked-vs-transient (#16, round-3 refinement): the status code is
@@ -2324,7 +2346,7 @@ function SharedDriveCard({
       // transient. False positives self-heal: any later successful sync
       // clears the badge.
       if (/ACT download failed:/.test((e as Error).message ?? '')) {
-        persistDrive({ revokedAt: Date.now() })
+        persistDrive({ revokedAt: Date.now(), syncRequestedAt: undefined })
       } else {
         setRefreshNote("Couldn't reach the drive right now — will retry.")
       }
@@ -2647,7 +2669,11 @@ export default function Drive() {
   const [updatedSharedDrive, setUpdatedSharedDrive] = useState(false)
   // Re-publish (re-encrypt under current ACT) progress, keyed nowhere — only one runs at a time.
   const [republishing, setRepublishing] = useState(false)
-  const [republishMsg, setRepublishMsg] = useState<string | null>(null)
+  // Per DRIVE (R4-5): a page-wide message leaked into every other drive's
+  // share dialog ("Re-published…" on a drive nobody had access to).
+  const [republishState, setRepublishState] = useState<{ driveId: string; text: string } | null>(null)
+  const republishMsgFor = (driveId: string | null | undefined) =>
+    driveId && republishState?.driveId === driveId ? republishState.text : null
   const [showAddSharedModal, setShowAddSharedModal] = useState(false)
   const [driveTab, setDriveTab] = useState<'mine' | 'shared'>('mine')
   const [addingFile, setAddingFile] = useState(false)
@@ -2696,16 +2722,23 @@ export default function Drive() {
   // Deep link from the bell (#24): /drive?open=<batchId> lands INSIDE the
   // drive (e.g. "Stored on the network" completion), no modal on top.
   useEffect(() => {
-    const openId = new URLSearchParams(location.search).get('open')
+    const params = new URLSearchParams(location.search)
+    const openId = params.get('open')
 
     if (openId) setActiveDriveId(openId)
+
+    // Drive-access messages + their bell entries land on Shared with me (R4-15).
+    if (params.get('tab') === 'shared') {
+      setActiveDriveId(null)
+      setDriveTab('shared')
+    }
     // eslint-disable-next-line
   }, [location.key])
 
   // Clear the per-drive prompts when switching drives.
   useEffect(() => {
     setUpdatedSharedDrive(false)
-    setRepublishMsg(null)
+    setRepublishState(null)
   }, [activeDriveId])
 
   // Re-encrypt + re-upload a drive's files under its current ACT, then refresh
@@ -2730,12 +2763,12 @@ export default function Drive() {
     const currentHistoryRef = historyOverride || meta?.actHistoryRef || firstRec?.actHistoryRef
 
     if (!actPublisher || !currentHistoryRef) {
-      setRepublishMsg('This drive isn’t ready to re-publish yet.')
+      setRepublishState({ driveId, text: 'This drive isn’t ready to re-publish yet.' })
 
       return
     }
     setRepublishing(true)
-    setRepublishMsg('Starting…')
+    setRepublishState({ driveId, text: 'Starting…' })
     try {
       await republishDrive({
         onWrapperRef: ref => driveMetadata.update(driveId, { lastWrapperRef: ref }),
@@ -2743,14 +2776,14 @@ export default function Drive() {
         records: driveRecords,
         actPublisher,
         currentHistoryRef,
-        onProgress: setRepublishMsg,
+        onProgress: text => setRepublishState({ driveId, text }),
         onRecordUpdate: (id, changes) => updateRecord(id, changes),
         onHistoryUpdate: historyRef => driveMetadata.update(driveId, { actHistoryRef: historyRef }),
       })
       driveMetadata.update(driveId, { keyRotated: false })
-      setRepublishMsg('Re-published — recipients can refresh to get the latest.')
+      setRepublishState({ driveId, text: 'Re-published — everyone with access can open all files again.' })
     } catch (e) {
-      setRepublishMsg(`Re-publish failed: ${(e as Error).message}`)
+      setRepublishState({ driveId, text: `Re-publish failed: ${(e as Error).message}` })
     } finally {
       setRepublishing(false)
     }
@@ -3107,7 +3140,7 @@ export default function Drive() {
                 }}
                 keyRotated={driveMetadata.get(showShareModal)?.keyRotated}
                 republishing={republishing}
-                republishMsg={republishMsg}
+                republishMsg={republishMsgFor(showShareModal)}
                 onRepublish={() => void handleRepublish(showShareModal)}
               />
             )
@@ -3425,13 +3458,13 @@ export default function Drive() {
       )}
 
       {/* Re-publish prompt / progress (encrypted drives) */}
-      {activeDriveId && (driveMetadata.get(activeDriveId)?.keyRotated || republishMsg) && (
+      {activeDriveId && (driveMetadata.get(activeDriveId)?.keyRotated || republishMsgFor(activeDriveId)) && (
         <div
           className="rounded-lg border px-4 py-2.5 flex items-center justify-between gap-3 mb-3"
           style={{ backgroundColor: 'rgb(var(--bg-surface))', borderColor: 'rgb(var(--accent))' }}
         >
           <p className="text-xs" style={{ color: 'rgb(var(--fg))' }}>
-            {republishMsg ??
+            {republishMsgFor(activeDriveId) ??
               'A grantee was revoked, so this drive’s key changed. Re-publish so people you grant can open the existing files.'}
           </p>
           {!republishing && driveMetadata.get(activeDriveId)?.keyRotated && (
@@ -3709,7 +3742,7 @@ export default function Drive() {
               }}
               keyRotated={driveMetadata.get(showShareModal)?.keyRotated}
               republishing={republishing}
-              republishMsg={republishMsg}
+              republishMsg={republishMsgFor(showShareModal)}
               onRepublish={() => void handleRepublish(showShareModal)}
             />
           )

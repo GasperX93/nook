@@ -2,7 +2,7 @@
  * Shared drives — drives other users have shared with you via share links.
  * Stored in localStorage. Read-only (you can download but not upload).
  */
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import { addressFromWalletPubKey, normalizeHex } from '../notify/share-link'
 
@@ -34,6 +34,11 @@ export interface SharedDrive {
    * re-grant clears it (#17 self-heal).
    */
   revokedAt?: number
+  /**
+   * Set when a drive message (access restored / an update) asked for a sync;
+   * the card re-reads the feed once and clears it (R4-15).
+   */
+  syncRequestedAt?: number
 }
 
 function load(): SharedDrive[] {
@@ -152,6 +157,16 @@ export function buildShareLink(args: {
 
 export function useSharedDrives() {
   const [drives, setDrives] = useState<SharedDrive[]>(load)
+
+  // Drive messages (access removed/restored) update the store from the inbox
+  // poller outside React — re-read when they do (notify/drive-access).
+  useEffect(() => {
+    const reloadFromStore = () => setDrives(load())
+
+    window.addEventListener('nook:shared-drives-changed', reloadFromStore)
+
+    return () => window.removeEventListener('nook:shared-drives-changed', reloadFromStore)
+  }, [])
 
   function add(drive: Omit<SharedDrive, 'id' | 'addedAt'>) {
     // A drive's identity is its feed (topic + owner) — the same for every re-share.
