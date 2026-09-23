@@ -2,8 +2,6 @@ import { Bee } from '@ethersphere/bee-js'
 import { identity, mailbox, registry } from '@swarm-notify/sdk'
 import { FileText, Mail, Send } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { getWalletClient, switchChain, waitForTransactionReceipt } from '@wagmi/core'
-import { useWalletClient } from 'wagmi'
 
 import { useReclaimableDrives, useAddresses, useStamps } from '../api/queries'
 import AddSharedDriveModal from '../components/AddSharedDriveModal'
@@ -16,7 +14,7 @@ import { useNavigate } from 'react-router-dom'
 import { useDerivedKey } from '../hooks/useDerivedKey'
 import { pickMessagingStamp } from '../lib/system-stamp'
 import { hexToBytes } from '../lib/hex'
-import { GNOSIS_CHAIN_ID, REGISTRY_ADDRESS } from '../notify/constants'
+import { REGISTRY_ADDRESS } from '../notify/constants'
 import {
   defaultInviteMessage,
   deriveConnectionState,
@@ -34,11 +32,10 @@ import { queueAndDeliver, retryOutboxEntry } from '../notify/deliver'
 import { appendSent, loadReadCursors, loadThreads, markRead, type StoredMessage, unreadCount } from '../notify/messages'
 import { sendMailboxMessage } from '../notify/send-message'
 import { waitForBeeReady } from '../notify/bee-ready'
-import { createNotifyProvider } from '../notify/provider'
+import { createNodeNotifyProvider } from '../notify/provider'
 import { publishIdentity } from '../notify/publish-identity'
 import { addContact, isIdentityPublished, loadContacts } from '../notify/storage'
 import { toLibraryContact, type NookContact } from '../notify/types'
-import { wagmiConfig } from '../wagmi'
 
 const BEE_URL = `${window.location.origin}/bee-api`
 
@@ -46,22 +43,11 @@ function short(s: string, n = 6): string {
   return s.length <= n * 2 + 3 ? s : `${s.slice(0, n)}…${s.slice(-n)}`
 }
 
-// Turn a raw wallet/viem error into a one-line, user-facing message. Without
-// this, the full viem dump (chain/from/to/data/Version) leaks into the UI.
+// Turn a raw send error into a one-line, user-facing message. The node-wallet
+// ping route already returns friendly text (e.g. the no-xDAI case); this keeps
+// any other raw dump out of the UI.
 function friendlyError(e: unknown): string {
   const raw = (e as Error)?.message ?? ''
-
-  if (/user rejected|user denied|rejected the request|denied transaction/i.test(raw)) {
-    return 'Invite cancelled — you declined the wallet prompt.'
-  }
-
-  if (/insufficient funds|exceeds the balance|gas required exceeds|cannot estimate gas/i.test(raw)) {
-    return 'Not enough xDAI to send the on-chain invite. Top up in Account → Wallet.'
-  }
-  // viem BaseError exposes a clean one-liner; fall back to the first line.
-  const short = (e as { shortMessage?: string })?.shortMessage
-
-  if (typeof short === 'string' && short) return short
 
   return raw.split('\n')[0].slice(0, 200) || 'Something went wrong. Please try again.'
 }
@@ -84,7 +70,7 @@ interface MessagesProps {
 }
 
 export default function Messages({ initialContactId, hideContactList, hideThreadHeader }: MessagesProps = {}) {
-  const { signer, derive, deriving, walletConnected } = useDerivedKey()
+  const { signer, signIn, deriving } = useDerivedKey()
   const navigate = useNavigate()
   const { data: stamps } = useStamps()
   const { data: addresses } = useAddresses()
@@ -106,7 +92,7 @@ export default function Messages({ initialContactId, hideContactList, hideThread
   const [needsPublish, setNeedsPublish] = useState(false)
   const [publishing, setPublishing] = useState(false)
   // Phase label shown while an invite is in flight — the publish + mailbox
-  // writes happen before the wallet popup, so without this the gap looks stuck.
+  // writes happen before the on-chain ping confirms, so without this the gap looks stuck.
   const [sendStatus, setSendStatus] = useState<string | null>(null)
   // Pre-filled share link when the user clicks "Add drive" on a drive-share card
   const [importingLink, setImportingLink] = useState<string | null>(null)
@@ -125,7 +111,6 @@ export default function Messages({ initialContactId, hideContactList, hideThread
   const [invitePreview, setInvitePreview] = useState<InvitePreview>({ loading: false })
   const sharedDrives = useSharedDrives()
   const scrollRef = useRef<HTMLDivElement>(null)
-  const { data: walletClient } = useWalletClient()
 
   // Sender's display name — used in the default invite template "X would
   // like to connect" and shown to the recipient when they receive the
@@ -377,13 +362,7 @@ export default function Messages({ initialContactId, hideContactList, hideThread
       return
     }
 
-    // ── Invite: needs a connected wallet + published identity + on-chain ping ──
-    if (!walletClient) {
-      setError('Connect your wallet to send an invite (an on-chain ping is required).')
-
-      return
-    }
-
+    // ── Invite: needs a published identity + on-chain ping (paid by the node wallet) ──
     // The recipient resolves us via our published identity feed to accept the
     // invite. If we haven't published, surface an inline "Publish & send".
     if (!isIdentityPublished(signer.getAddress())) {
@@ -413,33 +392,18 @@ export default function Messages({ initialContactId, hideContactList, hideThread
       })
 
       // Fire the on-chain wake-up so the recipient discovers this invite even
-      // if they haven't added us yet. Switch to Gnosis just-in-time; re-fetch
-      // the client after (stale across a chain change — same as ENSModal).
-      setSendStatus('Confirm in your wallet…')
-
-      if (walletClient.chain?.id !== GNOSIS_CHAIN_ID) {
-        await switchChain(wagmiConfig, { chainId: GNOSIS_CHAIN_ID })
-      }
-      const gnosisClient = await getWalletClient(wagmiConfig, { chainId: GNOSIS_CHAIN_ID })
-      const provider = createNotifyProvider(gnosisClient)
+      // if they haven't added us yet. Signed + paid by the node wallet; the
+      // server resolves only after one confirmation, so a returned hash means
+      // the ping is on-chain ("sent" means sent).
+      setSendStatus('Notifying on Gnosis Chain…')
+      const provider = createNodeNotifyProvider()
       const recipientPubKey = hexToBytes(selected.walletPublicKey)
       // Include our display name so the recipient's invitation shows who's
       // reaching out (payload is ECIES-encrypted to them — not public on-chain).
-      const notifyTx = await registry.sendNotification(provider, REGISTRY_ADDRESS, recipientPubKey, selected.id, {
+      await registry.sendNotification(provider, REGISTRY_ADDRESS, recipientPubKey, selected.id, {
         sender: myAddr,
         name,
       } as Parameters<typeof registry.sendNotification>[4])
-      setSendStatus('Confirming on-chain…')
-      // sendNotification resolves on BROADCAST, not mining — wait for the
-      // receipt so "sent" means it actually confirmed.
-      const receipt = await waitForTransactionReceipt(wagmiConfig, {
-        hash: notifyTx as `0x${string}`,
-        chainId: GNOSIS_CHAIN_ID,
-      })
-
-      if (receipt.status !== 'success') {
-        throw new Error(`On-chain invite failed to confirm (tx ${notifyTx}). The recipient was not notified.`)
-      }
       recordInviteSent(selected.id)
 
       // Invite fully succeeded — lock in the display name for future invites.
@@ -471,7 +435,7 @@ export default function Messages({ initialContactId, hideContactList, hideThread
     }
 
     if (!stampId) {
-      setError('No usable stamp — buy a drive in Account → My Storage to publish.')
+      setError('Publishing needs a small reserved space — add about 3 xBZZ on the Wallet page.')
 
       return
     }
@@ -497,28 +461,15 @@ export default function Messages({ initialContactId, hideContactList, hideThread
     }
   }
 
-  if (!walletConnected) {
-    return (
-      <div className="flex flex-col p-6 gap-4 max-w-3xl">
-        <h2 className="text-2xl font-semibold">Messages</h2>
-        <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
-          Connect your wallet to see messages.
-        </p>
-      </div>
-    )
-  }
-
   if (!signer) {
     return (
       <div className="flex flex-col p-6 gap-4 max-w-3xl">
         <h2 className="text-2xl font-semibold">Messages</h2>
         <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
-          {deriving
-            ? 'Check your wallet — approve the signature requests to finish setting up your Nook identity.'
-            : 'Set up your Nook identity to start messaging.'}
+          Sign in with Swarm ID to start messaging.
         </p>
-        <Button onClick={async () => derive()} disabled={deriving} className="self-start uppercase tracking-widest">
-          {deriving ? 'Setting up…' : 'Set up Nook identity'}
+        <Button onClick={async () => signIn()} disabled={deriving} className="self-start uppercase tracking-widest">
+          {deriving ? 'Signing in…' : 'Sign in with Swarm ID'}
         </Button>
       </div>
     )

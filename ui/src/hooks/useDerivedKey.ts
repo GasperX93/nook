@@ -1,44 +1,34 @@
 /**
- * useDerivedKey — wallet-derived identity, auto-set up on connect.
+ * useDerivedKey — the Nook identity, seeded by Swarm ID.
  *
- * On first wallet connect (or app launch with a connected wallet), we
- * hydrate from the persistent identity cache (Electron safeStorage). If
- * nothing is cached for the connected wallet, we prompt the user once via
- * signMessage and persist. Subsequent launches with the same wallet skip
- * the prompt entirely.
+ * Signing in with Swarm ID yields a 32-byte app secret (deriveAppSecret) that
+ * is the same for this account on every device. It seeds the regular
+ * NookSigner chain and is persisted through the identity cache (Electron
+ * safeStorage, sessionStorage fallback), so later launches need no sign-in.
  *
- * If the user rejects the auto-sign prompt, we stay in an "auto-derive
- * declined" state for this session so we don't pester them — they can
- * manually call derive() from the Identity UI to retry.
+ * A wallet is a payment tool only: connecting, switching or disconnecting one
+ * never creates, changes or wipes the identity.
  *
- * Clears on wallet disconnect or wallet switch.
+ * Installs from before Swarm ID may still hold a wallet-derived identity in
+ * the cache. It is never activated; signing in with Swarm ID overwrites it.
+ * The UI explains the move via the markers in notify/active-identity (#21).
  */
-import { getAccount } from '@wagmi/core'
 import { useCallback, useEffect } from 'react'
-import { useAccount, useSignMessage } from 'wagmi'
 
-import { SIGN_MESSAGE } from '../crypto/signer'
-import { setActiveIdentity } from '../notify/active-identity'
+import { SWARM_ID_SECRET_PREFIX, SWARM_ID_WALLET_MARKER } from '../crypto/signer'
+import { markSwarmIdIdentity, setActiveIdentity } from '../notify/active-identity'
 import { migrateMessagesToV2 } from '../notify/messages'
-import {
-  acquireDeriveLock,
-  getAutoDeriveDeclined,
-  releaseDeriveLock,
-  setAutoDeriveDeclined,
-  useIdentityStore,
-} from '../store/identity'
-import { wagmiConfig } from '../wagmi'
+import { acquireDeriveLock, releaseDeriveLock, useIdentityStore } from '../store/identity'
+import { signInWithSwarmId } from '../swarm-id'
 
 export function useDerivedKey() {
-  const { address, isConnected, status } = useAccount()
-  const { signMessageAsync } = useSignMessage()
-  const { signer, deriving, error, walletAddress, hydrated, setSigner, setDeriving, setError, clear, hydrate } =
+  const { signer, deriving, error, walletAddress, swarmIdAccount, setSigner, setDeriving, setError, clear, hydrate } =
     useIdentityStore()
 
   // Hydrate the identity store from safeStorage on first mount. hydrate()
   // returns false on a transient failure (Koa not up yet at boot); retry a
   // bounded number of times so a valid safeStorage cache isn't permanently
-  // downgraded to session-storage and the user isn't forced to re-sign (D8).
+  // downgraded to session-storage and the user isn't forced to sign in again (D8).
   useEffect(() => {
     let cancelled = false
     let attempts = 0
@@ -62,146 +52,46 @@ export function useDerivedKey() {
     }
   }, [hydrate])
 
-  // Clear signer ONLY on a true wallet switch — not on disconnect.
-  //
-  // Keeping the derived signer + its encrypted cache across a disconnect means
-  // reconnecting the SAME wallet needs zero signatures (it rehydrates), instead
-  // of forcing the user to re-sign the 2x determinism check every time. This is
-  // what eliminated the "had to sign 4-5 times" problem: MetaMask frequently
-  // bounces disconnected→connecting→connected, and each bounce previously
-  // wiped the identity and re-triggered derivation.
-  //
-  // While disconnected, `address` is null, so the D6 safeSigner gate returns
-  // null and the active-identity namespace falls back to __none__ — contacts
-  // and messages stay private during the disconnected window even though the
-  // signer lingers in memory. A genuine wallet SWITCH (mismatch branch below)
-  // still wipes the old identity.
-  useEffect(() => {
-    if (status === 'disconnected') {
-      setAutoDeriveDeclined(false)
+  // Sign in with Swarm ID: dialog → SDK popup → deriveAppSecret → the same
+  // NookSigner chain, persisted through the same identity cache.
+  const signIn = useCallback(async () => {
+    // Shared across ALL useDerivedKey instances (several are mounted at once),
+    // so only the first caller opens the dialog.
+    if (!acquireDeriveLock()) return null
+    setDeriving(true)
+    setError(null)
 
-      return
+    try {
+      const { seedHex, identity } = await signInWithSwarmId()
+
+      await setSigner(`${SWARM_ID_SECRET_PREFIX}${seedHex}`, SWARM_ID_WALLET_MARKER, {
+        address: identity.address,
+        name: identity.name,
+      })
+
+      return useIdentityStore.getState().signer
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Swarm ID sign-in failed')
+
+      return null
+    } finally {
+      releaseDeriveLock()
+      setDeriving(false)
     }
+  }, [setSigner, setDeriving, setError])
 
-    // Security (D6): wipe a hydrated/foreign identity as soon as a mismatch is
-    // *confirmed* — both the cached walletAddress and the connected address are
-    // known and differ. Not gated on status==='connected', because hydrate()
-    // (which has no access to the wagmi address) can set a signer from a
-    // different wallet's cache during the 'connecting'/'reconnecting' boot
-    // window. We only clear on a confirmed mismatch, never when `address` is
-    // merely not-yet-known.
-    if (walletAddress && address && walletAddress.toLowerCase() !== address.toLowerCase()) {
-      void clear()
-      setAutoDeriveDeclined(false)
-    }
-  }, [status, address, walletAddress, clear])
+  // Only a Swarm ID-seeded identity is ever exposed. A legacy wallet-derived
+  // cache entry stays dormant.
+  const safeSigner = signer && walletAddress === SWARM_ID_WALLET_MARKER ? signer : null
 
-  const derive = useCallback(
-    async (opts?: { auto?: boolean }) => {
-      // Already derived for this wallet
-      if (signer && walletAddress?.toLowerCase() === address?.toLowerCase()) {
-        return signer
-      }
-
-      if (!isConnected || !address) {
-        if (!opts?.auto) setError('Wallet not connected')
-
-        return null
-      }
-
-      // Shared synchronous guard against overlapping derivations. Multiple
-      // useDerivedKey instances are mounted at once (Layout's polling hooks +
-      // the current page, which may embed others); on a wallet switch each
-      // independently fires derive(). The lock lives in the store module so it
-      // is shared across ALL instances — only the first caller signs.
-      if (!acquireDeriveLock()) return null
-
-      setDeriving(true)
-      setError(null)
-
-      try {
-        const signature1 = await signMessageAsync({ message: SIGN_MESSAGE })
-        const signature2 = await signMessageAsync({ message: SIGN_MESSAGE })
-
-        if (signature1 !== signature2) {
-          setError(
-            'Your wallet produced different signatures for the same message. ' +
-              'Encryption features cannot work reliably with this wallet. ' +
-              'Try using MetaMask or another software wallet.',
-          )
-
-          return null
-        }
-
-        // Security (D7): the user can switch wallets in MetaMask while the
-        // signature popups are pending. `address` is captured from the closure
-        // at call time, so persisting against it would bind a signature from
-        // the NEW wallet to the OLD address. Re-read the live connected address
-        // and bail if it changed — the switch effect will derive for the new
-        // wallet on its own.
-        const currentAddress = getAccount(wagmiConfig).address
-
-        if (!currentAddress || currentAddress.toLowerCase() !== address.toLowerCase()) {
-          return null
-        }
-
-        await setSigner(signature1, address)
-
-        return useIdentityStore.getState().signer
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : 'Signature rejected'
-
-        // User rejected the popup — record it so the auto-derive effect
-        // doesn't immediately prompt them again on the next render.
-        if (opts?.auto) {
-          setAutoDeriveDeclined(true)
-          // Soft message; the Identity tab CTA is the recovery path.
-          setError(null)
-        } else {
-          setError(msg)
-        }
-
-        return null
-      } finally {
-        releaseDeriveLock()
-        setDeriving(false)
-      }
-    },
-    [signer, walletAddress, address, isConnected, signMessageAsync, setSigner, setDeriving, setError],
-  )
-
-  // Auto-derive on wallet connect if we don't already have a signer cached.
-  useEffect(() => {
-    if (!hydrated) return
-
-    if (status !== 'connected' || !address) return
-
-    if (signer) return
-
-    if (deriving) return
-
-    if (getAutoDeriveDeclined()) return
-    void derive({ auto: true })
-  }, [hydrated, status, address, signer, deriving, derive])
-
-  // Security (D6): only ever expose a signer that matches the currently
-  // connected wallet. hydrate() can momentarily set a signer from a previous
-  // wallet's cache before the clear effect above runs; gating the *returned*
-  // value on an address match guarantees no consumer can perform feed/ACT
-  // operations under a stale identity, independent of effect timing.
-  const signerMatchesWallet = Boolean(
-    signer && walletAddress && address && walletAddress.toLowerCase() === address.toLowerCase(),
-  )
-  const safeSigner = signerMatchesWallet ? signer : null
-
-  // Phase 4: keep the per-identity storage namespace in sync with the derived
-  // identity. Contacts/messages/invitations/display-name are keyed by this
-  // address, so different wallets see different data. null when no safe signer
-  // (disconnected / mismatched / mid-boot) → reads/writes hit the isolated
-  // ':__none__' bucket and no wallet's data leaks across the gap.
+  // Keep the per-identity storage namespace in sync. Contacts/messages/
+  // invitations/display-name are keyed by this address; null (signed out /
+  // mid-boot) → reads/writes hit the isolated ':__none__' bucket.
   const safeAddress = safeSigner ? safeSigner.getAddress() : null
 
   useEffect(() => {
+    // Before setActiveIdentity overwrites the last-identity marker (#21).
+    if (safeAddress) markSwarmIdIdentity(safeAddress)
     setActiveIdentity(safeAddress)
 
     // Once the identity namespace is active, run the one-time v2 clean break
@@ -210,22 +100,22 @@ export function useDerivedKey() {
   }, [safeAddress])
 
   return {
-    /** The derived signer for the connected wallet, or null if not yet derived / mismatched */
+    /** The Nook signer, or null when not signed in with Swarm ID */
     signer: safeSigner,
 
-    /** True while waiting for user to approve signature */
+    /** True while the Swarm ID sign-in is in progress */
     deriving,
 
-    /** Error message if derivation failed */
+    /** Error message if sign-in failed */
     error,
 
-    /** Whether a wallet is connected (prerequisite for derivation) */
-    walletConnected: isConnected,
+    /** Open the Swarm ID sign-in dialog and derive the Nook identity */
+    signIn,
 
-    /** Manually trigger the signMessage popup (used by the Identity CTA after a user-declined auto-derive). */
-    derive: async () => derive(),
+    /** The Swarm ID account signed in (name shown in the UI; its address is display-only) */
+    swarmIdAccount: safeSigner ? swarmIdAccount : null,
 
-    /** Clear the derived key manually */
+    /** Wipe the persisted identity (sign-out) */
     clear,
   }
 }

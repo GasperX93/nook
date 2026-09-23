@@ -1,13 +1,12 @@
 import { Bee } from '@ethersphere/bee-js'
 import { ContactStore, identity, mailbox, registry } from '@swarm-notify/sdk'
 import { useEffect, useMemo, useState } from 'react'
-import { useWalletClient } from 'wagmi'
 
 import { useAddresses, useStamps } from '../api/queries'
 import { useDerivedKey } from '../hooks/useDerivedKey'
 import { bytesToHex, hexToBytes } from '../lib/hex'
-import { GNOSIS_CHAIN_ID, REGISTRY_ADDRESS } from '../notify/constants'
-import { createNotifyProvider } from '../notify/provider'
+import { REGISTRY_ADDRESS } from '../notify/constants'
+import { createNodeNotifyProvider, createNotifyProvider } from '../notify/provider'
 import { sendMailboxMessage } from '../notify/send-message'
 
 // Vite proxies /bee-api → http://localhost:1633 in dev. This dev panel only ships in dev mode,
@@ -24,8 +23,7 @@ function full(s: string): string {
 }
 
 export function SwarmNotifyTest() {
-  const { signer, derive, walletConnected } = useDerivedKey()
-  const { data: walletClient } = useWalletClient()
+  const { signer, signIn } = useDerivedKey()
   const { data: addresses } = useAddresses()
   const { data: stamps } = useStamps()
 
@@ -238,14 +236,6 @@ export function SwarmNotifyTest() {
   async function handleSendNotification() {
     if (!signer) return addLog('ERROR: No signer')
 
-    if (!walletClient) return addLog('ERROR: Connect wallet to send Gnosis tx')
-
-    if (walletClient.chain?.id !== GNOSIS_CHAIN_ID) {
-      return addLog(
-        `ERROR: Wallet on chain ${walletClient.chain?.id} (${walletClient.chain?.name}), need Gnosis (${GNOSIS_CHAIN_ID})`,
-      )
-    }
-
     if (!addresses) return addLog('ERROR: Bee addresses not loaded')
 
     const recipient = contacts.find(c => c.ethAddress.toLowerCase() === sendTo.toLowerCase())
@@ -253,13 +243,13 @@ export function SwarmNotifyTest() {
     if (!recipient) return addLog(`ERROR: Recipient not in contacts: ${full(sendTo)}`)
 
     try {
-      const provider = createNotifyProvider(walletClient)
+      const provider = createNodeNotifyProvider()
       const recipientPubKey = hexToBytes(recipient.walletPublicKey)
       const myAddr = signer.getAddress()
 
       addLog(`Sending notification to ${recipient.nickname}…`)
       addLog(`  contract: ${full(REGISTRY_ADDRESS)}`)
-      addLog(`  chain: ${walletClient.chain?.name} (${walletClient.chain?.id})`)
+      addLog('  signer: node wallet (Koa /notify-ping)')
       addLog(`  recipient ETH: ${full(recipient.ethAddress)}`)
       addLog(`  recipient pubKey: ${full(recipient.walletPublicKey)}`)
       addLog(`  payload.sender: ${full(myAddr)}`)
@@ -348,12 +338,10 @@ export function SwarmNotifyTest() {
             <span style={{ color: 'rgb(var(--fg))' }}>
               {signer.getAddress()} · pubKey {bytesToHex(signer.getPublicKey())}
             </span>
-          ) : walletConnected ? (
-            <button onClick={derive} className="underline">
-              derive key
-            </button>
           ) : (
-            'connect wallet to derive Nook address'
+            <button onClick={async () => signIn()} className="underline">
+              sign in with Swarm ID
+            </button>
           )}
         </div>
         <div>Bee: {addresses ? <span style={{ color: 'rgb(var(--fg))' }}>overlay {addresses.overlay}</span> : '—'}</div>
@@ -374,17 +362,6 @@ export function SwarmNotifyTest() {
             </select>
           ) : (
             'no usable stamp — buy one in Account → My Storage'
-          )}
-        </div>
-        <div>
-          Wallet chain:{' '}
-          {walletClient?.chain ? (
-            <span style={{ color: walletClient.chain.id === GNOSIS_CHAIN_ID ? 'rgb(var(--fg))' : 'rgb(255,140,40)' }}>
-              {walletClient.chain.name} ({walletClient.chain.id})
-              {walletClient.chain.id !== GNOSIS_CHAIN_ID && ' — switch to Gnosis for sendNotification'}
-            </span>
-          ) : (
-            '—'
           )}
         </div>
       </div>

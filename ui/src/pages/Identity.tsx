@@ -3,6 +3,7 @@ import { Check, Copy, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
 import { useAddresses, useReclaimableDrives, useStamps } from '../api/queries'
+import SwarmIdBadge from '../components/SwarmIdBadge'
 import { Button } from '../components/ui/button'
 import { useDerivedKey } from '../hooks/useDerivedKey'
 import { bytesToHex } from '../lib/hex'
@@ -11,11 +12,12 @@ import { pickMessagingStamp } from '../lib/system-stamp'
 import { publishIdentity } from '../notify/publish-identity'
 import { encodeShareLink } from '../notify/share-link'
 import { isIdentityPublished, isOnboardingDismissed, markOnboardingDismissed } from '../notify/storage'
+import { signOutOfSwarmId } from '../swarm-id'
 
 const BEE_URL = `${window.location.origin}/bee-api`
 
 export default function Identity() {
-  const { signer, derive, deriving, walletConnected } = useDerivedKey()
+  const { signer, signIn, deriving, error: identityError, swarmIdAccount, clear } = useDerivedKey()
   const { data: addresses } = useAddresses()
   const { data: stamps } = useStamps()
 
@@ -46,11 +48,12 @@ export default function Identity() {
       ethAddress: signer.getAddress(),
       walletPublicKey: bytesToHex(signer.getPublicKey()),
       beePublicKey: addresses.publicKey,
+      nickname: swarmIdAccount?.name || undefined,
     })
-  }, [signer, addresses])
+  }, [signer, addresses, swarmIdAccount])
 
   async function handlePublish() {
-    if (!signer) return setPublishError('Derive your key first')
+    if (!signer) return setPublishError('Sign in with Swarm ID first')
 
     if (!addresses) return setPublishError('Bee node not reachable')
 
@@ -74,6 +77,11 @@ export default function Identity() {
     await navigator.clipboard.writeText(value)
     setCopied(kind)
     setTimeout(() => setCopied(null), 1500)
+  }
+
+  async function signOut() {
+    await signOutOfSwarmId().catch(() => undefined)
+    await clear()
   }
 
   function handleDismissHint() {
@@ -106,26 +114,42 @@ export default function Identity() {
           How others connect with you
         </p>
 
-        {!walletConnected && (
-          <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
-            Connect your wallet (top right) to set up your Nook identity.
-          </p>
-        )}
-
-        {walletConnected && !signer && (
-          <Button onClick={async () => derive()} disabled={deriving}>
-            {deriving ? 'Setting up… (check your wallet)' : 'Set up Nook identity'}
-          </Button>
+        {!signer && (
+          <div className="space-y-3">
+            <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
+              Sign in to get your Nook address, so contacts can message you and share drives with you.
+            </p>
+            <Button onClick={async () => signIn()} disabled={deriving}>
+              {deriving ? 'Signing in…' : 'Sign in with Swarm ID'}
+            </Button>
+            {identityError && (
+              <p className="text-xs" style={{ color: 'rgb(248,113,113)' }}>
+                {identityError}
+              </p>
+            )}
+          </div>
         )}
 
         {signer && myAddress && (
           <>
-            {/* Nook address row */}
+            {/* Who you're signed in as. The Swarm ID account address is never
+                shown: nobody can look you up by it (see
+                spindle notes/swarm-id-only-identity-asks-2026-09-23.md). */}
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <SwarmIdBadge suffix="signed in with Swarm ID" />
+              <Button variant="outline" size="sm" onClick={async () => signOut()}>
+                Sign out
+              </Button>
+            </div>
+
+            <div className="h-px" style={{ backgroundColor: 'rgb(var(--border))' }} />
+
+            {/* Nook address — the one address people type to find you. */}
             <div className="space-y-2">
               <p className="text-xs font-semibold">Nook address</p>
               <p className="text-xs leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
-                Your unique ID on Nook. Publish it so others can add you as a contact just by typing your address — no
-                link needed.
+                Share this — anyone can find you in Nook by typing it, then message you and share drives with you.
+                It&apos;s the same on every device you sign in on.
               </p>
               <div className="flex items-center gap-2 flex-wrap">
                 <code
@@ -138,7 +162,7 @@ export default function Identity() {
                   onClick={async () => handleCopy(myAddress, 'address')}
                   className="shrink-0 px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1 border"
                   style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
-                  aria-label="Copy address"
+                  aria-label="Copy Nook address"
                 >
                   {copied === 'address' ? <Check size={11} /> : <Copy size={11} />}
                   {copied === 'address' ? 'Copied' : 'Copy'}

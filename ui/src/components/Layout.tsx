@@ -1,12 +1,9 @@
-import { ConnectButton } from '@rainbow-me/rainbowkit'
 import {
   AlertTriangle,
   Contact,
-  Copy,
   Download,
   Globe,
   HardDrive,
-  LogOut,
   Mail,
   RefreshCw,
   Settings,
@@ -14,9 +11,8 @@ import {
   Wallet,
   X,
 } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
-import { useDisconnect } from 'wagmi'
 import { weiToDai } from '../api/bee'
 import { resumePendingPropagation } from '../store/transfers'
 import TransferIndicator from './TransferIndicator'
@@ -35,7 +31,7 @@ import { useAutoPublish } from '../hooks/useAutoPublish'
 import { useInboxPolling } from '../hooks/useInboxPolling'
 import { isSystemStamp, pickMessagingStamp } from '../lib/system-stamp'
 import { useOutboxDrain } from '../hooks/useOutboxDrain'
-import { hasKnownIdentity } from '../notify/active-identity'
+import { hasKnownIdentity, hasLegacyIdentityPendingMove } from '../notify/active-identity'
 import { primeCricketAudio } from '../lib/cricket'
 import { loadReadCursors, loadThreads, totalUnread } from '../notify/messages'
 import { loadInvitations, pendingInvitations } from '../notify/invitations'
@@ -43,6 +39,8 @@ import { loadContacts } from '../notify/storage'
 import { useRegistryPolling } from '../hooks/useRegistryPolling'
 import { useAppStore } from '../store/app'
 import NotificationBell from './NotificationBell'
+import SwarmIdChip from './SwarmIdChip'
+import SwarmIdDialog from './SwarmIdDialog'
 import Onboarding from './Onboarding'
 import {
   Sidebar,
@@ -69,73 +67,9 @@ const youNavItems = [
 
 const settingsNavItem = { to: '/settings', icon: Settings, label: 'Settings' }
 
+const MOVE_NOTICE_DISMISSED_KEY = 'nook-swarm-id-move-notice-dismissed'
+
 const appNavItems = [{ to: '/apps/website-publisher', icon: Globe, label: 'Publish website' }]
-
-function WalletDropdown({ displayName, address, avatar }: { displayName: string; address: string; avatar?: string }) {
-  const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
-  const { disconnect } = useDisconnect()
-
-  const handleCopy = useCallback(() => {
-    navigator.clipboard.writeText(address)
-    setOpen(false)
-  }, [address])
-
-  const handleDisconnect = useCallback(() => {
-    disconnect()
-    setOpen(false)
-  }, [disconnect])
-
-  // Close on outside click
-  useEffect(() => {
-    if (!open) return
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', handler)
-
-    return () => document.removeEventListener('mousedown', handler)
-  }, [open])
-
-  return (
-    <div ref={ref} className="relative">
-      <button
-        onClick={() => setOpen(!open)}
-        className="nook-wallet-btn connected flex items-center gap-2 px-3 py-1.5 rounded-full text-xs transition-colors border"
-      >
-        {avatar ? (
-          <img src={avatar} alt="" className="w-4 h-4 rounded-full" />
-        ) : (
-          <div className="w-4 h-4 rounded-full" style={{ backgroundColor: 'rgb(var(--fg-muted))' }} />
-        )}
-        {displayName}
-      </button>
-      {open && (
-        <div
-          className="absolute right-0 top-full mt-1 rounded-lg border py-1 z-50 min-w-[180px]"
-          style={{ backgroundColor: 'rgb(var(--bg-surface))', borderColor: 'rgb(var(--border))' }}
-        >
-          <button
-            onClick={handleCopy}
-            className="flex items-center gap-2.5 w-full px-3 py-2 text-xs transition-colors hover:bg-white/5"
-            style={{ color: 'rgb(var(--fg))' }}
-          >
-            <Copy size={13} style={{ color: 'rgb(var(--fg-muted))' }} />
-            {address.slice(0, 6)}...{address.slice(-4)}
-          </button>
-          <button
-            onClick={handleDisconnect}
-            className="flex items-center gap-2.5 w-full px-3 py-2 text-xs transition-colors hover:bg-white/5"
-            style={{ color: '#ef4444' }}
-          >
-            <LogOut size={13} />
-            Disconnect
-          </button>
-        </div>
-      )}
-    </div>
-  )
-}
 
 export default function Layout() {
   const { isError: beeOffline, isPending: beeChecking, isSuccess: beeOnline } = useBeeHealth()
@@ -258,8 +192,20 @@ export default function Layout() {
   // arriving messages look lost. The un-namespaced last-identity marker is
   // the one signal that there is an inbox worth unlocking; only users who
   // have actually used messaging ever see this.
-  const { signer: derivedSigner } = useDerivedKey()
+  const { signer: derivedSigner, signIn, deriving } = useDerivedKey()
   const showMessagesPaused = !derivedSigner && hasKnownIdentity()
+
+  // Swarm ID transition (#21): a pre-0.7 wallet-derived identity existed and
+  // nobody has signed in with Swarm ID yet. Replaces the paused banner until
+  // the user signs in or closes it (closing falls back to the paused banner).
+  const [moveNoticeDismissed, setMoveNoticeDismissed] = useState(() => {
+    try {
+      return localStorage.getItem(MOVE_NOTICE_DISMISSED_KEY) !== null
+    } catch {
+      return false
+    }
+  })
+  const showMoveNotice = !derivedSigner && !moveNoticeDismissed && hasLegacyIdentityPendingMove()
 
   // Auto-complete onboarding for existing users upgrading from v0.2.0 (they never had the flag).
   // Once stamps or wallet data loads and shows existing activity, mark onboarding done.
@@ -392,30 +338,10 @@ export default function Layout() {
             </h1>
             <div className="flex items-center gap-2">
               <NotificationBell />
-              <ConnectButton.Custom>
-                {({ account, chain, openConnectModal, mounted }) => {
-                  if (!mounted) return null
-
-                  if (!account || !chain) {
-                    return (
-                      <button
-                        onClick={openConnectModal}
-                        className="nook-wallet-btn flex items-center gap-2 px-3 py-1.5 rounded-full text-xs transition-colors border"
-                      >
-                        Connect Wallet
-                      </button>
-                    )
-                  }
-
-                  return (
-                    <WalletDropdown
-                      displayName={account.displayName}
-                      address={account.address}
-                      avatar={account.ensAvatar}
-                    />
-                  )
-                }}
-              </ConnectButton.Custom>
+              {/* permanently mounted SDK host (see SwarmIdDialog) */}
+              <SwarmIdDialog />
+              {/* identity lives in Swarm ID; wallets appear only in payment flows */}
+              <SwarmIdChip />
             </div>
           </div>
 
@@ -559,13 +485,51 @@ export default function Layout() {
             </div>
           )}
 
-          {showMessagesPaused && !showOnboarding && (
+          {showMoveNotice && !showOnboarding && (
+            <div
+              className="flex items-start gap-2.5 px-4 py-2.5 text-xs shrink-0"
+              style={{ backgroundColor: 'rgba(96,165,250,0.08)', borderBottom: '1px solid rgba(96,165,250,0.2)' }}
+            >
+              <Mail size={12} className="shrink-0 mt-0.5" style={{ color: '#60a5fa' }} />
+              <div className="flex-1 space-y-2" style={{ color: 'rgb(var(--fg))' }}>
+                <p>
+                  <span className="font-semibold">Messaging now uses Swarm ID.</span> Your drives, files and funds are
+                  untouched. Sign in to get your new Nook address, then share it with your contacts again — your old
+                  address stops receiving messages.
+                </p>
+                <button
+                  onClick={async () => signIn()}
+                  disabled={deriving}
+                  className="px-3 py-1.5 rounded-md text-xs font-semibold disabled:opacity-60"
+                  style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
+                >
+                  {deriving ? 'Signing in…' : 'Sign in with Swarm ID'}
+                </button>
+              </div>
+              <button
+                onClick={() => {
+                  try {
+                    localStorage.setItem(MOVE_NOTICE_DISMISSED_KEY, '1')
+                  } catch {
+                    // best-effort
+                  }
+                  setMoveNoticeDismissed(true)
+                }}
+                className="shrink-0 p-0.5 hover:opacity-60"
+                aria-label="Dismiss"
+              >
+                <X size={12} style={{ color: 'rgb(var(--fg-muted))' }} />
+              </button>
+            </div>
+          )}
+
+          {showMessagesPaused && !showMoveNotice && !showOnboarding && (
             <div
               className="flex items-center gap-2.5 px-4 py-2.5 text-xs shrink-0"
               style={{ backgroundColor: 'rgba(96,165,250,0.08)', borderBottom: '1px solid rgba(96,165,250,0.2)' }}
             >
               <Mail size={12} className="shrink-0" style={{ color: '#60a5fa' }} />
-              <span style={{ color: 'rgb(var(--fg))' }}>To use Messages, connect your wallet (top right).</span>
+              <span style={{ color: 'rgb(var(--fg))' }}>To use Messages, sign in with Swarm ID (top right).</span>
             </div>
           )}
 

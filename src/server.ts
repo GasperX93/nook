@@ -13,7 +13,13 @@ import { ethers } from 'ethers'
 
 import PACKAGE_JSON from '../package.json'
 import { getApiKey } from './api-key'
-import { redeemGiftCode, sendBzzTransaction, sendNativeTransaction } from './blockchain'
+import {
+  isNotifyCalldata,
+  redeemGiftCode,
+  sendBzzTransaction,
+  sendNativeTransaction,
+  sendRegistryNotification,
+} from './blockchain'
 import { clearIdentityCache, isIdentityCacheAvailable, readIdentityCache, writeIdentityCache } from './identity-cache'
 import { readConfigYaml, readWalletPasswordOrThrow, writeConfigYaml } from './config'
 import { runLauncher } from './launcher'
@@ -1025,6 +1031,47 @@ export function runServer() {
       logger.error(error)
       context.status = 500
       context.body = { message: 'Failed to update grantees' }
+    }
+  })
+
+  // First-contact ping (swarm-notify registry) paid by the node wallet, so
+  // messaging needs no external wallet. Destination is fixed server-side and
+  // only notify(bytes32,bytes) calldata is accepted — this route can never
+  // make the node key sign anything else.
+  router.post('/notify-ping', async context => {
+    const { data } = context.request.body as { data?: unknown }
+
+    if (!isNotifyCalldata(data)) {
+      context.status = 400
+      context.body = { message: 'Not a registry notify call' }
+
+      return
+    }
+
+    const config = readConfigYaml()
+    const blockchainRpcEndpoint =
+      (Reflect.get(config, 'blockchain-rpc-endpoint') as string) || 'https://rpc.gnosischain.com'
+    const privateKeyString = await getPrivateKey()
+
+    try {
+      const { transaction } = await sendRegistryNotification(privateKeyString, data, blockchainRpcEndpoint)
+
+      context.body = { success: true, txHash: transaction.hash }
+    } catch (error) {
+      logger.error(error)
+      const code = (error as { code?: string })?.code
+      const message = String((error as { message?: string })?.message ?? error)
+
+      if (code === 'INSUFFICIENT_FUNDS' || /insufficient funds/i.test(message)) {
+        context.status = 402
+        context.body = {
+          message: 'Your node wallet needs a little xDAI to notify new contacts — add some on the Wallet page.',
+        }
+
+        return
+      }
+      context.status = 500
+      context.body = { message: 'Could not send the notification on Gnosis Chain — try again in a moment.' }
     }
   })
 

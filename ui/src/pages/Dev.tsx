@@ -7,7 +7,7 @@ import { useDerivedKey } from '../hooks/useDerivedKey'
 import { bytesToHex } from '../lib/hex'
 
 function KeyDerivationTest() {
-  const { signer, deriving, error, walletConnected, derive, clear } = useDerivedKey()
+  const { signer, deriving, error, signIn, clear } = useDerivedKey()
   const [log, setLog] = useState<string[]>([])
 
   function addLog(msg: string) {
@@ -15,8 +15,8 @@ function KeyDerivationTest() {
   }
 
   async function handleDerive() {
-    addLog('Requesting signature...')
-    const result = await derive()
+    addLog('Signing in with Swarm ID...')
+    const result = await signIn()
 
     if (result) {
       addLog(`Derived! Address: ${result.getAddress()}`)
@@ -30,7 +30,7 @@ function KeyDerivationTest() {
 
   async function handleDeriveAgain() {
     addLog('Deriving again (should match)...')
-    const result = await derive()
+    const result = await signIn()
 
     if (result) {
       addLog(`Address: ${result.getAddress()}`)
@@ -52,18 +52,17 @@ function KeyDerivationTest() {
     <div className="rounded-xl border p-5 space-y-4 shrink-0" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
       <div>
         <p className="text-xs uppercase tracking-widest mb-1" style={{ color: 'rgb(var(--fg-muted))' }}>
-          Wallet Key Derivation
+          Identity Key Derivation
         </p>
         <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-          Wallet: {walletConnected ? 'Connected' : 'Not connected'} | Signer:{' '}
-          {signer ? signer.getAddress().slice(0, 10) + '...' : 'None'}
+          Signer: {signer ? signer.getAddress().slice(0, 10) + '...' : 'None'}
           {deriving ? ' | Deriving...' : ''}
           {error ? ` | Error: ${error}` : ''}
         </p>
       </div>
 
       <div className="flex flex-wrap gap-2">
-        <button onClick={handleDerive} disabled={!walletConnected || deriving} className={btnClass} style={accentStyle}>
+        <button onClick={handleDerive} disabled={deriving} className={btnClass} style={accentStyle}>
           1. Derive Key
         </button>
         <button onClick={handleDeriveAgain} disabled={!signer} className={btnClass} style={btnStyle}>
