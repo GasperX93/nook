@@ -12,9 +12,10 @@
  */
 import { create } from 'zustand'
 
-import { waitForTagPropagation } from '../api/bee'
+import { waitForRetrievable, waitForTagPropagation } from '../api/bee'
 import { serverApi } from '../api/server'
 import { clearPendingTagUid, pendingPropagationRecords } from '../hooks/useUploadHistory'
+import { waitForBeeReady } from '../notify/bee-ready'
 
 export interface TransferEntry {
   id: string
@@ -112,6 +113,32 @@ export function etaText(t: TransferEntry): string | null {
 
 // ─── Propagation following (uploads) ─────────────────────────────────────────
 
+/** Retry cadence while propagation markers remain (R3-3: no manual reload, ever). */
+const RESUME_RETRY_MS = 5 * 60_000
+/** Consecutive resume cycles with an unreadable tag before the stewardship fallback. */
+const TAG_MISSING_CYCLES = 3
+
+/** Tags currently being followed — the resume loop never double-follows a live upload. */
+const following = new Set<number>()
+const tagMissingCycles = new Map<number, number>()
+let retryTimer: ReturnType<typeof setTimeout> | null = null
+let resuming = false
+
+function markPropagated(id: string, tagUid: number, name: string, driveId: string | undefined): void {
+  tagMissingCycles.delete(tagUid)
+  clearPendingTagUid(tagUid)
+  useTransfersStore.getState().finish(id)
+  serverApi
+    .createNotification({
+      type: 'info',
+      title: 'Stored on the network',
+      body: `“${name}” has reached the network — every piece is confirmed stored.`,
+      // Land inside the drive (#24), not on the generic list.
+      link: driveId ? `/drive?open=${driveId}` : '/drive',
+    })
+    .catch(() => undefined)
+}
+
 /**
  * Follow a Bee tag until the upload is on the network, feeding this store
  * (and the caller's optional pct callback). Rings the bell on completion.
@@ -119,42 +146,38 @@ export function etaText(t: TransferEntry): string | null {
  * record is written, BEFORE this wait — a navigation or quit can no longer
  * lose the file's address) and is cleared here centrally on completion.
  * Same stall semantics as waitForTagPropagation: `complete: false` is a soft
- * outcome — Bee's background pusher keeps working and the next app start
- * resumes following via the still-marked record.
+ * outcome — Bee's background pusher keeps working, and the resume loop
+ * follows the still-marked record again on its own timer (R3-3).
  */
 export async function followTagPropagation(
   tagUid: number,
   name: string,
   driveId: string | undefined,
   onPct?: (pct: number) => void,
-): Promise<{ complete: boolean }> {
+): Promise<{ complete: boolean; tagRead: boolean }> {
   const id = `tag:${tagUid}`
   const store = useTransfersStore.getState()
 
-  store.begin({ id, kind: 'upload', name, driveId, phase: 'Propagating to network…' })
+  following.add(tagUid)
+  store.begin({ id, kind: 'upload', name, driveId, phase: 'Storing on the network…' })
 
-  const { complete } = await waitForTagPropagation(tagUid, onPct, {
-    onTag: tag => useTransfersStore.getState().chunkProgress(id, tag.seen + tag.synced, tag.split),
-  })
+  try {
+    const { complete, tag } = await waitForTagPropagation(tagUid, onPct, {
+      onTag: t => useTransfersStore.getState().chunkProgress(id, t.seen + t.synced, t.split),
+    })
 
-  if (complete) {
-    clearPendingTagUid(tagUid)
-    useTransfersStore.getState().finish(id)
-    serverApi
-      .createNotification({
-        type: 'info',
-        title: 'Stored on the network',
-        body: `“${name}” has reached the network — every piece is confirmed stored.`,
-        // Land inside the drive (#24), not on the generic list.
-        link: driveId ? `/drive?open=${driveId}` : '/drive',
-      })
-      .catch(() => undefined)
-  } else {
-    useTransfersStore.getState().update(id, { phase: 'Still propagating in the background…' })
-    useTransfersStore.getState().finish(id)
+    if (complete) {
+      markPropagated(id, tagUid, name, driveId)
+    } else {
+      useTransfersStore.getState().update(id, { phase: 'Still storing in the background…' })
+      useTransfersStore.getState().finish(id)
+      scheduleResume()
+    }
+
+    return { complete, tagRead: tag !== null }
+  } finally {
+    following.delete(tagUid)
   }
-
-  return { complete }
 }
 
 /**
@@ -162,13 +185,65 @@ export async function followTagPropagation(
  * last closed (tags persist on the Bee node; marked records persist in
  * localStorage). Mounted once from Layout. A tag that finished while the app
  * was closed completes on the first poll and clears its record's marker.
+ *
+ * Self-healing (R3-3): waits for Bee to be READY first (polling /tags during
+ * warmup is what burned the stall budget and froze rows), then keeps retrying
+ * every few minutes while markers remain. A tag that stays unreadable falls
+ * back to a stewardship check of the record's reference.
  */
 export function resumePendingPropagation(): void {
-  const seen = new Set<number>()
+  void resumeCycle()
+}
 
-  for (const p of pendingPropagationRecords()) {
-    if (seen.has(p.tagUid)) continue
-    seen.add(p.tagUid)
-    void followTagPropagation(p.tagUid, p.name, p.driveId)
+function scheduleResume(): void {
+  if (retryTimer || pendingPropagationRecords().length === 0) return
+  retryTimer = setTimeout(() => {
+    retryTimer = null
+    void resumeCycle()
+  }, RESUME_RETRY_MS)
+}
+
+async function resumeCycle(): Promise<void> {
+  if (resuming) return
+  resuming = true
+
+  try {
+    if (!(await waitForBeeReady({ timeoutMs: 5 * 60_000, intervalMs: 3_000 }))) return
+
+    const seen = new Set<number>()
+    const pending = pendingPropagationRecords().filter(p => {
+      if (seen.has(p.tagUid) || following.has(p.tagUid)) return false
+      seen.add(p.tagUid)
+
+      return true
+    })
+
+    await Promise.all(pending.map(async p => resumeOne(p)))
+  } finally {
+    resuming = false
+    scheduleResume()
+  }
+}
+
+async function resumeOne(p: ReturnType<typeof pendingPropagationRecords>[number]): Promise<void> {
+  const { complete, tagRead } = await followTagPropagation(p.tagUid, p.name, p.driveId)
+
+  if (complete || tagRead) {
+    tagMissingCycles.delete(p.tagUid)
+
+    return
+  }
+
+  // The tag itself is gone (never readable this cycle). After a few cycles,
+  // ask the network directly. ACT-encrypted references aren't traversable by
+  // stewardship, so those keep following the tag.
+  const cycles = (tagMissingCycles.get(p.tagUid) ?? 0) + 1
+
+  tagMissingCycles.set(p.tagUid, cycles)
+
+  if (cycles < TAG_MISSING_CYCLES || p.isEncrypted) return
+
+  if (await waitForRetrievable(p.hash, { attempts: 1 })) {
+    markPropagated(`tag:${p.tagUid}`, p.tagUid, p.name, p.driveId)
   }
 }

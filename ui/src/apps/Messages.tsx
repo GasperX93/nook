@@ -20,6 +20,7 @@ import { GNOSIS_CHAIN_ID, REGISTRY_ADDRESS } from '../notify/constants'
 import {
   defaultInviteMessage,
   deriveConnectionState,
+  hasInboundSince,
   getMyDisplayName,
   markInviteAccepted,
   recordInviteSent,
@@ -148,7 +149,7 @@ export default function Messages({ initialContactId, hideContactList, hideThread
   const stampId = pickMessagingStamp(stamps, new Set((reclaimableForStamp ?? []).map(d => d.batchId)))?.batchID ?? ''
   const selected = contacts.find(c => c.id === selectedId) ?? null
   const selectedThread = selected ? (threads[selected.id.toLowerCase()] ?? []) : []
-  const hasInbound = selectedThread.some(m => m.direction === 'received')
+  const hasInbound = selected ? hasInboundSince(selectedThread, selected.addedAt) : false
   const connectionState: ConnectionState = selected ? deriveConnectionState(selected.id, hasInbound) : 'not-connected'
   const needsNickname = connectionState !== 'connected' && !myDisplayName
   // If the selected entry isn't a contact, it might be a pending invitation.

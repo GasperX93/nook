@@ -6,7 +6,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Messages, { ConnectionStatusBadge } from '../apps/Messages'
 import { useStamps } from '../api/queries'
 import { useDerivedKey } from '../hooks/useDerivedKey'
-import { deriveConnectionState, getMyDisplayName, markInviteAccepted } from '../notify/contact-state'
+import { deriveConnectionState, getMyDisplayName, hasInboundSince, markInviteAccepted } from '../notify/contact-state'
 import { sendInviteAck } from '../notify/invite-ack'
 import { loadReadCursors, loadThreads, unreadCount } from '../notify/messages'
 import { Button } from '../components/ui/button'
@@ -238,8 +238,10 @@ export default function Contacts() {
     if (!selectedId) return { hasThread: false, hasInbound: false }
     const t = threads[selectedId.toLowerCase()] ?? []
 
-    return { hasThread: t.length > 0, hasInbound: t.some(m => m.direction === 'received') }
-  }, [selectedId, threads, composeFor])
+    const addedAt = contacts.find(c => c.id === selectedId)?.addedAt
+
+    return { hasThread: t.length > 0, hasInbound: hasInboundSince(t, addedAt) }
+  }, [selectedId, threads, composeFor, contacts])
   const showThread = hasThread || composeFor === selectedId
   const connectionState = selectedId ? deriveConnectionState(selectedId, hasInbound) : 'not-connected'
 

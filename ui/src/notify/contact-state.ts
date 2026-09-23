@@ -109,6 +109,29 @@ export function markInviteAccepted(contactId: string): void {
   }
 }
 
+/** Forget that we accepted this contact's invitation — used when the contact is deleted (R3b-3). */
+export function clearInviteAccepted(contactId: string): void {
+  try {
+    const map = loadAccepted()
+
+    delete map[contactId.toLowerCase()]
+    localStorage.setItem(nsKey(ACCEPTED_KEY), JSON.stringify(map))
+  } catch {
+    // storage unavailable — ignore
+  }
+}
+
+/**
+ * Whether the thread holds a message FROM this contact received since they
+ * were (re-)added. Deleting a contact keeps the thread history, so without the
+ * cut-off a re-added contact looks connected off old messages and the invite
+ * (with its on-chain ping) never fires (R3b-3). Received `ts` is the sender's
+ * timestamp; contacts saved without `addedAt` count every message.
+ */
+export function hasInboundSince(thread: { direction: 'sent' | 'received'; ts: number }[], addedAt?: number): boolean {
+  return thread.some(m => m.direction === 'received' && m.ts >= (addedAt ?? 0))
+}
+
 export function wasInviteAccepted(contactId: string): boolean {
   return contactId.toLowerCase() in loadAccepted()
 }

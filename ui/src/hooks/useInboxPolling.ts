@@ -13,7 +13,8 @@ import { mailbox } from '@swarm-notify/sdk'
 import { useEffect, useMemo } from 'react'
 
 import { playCricketChirp } from '../lib/cricket'
-import { loadThreads, mergeReceived, saveThreads } from '../notify/messages'
+import { appendReceived, loadThreads } from '../notify/messages'
+import { getReadCursor, recordRead } from '../notify/receive-cursor'
 import { loadContacts } from '../notify/storage'
 import { toLibraryContact } from '../notify/types'
 import { useAppStore } from '../store/app'
@@ -21,6 +22,13 @@ import { useDerivedKey } from './useDerivedKey'
 
 const BEE_URL = `${window.location.origin}/bee-api`
 const POLL_INTERVAL_MS = 30_000
+/**
+ * Probing past the tail costs a 404 per slot on every contact, every poll.
+ * The full look-ahead (hops a sender's slot-gap) runs on the first poll and
+ * then every Nth; the polls between stop at the first missing slot — a rare
+ * gap delays later messages by at most one full cycle (~5 min). R3b-2.
+ */
+const FULL_LOOKAHEAD_EVERY = 10
 
 export function useInboxPolling(): void {
   const { signer } = useDerivedKey()
@@ -30,34 +38,61 @@ export function useInboxPolling(): void {
     if (!signer) return
 
     let cancelled = false
+    let pollCount = 0
+    // Sequential reads can outlast the interval (first full read of long
+    // histories) — never run two polls at once.
+    let polling = false
 
     const poll = async () => {
+      if (polling) return
+      polling = true
+      const fullLookahead = pollCount % FULL_LOOKAHEAD_EVERY === 0
+
+      pollCount++
       const myAddr = signer.getAddress()
       // Re-read contacts each tick — the user may add a contact between polls.
       // Filter out self: if a user adds their own share link as a contact (eg
       // for solo testing), every poll otherwise hits myAddr→myAddr (404).
       const contacts = loadContacts().filter(c => c.id.toLowerCase() !== myAddr.toLowerCase())
 
-      if (contacts.length === 0) return
+      if (contacts.length === 0) {
+        polling = false
+
+        return
+      }
 
       try {
-        const inbox = await mailbox.checkInbox(bee, signer.getSigningKey(), myAddr, contacts.map(toLibraryContact))
-
-        if (cancelled) return
-        // Merge directly into stored threads so the on-disk view is the
-        // source of truth for both Messages and the sidebar badge.
-        let threads = loadThreads()
+        // One contact at a time from its read cursor (R3b-2): the old
+        // checkInbox walked every full history in parallel each tick.
         let newCount = 0
 
-        for (const { contact, messages } of inbox) {
-          const before = threads[contact.ethAddress.toLowerCase()]?.length ?? 0
-          threads = mergeReceived(threads, contact.ethAddress, messages)
-          const after = threads[contact.ethAddress.toLowerCase()]?.length ?? 0
-          newCount += Math.max(0, after - before)
+        for (const contact of contacts) {
+          if (cancelled) return
+          const lib = toLibraryContact(contact)
+          const { fromIndex, retryIndices } = getReadCursor(contact.id)
+
+          try {
+            const result = await mailbox.readMailbox(bee, signer.getSigningKey(), myAddr, lib, {
+              fromIndex,
+              retryIndices,
+              lookahead: fullLookahead ? undefined : 0,
+            })
+
+            if (cancelled) return
+            recordRead(contact.id, result)
+            // Fresh load right before the write: a message sent while this
+            // (possibly long) poll ran must not be overwritten by a snapshot.
+            const current = loadThreads()
+            const key = lib.ethAddress.toLowerCase()
+            const before = current[key]?.length ?? 0
+            const after = appendReceived(current, lib.ethAddress, result.messages)[key]?.length ?? 0
+
+            newCount += Math.max(0, after - before)
+          } catch {
+            // One unreachable mailbox must not stop the others; the cursor is
+            // unchanged, so the next tick retries from the same place.
+          }
         }
-        // mergeReceived already persists per call, but call once more here
-        // for clarity in case the loop body ever changes.
-        saveThreads(threads)
 
         // Chirp on new arrivals — only if enabled AND the user isn't already
         // looking at a page that shows the messages. Threads render on both the
@@ -71,6 +106,8 @@ export function useInboxPolling(): void {
         }
       } catch {
         // Network blips happen; the next tick will retry. Don't spam the UI.
+      } finally {
+        polling = false
       }
     }
 

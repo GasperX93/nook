@@ -69,13 +69,25 @@ function save(records: UploadRecord[]) {
  * re-follows these on app start. Standalone (non-hook) because the tracker
  * lives outside React.
  */
-export function pendingPropagationRecords(): { tagUid: number; name: string; driveId: string }[] {
+export function pendingPropagationRecords(): {
+  tagUid: number
+  name: string
+  driveId: string
+  hash: string
+  isEncrypted: boolean
+}[] {
   try {
     const records: UploadRecord[] = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '[]')
 
     return records
       .filter(r => r.pendingTagUid !== undefined)
-      .map(r => ({ tagUid: r.pendingTagUid!, name: r.name, driveId: r.driveId }))
+      .map(r => ({
+        tagUid: r.pendingTagUid!,
+        name: r.name,
+        driveId: r.driveId,
+        hash: r.hash,
+        isEncrypted: Boolean(r.isEncrypted),
+      }))
   } catch {
     return []
   }

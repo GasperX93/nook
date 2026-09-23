@@ -265,6 +265,45 @@ export function mergeReceived(threads: ThreadMap, counterparty: string, received
   return updated
 }
 
+/**
+ * Add newly read messages from a counterparty, keeping everything already in
+ * the thread (R3b-2). The incremental poller only returns what's new since
+ * its cursor, so — unlike mergeReceived — nothing may be replaced. Duplicates
+ * (a hole re-read, an overlapping read) are dropped by id.
+ */
+export function appendReceived(threads: ThreadMap, counterparty: string, received: SdkMessage[]): ThreadMap {
+  const key = counterparty.toLowerCase()
+  const existing = threads[key] ?? []
+  const known = new Set(existing.map(m => m.id))
+  const incoming: StoredMessage[] = []
+
+  for (const m of received) {
+    const id = makeId(m.ts, 'received', m.body)
+
+    if (known.has(id)) continue
+    known.add(id)
+    incoming.push({
+      id,
+      counterparty: key,
+      ts: m.ts,
+      body: m.body,
+      direction: 'received',
+      kind: m.type === 'drive-share' ? 'drive-share' : 'message',
+      driveShareLink: m.driveShareLink,
+      driveName: m.driveName,
+      fileCount: m.fileCount,
+    })
+  }
+
+  if (incoming.length === 0) return threads
+
+  const updated: ThreadMap = { ...threads, [key]: [...existing, ...incoming].sort((a, b) => a.ts - b.ts) }
+
+  saveThreads(updated)
+
+  return updated
+}
+
 /** Count unread received messages for a counterparty. */
 export function unreadCount(thread: StoredMessage[] | undefined, cursor: number | undefined): number {
   if (!thread) return 0

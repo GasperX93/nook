@@ -78,6 +78,7 @@ import ShareModal from '../components/ShareModal'
 import { Switch } from '../components/ui/switch'
 import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { useSidebar } from '../components/ui/sidebar'
+import { friendlyError } from '../lib/friendly-error'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -189,20 +190,21 @@ function PlanButton({ label, selected, onClick }: { label: string; selected: boo
 
 // ─── ExpiryBar ────────────────────────────────────────────────────────────────
 
-function ExpiryBar({ expiresAt, uploadedAt }: { expiresAt: number; uploadedAt: number }) {
-  const total = expiresAt - uploadedAt
-  const remaining = expiresAt - Date.now()
-  const pct = Math.max(0, Math.min(100, (remaining / total) * 100))
-  const urgent = remaining < 7 * 86_400_000
+/**
+ * Time left on a FIXED one-year scale (R3-6), matching the deletable-drive
+ * card: same time left ⇒ same bar, whatever the file's upload date. Files on
+ * a drive expire together, so a per-file lifetime ratio only confused.
+ */
+function ExpiryBar({ expiresAt }: { expiresAt: number }) {
+  const daysLeft = (expiresAt - Date.now()) / 86_400_000
+  const pct = Math.max(2, Math.min(100, (daysLeft / 365) * 100))
+  const urgent = daysLeft <= 7
 
   return (
     <div className="h-1 rounded-full overflow-hidden w-24" style={{ backgroundColor: 'rgb(var(--border))' }}>
       <div
         className="h-full rounded-full transition-all"
-        style={{
-          width: `${pct}%`,
-          backgroundColor: urgent ? '#ef4444' : pct < 30 ? '#facc15' : '#4ade80',
-        }}
+        style={{ width: `${pct}%`, backgroundColor: urgent ? '#ef4444' : '#4ade80' }}
       />
     </div>
   )
@@ -1113,6 +1115,8 @@ interface RecordRowProps {
   copiedId: string | null
   downloadingId: string | null
   downloadPct: number | null
+  /** Last download failure for a record (R3b-1b) — shown inline with a retry, never an alert */
+  downloadErrors: Record<string, string>
   gatewayUrl: string
   onCopy: (id: string, hash: string) => void
   onUpdate: (id: string) => void
@@ -1129,6 +1133,7 @@ function RecordRow({
   copiedId,
   downloadingId,
   downloadPct,
+  downloadErrors,
   gatewayUrl,
   onCopy,
   onUpdate,
@@ -1254,6 +1259,24 @@ function RecordRow({
             {downloadPct > 0 ? `Saving ${downloadPct}%` : 'Preparing…'}
           </span>
         </div>
+      ) : downloadErrors[record.id] ? (
+        // Failed download (R3b-1b): inline, in the same status column, with a
+        // retry — the reason is on hover so the row keeps its layout.
+        <div className="flex items-center justify-end gap-2 shrink-0 w-[12.5rem]" title={downloadErrors[record.id]}>
+          <span
+            className="text-[10px] uppercase tracking-widest font-semibold whitespace-nowrap"
+            style={{ color: '#ef4444' }}
+          >
+            Download failed
+          </span>
+          <button
+            onClick={() => onDownload(record.id, record.hash, record.name)}
+            className="text-[10px] uppercase tracking-widest font-semibold underline whitespace-nowrap"
+            style={{ color: 'rgb(var(--fg))' }}
+          >
+            Retry
+          </button>
+        </div>
       ) : record.pendingTagUid !== undefined ? (
         // Still spreading to the network (#23) — same prominent treatment as
         // downloads, driven by the tracker entry this record's tag feeds.
@@ -1268,16 +1291,14 @@ function RecordRow({
             className="text-[10px] uppercase tracking-widest font-semibold w-24 text-right whitespace-nowrap tabular-nums"
             style={{ color: 'rgb(var(--accent))' }}
           >
-            {propagating?.pct !== null && propagating?.pct !== undefined
-              ? `To network ${propagating.pct}%`
-              : 'To network…'}
+            {propagating?.pct !== null && propagating?.pct !== undefined ? `Storing ${propagating.pct}%` : 'Storing…'}
           </span>
         </div>
       ) : (
         <div className="flex items-center gap-2 shrink-0">
-          <ExpiryBar expiresAt={expiresAt} uploadedAt={record.uploadedAt} />
+          <ExpiryBar expiresAt={expiresAt} />
           <span
-            className="text-[10px] uppercase tracking-widest font-semibold w-16 text-right whitespace-nowrap"
+            className="text-[10px] uppercase tracking-widest font-semibold w-24 text-right whitespace-nowrap"
             style={{ color: urgent ? '#ef4444' : 'rgb(var(--fg-muted))' }}
           >
             {expiry}
@@ -2010,14 +2031,14 @@ function AddFilePanel({
         // through the global tracker (#4/#5), so the progress survives
         // navigation, feeds the sidebar indicator + propagation visual, and
         // rings the bell on completion.
-        setPhase('Propagating to network…')
+        setPhase('Storing on the network…')
         setProgress(0)
         setPropagationTagUid(uploadTagUid)
         const { complete } = await followTagPropagation(uploadTagUid, name, driveId, pct => setProgress(pct))
 
         setPropagationTagUid(null)
 
-        if (!complete) setPhase('Still propagating in the background…')
+        if (!complete) setPhase('Still storing in the background…')
       }
 
       setProgress(null)
@@ -2631,6 +2652,7 @@ export default function Drive() {
   const [addingFile, setAddingFile] = useState(false)
   const [search, setSearch] = useState('')
   const [copiedId, setCopiedId] = useState<string | null>(null)
+  const [downloadErrors, setDownloadErrors] = useState<Record<string, string>>({})
   // Downloads live in the global transfers store (#5): the fetch keeps
   // updating the store after navigation, so a revisit re-attaches instead of
   // showing an idle row while bytes are still flowing.
@@ -2771,6 +2793,7 @@ export default function Drive() {
 
     transfers.begin({ id: transferId, kind: 'download', name, phase: 'Downloading…' })
     transfers.update(transferId, { pct: 0 })
+    setDownloadErrors(({ [id]: _cleared, ...rest }) => rest)
     try {
       // Check if file is encrypted — find the record and its drive metadata
       const record = records.find(r => r.id === id)
@@ -2783,10 +2806,9 @@ export default function Drive() {
       useTransfersStore.getState().finish(transferId)
     } catch (error) {
       useTransfersStore.getState().finish(transferId, 'failed')
-      // Surface failures (#105) — a silent catch here left users with no
-      // feedback when a download stalled or errored mid-stream.
-      // eslint-disable-next-line no-alert
-      alert(error instanceof Error ? error.message : 'Download failed — please try again.')
+      // Surface failures (#105) inline on the row with a retry (R3b-1b) — a
+      // silent catch left users with no feedback, and an alert blocked the page.
+      setDownloadErrors(prev => ({ ...prev, [id]: friendlyError(error, 'Download failed — please try again.') }))
     }
   }
 
@@ -2891,6 +2913,7 @@ export default function Drive() {
                     copiedId={copiedId}
                     downloadingId={downloadingId}
                     downloadPct={downloadPct}
+                    downloadErrors={downloadErrors}
                     gatewayUrl={gatewayUrl}
                     onCopy={copyHash}
                     onUpdate={setUpdatingId}
@@ -3202,6 +3225,7 @@ export default function Drive() {
     copiedId,
     downloadingId,
     downloadPct,
+    downloadErrors,
     gatewayUrl,
     onCopy: copyHash,
     onUpdate: setUpdatingId,
