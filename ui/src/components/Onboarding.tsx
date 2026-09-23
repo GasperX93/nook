@@ -35,6 +35,9 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
 
   const [step, setStep] = useState<Step>('starting')
   const [copiedAddr, setCopiedAddr] = useState(false)
+  // R3-4: a cross-chain top-up takes minutes; without this the funding step
+  // sat silent between starting the transfer and the widget completing.
+  const [topUpInFlight, setTopUpInFlight] = useState(false)
   const [giftCode, setGiftCode] = useState('')
   const [redeeming, setRedeeming] = useState(false)
   const [redeemError, setRedeemError] = useState<string | null>(null)
@@ -231,7 +234,12 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
                   destination={address}
                   intent="arbitrary"
                   theme={WIDGET_THEME}
-                  hooks={{ onCompletion: async () => setStep('syncing') }}
+                  hooks={{
+                    beforeTransactionStart: async () => setTopUpInFlight(true),
+                    onUserAbort: async () => setTopUpInFlight(false),
+                    onFatalError: async () => setTopUpInFlight(false),
+                    onCompletion: async () => setStep('syncing'),
+                  }}
                 />
               ) : (
                 <div className="flex items-center gap-2">
@@ -242,6 +250,19 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
                 </div>
               )}
             </div>
+
+            {topUpInFlight && (
+              <div
+                className="rounded-xl border p-4 flex items-start gap-3"
+                style={{ backgroundColor: 'rgba(96,165,250,0.08)', borderColor: 'rgba(96,165,250,0.25)' }}
+              >
+                <Loader2 size={14} className="animate-spin shrink-0 mt-0.5" style={{ color: '#60a5fa' }} />
+                <p className="text-xs leading-relaxed" style={{ color: 'rgb(var(--fg))' }}>
+                  Funds are on the way — cross-chain transfers can take a few minutes. Nook checks every 15 s and moves
+                  on automatically.
+                </p>
+              </div>
+            )}
 
             {/* Or send directly — the address as a concrete instruction, with
                 the wrong-chain warning (irreversible-loss class). */}
