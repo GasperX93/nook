@@ -5,7 +5,7 @@ import '@rainbow-me/rainbowkit/styles.css'
 import '@upcoming/multichain-widget/styles.css'
 import { MultichainWidget } from '@upcoming/multichain-widget'
 import { weiToDai } from '../api/bee'
-import { api } from '../api/client'
+import { api, type FundingState } from '../api/client'
 import { useAddresses, useBeeHealth, useRestart, useStamps, useStatus, useWallet } from '../api/queries'
 import { useAppStore } from '../store/app'
 import { useDerivedKey } from '../hooks/useDerivedKey'
@@ -29,7 +29,7 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
   const { isSuccess: beeOnline } = useBeeHealth()
   const { data: status } = useStatus()
   const { isSuccess: stampsReady } = useStamps()
-  const { data: wallet, refetch: refetchWallet, isFetching: walletChecking } = useWallet()
+  const { data: wallet, refetch: refetchWallet } = useWallet()
   const { data: addresses } = useAddresses()
   const restart = useRestart()
 
@@ -42,6 +42,10 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
   const [redeeming, setRedeeming] = useState(false)
   const [redeemError, setRedeemError] = useState<string | null>(null)
   const [redeemDone, setRedeemDone] = useState(false)
+  // R5-15: "check now" runs the backend funding monitor's check (the one that
+  // actually decides this step) and reports what it found.
+  const [fundCheck, setFundCheck] = useState<FundingState | null>(null)
+  const [checkingFunds, setCheckingFunds] = useState(false)
 
   const address = addresses?.ethereum ?? (status?.address ? `0x${status.address}` : '')
   const hasFunds = wallet ? Number(weiToDai(wallet.nativeTokenBalance)) > 0 : false
@@ -75,9 +79,36 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
     if (status?.mode === 'ultra-light' || beeOnline) setStep('identity')
   }, [step, beeOnline, status?.mode, lockedStep, startingMinElapsed, skipReady])
 
+  // Advance when the funds are visible to Bee — or, earlier, when the backend
+  // funding monitor has found them and is restarting Bee in light mode (in
+  // ultra-light mode Bee has no chain connection to read the balance with).
+  const fundsFound = hasFunds || status?.funding?.switching === true || status?.mode === 'light'
+
   useEffect(() => {
-    if (!lockedStep && step === 'funding' && hasFunds) setStep('syncing')
-  }, [step, hasFunds, lockedStep])
+    if (!lockedStep && step === 'funding' && fundsFound) setStep('syncing')
+  }, [step, fundsFound, lockedStep])
+
+  async function checkFundsNow() {
+    setCheckingFunds(true)
+
+    try {
+      const result = await api.checkFunding()
+
+      setFundCheck(result)
+
+      if (result.switching) setStep('syncing')
+      void refetchWallet()
+    } catch {
+      setFundCheck({
+        checkedAt: Date.now(),
+        xdai: null,
+        error: "Couldn't reach Nook's background service",
+        switching: false,
+      })
+    } finally {
+      setCheckingFunds(false)
+    }
+  }
 
   useEffect(() => {
     if (!lockedStep && step === 'syncing' && stampsReady) {
@@ -198,6 +229,11 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
           <div className="text-center space-y-4">
             <Loader2 size={32} className="animate-spin mx-auto" style={{ color: '#f97316' }} />
             <h2 className="text-lg font-semibold">Connecting to the network</h2>
+            {status?.funding?.switching && (
+              <p className="text-sm font-medium" style={{ color: '#4ade80' }}>
+                Funds received — your node is restarting to use them.
+              </p>
+            )}
             <p className="text-sm leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
               Your node is syncing with the Swarm network. It discovers peers and catches up with the latest state.
             </p>
@@ -214,17 +250,17 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
         {step === 'funding' && (
           <div className="space-y-5">
             <div className="text-center space-y-3">
-              <h2 className="text-lg font-semibold">Top up your node wallet</h2>
+              <h2 className="text-lg font-semibold">Add funds to your node wallet</h2>
               <p className="text-sm leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
                 Nook doesn't use servers — your files and messages live on Swarm, a decentralized network. You pay
-                upfront for the space you use. To finish setup, top up your node wallet with 5 xBZZ.
+                upfront for the space you use. To finish setup, add 5 xBZZ to your node wallet.
               </p>
             </div>
 
             {/* Multichain widget */}
             <div className="rounded-xl border p-5" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
               <p className="text-xs uppercase tracking-widest mb-1" style={{ color: 'rgb(var(--fg-muted))' }}>
-                Top up
+                Add funds
               </p>
               <p className="text-xs mb-3" style={{ color: 'rgb(var(--fg-muted))' }}>
                 Fund from any EVM-compatible chain using any token — it's swapped automatically.
@@ -353,14 +389,15 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
             <p className="text-xs text-center" style={{ color: 'rgb(var(--fg-muted))' }}>
               Nook checks your wallet every 15 seconds and moves on automatically — or{' '}
               <button
-                onClick={() => void refetchWallet()}
-                disabled={walletChecking}
+                onClick={() => void checkFundsNow()}
+                disabled={checkingFunds}
                 className="underline transition-colors"
                 style={{ color: 'rgb(var(--fg-muted))' }}
               >
-                {walletChecking ? 'checking…' : "I've sent funds — check now"}
+                {checkingFunds ? 'checking…' : "I've sent funds — check now"}
               </button>
             </p>
+            {fundCheck && !checkingFunds && <FundCheckResult result={fundCheck} />}
             <p className="text-[11px] text-center" style={{ color: 'rgb(var(--fg-muted))' }}>
               Using MetaMask? Unlock it first — if it doesn't show up in the box above, refresh this page.
             </p>
@@ -509,5 +546,31 @@ function OnboardingIdentityStep({ onContinue }: { onContinue: () => void }) {
         </p>
       </div>
     </div>
+  )
+}
+
+/** What "check now" found (R5-15) — one plain line under the button. */
+function FundCheckResult({ result }: { result: FundingState }) {
+  let text: string
+
+  if (result.switching) {
+    text = 'Funds received — your node is restarting to use them.'
+  } else if (result.error) {
+    text = `${result.error}. Nook keeps checking every 15 seconds.`
+  } else if (result.xdai !== null) {
+    const xdai = Number(result.xdai)
+
+    text =
+      xdai > 0
+        ? `Not enough yet — your node wallet has ${xdai.toFixed(4)} xDAI and Nook needs at least 0.001 xDAI to start.`
+        : 'Nothing has arrived yet — transfers can take a minute or two. Nook keeps checking every 15 seconds.'
+  } else {
+    text = 'Nook keeps checking every 15 seconds.'
+  }
+
+  return (
+    <p className="text-xs text-center" role="status" style={{ color: 'rgb(var(--fg))' }}>
+      {text}
+    </p>
   )
 }

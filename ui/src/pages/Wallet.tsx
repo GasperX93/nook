@@ -316,7 +316,7 @@ export default function Wallet() {
               <div className="flex items-center gap-2">
                 <WalletIcon size={13} style={{ color: 'rgb(var(--accent))' }} />
                 <p className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--accent))' }}>
-                  Top up
+                  Add funds
                 </p>
               </div>
               <p className="text-xs mt-1" style={{ color: 'rgb(var(--fg-muted))' }}>

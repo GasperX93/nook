@@ -7,15 +7,38 @@ import { runLauncher } from './launcher'
 import { BeeManager } from './lifecycle'
 import { logger } from './logger'
 import { checkPath, getPath } from './path'
+import { isAutomaticRpc, nookRpcUrl, RPC_RELAY_URL } from './rpc'
 
 export type BeeMode = 'ultra-light' | 'light'
 
 const MIN_XDAI = '0.001'
 const POLL_INTERVAL_MS = 15_000
-const RPC_ENDPOINT = 'https://rpc.gnosischain.com'
 
 let currentMode: BeeMode = 'light'
 let pollTimer: ReturnType<typeof setInterval> | null = null
+let monitorAddress: string | undefined
+
+/**
+ * What the funding monitor last saw (R5-15). Exposed through /status and
+ * `POST /funding/check`, so onboarding can say "found 1.0 xDAI — restarting
+ * your node" or "can't reach the network right now" instead of sitting silent.
+ */
+export interface FundingState {
+  /** Epoch ms of the last balance check, null before the first one. */
+  checkedAt: number | null
+  /** Last xDAI balance read, as a decimal string. */
+  xdai: string | null
+  /** Why the last check failed (RPC unreachable / throttled), else null. */
+  error: string | null
+  /** Funds found — Bee is being restarted in light mode. */
+  switching: boolean
+}
+
+const fundingState: FundingState = { checkedAt: null, xdai: null, error: null, switching: false }
+
+export function getFundingState(): FundingState {
+  return { ...fundingState }
+}
 
 export function detectMode(): BeeMode {
   if (!checkPath('config.yaml')) return 'ultra-light'
@@ -49,7 +72,28 @@ export function startMonitorIfNeeded() {
 
   logger.info(`Starting funding monitor for 0x${address} (polling every ${POLL_INTERVAL_MS / 1000}s)`)
 
-  pollTimer = setInterval(async () => checkBalance(address, RPC_ENDPOINT), POLL_INTERVAL_MS)
+  monitorAddress = address
+  pollTimer = setInterval(async () => checkBalance(address), POLL_INTERVAL_MS)
+}
+
+let inFlight: Promise<void> | null = null
+
+/**
+ * Run the balance check NOW instead of waiting for the next poll — what
+ * onboarding's "I've sent funds — check now" triggers (R5-15). Returns the
+ * resulting state. A no-op (just the state) once the node is in light mode.
+ */
+export async function checkFundingNow(): Promise<FundingState> {
+  const address = monitorAddress ?? readAddress()
+
+  if (currentMode === 'light' || fundingState.switching || !address) return getFundingState()
+
+  inFlight ??= checkBalance(address).finally(() => {
+    inFlight = null
+  })
+  await inFlight
+
+  return getFundingState()
 }
 
 function readAddress(): string | undefined {
@@ -63,24 +107,39 @@ function readAddress(): string | undefined {
   }
 }
 
-async function checkBalance(address: string, rpc: string) {
+let lastErrorLog = 0
+
+async function checkBalance(address: string) {
   try {
-    const provider = new providers.JsonRpcProvider(rpc, 100)
+    // Through the RPC relay (automatic fallback) unless the user set their own.
+    const provider = new providers.StaticJsonRpcProvider(nookRpcUrl(), 100)
     const balance = await provider.getBalance(`0x${address}`)
     const threshold = utils.parseEther(MIN_XDAI)
+
+    fundingState.checkedAt = Date.now()
+    fundingState.xdai = utils.formatEther(balance)
+    fundingState.error = null
 
     if (balance.gte(threshold)) {
       logger.info(`Funding detected (${utils.formatEther(balance)} xDAI) — switching to light mode`)
       await switchToLightMode()
     }
   } catch (err) {
-    // RPC failures are non-fatal — retry next interval
-    logger.debug(`Funding monitor RPC error: ${err}`)
+    // RPC failures are non-fatal — retry next interval — but no longer
+    // silent: onboarding shows them, and the log gets one line per 5 min.
+    fundingState.checkedAt = Date.now()
+    fundingState.error = 'The Gnosis network is not reachable right now'
+
+    if (Date.now() - lastErrorLog > 5 * 60_000) {
+      lastErrorLog = Date.now()
+      logger.info(`Funding monitor: balance check failed (${(err as Error).message ?? err}) — retrying`)
+    }
   }
 }
 
 async function switchToLightMode() {
   stopMonitor()
+  fundingState.switching = true
 
   logger.info('Funding detected — stopping Bee, updating config, restarting in light mode')
 
@@ -88,8 +147,15 @@ async function switchToLightMode() {
   BeeManager.stop()
   await BeeManager.waitForSigtermToFinish()
 
-  // 2. Write blockchain-rpc-endpoint and swap-enable AFTER Bee is stopped
-  writeConfigYaml({ 'blockchain-rpc-endpoint': RPC_ENDPOINT, 'swap-enable': true })
+  // 2. Write blockchain-rpc-endpoint and swap-enable AFTER Bee is stopped.
+  // Bee gets the RPC relay (automatic fallback) — unless the user already set
+  // their own RPC in Settings, which is kept.
+  const configured = readConfigYaml()['blockchain-rpc-endpoint']
+
+  writeConfigYaml({
+    'blockchain-rpc-endpoint': isAutomaticRpc(configured) ? RPC_RELAY_URL : configured,
+    'swap-enable': true,
+  })
   currentMode = 'light'
 
   // 3. Start Bee in light mode

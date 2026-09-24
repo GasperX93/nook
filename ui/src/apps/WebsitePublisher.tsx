@@ -1,4 +1,4 @@
-import { Check, ChevronRight, Copy, ExternalLink, Globe, Link } from 'lucide-react'
+import { Check, ChevronRight, Copy, ExternalLink, Globe, Link, Loader2 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { calcStampCost, depthToBytes, DURATION_PRESETS, getBeeUrl, plurToBzz, SIZE_PRESETS } from '../api/bee'
@@ -131,6 +131,28 @@ export default function WebsitePublisher() {
   const reusableStamp =
     boughtStamp && boughtStamp.sizeIdx === sizeIdx && boughtStamp.durationIdx === durationIdx ? boughtStamp : null
   const canAfford = cost && bzzBalance !== null ? bzzBalance >= Number(cost.bzzCost) : true
+
+  // R5-14: the Publish button must say WHY it's disabled, right where it is.
+  // The longest duration the wallet covers at the chosen size — offered as a
+  // one-click fix when the current choice costs more than the balance.
+  const affordableDuration = (() => {
+    if (!chainState || bzzBalance === null || canAfford) return null
+
+    for (let i = DURATION_PRESETS.length - 1; i >= 0; i--) {
+      const c = calcStampCost(
+        selectedSize.depth,
+        DURATION_PRESETS[i].months,
+        chainState.currentPrice,
+        chainState.minimumValidityBlocks,
+      )
+
+      if (bzzBalance >= Number(c.bzzCost)) return { idx: i, cost: c.bzzCost }
+    }
+
+    return null
+  })()
+  const publishBlocker: 'price' | 'funds' | null = reusableStamp ? null : !cost ? 'price' : !canAfford ? 'funds' : null
+  const xbzz = (v: string | number) => Number(v).toFixed(2)
 
   // ── Content selection ─────────────────────────────────────────────────────
 
@@ -430,40 +452,17 @@ export default function WebsitePublisher() {
               <p className="text-xs uppercase tracking-widest mb-0.5" style={{ color: 'rgb(var(--fg-muted))' }}>
                 Estimated cost
               </p>
-              <p className="text-sm font-semibold">{cost ? `${cost.bzzCost} BZZ` : '—'}</p>
+              <p className="text-sm font-semibold">{cost ? `${cost.bzzCost} xBZZ` : '—'}</p>
             </div>
             <div className="text-right">
               <p className="text-xs uppercase tracking-widest mb-0.5" style={{ color: 'rgb(var(--fg-muted))' }}>
                 Your balance
               </p>
               <p className="text-sm font-semibold" style={{ color: canAfford ? 'rgb(var(--fg))' : '#ef4444' }}>
-                {bzzBalance !== null ? `${bzzBalance.toFixed(4)} BZZ` : '—'}
+                {bzzBalance !== null ? `${bzzBalance.toFixed(4)} xBZZ` : '—'}
               </p>
             </div>
           </div>
-
-          {!canAfford && !reusableStamp && (
-            <div
-              className="rounded-lg border px-4 py-3 flex items-center justify-between gap-4"
-              style={{ backgroundColor: 'rgba(239,68,68,0.06)', borderColor: 'rgba(239,68,68,0.25)' }}
-            >
-              <div>
-                <p className="text-xs font-semibold mb-0.5" style={{ color: '#ef4444' }}>
-                  {bzzBalance === 0 ? 'Your wallet has no BZZ' : 'Not enough BZZ'}
-                </p>
-                <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-                  Top up your wallet with BZZ to fund this upload.
-                </p>
-              </div>
-              <button
-                onClick={() => navigate('/account')}
-                className="shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold"
-                style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
-              >
-                Go to Wallet
-              </button>
-            </div>
-          )}
 
           {/* Feed toggle */}
           <div className="rounded-lg border p-4 space-y-3" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
@@ -521,6 +520,46 @@ export default function WebsitePublisher() {
                   Your storage is already paid for — pressing Publish will reuse it and retry the upload.
                 </p>
               )}
+            </div>
+          )}
+
+          {/* Why Publish is disabled — next to the button (R5-14). */}
+          {publishBlocker === 'price' && (
+            <div className="flex items-start gap-2 text-xs" role="status" style={{ color: 'rgb(var(--fg-muted))' }}>
+              <Loader2 size={12} className="animate-spin shrink-0 mt-0.5" />
+              <span>
+                Checking the current storage price — your node is still connecting to the blockchain. This usually takes
+                a minute.
+              </span>
+            </div>
+          )}
+          {publishBlocker === 'funds' && cost && (
+            <div
+              className="rounded-lg border px-4 py-3 space-y-2"
+              role="status"
+              style={{ backgroundColor: 'rgba(239,68,68,0.06)', borderColor: 'rgba(239,68,68,0.25)' }}
+            >
+              <p className="text-xs" style={{ color: 'rgb(var(--fg))' }}>
+                Needs {xbzz(cost.bzzCost)} xBZZ — your wallet has {xbzz(bzzBalance ?? 0)} xBZZ.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {affordableDuration && (
+                  <button
+                    onClick={() => setDurationIdx(affordableDuration.idx)}
+                    className="px-3 py-1.5 rounded-lg text-xs font-semibold border"
+                    style={{ borderColor: 'rgb(var(--border))', color: 'rgb(var(--fg))' }}
+                  >
+                    Use {DURATION_PRESETS[affordableDuration.idx].label} · {xbzz(affordableDuration.cost)} xBZZ
+                  </button>
+                )}
+                <button
+                  onClick={() => navigate('/account')}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold"
+                  style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
+                >
+                  Add xBZZ
+                </button>
+              </div>
             </div>
           )}
 

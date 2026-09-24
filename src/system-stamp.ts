@@ -4,6 +4,7 @@ import { BATCH_CREATE_GAS_LIMIT } from './blockchain'
 import { readConfigYaml } from './config'
 import { setAutoExtendSetting, topupAmount } from './extend-monitor'
 import { fetchWithTimeout } from './fetch-timeout'
+import { isOwnBee } from './foreign-bee'
 import { getMode } from './funding-monitor'
 import { logger } from './logger'
 import { pushNotification } from './notifications'
@@ -143,6 +144,13 @@ export async function runSystemStampCheck(beeFetch: BeeFetch = realBeeFetch): Pr
       // word, identity and messaging silently never activate and the user has
       // no way to know why (fresh-install finding, 2026-09-17). Tell them once.
       if (bzzBalance > BigInt(0)) notifyLowFundsOnce()
+
+      return 'skipped'
+    }
+
+    // R5-11: never buy with a node that isn't provably Nook's own.
+    if (!(await isOwnBee())) {
+      logger.error('system-stamp: purchase skipped — the node on port 1633 is not Nook’s own')
 
       return 'skipped'
     }

@@ -159,6 +159,19 @@ function loadAll(): { records: UploadRecord[]; folders: DriveFolder[] } {
   return { records, folders }
 }
 
+/**
+ * Storage-first record write (R5-2). Saving inside a React state updater
+ * silently did NOTHING when the Drive page had unmounted — e.g. an encrypted
+ * upload (or a classic upload still in step 1) finishing after the user
+ * navigated away: the content was on Swarm but its address was never saved.
+ * Write localStorage directly, then poke every mounted instance to reload —
+ * the same path the transfer tracker uses (clearPendingTagUid).
+ */
+function persistRecords(mutate: (records: UploadRecord[]) => UploadRecord[]): void {
+  save(mutate(loadAll().records))
+  window.dispatchEvent(new Event('nook:records-changed'))
+}
+
 export function useUploadHistory() {
   const [init] = useState(loadAll)
   const [records, setRecords] = useState(init.records)
@@ -180,30 +193,15 @@ export function useUploadHistory() {
   }, [])
 
   function add(record: UploadRecord) {
-    setRecords(prev => {
-      const next = [record, ...prev]
-      save(next)
-
-      return next
-    })
+    persistRecords(all => [record, ...all])
   }
 
   function remove(id: string) {
-    setRecords(prev => {
-      const next = prev.filter(r => r.id !== id)
-      save(next)
-
-      return next
-    })
+    persistRecords(all => all.filter(r => r.id !== id))
   }
 
   function update(id: string, changes: Partial<UploadRecord>) {
-    setRecords(prev => {
-      const next = prev.map(r => (r.id === id ? { ...r, ...changes } : r))
-      save(next)
-
-      return next
-    })
+    persistRecords(all => all.map(r => (r.id === id ? { ...r, ...changes } : r)))
   }
 
   function addFolder(name: string, driveId: string, parentFolderId?: string) {

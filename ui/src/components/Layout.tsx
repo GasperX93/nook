@@ -41,6 +41,7 @@ import { useAppStore } from '../store/app'
 import NotificationBell from './NotificationBell'
 import SwarmIdChip from './SwarmIdChip'
 import SwarmIdDialog from './SwarmIdDialog'
+import ForeignBeeScreen from './ForeignBeeScreen'
 import Onboarding from './Onboarding'
 import {
   Sidebar,
@@ -357,7 +358,7 @@ export default function Layout() {
           )}
 
           {/* Crash loop — the supervisor gave up restarting Bee (#94) */}
-          {status?.crashLoop && !showOnboarding && (
+          {status?.crashLoop && !status?.foreignBee && !showOnboarding && (
             <div
               className="flex items-center gap-2 px-4 py-2.5 text-xs shrink-0"
               style={{ backgroundColor: 'rgba(239,68,68,0.1)', borderBottom: '1px solid rgba(239,68,68,0.2)' }}
@@ -385,7 +386,7 @@ export default function Layout() {
           )}
 
           {/* Bee down — only shown after it was previously online */}
-          {showDown && !status?.crashLoop && !showOnboarding && (
+          {showDown && !status?.crashLoop && !status?.foreignBee && !showOnboarding && (
             <div
               className="flex items-center gap-2 px-4 py-2.5 text-xs shrink-0"
               style={{ backgroundColor: 'rgba(239,68,68,0.1)', borderBottom: '1px solid rgba(239,68,68,0.2)' }}
@@ -551,7 +552,17 @@ export default function Layout() {
           )}
 
           <div className="flex-1 overflow-auto flex flex-col">
-            {showOnboarding ? <Onboarding skipReady={onboardingCompleted} /> : <Outlet />}
+            {status?.foreignBee ? (
+              <ForeignBeeScreen
+                foreignBee={status.foreignBee}
+                onRetry={() => restartBee.mutate()}
+                retrying={restartBee.isPending}
+              />
+            ) : showOnboarding ? (
+              <Onboarding skipReady={onboardingCompleted} />
+            ) : (
+              <Outlet />
+            )}
           </div>
         </main>
       </div>

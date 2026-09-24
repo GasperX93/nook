@@ -23,11 +23,13 @@ import {
 } from './blockchain'
 import { clearIdentityCache, isIdentityCacheAvailable, readIdentityCache, writeIdentityCache } from './identity-cache'
 import { readConfigYaml, readWalletPasswordOrThrow, writeConfigYaml } from './config'
+import { checkFundingNow } from './funding-monitor'
 import { runLauncher } from './launcher'
 import { BeeManager } from './lifecycle'
 import { logger, readNookLogs, readBeeLogs, subscribeLogServerRequests } from './logger'
 import { getPath } from './path'
 import { port } from './port'
+import { nookRpcUrl, rpcRelayMiddleware } from './rpc'
 import {
   MIN_RECLAIMABLE_DEPTH,
   RECLAIMABLE_WRITE_BLOCKED_MESSAGE,
@@ -125,6 +127,10 @@ export function runServer() {
     }
   })
   app.use(mount('/dashboard', serve(UI_DIST)))
+
+  // Gnosis RPC relay with automatic fallback (R5-3/R5-14) — Bee's
+  // blockchain-rpc-endpoint points here. Before bodyparser: raw body.
+  app.use(rpcRelayMiddleware)
 
   // Pass-through proxy: /bee-api/* → http://127.0.0.1:1633/*
   // Mirrors the Vite dev proxy so renderer code can use `${origin}/bee-api`
@@ -260,6 +266,27 @@ export function runServer() {
   router.get('/status', context => {
     context.body = getStatus()
   })
+
+  // Onboarding's "I've sent funds — check now" (R5-15): run the funding
+  // monitor's balance check immediately — the check that actually decides
+  // the step — instead of waiting for its next 15 s poll.
+  router.post('/funding/check', async context => {
+    context.body = await checkFundingNow()
+  })
+
+  // Bee readiness, always answered 200 (R5-15): Bee itself answers 400 while
+  // it warms up / re-syncs, and the browser prints every one of those as a
+  // red console error when the dashboard polls it directly for minutes.
+  router.get('/bee-readiness', async context => {
+    try {
+      const res = await fetchWithTimeout('http://127.0.0.1:1633/readiness', {}, 5_000)
+      const json = (await res.json().catch(() => ({}))) as { status?: string }
+
+      context.body = { ready: res.ok && json.status === 'ready' }
+    } catch {
+      context.body = { ready: false }
+    }
+  })
   router.get('/identity-cache', context => {
     context.body = {
       available: isIdentityCacheAvailable(),
@@ -332,9 +359,7 @@ export function runServer() {
 
       return
     }
-    const config = readConfigYaml()
-    const blockchainRpcEndpoint =
-      (Reflect.get(config, 'blockchain-rpc-endpoint') as string) || 'https://rpc.gnosischain.com'
+    const blockchainRpcEndpoint = nookRpcUrl()
     try {
       const { ethereum: nodeAddress } = await makeBee().getNodeAddresses()
       await redeemGiftCode(giftCode, nodeAddress.toString(), blockchainRpcEndpoint)
@@ -1067,10 +1092,7 @@ export function runServer() {
 
       return
     }
-
-    const config = readConfigYaml()
-    const blockchainRpcEndpoint =
-      (Reflect.get(config, 'blockchain-rpc-endpoint') as string) || 'https://rpc.gnosischain.com'
+    const blockchainRpcEndpoint = nookRpcUrl()
     const privateKeyString = await getPrivateKey()
 
     try {
@@ -1111,10 +1133,7 @@ export function runServer() {
 
       return
     }
-
-    const config = readConfigYaml()
-    const blockchainRpcEndpoint =
-      (Reflect.get(config, 'blockchain-rpc-endpoint') as string) || 'https://rpc.gnosischain.com'
+    const blockchainRpcEndpoint = nookRpcUrl()
     const privateKeyString = await getPrivateKey()
 
     try {
@@ -1190,9 +1209,7 @@ export function runServer() {
   })
 
   router.post('/swap', async context => {
-    const config = readConfigYaml()
-    const blockchainRpcEndpoint =
-      (Reflect.get(config, 'blockchain-rpc-endpoint') as string) || 'https://rpc.gnosischain.com'
+    const blockchainRpcEndpoint = nookRpcUrl()
     const privateKeyString = await getPrivateKey()
     try {
       await swap(privateKeyString, (context.request.body as Record<string, string>).dai, '10000', blockchainRpcEndpoint)

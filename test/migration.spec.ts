@@ -124,6 +124,41 @@ describe('runMigrations', () => {
     })
   })
 
+  describe('RPC relay (R5-3/R5-14)', () => {
+    const RELAY = 'http://127.0.0.1:3054/rpc'
+
+    it.each(['https://rpc.gnosischain.com', 'https://xdai.fairdatasociety.org'])(
+      'moves the old default %s to the relay',
+      old => {
+        mockExists.mockReturnValue(true)
+        mockRead.mockReturnValue({ 'blockchain-rpc-endpoint': old, 'use-postage-snapshot': false })
+        runMigrations()
+        expect(mockWrite).toHaveBeenCalledWith({ 'blockchain-rpc-endpoint': RELAY })
+      },
+    )
+
+    it('keeps a custom RPC the user chose', () => {
+      mockExists.mockReturnValue(true)
+      mockRead.mockReturnValue({ 'blockchain-rpc-endpoint': 'https://my.rpc', 'use-postage-snapshot': false })
+      runMigrations()
+      expect(mockWrite).not.toHaveBeenCalledWith({ 'blockchain-rpc-endpoint': RELAY })
+    })
+
+    it('does not rewrite an install already on the relay', () => {
+      mockExists.mockReturnValue(true)
+      mockRead.mockReturnValue({ 'blockchain-rpc-endpoint': RELAY, 'use-postage-snapshot': false })
+      runMigrations()
+      expect(mockWrite).not.toHaveBeenCalledWith({ 'blockchain-rpc-endpoint': RELAY })
+    })
+
+    it('does not add an RPC to ultra-light installs', () => {
+      mockExists.mockReturnValue(true)
+      mockRead.mockReturnValue({ 'use-postage-snapshot': false })
+      runMigrations()
+      expect(mockWrite).not.toHaveBeenCalledWith({ 'blockchain-rpc-endpoint': RELAY })
+    })
+  })
+
   describe('swap-enable (no longer migrated)', () => {
     it('does not modify swap-enable regardless of value', () => {
       mockExists.mockReturnValue(true)

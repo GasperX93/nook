@@ -4,6 +4,7 @@
 import { createTar } from '../utils/tar'
 import type { FileEntry } from '../utils/directory'
 import { useAppStore } from '../store/app'
+import { api } from './client'
 
 function useAppStoreApiKey(): string {
   return useAppStore.getState().apiKey ?? ''
@@ -61,6 +62,15 @@ export interface UploadTag {
   synced: number
 }
 
+/** Whether Bee is ready to push (via Nook's backend; false when unknown). */
+async function beeIsReady(): Promise<boolean> {
+  try {
+    return (await api.getBeeReadiness()).ready
+  } catch {
+    return false
+  }
+}
+
 /**
  * Poll a tag until the upload is fully propagated (#92). swarm-cli's pattern:
  * poll every second, and RESET the patience counter whenever progress advances,
@@ -68,17 +78,38 @@ export interface UploadTag {
  * Resolves `{ complete: false }` on stall instead of throwing: the content is
  * safe on the local node and the background pusher keeps working; the caller
  * should proceed with a soft warning, not fail the upload.
+ *
+ * A Bee restart is NOT a stall (R5-13): while Bee is unreachable, or up but
+ * not ready yet (re-syncing, pushing nothing), keep waiting — up to
+ * `maxNotReadyMs` — instead of giving up after a minute and leaving the row
+ * frozen until the 5-minute resume loop. Bee finishes the push by itself
+ * after a restart (verified: tag 653 reached 100%), so the row should too.
  */
 export async function waitForTagPropagation(
   uid: number,
   onProgress?: (pct: number) => void,
-  opts: { pollMs?: number; maxStalledPolls?: number; onTag?: (tag: UploadTag) => void } = {},
+  opts: {
+    pollMs?: number
+    maxStalledPolls?: number
+    maxNotReadyMs?: number
+    onTag?: (tag: UploadTag) => void
+  } = {},
 ): Promise<{ complete: boolean; tag: UploadTag | null }> {
   const pollMs = opts.pollMs ?? 1000
   const maxStalledPolls = opts.maxStalledPolls ?? 60
+  const maxNotReadyMs = opts.maxNotReadyMs ?? 15 * 60_000
   let best = -1
   let stalled = 0
   let tag: UploadTag | null = null
+  let notReadySince: number | null = null
+
+  const sleep = async (): Promise<void> => new Promise(r => setTimeout(r, pollMs))
+  /** Bee is down or warming up: wait without counting it, within the bound. */
+  const waitingOnBee = () => {
+    notReadySince ??= Date.now()
+
+    return Date.now() - notReadySince < maxNotReadyMs
+  }
 
   while (stalled < maxStalledPolls) {
     try {
@@ -95,13 +126,23 @@ export async function waitForTagPropagation(
       if (done > best) {
         best = done
         stalled = 0
+        notReadySince = null
       } else {
         stalled++
       }
-    } catch {
-      stalled++
+    } catch (error) {
+      // Network error = Bee unreachable (stopped / restarting): not a stall.
+      if (!(error instanceof TypeError)) stalled++
+      else if (!waitingOnBee()) break
     }
-    await new Promise(r => setTimeout(r, pollMs))
+
+    // Before a no-progress streak runs out, check whether Bee is simply not
+    // ready (just restarted, re-syncing) — that's not a stall either.
+    if (stalled > 0 && stalled % 10 === 0 && !(await beeIsReady())) {
+      if (!waitingOnBee()) break
+      stalled = 0
+    }
+    await sleep()
   }
 
   return { complete: false, tag }

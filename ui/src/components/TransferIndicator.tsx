@@ -41,10 +41,12 @@ export default function TransferIndicator() {
                 ? t.kind === 'upload'
                   ? 'Stored'
                   : 'Saved'
-                : `${t.kind === 'upload' ? 'Storing' : 'Saving'}${t.pct !== null ? ` · ${t.pct}%` : '…'}${
-                    // Coarse, honest estimate (R4-13) — absent until it's meaningful.
-                    etaText(t) ? ` · ${etaText(t)}` : ''
-                  }`}
+                : t.status === 'failed'
+                  ? 'Failed'
+                  : `${t.label ?? (t.kind === 'upload' ? 'Storing' : 'Saving')}${t.pct !== null ? ` · ${t.pct}%` : '…'}${
+                      // Coarse, honest estimate (R4-13) — absent until it's meaningful.
+                      etaText(t) ? ` · ${etaText(t)}` : ''
+                    }`}
             </span>
           </span>
         </button>

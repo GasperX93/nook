@@ -1,6 +1,7 @@
 import { existsSync, renameSync, unlinkSync } from 'fs'
 import { configYamlExists, deleteKeyFromConfigYaml, readConfigYaml, writeConfigYaml } from './config'
 import { getLogPath, getPath } from './path'
+import { isAutomaticRpc, RPC_RELAY_URL } from './rpc-endpoints'
 
 function migrateFile(oldPath: string, newPath: string) {
   const oldExists = existsSync(oldPath)
@@ -36,9 +37,15 @@ export function runMigrations() {
     writeConfigYaml({ 'blockchain-rpc-endpoint': config['swap-endpoint'] })
   }
 
-  // Only upgrade old RPC for existing users who already have one set — don't add it for new ultra-light installs
-  if (config['blockchain-rpc-endpoint'] === 'https://xdai.fairdatasociety.org') {
-    writeConfigYaml({ 'blockchain-rpc-endpoint': 'https://rpc.gnosischain.com' })
+  // Route installs still on a default Nook once wrote (rpc.gnosischain.com,
+  // or the older fairdatasociety one) through the RPC relay, which falls back
+  // to a second public RPC when the first throttles (R5-3/R5-14). A custom
+  // RPC the user chose stays untouched. Only for installs that already have
+  // an RPC set — new ultra-light installs get one when funding switches them.
+  const rpc = config['blockchain-rpc-endpoint']
+
+  if (typeof rpc === 'string' && rpc !== RPC_RELAY_URL && isAutomaticRpc(rpc)) {
+    writeConfigYaml({ 'blockchain-rpc-endpoint': RPC_RELAY_URL })
   }
 
   // Cloudflare deprecated its Ethereum gateway: it still answers the handshake

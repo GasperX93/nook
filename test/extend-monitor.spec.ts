@@ -12,6 +12,8 @@ jest.mock('../src/config', () => ({
   readConfigYaml: () => ({ password: 'pw' }),
 }))
 jest.mock('../src/notify', () => ({ createNotification: jest.fn() }))
+// The node on 1633 is Nook's own in these tests (the R5-11 spending guard).
+jest.mock('../src/foreign-bee', () => ({ isOwnBee: jest.fn(async () => true) }))
 
 import { mkdirSync, rmSync } from 'fs'
 

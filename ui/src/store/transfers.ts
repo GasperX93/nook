@@ -28,6 +28,13 @@ export interface TransferEntry {
   chunksDone?: number
   chunksTotal?: number
   status: 'active' | 'done' | 'failed'
+  /** Short verb for compact places (sidebar): 'Copying' / 'Encrypting' / 'Storing'. Default by kind. */
+  label?: string
+  /** Uploads started from a drive (R5-2): shown as an in-progress row in that drive/folder. */
+  bytes?: number
+  folderId?: string
+  /** Set once the upload's record exists — the real row takes over from the in-progress one. */
+  recordId?: string
   startedAt: number
   /** Rolling [timestampMs, chunksDone] samples for the rate/ETA estimate. */
   samples: [number, number][]
@@ -35,8 +42,13 @@ export interface TransferEntry {
 
 interface TransfersState {
   transfers: TransferEntry[]
-  begin: (t: Pick<TransferEntry, 'id' | 'kind' | 'name'> & Partial<Pick<TransferEntry, 'driveId' | 'phase'>>) => void
-  update: (id: string, changes: Partial<Pick<TransferEntry, 'phase' | 'pct'>>) => void
+  begin: (
+    t: Pick<TransferEntry, 'id' | 'kind' | 'name'> &
+      Partial<Pick<TransferEntry, 'driveId' | 'phase' | 'label' | 'bytes' | 'folderId'>>,
+  ) => void
+  update: (id: string, changes: Partial<Pick<TransferEntry, 'phase' | 'pct' | 'label' | 'recordId'>>) => void
+  /** Drop an entry at once (no "done" linger) — e.g. when a follow-up entry takes over. */
+  remove: (id: string) => void
   /** Progress in chunks — also feeds the rate samples for the ETA. */
   chunkProgress: (id: string, done: number, total: number) => void
   finish: (id: string, status?: 'done' | 'failed') => void
@@ -75,6 +87,8 @@ export const useTransfersStore = create<TransfersState>((set, get) => ({
         }
       }),
     })),
+
+  remove: id => set(state => ({ transfers: state.transfers.filter(t => t.id !== id) })),
 
   finish: (id, status = 'done') => {
     set(state => ({ transfers: state.transfers.map(t => (t.id === id ? { ...t, status, pct: 100 } : t)) }))

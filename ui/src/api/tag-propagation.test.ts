@@ -1,0 +1,93 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+// Readiness comes from Nook's backend; each test decides what it answers.
+const readiness = vi.fn()
+
+vi.mock('./client', () => ({ api: { getBeeReadiness: () => readiness() } }))
+// The app store touches localStorage at import; this module doesn't need it.
+vi.mock('../store/app', () => ({ useAppStore: { getState: () => ({}) } }))
+
+import { waitForTagPropagation } from './bee'
+
+type Step = { tag: { split: number; seen: number; synced: number } } | 'down' | 'error'
+
+/** Scripted /tags answers; the last step repeats. */
+function scriptTags(steps: Step[]) {
+  let i = 0
+
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => {
+      const step = steps[Math.min(i++, steps.length - 1)]
+
+      if (step === 'down') throw new TypeError('Failed to fetch')
+
+      if (step === 'error') return new Response('boom', { status: 500 })
+
+      return new Response(JSON.stringify({ uid: 1, sent: 0, ...step.tag }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    }),
+  )
+}
+
+const tag = (synced: number) => ({ tag: { split: 100, seen: 0, synced } })
+
+beforeEach(() => {
+  readiness.mockReset()
+})
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+
+describe('waitForTagPropagation (R5-13)', () => {
+  it('keeps following through a Bee restart and completes once Bee finishes the push', async () => {
+    // Progress, then Bee unreachable for longer than the stall limit, then done.
+    scriptTags([tag(1), ...Array(80).fill('down'), tag(50), tag(100)])
+    readiness.mockResolvedValue({ ready: true })
+
+    const res = await waitForTagPropagation(1, undefined, { pollMs: 0, maxStalledPolls: 60 })
+
+    expect(res.complete).toBe(true)
+  })
+
+  it('does not call it a stall while Bee is up but not ready (re-syncing)', async () => {
+    // No progress for 100 polls while Bee reports not ready, then progress resumes.
+    scriptTags([tag(1), ...Array(100).fill(tag(1)), tag(100)])
+    readiness.mockResolvedValue({ ready: false })
+
+    const res = await waitForTagPropagation(1, undefined, { pollMs: 0, maxStalledPolls: 60 })
+
+    expect(res.complete).toBe(true)
+  })
+
+  it('still gives up on a genuine stall when Bee is ready', async () => {
+    scriptTags([tag(1), tag(1)])
+    readiness.mockResolvedValue({ ready: true })
+
+    const res = await waitForTagPropagation(1, undefined, { pollMs: 0, maxStalledPolls: 60 })
+
+    expect(res.complete).toBe(false)
+    expect(res.tag?.synced).toBe(1)
+  })
+
+  it('stops waiting on a Bee that stays down beyond the bound', async () => {
+    scriptTags([tag(1), 'down'])
+    readiness.mockResolvedValue({ ready: false })
+
+    const res = await waitForTagPropagation(1, undefined, { pollMs: 0, maxNotReadyMs: 0 })
+
+    expect(res.complete).toBe(false)
+  })
+
+  it('counts Bee errors (not outages) as stalls', async () => {
+    scriptTags(['error'])
+    readiness.mockResolvedValue({ ready: true })
+
+    const res = await waitForTagPropagation(1, undefined, { pollMs: 0, maxStalledPolls: 5 })
+
+    expect(res.complete).toBe(false)
+  })
+})

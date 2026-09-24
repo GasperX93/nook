@@ -4,6 +4,7 @@ import { platform } from 'os'
 import { v4 } from 'uuid'
 import { rebuildElectronTray } from './electron'
 import { fetchWithTimeout } from './fetch-timeout'
+import { mayLaunchBee } from './foreign-bee'
 import { BeeManager } from './lifecycle'
 import { RotatingLogWriter } from './log-rotator'
 import { logger } from './logger'
@@ -97,6 +98,11 @@ export async function runLauncher() {
   }
 
   BeeManager.setUserIntention(true)
+
+  // R5-11: never start a second Bee on taken ports (it crash-loops) and never
+  // treat a foreign node as ours. The keep-alive loop re-checks every 10 s.
+  if (!(await mayLaunchBee())) return
+
   const subprocess = launchBee(abortController).catch(reason => {
     logger.error(reason)
   })
