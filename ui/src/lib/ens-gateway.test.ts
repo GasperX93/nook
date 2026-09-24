@@ -1,15 +1,21 @@
 import { describe, expect, it } from 'vitest'
 
-import { bzzLinkHost, limoHost } from './ens-gateway'
+import { bzzLink, limoHost } from './ens-gateway'
 
-describe('ENS gateway hosts', () => {
-  it('drops .eth for bzz.link (one label before bzz.link)', () => {
-    expect(bzzLinkHost('mzupan.eth')).toBe('mzupan.bzz.link')
+describe('ENS gateway links', () => {
+  it('drops .eth for a simple name on bzz.link (one label before bzz.link)', () => {
+    expect(bzzLink('mzupan.eth')).toEqual({ url: 'https://mzupan.bzz.link/', label: 'mzupan.bzz.link' })
   })
 
-  it('has no bzz.link address for subnames or non-.eth names', () => {
-    expect(bzzLinkHost('blog.mzupan.eth')).toBeNull()
-    expect(bzzLinkHost('example.com')).toBeNull()
+  it('uses the secure path form for subnames (the certificate covers one label only)', () => {
+    expect(bzzLink('martin.zupan.eth')).toEqual({
+      url: 'https://bzz.link/bzz/martin.zupan.eth/',
+      label: 'bzz.link/bzz/martin.zupan.eth',
+    })
+  })
+
+  it('has no bzz.link link for non-.eth names', () => {
+    expect(bzzLink('example.com')).toBeNull()
   })
 
   it('keeps the full name for eth.limo', () => {

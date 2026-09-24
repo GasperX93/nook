@@ -46,8 +46,13 @@ function ToggleChip({ on, onClick, children }: { on: boolean; onClick: () => voi
   )
 }
 
+/** Details longer than this (stack traces, big error bodies) collapse behind "more" (R5-8). */
+const DETAILS_PREVIEW = 140
+
 function Row({ line }: { line: LogLine }) {
   const style = LEVEL_STYLE[line.level]
+  const [expanded, setExpanded] = useState(false)
+  const longDetails = (line.details?.length ?? 0) > DETAILS_PREVIEW
 
   if (!line.msg) {
     return (
@@ -78,7 +83,17 @@ function Row({ line }: { line: LogLine }) {
         )}
         {line.details && (
           <span className="ml-2 break-all" style={{ color: 'rgb(var(--fg-muted))', opacity: 0.75 }}>
-            {line.details}
+            {expanded || !longDetails ? line.details : `${line.details.slice(0, DETAILS_PREVIEW)}…`}
+            {longDetails && (
+              <button
+                type="button"
+                onClick={() => setExpanded(v => !v)}
+                className="ml-1 underline"
+                style={{ color: 'rgb(var(--fg-muted))' }}
+              >
+                {expanded ? 'less' : 'more'}
+              </button>
+            )}
           </span>
         )}
       </span>

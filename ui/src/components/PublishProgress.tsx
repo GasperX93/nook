@@ -24,7 +24,7 @@ const STEP_LABEL: Record<StepId, string> = {
 
 const FACTS = [
   'Your site will live on Swarm, not on a server — nobody can take it down.',
-  'Storage is paid upfront, on Gnosis Chain — no subscription.',
+  'Storage is paid upfront — no subscription.',
   'Every file is split into pieces and spread across Bee nodes worldwide.',
   'With a permanent address, updating the site keeps the same link.',
 ]
@@ -88,6 +88,11 @@ export default function PublishProgress({
 
   const factIdx = Math.floor(now / 8000) % FACTS.length
   const measurable = current === 'copy' || (current === 'store' && propagationTransfer)
+  // One timer (R5-5): when the phase carries its own countdown ("Preparing
+  // storage… 37s"), the step list doesn't add a second, disagreeing clock.
+  const phaseHasCountdown = /\d+s$/.test(phase)
+  // The step list already says where we are — drop "Step N of 2 · ".
+  const phaseText = phase.replace(/^Step \d+ of \d+ · /, '')
 
   return (
     <div className="flex flex-col gap-5 py-10 max-w-md mx-auto w-full">
@@ -116,7 +121,7 @@ export default function PublishProgress({
                 )}
               </span>
               {STEP_LABEL[id]}
-              {active && !measurable && (
+              {active && !measurable && !phaseHasCountdown && (
                 <span className="ml-auto text-xs tabular-nums font-normal" style={{ color: 'rgb(var(--fg-muted))' }}>
                   {mmss(now - startedAt)}
                 </span>
@@ -131,7 +136,7 @@ export default function PublishProgress({
         style={{ backgroundColor: 'rgb(var(--bg-surface))', borderColor: 'rgb(var(--border))' }}
       >
         <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
-          {phase || 'Publishing…'}
+          {phaseText || 'Publishing…'}
           {fileCount > 0 && current !== 'store' && ` · ${fileCount} files`}
         </p>
 
@@ -153,7 +158,7 @@ export default function PublishProgress({
           <>
             {current === 'buy' && (
               <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-                This usually takes 1–3 minutes — Nook is paying for the space on Gnosis Chain.
+                This usually takes 1–3 minutes — Nook is paying for the space on the Swarm network.
               </p>
             )}
             <p className="text-xs italic" style={{ color: 'rgb(var(--fg-muted))' }}>

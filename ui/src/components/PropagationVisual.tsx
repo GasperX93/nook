@@ -16,7 +16,7 @@ import { etaText, type TransferEntry } from '../store/transfers'
 // Node vocabulary throughout (#15, user-corrected): Nook runs a LIGHT node
 // that doesn't store others' data — never claim "computers like yours".
 const FACTS = [
-  'Your file is split into thousands of encrypted pieces…',
+  'Your file is split into thousands of pieces…',
   'Each piece is stored by a different Bee node on the Swarm network…',
   'No single node ever holds your whole file…',
   'Once every piece is confirmed, anyone you share with can fetch it…',

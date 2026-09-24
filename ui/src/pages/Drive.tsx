@@ -2926,8 +2926,10 @@ export default function Drive() {
   async function handleDownload(id: string, hash: string, name: string) {
     const transferId = `dl:${id}`
     const transfers = useTransfersStore.getState()
+    // The drive the file is in — the sidebar indicator opens it (R5-1).
+    const downloadDriveId = records.find(r => r.id === id)?.driveId ?? activeDriveId ?? undefined
 
-    transfers.begin({ id: transferId, kind: 'download', name, phase: 'Downloading…' })
+    transfers.begin({ id: transferId, kind: 'download', name, driveId: downloadDriveId, phase: 'Downloading…' })
     transfers.update(transferId, { pct: 0 })
     setDownloadErrors(({ [id]: _cleared, ...rest }) => rest)
     try {

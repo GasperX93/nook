@@ -12,6 +12,16 @@ export default function Dev() {
   const updateConfig = useUpdateConfig()
   const [draft, setDraft] = useState<string>('')
   const [editMode, setEditMode] = useState(false)
+  const [showSecrets, setShowSecrets] = useState(false)
+  const [draftError, setDraftError] = useState<string | null>(null)
+
+  // R5-8: the view shows the whole config (no inner scroll) and masks secrets
+  // — Bee's API password was on screen in plain text (screenshot leak risk).
+  const isSecret = (key: string) => /password/i.test(key)
+  const hasSecrets = Object.keys(config ?? {}).some(isSecret)
+  const viewText = config
+    ? JSON.stringify(config, (key, value) => (!showSecrets && key && isSecret(key) && value ? '••••••••' : value), 2)
+    : 'No config found.'
 
   function startEdit() {
     setDraft(JSON.stringify(config, null, 2))
@@ -19,12 +29,17 @@ export default function Dev() {
   }
 
   function save() {
+    let parsed: unknown
+
     try {
-      const parsed = JSON.parse(draft)
-      updateConfig.mutate(parsed, { onSuccess: () => setEditMode(false) })
+      parsed = JSON.parse(draft)
     } catch {
-      // invalid JSON
+      setDraftError('That isn’t valid JSON — check commas and quotes.')
+
+      return
     }
+    setDraftError(null)
+    updateConfig.mutate(parsed as Record<string, unknown>, { onSuccess: () => setEditMode(false) })
   }
 
   return (
@@ -57,14 +72,25 @@ export default function Dev() {
             </p>
           </div>
           {!editMode ? (
-            <button
-              onClick={startEdit}
-              disabled={isLoading || !config}
-              className="px-3 py-1.5 rounded text-xs font-semibold uppercase tracking-widest transition-opacity disabled:opacity-40"
-              style={{ backgroundColor: 'rgb(var(--bg))', border: '1px solid rgb(var(--border))' }}
-            >
-              Edit
-            </button>
+            <div className="flex gap-2">
+              {hasSecrets && (
+                <button
+                  onClick={() => setShowSecrets(v => !v)}
+                  className="px-3 py-1.5 rounded text-xs font-semibold uppercase tracking-widest"
+                  style={{ color: 'rgb(var(--fg-muted))' }}
+                >
+                  {showSecrets ? 'Hide password' : 'Show password'}
+                </button>
+              )}
+              <button
+                onClick={startEdit}
+                disabled={isLoading || !config}
+                className="px-3 py-1.5 rounded text-xs font-semibold uppercase tracking-widest transition-opacity disabled:opacity-40"
+                style={{ backgroundColor: 'rgb(var(--bg))', border: '1px solid rgb(var(--border))' }}
+              >
+                Edit
+              </button>
+            </div>
           ) : (
             <div className="flex gap-2">
               <button
@@ -95,19 +121,27 @@ export default function Dev() {
             Nook backend not available. Start the app to configure node settings.
           </p>
         ) : editMode ? (
-          <textarea
-            className="w-full h-48 rounded-lg border p-4 text-xs font-mono focus:outline-none resize-none"
-            style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
-            value={draft}
-            onChange={e => setDraft(e.target.value)}
-            spellCheck={false}
-          />
+          <div className="space-y-2">
+            <textarea
+              className="w-full rounded-lg border p-4 text-xs font-mono focus:outline-none resize-y"
+              style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
+              rows={Math.max(10, draft.split('\n').length + 1)}
+              value={draft}
+              onChange={e => setDraft(e.target.value)}
+              spellCheck={false}
+            />
+            {draftError && (
+              <p className="text-xs" style={{ color: '#ef4444' }}>
+                {draftError}
+              </p>
+            )}
+          </div>
         ) : (
           <pre
-            className="text-xs overflow-auto rounded-lg border p-4 max-h-48"
+            className="text-xs overflow-x-auto rounded-lg border p-4"
             style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg-muted))' }}
           >
-            {JSON.stringify(config, null, 2) ?? 'No config found.'}
+            {viewText}
           </pre>
         )}
       </div>

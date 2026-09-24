@@ -798,7 +798,9 @@ export function ReclaimableDriveView({
     // regardless — this is purely visibility.
     const transferId = `rjob:${uploadId}`
 
-    useTransfersStore.getState().begin({ id: transferId, kind: 'upload', name: jobName, phase: 'Uploading…' })
+    useTransfersStore
+      .getState()
+      .begin({ id: transferId, kind: 'upload', name: jobName, driveId: drive.batchId, phase: 'Uploading…' })
     pollRef.current = window.setInterval(async () => {
       try {
         const job = await serverApi.getReclaimableUpload(uploadId)

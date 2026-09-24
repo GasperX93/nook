@@ -5,7 +5,7 @@ import { namehash } from 'viem'
 import { useAccount, usePublicClient, useSwitchChain, useWalletClient } from 'wagmi'
 import { getWalletClient } from '@wagmi/core'
 import { mainnet } from 'wagmi/chains'
-import { bzzLinkHost } from '../lib/ens-gateway'
+import { bzzLink } from '../lib/ens-gateway'
 import { wagmiConfig } from '../wagmi'
 import { Button } from './ui/button'
 
@@ -500,19 +500,23 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
                   {ensName}.limo
                   <ExternalLink size={10} />
                 </a>
-                {bzzLinkHost(ensName) && (
+                {bzzLink(ensName) && (
                   <a
-                    href={`https://${bzzLinkHost(ensName)}`}
+                    href={bzzLink(ensName)!.url}
                     target="_blank"
                     rel="noreferrer"
                     className="inline-flex items-center gap-1.5 text-xs font-medium transition-colors hover:underline"
                     style={{ color: 'rgb(var(--accent))' }}
                   >
                     <Globe size={12} />
-                    {bzzLinkHost(ensName)}
+                    {bzzLink(ensName)!.label}
                     <ExternalLink size={10} />
                   </a>
                 )}
+                {/* R5-7: gateways cache ENS lookups for a few minutes. */}
+                <p className="text-[11px]" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  It can take a few minutes to show up. If you see an older version, refresh in a minute.
+                </p>
                 {txHash && (
                   <div>
                     <a
