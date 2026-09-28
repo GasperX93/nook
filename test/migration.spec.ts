@@ -47,6 +47,12 @@ describe('runMigrations', () => {
       expect(mockWrite).not.toHaveBeenCalled()
       expect(mockDelete).not.toHaveBeenCalled()
     })
+
+    it('marks the one-time RPC move as done on a fresh install', () => {
+      mockExists.mockReturnValue(false)
+      runMigrations()
+      expect(existsSync(join(mockDataDir, '.rpc-relay-migrated'))).toBe(true)
+    })
   })
 
   describe('legacy key removal', () => {
@@ -177,6 +183,13 @@ describe('runMigrations', () => {
       mockRead.mockReturnValue({ 'use-postage-snapshot': false })
       runMigrations()
       expect(mockWrite).not.toHaveBeenCalledWith({ 'blockchain-rpc-endpoint': RELAY })
+    })
+
+    it('moves an old default that only came in via swap-endpoint', () => {
+      mockExists.mockReturnValue(true)
+      mockRead.mockReturnValue({ 'swap-endpoint': 'https://rpc.gnosischain.com', 'use-postage-snapshot': false })
+      runMigrations()
+      expect(mockWrite).toHaveBeenLastCalledWith({ 'blockchain-rpc-endpoint': RELAY })
     })
 
     it('runs once and leaves a marker', () => {

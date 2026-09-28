@@ -90,6 +90,9 @@ export async function initializeBee() {
   return runProcess(getPath(getBeeExecutable()), ['init', `--config=${configPath}`], new AbortController())
 }
 
+/** A launch is between its port check and signalRunning (see runLauncher). */
+let launchInFlight = false
+
 export async function runLauncher() {
   const abortController = new AbortController()
 
@@ -101,7 +104,20 @@ export async function runLauncher() {
 
   // R5-11: never start a second Bee on taken ports (it crash-loops) and never
   // treat a foreign node as ours. The keep-alive loop re-checks every 10 s.
-  if (!(await mayLaunchBee())) return
+  // Only one launch at a time: the port check can take seconds, and a
+  // keep-alive tick, /restart or the funding switch landing meanwhile would
+  // otherwise also see the ports free and start a second Bee.
+  if (launchInFlight) return
+  launchInFlight = true
+  let mayLaunch: boolean
+
+  try {
+    mayLaunch = await mayLaunchBee()
+  } finally {
+    launchInFlight = false
+  }
+
+  if (!mayLaunch) return
 
   const subprocess = launchBee(abortController).catch(reason => {
     logger.error(reason)

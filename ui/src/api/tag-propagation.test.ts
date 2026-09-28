@@ -63,6 +63,17 @@ describe('waitForTagPropagation (R5-13)', () => {
     expect(onWaiting.mock.calls).toEqual([[true], [false]])
   })
 
+  it('starts the no-progress count over after an outage', async () => {
+    // 55 polls without progress, Bee down, then back without progress for a
+    // while before the push resumes — must not give up in between.
+    scriptTags([tag(1), ...Array(55).fill(tag(1)), 'down', 'down', ...Array(20).fill(tag(1)), tag(100)])
+    readiness.mockResolvedValue({ ready: true })
+
+    const res = await waitForTagPropagation(1, undefined, { pollMs: 0, maxStalledPolls: 60 })
+
+    expect(res.complete).toBe(true)
+  })
+
   it('does not call it a stall while Bee is up but not ready (re-syncing)', async () => {
     // No progress for 100 polls while Bee reports not ready, then progress resumes.
     scriptTags([tag(1), ...Array(100).fill(tag(1)), tag(100)])

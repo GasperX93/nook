@@ -2,6 +2,7 @@ import {
   COOLDOWN_MS,
   endpointOrder,
   isAutomaticRpc,
+  isLoopback,
   isRetryableAnswer,
   relayJsonRpc,
   resetFailover,
@@ -27,7 +28,11 @@ function replies(byUrl: Record<string, Reply[]>) {
 
     if (next instanceof Error) throw next
 
-    return { status: next.status, text: async () => next.body, headers: new Map([['content-type', 'application/json']]) }
+    return {
+      status: next.status,
+      text: async () => next.body,
+      headers: new Map([['content-type', 'application/json']]),
+    }
   })
 }
 
@@ -158,6 +163,22 @@ describe('relayJsonRpc', () => {
       expect(fetchMock).toHaveBeenCalledTimes(1)
     })
 
+    it('retries a transaction when the primary could not even be reached', async () => {
+      replies({
+        [RPC_PRIMARY]: [Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } })],
+        [RPC_FALLBACK]: [{ status: 200, body: OK }],
+      })
+      expect((await relayJsonRpc(TX)).body).toBe(OK)
+    })
+
+    it('does not retry a transaction after a dropped connection', async () => {
+      replies({ [RPC_PRIMARY]: [Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNRESET' } })] })
+      const res = await relayJsonRpc(TX)
+
+      expect(res.status).toBe(502)
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+
     it('does not retry a transaction after a timeout', async () => {
       replies({ [RPC_PRIMARY]: [timeout()] })
       const res = await relayJsonRpc(TX)
@@ -165,5 +186,15 @@ describe('relayJsonRpc', () => {
       expect(res.status).toBe(502)
       expect(fetchMock).toHaveBeenCalledTimes(1)
     })
+  })
+})
+
+describe('isLoopback', () => {
+  it.each(['127.0.0.1', '::1', '::ffff:127.0.0.1'])('%s is this machine', a => {
+    expect(isLoopback(a)).toBe(true)
+  })
+
+  it.each(['192.168.1.20', '::ffff:10.0.0.5', '', undefined])('%p is not', a => {
+    expect(isLoopback(a)).toBe(false)
   })
 })

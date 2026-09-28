@@ -137,6 +137,9 @@ export async function mayLaunchBee(): Promise<boolean> {
       )
       foreign = { port: state.port, address: state.address, since: Date.now() }
     }
+    // A cached "own" from before the other node appeared must not let a
+    // monitor spend for up to a minute (isOwnBee).
+    ownCheck = { at: 0, ok: false }
 
     return false
   }

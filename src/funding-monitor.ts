@@ -138,6 +138,10 @@ async function checkBalance(address: string) {
 }
 
 async function switchToLightMode() {
+  // The 15 s poll and onboarding's "check now" run separate balance checks;
+  // both can see the funds at once. Switch once — a second pass would start
+  // a second Bee.
+  if (fundingState.switching || currentMode === 'light') return
   stopMonitor()
   fundingState.switching = true
 

@@ -29,7 +29,7 @@ import {
 } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import React, { useEffect, useRef, useState } from 'react'
-import { useLocation } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useAccount } from 'wagmi'
 import {
   beeApi,
@@ -2710,6 +2710,11 @@ function SharedDriveCard({
 export default function Drive() {
   const { toggle: toggleSidebar } = useSidebar()
   const { data: stamps } = useStamps()
+  const { data: wallet } = useWallet()
+  const navigate = useNavigate()
+  // Setup finishes on xDAI alone, but a drive needs xBZZ (R6-4): say so up
+  // front instead of letting "New drive" fail.
+  const noBzz = wallet !== undefined && BigInt(wallet.bzzBalance || '0') === BigInt(0)
   const { data: reclaimableData } = useReclaimableDrives()
   const {
     records,
@@ -3087,16 +3092,28 @@ export default function Drive() {
             <div>
               <p className="text-sm font-medium">No drives yet</p>
               <p className="text-xs mt-1" style={{ color: 'rgb(var(--fg-muted))' }}>
-                Create a drive to start storing files.
+                {noBzz
+                  ? 'Add xBZZ to your node wallet to create your first drive — it pays for the storage.'
+                  : 'Create a drive to start storing files.'}
               </p>
             </div>
-            <button
-              onClick={() => setShowBuyModal(true)}
-              className="mt-2 px-4 py-2 rounded-lg text-sm font-semibold"
-              style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
-            >
-              New drive
-            </button>
+            {noBzz ? (
+              <button
+                onClick={() => navigate('/account?tab=wallet')}
+                className="mt-2 px-4 py-2 rounded-lg text-sm font-semibold"
+                style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
+              >
+                Open wallet
+              </button>
+            ) : (
+              <button
+                onClick={() => setShowBuyModal(true)}
+                className="mt-2 px-4 py-2 rounded-lg text-sm font-semibold"
+                style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
+              >
+                New drive
+              </button>
+            )}
           </div>
         ) : (
           /* Drive list */

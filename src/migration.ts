@@ -1,4 +1,5 @@
-import { existsSync, renameSync, unlinkSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'fs'
+import { dirname } from 'path'
 import { configYamlExists, deleteKeyFromConfigYaml, readConfigYaml, writeConfigYaml } from './config'
 import { logger } from './logger'
 import { getLogPath, getPath } from './path'
@@ -6,6 +7,18 @@ import { LEGACY_DEFAULT_RPCS, RPC_RELAY_URL } from './rpc-endpoints'
 
 /** Written once the legacy-RPC → relay move has run (R6-1). */
 const RPC_RELAY_MARKER = '.rpc-relay-migrated'
+
+function markRpcMoveDone() {
+  const marker = getPath(RPC_RELAY_MARKER)
+
+  try {
+    mkdirSync(dirname(marker), { recursive: true })
+    writeFileSync(marker, '')
+  } catch (error) {
+    // Worst case the move runs again next start — same result as today.
+    logger.error('migration: could not write the RPC relay marker', error)
+  }
+}
 
 function migrateFile(oldPath: string, newPath: string) {
   const oldExists = existsSync(oldPath)
@@ -24,6 +37,10 @@ export function runMigrations() {
   migrateFile(getLogPath('bee-desktop.log'), getLogPath('nook.log'))
 
   if (!configYamlExists()) {
+    // Fresh install: nothing legacy to move, so the one-time RPC move is done
+    // — a URL the user picks in the first session must survive the restart.
+    markRpcMoveDone()
+
     return
   }
 
@@ -50,18 +67,15 @@ export function runMigrations() {
   const rpcMarker = getPath(RPC_RELAY_MARKER)
 
   if (!existsSync(rpcMarker)) {
-    const rpc = config['blockchain-rpc-endpoint']
+    // The swap-endpoint move above may just have written the RPC (the
+    // config snapshot predates it).
+    const rpc = config['blockchain-rpc-endpoint'] || config['swap-endpoint']
 
     if (typeof rpc === 'string' && LEGACY_DEFAULT_RPCS.includes(rpc)) {
       writeConfigYaml({ 'blockchain-rpc-endpoint': RPC_RELAY_URL })
     }
 
-    try {
-      writeFileSync(rpcMarker, '')
-    } catch (error) {
-      // Worst case the move runs again next start — same result as today.
-      logger.error('migration: could not write the RPC relay marker', error)
-    }
+    markRpcMoveDone()
   }
 
   // Cloudflare deprecated its Ethereum gateway: it still answers the handshake

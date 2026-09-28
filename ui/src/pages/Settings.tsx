@@ -142,7 +142,7 @@ export default function Settings() {
       url = rpcDraft.trim()
 
       if (!/^https?:\/\/\S+$/i.test(url)) {
-        setRpcError('Enter a full address starting with https://')
+        setRpcError('Enter a full address starting with https:// (or http://)')
 
         return
       }
@@ -322,7 +322,10 @@ export default function Settings() {
                     name="rpc-mode"
                     className="mt-1"
                     checked={rpcMode === 'automatic'}
-                    onChange={() => setRpcMode('automatic')}
+                    onChange={() => {
+                      setRpcMode('automatic')
+                      setRpcError(null)
+                    }}
                   />
                   <span>
                     <span className="text-sm block">Automatic (recommended)</span>
@@ -337,7 +340,10 @@ export default function Settings() {
                     name="rpc-mode"
                     className="mt-1"
                     checked={rpcMode === 'custom'}
-                    onChange={() => setRpcMode('custom')}
+                    onChange={() => {
+                      setRpcMode('custom')
+                      setRpcError(null)
+                    }}
                   />
                   <span className="flex-1 min-w-0">
                     <span className="text-sm block">Your own RPC</span>
@@ -349,7 +355,10 @@ export default function Settings() {
                 {rpcMode === 'custom' && (
                   <Input
                     value={rpcDraft}
-                    onChange={e => setRpcDraft(e.target.value)}
+                    onChange={e => {
+                      setRpcDraft(e.target.value)
+                      setRpcError(null)
+                    }}
                     onKeyDown={e => e.key === 'Enter' && saveRpc()}
                     placeholder="https://…"
                     className="font-mono text-xs"

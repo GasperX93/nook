@@ -23,6 +23,7 @@ import {
 } from './blockchain'
 import { clearIdentityCache, isIdentityCacheAvailable, readIdentityCache, writeIdentityCache } from './identity-cache'
 import { readConfigYaml, readWalletPasswordOrThrow, writeConfigYaml } from './config'
+import { getForeignBee } from './foreign-bee'
 import { checkFundingNow } from './funding-monitor'
 import { runLauncher } from './launcher'
 import { BeeManager } from './lifecycle'
@@ -144,6 +145,16 @@ export function runServer() {
       return
     }
     const beePath = context.path.replace(/^\/bee-api/, '')
+
+    // Another node holds Nook's ports (R5-11): the dashboard's background work
+    // (identity auto-publish, message sends, inbox reads) must not run against
+    // it — a republish would pin the user's identity to that node's key.
+    if (getForeignBee()) {
+      context.status = 503
+      context.body = { message: 'Another Bee node is using Nook’s ports — Nook is not talking to it' }
+
+      return
+    }
 
     // Reclaimable-drive batches are stamped client-side against a local slot
     // ledger; a Bee-stamped write to one allocates slots the ledger can't see

@@ -142,9 +142,12 @@ export async function waitForTagPropagation(
         stalled++
       }
     } catch (error) {
-      // Network error = Bee unreachable (stopped / restarting): not a stall.
+      // Network error = Bee unreachable (stopped / restarting): not a stall —
+      // and the no-progress streak from before the outage starts over, or a
+      // slow push could give up seconds after Bee comes back.
       if (!(error instanceof TypeError)) stalled++
       else if (!waitingOnBee()) break
+      else stalled = 0
     }
 
     // Before a no-progress streak runs out, check whether Bee is simply not

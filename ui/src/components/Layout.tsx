@@ -76,6 +76,9 @@ export default function Layout() {
   const { isError: beeOffline, isPending: beeChecking, isSuccess: beeOnline } = useBeeHealth()
   const { data: peers } = usePeers()
   const { data: status } = useStatus()
+  // Known to be Nook's own node on the ports — not a foreign one (R5-11), and
+  // not unknown yet: nothing below may act on another node's data.
+  const ownNode = status !== undefined && !status.foreignBee
   const restartBee = useRestart()
   const { data: stamps, isSuccess: stampsLoaded } = useStamps()
   const { data: reclaimableForPick } = useReclaimableDrives()
@@ -98,7 +101,10 @@ export default function Layout() {
   // shows one calm informational banner until the reserve is usable. Rough
   // client-side gate (~2 xBZZ); the endpoint re-checks every guard.
   const fundsReadyForReserve =
-    noMessagingSpace && walletForReserve !== undefined && BigInt(walletForReserve.bzzBalance) >= 20000000000000000n
+    ownNode &&
+    noMessagingSpace &&
+    walletForReserve !== undefined &&
+    BigInt(walletForReserve.bzzBalance) >= 20000000000000000n
   const reserveNudged = useRef(false)
 
   useEffect(() => {
@@ -212,7 +218,10 @@ export default function Layout() {
   // Once stamps or wallet data loads and shows existing activity, mark onboarding done.
   // Existing users (they own stamps) never get re-onboarded — unless the
   // debug step-lock is set, which must keep the preview on screen.
+  // Never judged from ANOTHER node's drives or funds (R5-11): with a foreign
+  // node on the ports, this would skip a fresh install's setup for good.
   if (
+    ownNode &&
     !onboardingCompleted &&
     stampsLoaded &&
     stamps &&
@@ -222,7 +231,7 @@ export default function Layout() {
     setOnboardingCompleted()
   }
 
-  if (!onboardingCompleted && walletLoaded && wallet && Number(weiToDai(wallet.nativeTokenBalance)) > 0) {
+  if (ownNode && !onboardingCompleted && walletLoaded && wallet && Number(weiToDai(wallet.nativeTokenBalance)) > 0) {
     setOnboardingCompleted()
   }
 

@@ -186,8 +186,9 @@ export async function followTagPropagation(
     if (complete) {
       markPropagated(id, tagUid, name, driveId)
     } else {
-      useTransfersStore.getState().update(id, { phase: 'Still storing in the background…' })
-      useTransfersStore.getState().finish(id)
+      // Not "done": the row keeps its "Storing" state and the resume loop
+      // follows it again — a green "Stored" here would contradict both.
+      useTransfersStore.getState().remove(id)
       scheduleResume()
     }
 

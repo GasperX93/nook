@@ -119,6 +119,16 @@ interface Attempt {
   contentType: string
 }
 
+/** Connection errors that happen before a single byte was sent. */
+const PRE_CONNECT_CODES = new Set(['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'ENETUNREACH', 'EHOSTUNREACH'])
+
+/** Whether a failed fetch provably never reached the endpoint (safe to resend a transaction). */
+function neverConnected(error: unknown): boolean {
+  const code = (error as { cause?: { code?: string } })?.cause?.code ?? (error as { code?: string })?.code ?? ''
+
+  return PRE_CONNECT_CODES.has(code)
+}
+
 async function forward(endpoint: string, bodyText: string): Promise<Attempt> {
   const res = await fetch(endpoint, {
     method: 'POST',
@@ -139,9 +149,10 @@ async function forward(endpoint: string, bodyText: string): Promise<Attempt> {
  * global and mockable).
  *
  * Transactions are only retried when the first endpoint clearly REFUSED them
- * (429, or no connection at all) — never after a timeout or 5xx, where the
- * transaction may already be in the mempool and a second send could confuse
- * nonce handling.
+ * (429, or the connection never opened) — never after a timeout, a dropped
+ * connection or a 5xx, where the transaction may already be in the mempool
+ * and a second send could confuse nonce handling or report a sent
+ * transaction as failed.
  */
 export async function relayJsonRpc(bodyText: string, now = Date.now()): Promise<Attempt> {
   const order = endpointOrder(now)
@@ -168,7 +179,7 @@ export async function relayJsonRpc(bodyText: string, now = Date.now()): Promise<
       const name = (error as Error).name
       const timedOut = name === 'TimeoutError' || name === 'AbortError'
 
-      if (isLast || (isTx && timedOut)) {
+      if (isLast || (isTx && !neverConnected(error))) {
         if (last) return last
 
         return {
@@ -206,9 +217,26 @@ async function readBody(context: Context): Promise<string | null> {
 }
 
 /**
+ * The server listens on every interface, and a Host header is just text — so
+ * also require the connection itself to come from this machine. Otherwise any
+ * device on the same network could use the relay as a free Gnosis RPC and
+ * burn the rate limit Bee depends on.
+ */
+export function isLoopback(address: string | undefined): boolean {
+  if (!address) return false
+  const a = address.replace(/^::ffff:/, '')
+
+  return a === '::1' || a.startsWith('127.')
+}
+
+function fromThisMachine(context: Context): boolean {
+  return isLoopback(context.req.socket?.remoteAddress)
+}
+
+/**
  * `POST /rpc` — the relay Bee and Nook's providers point at. Unauthenticated
  * (Bee can't send Nook's API key), so it only serves local, non-browser
- * callers: the Host must be this machine and there must be no Origin header
+ * callers: the connection and the Host must be this machine and there must be no Origin header
  * (browsers always send Origin on POST — that blocks web pages and DNS
  * rebinding). It only relays public-chain JSON-RPC; it holds no keys.
  * Registered before the body parser so the raw body is intact.
@@ -223,7 +251,7 @@ export async function rpcRelayMiddleware(context: Context, next: () => Promise<u
   const host = (context.headers.host ?? '').toLowerCase()
   const localHost = host === `127.0.0.1:${RELAY_PORT}` || host === `localhost:${RELAY_PORT}`
 
-  if (context.method !== 'POST' || !localHost || context.headers.origin) {
+  if (context.method !== 'POST' || !localHost || !fromThisMachine(context) || context.headers.origin) {
     context.status = 403
     context.body = { error: 'forbidden' }
 
