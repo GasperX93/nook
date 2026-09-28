@@ -24,6 +24,7 @@ import { fileListToEntries, readDroppedDirectory, type FileEntry } from '../util
 import { useTransfersStore } from '../store/transfers'
 import { friendlyError } from '../lib/friendly-error'
 import { savingLabel } from '../lib/transfer-labels'
+import PropagationVisual from './PropagationVisual'
 
 // Reclaimable drives (#99): the server stamps chunks client-side and keeps a
 // slot ledger, so deleting a file really frees its capacity. Files come from
@@ -771,7 +772,8 @@ export function ReclaimableDriveView({
   const [dragOverTarget, setDragOverTarget] = useState<string | 'root' | null>(null)
   const [uploading, setUploading] = useState<{ name: string; estimate: number } | null>(null)
   const [staging, setStaging] = useState<{ name: string; done: number; total: number } | null>(null)
-  const [chunks, setChunks] = useState(0)
+  const [jobTransferId, setJobTransferId] = useState<string | null>(null)
+  const jobTransfer = useTransfersStore(state => state.transfers.find(t => t.id === jobTransferId))
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [deletingRef, setDeletingRef] = useState<string | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
@@ -798,13 +800,14 @@ export function ReclaimableDriveView({
     // regardless — this is purely visibility.
     const transferId = `rjob:${uploadId}`
 
+    setJobTransferId(transferId)
+
     useTransfersStore
       .getState()
       .begin({ id: transferId, kind: 'upload', name: jobName, driveId: drive.batchId, phase: 'Uploading…' })
     pollRef.current = window.setInterval(async () => {
       try {
         const job = await serverApi.getReclaimableUpload(uploadId)
-        setChunks(job.chunksUploaded)
 
         if (jobEstimate > 0) {
           useTransfersStore.getState().chunkProgress(transferId, job.chunksUploaded, jobEstimate)
@@ -860,7 +863,7 @@ export function ReclaimableDriveView({
   async function handleFile(uploadFile: globalThis.File) {
     setAddingFile(false)
     setUploadError(null)
-    setChunks(0)
+    setJobTransferId(null)
     setUploading({ name: uploadFile.name, estimate: estimateChunks(uploadFile.size) })
     try {
       const { uploadId } = await serverApi.uploadReclaimableFile(drive.batchId, uploadFile)
@@ -875,7 +878,7 @@ export function ReclaimableDriveView({
     if (entries.length === 0) return
     setAddingFile(false)
     setUploadError(null)
-    setChunks(0)
+    setJobTransferId(null)
     setStaging({ name: folderName, done: 0, total: entries.length })
     try {
       const { stageId } = await serverApi.createReclaimableStage(drive.batchId)
@@ -939,7 +942,6 @@ export function ReclaimableDriveView({
     setTimeout(() => setCopiedRef(null), 1500)
   }
 
-  const uploadPct = uploading ? Math.min(99, Math.round((chunks / uploading.estimate) * 100)) : 0
   const openFolder = openFolderId ? (drive.folders.find(folder => folder.id === openFolderId) ?? null) : null
   const visibleFiles = drive.files.filter(file => (openFolderId ? file.folderId === openFolderId : !file.folderId))
   const folderCounts = new Map<string, number>()
@@ -1156,18 +1158,25 @@ export function ReclaimableDriveView({
             <p className="text-sm truncate" style={{ color: 'rgb(var(--fg-muted))' }}>
               {staging
                 ? `Preparing ${staging.name}… ${staging.done}/${staging.total} files`
-                : `Uploading & propagating ${uploading!.name}… · ${chunks} chunks confirmed by the network`}
+                : 'Storing on the Swarm network'}
             </p>
           </div>
-          <div className="h-1 rounded-full" style={{ backgroundColor: 'rgb(var(--border))' }}>
-            <div
-              className="h-1 rounded-full transition-all"
-              style={{
-                width: `${staging ? Math.round((staging.done / staging.total) * 100) : uploadPct}%`,
-                backgroundColor: 'rgb(var(--accent))',
-              }}
-            />
-          </div>
+          {/* Same honest visual as a regular drive's upload: real confirmed
+              pieces, dots at the real pace, coarse ETA. Deletable uploads are
+              one step — every piece waits for the network's receipt. */}
+          {!staging && jobTransfer ? (
+            <PropagationVisual transfer={jobTransfer} approxTotal />
+          ) : (
+            <div className="h-1 rounded-full" style={{ backgroundColor: 'rgb(var(--border))' }}>
+              <div
+                className="h-1 rounded-full transition-all"
+                style={{
+                  width: `${staging ? Math.round((staging.done / staging.total) * 100) : 2}%`,
+                  backgroundColor: 'rgb(var(--accent))',
+                }}
+              />
+            </div>
+          )}
         </div>
       )}
 

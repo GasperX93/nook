@@ -35,7 +35,14 @@ function currentRate(t: TransferEntry): number {
   return (lastDone - firstDone) / ((lastTs - firstTs) / 1000)
 }
 
-export default function PropagationVisual({ transfer }: { transfer: TransferEntry }) {
+export default function PropagationVisual({
+  transfer,
+  approxTotal = false,
+}: {
+  transfer: TransferEntry
+  /** The total is an estimate from the file size (deletable drives) — shown as "~". */
+  approxTotal?: boolean
+}) {
   const [factIdx, setFactIdx] = useState(0)
 
   useEffect(() => {
@@ -52,8 +59,8 @@ export default function PropagationVisual({ transfer }: { transfer: TransferEntr
   const counts = useMemo(() => {
     if (transfer.chunksTotal === undefined || transfer.chunksDone === undefined) return null
 
-    return `${transfer.chunksDone.toLocaleString()} of ${transfer.chunksTotal.toLocaleString()} pieces stored`
-  }, [transfer.chunksDone, transfer.chunksTotal])
+    return `${transfer.chunksDone.toLocaleString()} of ${approxTotal ? '~' : ''}${transfer.chunksTotal.toLocaleString()} pieces stored`
+  }, [transfer.chunksDone, transfer.chunksTotal, approxTotal])
 
   return (
     <div className="space-y-2">
