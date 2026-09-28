@@ -84,6 +84,8 @@ async function beeIsReady(): Promise<boolean> {
  * `maxNotReadyMs` — instead of giving up after a minute and leaving the row
  * frozen until the 5-minute resume loop. Bee finishes the push by itself
  * after a restart (verified: tag 653 reached 100%), so the row should too.
+ * `onWaiting(true)` fires when that waiting starts and `onWaiting(false)` once
+ * pieces land again, so the UI can say "paused" instead of "storing" (R6-3).
  */
 export async function waitForTagPropagation(
   uid: number,
@@ -93,6 +95,7 @@ export async function waitForTagPropagation(
     maxStalledPolls?: number
     maxNotReadyMs?: number
     onTag?: (tag: UploadTag) => void
+    onWaiting?: (waiting: boolean) => void
   } = {},
 ): Promise<{ complete: boolean; tag: UploadTag | null }> {
   const pollMs = opts.pollMs ?? 1000
@@ -102,11 +105,18 @@ export async function waitForTagPropagation(
   let stalled = 0
   let tag: UploadTag | null = null
   let notReadySince: number | null = null
+  let waiting = false
 
+  const setWaiting = (next: boolean) => {
+    if (next === waiting) return
+    waiting = next
+    opts.onWaiting?.(next)
+  }
   const sleep = async (): Promise<void> => new Promise(r => setTimeout(r, pollMs))
   /** Bee is down or warming up: wait without counting it, within the bound. */
   const waitingOnBee = () => {
     notReadySince ??= Date.now()
+    setWaiting(true)
 
     return Date.now() - notReadySince < maxNotReadyMs
   }
@@ -127,6 +137,7 @@ export async function waitForTagPropagation(
         best = done
         stalled = 0
         notReadySince = null
+        setWaiting(false)
       } else {
         stalled++
       }

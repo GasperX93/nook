@@ -1,7 +1,11 @@
-import { existsSync, renameSync, unlinkSync } from 'fs'
+import { existsSync, renameSync, unlinkSync, writeFileSync } from 'fs'
 import { configYamlExists, deleteKeyFromConfigYaml, readConfigYaml, writeConfigYaml } from './config'
+import { logger } from './logger'
 import { getLogPath, getPath } from './path'
-import { isAutomaticRpc, RPC_RELAY_URL } from './rpc-endpoints'
+import { LEGACY_DEFAULT_RPCS, RPC_RELAY_URL } from './rpc-endpoints'
+
+/** Written once the legacy-RPC → relay move has run (R6-1). */
+const RPC_RELAY_MARKER = '.rpc-relay-migrated'
 
 function migrateFile(oldPath: string, newPath: string) {
   const oldExists = existsSync(oldPath)
@@ -39,13 +43,25 @@ export function runMigrations() {
 
   // Route installs still on a default Nook once wrote (rpc.gnosischain.com,
   // or the older fairdatasociety one) through the RPC relay, which falls back
-  // to a second public RPC when the first throttles (R5-3/R5-14). A custom
-  // RPC the user chose stays untouched. Only for installs that already have
-  // an RPC set — new ultra-light installs get one when funding switches them.
-  const rpc = config['blockchain-rpc-endpoint']
+  // to a second public RPC when the first throttles (R5-3/R5-14). Runs ONCE:
+  // afterwards the same URL in the config is a custom RPC the user picked in
+  // Settings and must be kept (R6-1). Installs without an RPC yet (ultra-light)
+  // get the relay when funding switches them.
+  const rpcMarker = getPath(RPC_RELAY_MARKER)
 
-  if (typeof rpc === 'string' && rpc !== RPC_RELAY_URL && isAutomaticRpc(rpc)) {
-    writeConfigYaml({ 'blockchain-rpc-endpoint': RPC_RELAY_URL })
+  if (!existsSync(rpcMarker)) {
+    const rpc = config['blockchain-rpc-endpoint']
+
+    if (typeof rpc === 'string' && LEGACY_DEFAULT_RPCS.includes(rpc)) {
+      writeConfigYaml({ 'blockchain-rpc-endpoint': RPC_RELAY_URL })
+    }
+
+    try {
+      writeFileSync(rpcMarker, '')
+    } catch (error) {
+      // Worst case the move runs again next start — same result as today.
+      logger.error('migration: could not write the RPC relay marker', error)
+    }
   }
 
   // Cloudflare deprecated its Ethereum gateway: it still answers the handshake

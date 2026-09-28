@@ -24,14 +24,15 @@ type SettingsTab = 'general' | 'network'
 
 /**
  * The backend RPC relay Bee points at in "automatic" mode (src/rpc-endpoints.ts
- * RPC_RELAY_URL): a public RPC with an automatic backup (R5-3/R5-14). Values
- * Nook wrote as defaults in earlier versions also count as automatic.
+ * RPC_RELAY_URL): a public RPC with an automatic backup (R5-3/R5-14). Any
+ * other URL is the user's own — even one Nook once used as its default: the
+ * backend moves those to the relay once at startup, so one still in the
+ * config was chosen here (R6-1).
  */
 const RPC_RELAY_URL = 'http://127.0.0.1:3054/rpc'
-const LEGACY_DEFAULT_RPCS = ['https://rpc.gnosischain.com', 'https://xdai.fairdatasociety.org']
 
 function isAutomaticRpc(value: unknown): boolean {
-  return typeof value !== 'string' || value === '' || value === RPC_RELAY_URL || LEGACY_DEFAULT_RPCS.includes(value)
+  return typeof value !== 'string' || value === '' || value === RPC_RELAY_URL
 }
 
 export default function Settings() {

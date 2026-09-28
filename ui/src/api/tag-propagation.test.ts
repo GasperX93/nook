@@ -53,6 +53,16 @@ describe('waitForTagPropagation (R5-13)', () => {
     expect(res.complete).toBe(true)
   })
 
+  it('reports waiting while Bee is down and clears it once pieces land again (R6-3)', async () => {
+    scriptTags([tag(1), 'down', 'down', tag(50), tag(100)])
+    readiness.mockResolvedValue({ ready: true })
+    const onWaiting = vi.fn()
+
+    await waitForTagPropagation(1, undefined, { pollMs: 0, onWaiting })
+
+    expect(onWaiting.mock.calls).toEqual([[true], [false]])
+  })
+
   it('does not call it a stall while Bee is up but not ready (re-syncing)', async () => {
     // No progress for 100 polls while Bee reports not ready, then progress resumes.
     scriptTags([tag(1), ...Array(100).fill(tag(1)), tag(100)])

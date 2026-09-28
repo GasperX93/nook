@@ -11,10 +11,14 @@ export const RPC_FALLBACK = 'https://gnosis-rpc.publicnode.com'
 export const RELAY_PORT = 3054
 export const RPC_RELAY_URL = `http://127.0.0.1:${RELAY_PORT}/rpc`
 
-/** Endpoints Nook itself wrote as defaults in earlier versions. */
-const LEGACY_DEFAULTS = ['https://rpc.gnosischain.com', 'https://xdai.fairdatasociety.org']
+/**
+ * Endpoints Nook itself wrote as defaults in earlier versions. Only the
+ * one-time migration (migration.ts) moves these to the relay — afterwards the
+ * same URL in the config is a choice the user made in Settings (R6-1).
+ */
+export const LEGACY_DEFAULT_RPCS = ['https://rpc.gnosischain.com', 'https://xdai.fairdatasociety.org']
 
-/** True when the config value means "Nook picks the RPC" (relay, legacy default or unset). */
+/** True when the config value means "Nook picks the RPC" (relay or unset). */
 export function isAutomaticRpc(value: unknown): boolean {
-  return typeof value !== 'string' || value === '' || value === RPC_RELAY_URL || LEGACY_DEFAULTS.includes(value)
+  return typeof value !== 'string' || value === '' || value === RPC_RELAY_URL
 }

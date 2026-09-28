@@ -79,7 +79,13 @@ import { Switch } from '../components/ui/switch'
 import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { useSidebar } from '../components/ui/sidebar'
 import { friendlyError } from '../lib/friendly-error'
-import { savingLabel, UPLOAD_ENCRYPTED, UPLOAD_STEP_LOCAL, UPLOAD_STEP_NETWORK } from '../lib/transfer-labels'
+import {
+  savingLabel,
+  UPLOAD_ENCRYPTED,
+  UPLOAD_PAUSED,
+  UPLOAD_STEP_LOCAL,
+  UPLOAD_STEP_NETWORK,
+} from '../lib/transfer-labels'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -1299,15 +1305,22 @@ function RecordRow({
           <div className="w-24 h-1 rounded-full overflow-hidden" style={{ backgroundColor: 'rgb(var(--border))' }}>
             <div
               className="h-full rounded-full transition-all"
-              style={{ width: `${Math.max(propagating?.pct ?? 0, 2)}%`, backgroundColor: 'rgb(var(--accent))' }}
+              style={{
+                width: `${Math.max(propagating?.pct ?? 0, 2)}%`,
+                backgroundColor: propagating?.paused ? 'rgb(var(--fg-muted))' : 'rgb(var(--accent))',
+              }}
             />
           </div>
           <span
-            title={transferEta ?? undefined}
+            title={propagating?.paused ? UPLOAD_PAUSED : (transferEta ?? undefined)}
             className="text-[10px] uppercase tracking-widest font-semibold w-24 text-right whitespace-nowrap tabular-nums"
-            style={{ color: 'rgb(var(--accent))' }}
+            style={{ color: propagating?.paused ? 'rgb(var(--fg-muted))' : 'rgb(var(--accent))' }}
           >
-            {propagating?.pct !== null && propagating?.pct !== undefined ? `Storing ${propagating.pct}%` : 'Storing…'}
+            {propagating?.paused
+              ? 'Paused'
+              : propagating?.pct !== null && propagating?.pct !== undefined
+                ? `Storing ${propagating.pct}%`
+                : 'Storing…'}
           </span>
         </div>
       ) : (
@@ -2243,9 +2256,13 @@ function AddFilePanel({
         style={{ backgroundColor: 'rgb(var(--bg-surface))', borderColor: 'rgb(var(--border))' }}
       >
         <div className="flex items-center gap-2">
-          <RefreshCw size={13} className="animate-spin shrink-0" style={{ color: 'rgb(var(--accent))' }} />
+          <RefreshCw
+            size={13}
+            className={`shrink-0 ${propagationTransfer?.paused ? '' : 'animate-spin'}`}
+            style={{ color: propagationTransfer?.paused ? 'rgb(var(--fg-muted))' : 'rgb(var(--accent))' }}
+          />
           <p className="text-sm tabular-nums" style={{ color: 'rgb(var(--fg-muted))' }}>
-            {phase || 'Preparing…'}
+            {propagationTransfer?.paused ? `Step 2 of 2 · ${UPLOAD_PAUSED}` : phase || 'Preparing…'}
             {/* Step 2 shows its own numbers in the visual below. */}
             {!propagationTransfer && progress !== null && progress > 0 && ` — ${progress}%`}
           </p>

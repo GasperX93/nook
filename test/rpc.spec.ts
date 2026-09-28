@@ -1,6 +1,7 @@
 import {
   COOLDOWN_MS,
   endpointOrder,
+  isAutomaticRpc,
   isRetryableAnswer,
   relayJsonRpc,
   resetFailover,
@@ -45,6 +46,21 @@ beforeAll(() => {
 beforeEach(() => {
   fetchMock.mockReset()
   resetFailover()
+})
+
+describe('isAutomaticRpc', () => {
+  it.each([undefined, '', 'http://127.0.0.1:3054/rpc'])('%p means Nook picks the RPC', value => {
+    expect(isAutomaticRpc(value)).toBe(true)
+  })
+
+  // R6-1: old defaults are moved to the relay once by the migration; after
+  // that the same URL is a custom RPC the user chose.
+  it.each(['https://rpc.gnosischain.com', 'https://xdai.fairdatasociety.org', 'https://my.rpc'])(
+    '%s is a custom RPC',
+    value => {
+      expect(isAutomaticRpc(value)).toBe(false)
+    },
+  )
 })
 
 describe('isRetryableAnswer', () => {

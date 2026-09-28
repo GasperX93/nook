@@ -1,6 +1,7 @@
 import { FileBox } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
+import { UPLOAD_PAUSED } from '../lib/transfer-labels'
 import { etaText, type TransferEntry } from '../store/transfers'
 
 /**
@@ -45,7 +46,8 @@ export default function PropagationVisual({ transfer }: { transfer: TransferEntr
 
   const rate = currentRate(transfer)
   // Dot travel time: idle 0 (paused), slow trickle 2.6s, brisk 1s.
-  const duration = rate <= 0 ? 0 : rate > 400 ? 1 : rate > 100 ? 1.6 : 2.6
+  // Paused (R6-3): Bee is down, the last samples still show a rate — freeze.
+  const duration = transfer.paused || rate <= 0 ? 0 : rate > 400 ? 1 : rate > 100 ? 1.6 : 2.6
   const eta = etaText(transfer)
   const counts = useMemo(() => {
     if (transfer.chunksTotal === undefined || transfer.chunksDone === undefined) return null
@@ -102,7 +104,7 @@ export default function PropagationVisual({ transfer }: { transfer: TransferEntr
       </p>
 
       <p className="text-[11px]" style={{ color: 'rgb(var(--fg-muted))' }}>
-        {FACTS[factIdx]}
+        {transfer.paused ? `${UPLOAD_PAUSED} — it continues by itself once the node is back.` : FACTS[factIdx]}
       </p>
     </div>
   )

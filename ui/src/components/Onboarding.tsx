@@ -49,6 +49,9 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
 
   const address = addresses?.ethereum ?? (status?.address ? `0x${status.address}` : '')
   const hasFunds = wallet ? Number(weiToDai(wallet.nativeTokenBalance)) > 0 : false
+  // xDAI alone finishes setup (the node connects), but drives and messages
+  // need xBZZ — the Ready step must not claim "funded" then (R6-4).
+  const noBzz = wallet !== undefined && BigInt(wallet.bzzBalance || '0') === BigInt(0)
 
   // Debug: lock to a specific step via localStorage (e.g. 'starting', 'syncing', 'funding')
   const lockedStep = localStorage.getItem('nook:onboarding-step') as Step | null
@@ -150,6 +153,11 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
   function finish() {
     setOnboardingCompleted()
     navigate('/drive')
+  }
+
+  function finishToWallet() {
+    setOnboardingCompleted()
+    navigate('/account?tab=wallet')
   }
 
   function skip() {
@@ -414,17 +422,44 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
               <Check size={28} style={{ color: '#4ade80' }} />
             </div>
             <h2 className="text-lg font-semibold">Your node is ready</h2>
-            <p className="text-sm leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
-              Your Bee node is connected and funded. You can now create a drive and start uploading files to the Swarm
-              network.
-            </p>
-            <button
-              onClick={finish}
-              className="px-6 py-3 rounded-lg text-sm font-semibold transition-opacity"
-              style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
-            >
-              Create your first drive →
-            </button>
+            {noBzz ? (
+              <>
+                <p className="text-sm leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  Your node is connected. Add xBZZ to create drives and turn on messages — Nook sets up the rest
+                  automatically.
+                </p>
+                <div className="flex flex-col items-center gap-3">
+                  <button
+                    onClick={finishToWallet}
+                    className="px-6 py-3 rounded-lg text-sm font-semibold transition-opacity"
+                    style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
+                  >
+                    Open wallet →
+                  </button>
+                  <button
+                    onClick={finish}
+                    className="text-xs underline transition-colors"
+                    style={{ color: 'rgb(var(--fg-muted))' }}
+                  >
+                    Go to Drive
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="text-sm leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  Your Bee node is connected and funded. You can now create a drive and start uploading files to the
+                  Swarm network.
+                </p>
+                <button
+                  onClick={finish}
+                  className="px-6 py-3 rounded-lg text-sm font-semibold transition-opacity"
+                  style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
+                >
+                  Create your first drive →
+                </button>
+              </>
+            )}
           </div>
         )}
 
