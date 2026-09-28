@@ -242,7 +242,20 @@ export default function LogViewer({ className = '' }: { className?: string }) {
               {lines.length === 0 ? 'No logs yet.' : 'Nothing matches these filters.'}
             </p>
           ) : (
-            visible.map((l, i) => <Row key={i} line={l} />)
+            // Keyed by the line itself (+ how often it occurred so far), not
+            // its position: the 2,000-line window slides on every refresh, and
+            // an index key moved a "more" expansion onto another line.
+            (() => {
+              const seen = new Map<string, number>()
+
+              return visible.map(l => {
+                const n = (seen.get(l.raw) ?? 0) + 1
+
+                seen.set(l.raw, n)
+
+                return <Row key={`${n}:${l.raw}`} line={l} />
+              })
+            })()
           )}
         </div>
         {!follow && (

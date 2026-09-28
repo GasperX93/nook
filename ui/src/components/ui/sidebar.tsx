@@ -215,6 +215,7 @@ const SidebarLinkItem = React.forwardRef<
       rel="noreferrer"
       onClick={onClick}
       title={!expanded ? label : undefined}
+      aria-label={`${label} (opens in a new tab)`}
       className={cn(
         'flex items-center gap-3 h-8 rounded-lg transition-colors text-xs text-sidebar-muted opacity-70 hover:opacity-100 hover:text-sidebar-foreground',
         expanded ? 'px-3 mx-1' : 'w-12 mx-auto justify-center',
