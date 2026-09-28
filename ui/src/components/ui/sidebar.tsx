@@ -197,6 +197,42 @@ const SidebarMenuItem = React.forwardRef<HTMLAnchorElement, SidebarMenuItemProps
 SidebarMenuItem.displayName = 'SidebarMenuItem'
 
 /**
+ * A quiet sidebar link to an outside page, opened in a new tab (e.g. the
+ * feedback form) — smaller and dimmer than the nav items so it doesn't
+ * compete with them.
+ */
+const SidebarLinkItem = React.forwardRef<
+  HTMLAnchorElement,
+  Omit<SidebarMenuItemProps, 'to' | 'badge'> & { href: string }
+>(({ href, icon: Icon, label, onClick, className }, ref) => {
+  const { expanded } = useSidebar()
+
+  return (
+    <a
+      ref={ref}
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      onClick={onClick}
+      title={!expanded ? label : undefined}
+      className={cn(
+        'flex items-center gap-3 h-8 rounded-lg transition-colors text-xs text-sidebar-muted opacity-70 hover:opacity-100 hover:text-sidebar-foreground',
+        expanded ? 'px-3 mx-1' : 'w-12 mx-auto justify-center',
+        className,
+      )}
+    >
+      {/* 20px box: the small icon lines up with the nav icons above. */}
+      <span className="w-5 shrink-0 flex items-center justify-center">
+        <Icon size={14} />
+      </span>
+      {expanded && <span className="truncate">{label}</span>}
+    </a>
+  )
+})
+
+SidebarLinkItem.displayName = 'SidebarLinkItem'
+
+/**
  * Toggle button for collapsing/expanding the sidebar. Place it in the footer
  * (or anywhere) — uses the SidebarProvider context.
  */
@@ -232,5 +268,6 @@ export {
   SidebarFooter,
   SidebarSpacer,
   SidebarMenuItem,
+  SidebarLinkItem,
   SidebarTrigger,
 }

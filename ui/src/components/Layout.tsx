@@ -5,6 +5,7 @@ import {
   Globe,
   HardDrive,
   Mail,
+  MessageSquare,
   RefreshCw,
   Settings,
   Terminal,
@@ -29,6 +30,7 @@ import { serverApi } from '../api/server'
 import { useDerivedKey } from '../hooks/useDerivedKey'
 import { useAutoPublish } from '../hooks/useAutoPublish'
 import { useInboxPolling } from '../hooks/useInboxPolling'
+import { FEEDBACK_URL } from '../lib/links'
 import { isSystemStamp, pickMessagingStamp } from '../lib/system-stamp'
 import { useOutboxDrain } from '../hooks/useOutboxDrain'
 import { hasKnownIdentity, hasLegacyIdentityPendingMove } from '../notify/active-identity'
@@ -42,11 +44,13 @@ import NotificationBell from './NotificationBell'
 import SwarmIdChip from './SwarmIdChip'
 import SwarmIdDialog from './SwarmIdDialog'
 import ForeignBeeScreen from './ForeignBeeScreen'
+import NookWordmark from './NookWordmark'
 import Onboarding from './Onboarding'
 import {
   Sidebar,
   SidebarFooter,
   SidebarHeader,
+  SidebarLinkItem,
   SidebarMenuItem,
   SidebarProvider,
   SidebarSection,
@@ -54,6 +58,7 @@ import {
   SidebarSeparator,
   SidebarSpacer,
   SidebarTrigger,
+  useSidebar,
 } from './ui/sidebar'
 
 const storageNavItems = [
@@ -71,6 +76,13 @@ const settingsNavItem = { to: '/settings', icon: Settings, label: 'Settings' }
 const MOVE_NOTICE_DISMISSED_KEY = 'nook-swarm-id-move-notice-dismissed'
 
 const appNavItems = [{ to: '/apps/website-publisher', icon: Globe, label: 'Publish website' }]
+
+/** Same wordmark as the product site and promo video — smaller when the sidebar is collapsed (80px). */
+function SidebarWordmark() {
+  const { expanded } = useSidebar()
+
+  return <NookWordmark height={expanded ? 14 : 10} className="mb-2.5 text-sidebar-foreground" />
+}
 
 export default function Layout() {
   const { isError: beeOffline, isPending: beeChecking, isSuccess: beeOnline } = useBeeHealth()
@@ -267,7 +279,7 @@ export default function Layout() {
         {/* Sidebar */}
         <Sidebar>
           <SidebarHeader>
-            <span className="text-[10px] font-bold uppercase tracking-widest mb-2 text-sidebar-foreground">Nook</span>
+            <SidebarWordmark />
             {/* Node status dot */}
             <div
               className="flex flex-col items-center gap-1 mb-3"
@@ -332,6 +344,7 @@ export default function Layout() {
           <SidebarFooter>
             <SidebarSection>
               <SidebarMenuItem to={settingsNavItem.to} icon={settingsNavItem.icon} label={settingsNavItem.label} />
+              <SidebarLinkItem href={FEEDBACK_URL} icon={MessageSquare} label="Send feedback" />
             </SidebarSection>
             <div className="pt-2">
               <SidebarTrigger />

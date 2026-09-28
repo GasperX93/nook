@@ -17,6 +17,7 @@ import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Switch } from '../components/ui/switch'
 import { serverApi } from '../api/server'
+import { FEEDBACK_URL } from '../lib/links'
 import { isSystemStamp } from '../lib/system-stamp'
 import { useAppStore } from '../store/app'
 
@@ -453,7 +454,7 @@ export default function Settings() {
                 GitHub
               </a>
               <a
-                href="https://github.com/GasperX93/nook/issues/new/choose"
+                href={FEEDBACK_URL}
                 target="_blank"
                 rel="noreferrer"
                 className="flex items-center gap-2 text-xs transition-colors hover:underline"
