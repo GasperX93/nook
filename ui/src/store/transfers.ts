@@ -40,6 +40,10 @@ export interface TransferEntry {
   folderId?: string
   /** Set once the upload's record exists — the real row takes over from the in-progress one. */
   recordId?: string
+  /** Where the sidebar card leads instead of the drive (e.g. the publish wizard, R7-5). */
+  href?: string
+  /** What a finished entry says instead of "Stored" (e.g. "Published"). */
+  doneLabel?: string
   startedAt: number
   /** Rolling [timestampMs, chunksDone] samples for the rate/ETA estimate. */
   samples: [number, number][]
@@ -49,7 +53,7 @@ interface TransfersState {
   transfers: TransferEntry[]
   begin: (
     t: Pick<TransferEntry, 'id' | 'kind' | 'name'> &
-      Partial<Pick<TransferEntry, 'driveId' | 'phase' | 'label' | 'bytes' | 'folderId'>>,
+      Partial<Pick<TransferEntry, 'driveId' | 'phase' | 'label' | 'bytes' | 'folderId' | 'href' | 'doneLabel'>>,
   ) => void
   update: (
     id: string,

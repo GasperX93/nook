@@ -309,7 +309,8 @@ export const serverApi = {
 
   // ─── Wallet activity (#139) ─────────────────────────────────────────────
 
-  getWalletActivity: async () => serverGet<WalletActivity>('/wallet-activity'),
+  /** `fresh` skips the server's 1-minute cache — right after moving funds (R7-4). */
+  getWalletActivity: async (fresh = false) => serverGet<WalletActivity>(`/wallet-activity${fresh ? '?fresh=1' : ''}`),
 
   // ─── Notifications (#138) — the bell's event feed ───────────────────────
 

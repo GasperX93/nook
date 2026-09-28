@@ -270,8 +270,23 @@ export default function Layout() {
 
   const showOnboarding = !onboardingCompleted || (onboardingCompleted && !startupDone)
 
-  const dotColor = beeChecking ? 'rgb(var(--border))' : isSyncing ? '#f97316' : beeOnline ? '#4ade80' : '#ef4444'
-  const dotLabel = beeChecking ? '···' : isSyncing ? 'sync' : beeOnline ? 'live' : 'off'
+  // Another node on Nook's ports (R7-3): whatever answers health/peers is
+  // THAT node, so its "live" says nothing about ours — which isn't running.
+  const blocked = Boolean(status?.foreignBee)
+  const dotColor = blocked
+    ? '#ef4444'
+    : beeChecking
+      ? 'rgb(var(--border))'
+      : isSyncing
+        ? '#f97316'
+        : beeOnline
+          ? '#4ade80'
+          : '#ef4444'
+  const dotLabel = blocked ? 'blocked' : beeChecking ? '···' : isSyncing ? 'sync' : beeOnline ? 'live' : 'off'
+  const dotTitle = blocked
+    ? 'Another node is using Nook’s ports — your node isn’t running'
+    : `Bee node: ${dotLabel}${beeOnline ? ` · ${peerCount} peers` : ''}`
+  const dotGlow = beeOnline && !blocked
 
   return (
     <SidebarProvider>
@@ -281,13 +296,10 @@ export default function Layout() {
           <SidebarHeader>
             <SidebarWordmark />
             {/* Node status dot */}
-            <div
-              className="flex flex-col items-center gap-1 mb-3"
-              title={`Bee node: ${dotLabel}${beeOnline ? ` · ${peerCount} peers` : ''}`}
-            >
+            <div className="flex flex-col items-center gap-1 mb-3" title={dotTitle}>
               <div
                 className="w-2 h-2 rounded-full transition-colors"
-                style={{ backgroundColor: dotColor, boxShadow: beeOnline ? `0 0 6px ${dotColor}` : 'none' }}
+                style={{ backgroundColor: dotColor, boxShadow: dotGlow ? `0 0 6px ${dotColor}` : 'none' }}
               />
               <span className="text-[8px] uppercase tracking-widest font-semibold" style={{ color: dotColor }}>
                 {dotLabel}

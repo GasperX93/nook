@@ -8,6 +8,16 @@ import { useUpload } from '../hooks/useUpload'
 import ENSModal from '../components/ENSModal'
 import { bzzLink } from '../lib/ens-gateway'
 import PublishProgress from '../components/PublishProgress'
+import { serverApi } from '../api/server'
+import { UPLOAD_STEP_LOCAL, UPLOAD_STEP_NETWORK } from '../lib/transfer-labels'
+import {
+  type BoughtStamp,
+  loadBoughtStamp,
+  PUBLISH_JOB_HREF,
+  publishTransferId,
+  saveBoughtStamp,
+  usePublishJob,
+} from '../store/publish-job'
 import { useTransfersStore } from '../store/transfers'
 import {
   detectIndexDocument,
@@ -28,11 +38,17 @@ interface SelectedContent {
   indexDocument: string
 }
 
-interface PublishResult {
-  hash: string
-  expiresAt: number
-  feedManifestAddress?: string
-  recordId: string
+/** The short step name on the sidebar card, from the publish phase. */
+function cardLabel(phase: string): string {
+  if (phase.startsWith('Buying')) return 'Buying storage'
+
+  if (phase === UPLOAD_STEP_LOCAL || phase.startsWith('Encrypting')) return 'Copying'
+
+  if (phase === UPLOAD_STEP_NETWORK || phase.startsWith('Still storing')) return 'Storing'
+
+  if (phase.startsWith('Creating the permanent address')) return 'Finishing'
+
+  return 'Preparing'
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -77,23 +93,28 @@ export default function WebsitePublisher() {
 
   // A stamp bought by a previous (failed) publish attempt. Reused on retry so
   // the user isn't charged twice — but only while the size/duration selection
-  // still matches what was paid for; changing either buys fresh.
-  const [boughtStamp, setBoughtStamp] = useState<{ batchID: string; sizeIdx: number; durationIdx: number } | null>(null)
+  // still matches what was paid for; changing either buys fresh. Kept in
+  // localStorage (R7-5): leaving the page or reloading must not forget it.
+  const [boughtStamp, setBoughtStampState] = useState<BoughtStamp | null>(loadBoughtStamp)
+  const setBoughtStamp = (stamp: BoughtStamp | null) => {
+    saveBoughtStamp(stamp)
+    setBoughtStampState(stamp)
+  }
 
-  // Publishing state
-  const [publishPhase, setPublishPhase] = useState('')
+  // The publish itself is an app-wide job (R7-5): it keeps running when the
+  // user leaves, and its progress/result live in a store the sidebar card
+  // reads too — so this page shows it again on return.
+  const job = usePublishJob(state => state.job)
+  const view: Step = job?.status === 'running' ? 'publishing' : job?.status === 'done' ? 'done' : step
+  const result = job?.status === 'done' ? (job.result ?? null) : null
+  const publishError = job?.status === 'failed' ? (job.error ?? 'Something went wrong') : null
   // Progress view (R4-7): the upload's tag feeds the same honest propagation
   // visual as Drive; steps without measurable progress show elapsed time.
-  const [publishTagUid, setPublishTagUid] = useState<number | null>(null)
-  const [skippedBuy, setSkippedBuy] = useState(false)
   const propagationTransfer = useTransfersStore(state =>
-    publishTagUid === null ? undefined : state.transfers.find(t => t.id === `tag:${publishTagUid}`),
+    !job || job.tagUid === null ? undefined : state.transfers.find(t => t.id === `tag:${job.tagUid}`),
   )
-  const [publishError, setPublishError] = useState<string | null>(null)
-  const [uploadProgress, setUploadProgress] = useState<number | null>(null)
 
   // Done state
-  const [result, setResult] = useState<PublishResult | null>(null)
   const [copied, setCopied] = useState(false)
   const [ensModalOpen, setEnsModalOpen] = useState(false)
   const [linkedDomain, setLinkedDomain] = useState('')
@@ -102,11 +123,33 @@ export default function WebsitePublisher() {
   const navigate = useNavigate()
   const location = useLocation()
 
-  // Reset when sidebar item is clicked (new location.key)
+  // Reset when the sidebar item is clicked (new location.key) — except while
+  // a publish runs, or when the sidebar card asked to see the job (?job=1):
+  // then show its progress or result. A failed job restores its options.
   // eslint-disable-next-line
   useEffect(() => {
+    const current = usePublishJob.getState().job
+    const showJob = new URLSearchParams(location.search).get('job') === '1'
+
+    if (current?.status === 'running') return
+
+    if (current && showJob) {
+      if (current.status === 'failed') restoreFrom(current)
+
+      return
+    }
     reset()
   }, [location.key])
+
+  function restoreFrom(failed: NonNullable<typeof job>) {
+    setContent(failed.content)
+    setSizeIdx(failed.selection.sizeIdx)
+    setDurationIdx(failed.selection.durationIdx)
+    setDriveName(failed.selection.driveName)
+    setFeedTopic(failed.selection.feedTopic)
+    setFeedEnabled(failed.feedEnabled)
+    setStep('options')
+  }
 
   const { isError: beeOffline, isSuccess: beeOnline } = useBeeHealth()
   const { data: chainState } = useChainState()
@@ -194,19 +237,53 @@ export default function WebsitePublisher() {
   async function publish() {
     if (!content || (!cost && !reusableStamp)) return
 
-    setStep('publishing')
-    setPublishError(null)
+    const jobId = crypto.randomUUID()
+    const siteName = driveName.trim() || content.name
+    const transferId = publishTransferId(jobId)
+    const jobs = usePublishJob.getState()
+    const transfers = useTransfersStore.getState()
+    const firstPhase = reusableStamp ? 'Getting storage ready…' : 'Buying storage…'
+
+    jobs.start({
+      id: jobId,
+      siteName,
+      status: 'running',
+      phase: firstPhase,
+      uploadProgress: null,
+      tagUid: null,
+      skippedBuy: Boolean(reusableStamp),
+      feedEnabled,
+      fileCount: content.entries.length,
+      content,
+      selection: { sizeIdx, durationIdx, driveName, feedTopic },
+    })
+    // One sidebar card for the whole publish, from the first step (R7-5).
+    transfers.begin({
+      id: transferId,
+      kind: 'upload',
+      name: siteName,
+      phase: firstPhase,
+      label: cardLabel(firstPhase),
+      href: PUBLISH_JOB_HREF,
+      doneLabel: 'Published',
+    })
+    // Everything below keeps running when the user leaves this page — it
+    // only writes to the stores, never to this component.
+    const onPhase = (phase: string) => {
+      usePublishJob.getState().patch(jobId, { phase })
+      useTransfersStore.getState().update(transferId, { phase, label: cardLabel(phase), pct: null })
+    }
+    const onProgress = (pct: number | null) => {
+      usePublishJob.getState().patch(jobId, { uploadProgress: pct })
+      useTransfersStore.getState().update(transferId, { pct })
+    }
 
     try {
       let batchID: string
 
-      setPublishTagUid(null)
-      setSkippedBuy(Boolean(reusableStamp))
-
       if (reusableStamp) {
         batchID = reusableStamp.batchID
       } else {
-        setPublishPhase('Buying storage…')
         const res = await buyStamp.mutateAsync({
           amount: cost!.amount,
           depth: selectedSize.depth,
@@ -221,25 +298,38 @@ export default function WebsitePublisher() {
         entries: content.entries,
         type: 'website',
         driveId: batchID,
-        name: driveName.trim() || content.name,
+        name: siteName,
         indexDocument: content.indexDocument,
         feedEnabled,
         feedTopic: feedTopic.trim() || driveName.trim() || content.name,
-        onPhase: setPublishPhase,
-        onProgress: setUploadProgress,
-        onTag: setPublishTagUid,
+        onPhase,
+        onProgress,
+        onTag: uid => usePublishJob.getState().patch(jobId, { tagUid: uid }),
       })
 
-      setResult(uploadResult)
       setBoughtStamp(null)
-      setStep('done')
+      usePublishJob.getState().patch(jobId, { status: 'done', result: uploadResult, uploadProgress: null })
+      useTransfersStore.getState().finish(transferId)
+      serverApi
+        .createNotification({
+          type: 'info',
+          title: 'Website published',
+          body: `“${siteName}” is live on Swarm.`,
+          link: PUBLISH_JOB_HREF,
+        })
+        .catch(() => undefined)
     } catch (err) {
-      setPublishError(err instanceof Error ? err.message : 'Something went wrong')
+      usePublishJob.getState().patch(jobId, {
+        status: 'failed',
+        error: err instanceof Error ? err.message : 'Something went wrong',
+      })
+      useTransfersStore.getState().finish(transferId, 'failed')
       setStep('options')
     }
   }
 
   function reset() {
+    usePublishJob.getState().clear()
     setStep('select')
     setContent(null)
     setDragging(false)
@@ -248,11 +338,7 @@ export default function WebsitePublisher() {
     setDriveName('')
     setFeedEnabled(true)
     setFeedTopic('')
-    setBoughtStamp(null)
-    setPublishPhase('')
-    setPublishError(null)
-    setUploadProgress(null)
-    setResult(null)
+    // boughtStamp is NOT cleared: it is paid-for storage a retry must reuse.
     setCopied(false)
 
     if (dirInputRef.current) dirInputRef.current.value = ''
@@ -264,7 +350,7 @@ export default function WebsitePublisher() {
     <div
       className="p-6 max-w-xl"
       onDragOver={
-        step === 'select'
+        view === 'select'
           ? e => {
               e.preventDefault()
               setDragging(true)
@@ -272,16 +358,16 @@ export default function WebsitePublisher() {
           : undefined
       }
       onDragLeave={
-        step === 'select'
+        view === 'select'
           ? e => {
               if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragging(false)
             }
           : undefined
       }
-      onDrop={step === 'select' ? handleDrop : undefined}
+      onDrop={view === 'select' ? handleDrop : undefined}
     >
       {/* ── Step: Step dots (select / options) ── */}
-      {(step === 'select' || step === 'options') && (
+      {(view === 'select' || view === 'options') && (
         <div className="flex items-center gap-2 mb-8">
           {(['select', 'options'] as const).map((s, i) => {
             const labels = ['Select', 'Options']
@@ -309,7 +395,7 @@ export default function WebsitePublisher() {
       )}
 
       {/* ── Step 1: Select ── */}
-      {step === 'select' && (
+      {view === 'select' && (
         <div className="space-y-4">
           {/* Drop zone */}
           <div
@@ -364,7 +450,7 @@ export default function WebsitePublisher() {
       )}
 
       {/* ── Step 2: Options ── */}
-      {step === 'options' && content && (
+      {view === 'options' && content && (
         <div className="space-y-6">
           {/* Content summary */}
           <div className="rounded-lg border px-4 py-3 space-y-1" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
@@ -584,19 +670,19 @@ export default function WebsitePublisher() {
       )}
 
       {/* ── Publishing ── */}
-      {step === 'publishing' && (
+      {view === 'publishing' && job && (
         <PublishProgress
-          phase={publishPhase}
-          fileCount={content?.entries.length ?? 0}
-          uploadProgress={uploadProgress}
+          phase={job.phase}
+          fileCount={job.fileCount}
+          uploadProgress={job.uploadProgress}
           propagationTransfer={propagationTransfer}
-          skippedBuy={skippedBuy}
-          feedEnabled={feedEnabled}
+          skippedBuy={job.skippedBuy}
+          feedEnabled={job.feedEnabled}
         />
       )}
 
       {/* ── Done ── */}
-      {step === 'done' && result && (
+      {view === 'done' && result && (
         <div className="space-y-6">
           <div className="flex items-center gap-3">
             <div
@@ -608,7 +694,7 @@ export default function WebsitePublisher() {
             <div>
               <p className="text-sm font-semibold">Published to Swarm</p>
               <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-                {driveName.trim() || content?.name}
+                {job?.siteName}
               </p>
             </div>
           </div>

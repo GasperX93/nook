@@ -577,7 +577,7 @@ export function runServer() {
 
   // ─── Wallet activity (#139) — audit surface for automatic spending ────────
   router.get('/wallet-activity', async context => {
-    context.body = await getWalletActivity()
+    context.body = await getWalletActivity(undefined, undefined, { fresh: context.query.fresh === '1' })
   })
 
   // ─── Notifications (#138) — the bell's event feed ─────────────────────────

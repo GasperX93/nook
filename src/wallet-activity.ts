@@ -255,8 +255,11 @@ const realBeeFetch: ActivityFetch = async url => {
 export async function getWalletActivity(
   fetchFn: ActivityFetch = realFetch,
   beeFetch: ActivityFetch = realBeeFetch,
+  opts: { fresh?: boolean } = {},
 ): Promise<WalletActivity> {
-  if (cache && Date.now() - cache.at < CACHE_MS) return cache.data
+  // `fresh`: the UI just moved funds and is waiting for the tx to show up
+  // (R7-4) — skip the minute-long cache for these few follow-up reads.
+  if (!opts.fresh && cache && Date.now() - cache.at < CACHE_MS) return cache.data
 
   const address = readNodeWalletAddress()
   const ledger = ledgerEntries()
