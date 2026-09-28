@@ -16,7 +16,8 @@ interface Props {
   /** The other person's nickname */
   counterpartName: string
   time: string
-  onAdd: (link: string) => void
+  /** The share link, plus the drive's name when the message carries it (R6-5). */
+  onAdd: (link: string, driveName?: string) => void
   onOpen: () => void
   status?: ReactNode
 }
@@ -77,7 +78,7 @@ export default function DriveMessageCard({ m, counterpartName, time, onAdd, onOp
           Open
         </Button>
       ) : (
-        <Button onClick={() => m.driveShareLink && onAdd(m.driveShareLink)} size="sm" className="w-full">
+        <Button onClick={() => m.driveShareLink && onAdd(m.driveShareLink, m.driveName)} size="sm" className="w-full">
           Add drive
         </Button>
       )

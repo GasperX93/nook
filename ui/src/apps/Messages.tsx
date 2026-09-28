@@ -96,7 +96,7 @@ export default function Messages({ initialContactId, hideContactList, hideThread
   // writes happen before the on-chain ping confirms, so without this the gap looks stuck.
   const [sendStatus, setSendStatus] = useState<string | null>(null)
   // Pre-filled share link when the user clicks "Add drive" on a drive-share card
-  const [importingLink, setImportingLink] = useState<string | null>(null)
+  const [importingLink, setImportingLink] = useState<{ link: string; driveName?: string } | null>(null)
   // Invitation acceptance state — nickname input + in-flight flag
   const [inviteNickname, setInviteNickname] = useState('')
   const [acceptingInvite, setAcceptingInvite] = useState(false)
@@ -628,7 +628,7 @@ export default function Messages({ initialContactId, hideContactList, hideThread
                         m={m}
                         counterpartName={selected.nickname}
                         time={formatTime(m.ts)}
-                        onAdd={link => setImportingLink(link)}
+                        onAdd={(link, driveName) => setImportingLink({ link, driveName })}
                         onOpen={() => navigate('/drive?tab=shared')}
                         status={renderDeliveryStatus(m)}
                       />
@@ -838,7 +838,8 @@ export default function Messages({ initialContactId, hideContactList, hideThread
 
       {importingLink && (
         <AddSharedDriveModal
-          initialLink={importingLink}
+          initialLink={importingLink.link}
+          initialName={importingLink.driveName}
           onClose={() => setImportingLink(null)}
           onAdd={drive => sharedDrives.add(drive)}
         />

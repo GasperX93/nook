@@ -1886,7 +1886,7 @@ type UploadType = 'file' | 'folder'
  * uploads still copying to the local node. Mirrors RecordRow's "Storing"
  * treatment so every upload looks the same whatever the drive type.
  */
-function PendingUploadRow({ transfer }: { transfer: TransferEntry }) {
+function PendingUploadRow({ transfer, encrypted }: { transfer: TransferEntry; encrypted: boolean }) {
   const failed = transfer.status === 'failed'
   const verb = transfer.label ?? 'Storing'
 
@@ -1902,12 +1902,13 @@ function PendingUploadRow({ transfer }: { transfer: TransferEntry }) {
           <File size={12} style={{ color: 'rgb(var(--fg-muted))' }} />
         )}
       </div>
-      <span className="flex-1 min-w-0 text-sm truncate">{transfer.name}</span>
-      {transfer.bytes !== undefined && (
-        <span className="text-xs shrink-0 tabular-nums" style={{ color: 'rgb(var(--fg-muted))' }}>
-          {formatBytes(transfer.bytes)}
-        </span>
-      )}
+      <span className="flex-1 min-w-0 text-xs font-medium truncate">{transfer.name}</span>
+      <span
+        className="text-xs shrink-0 hidden sm:block w-14 text-right tabular-nums"
+        style={{ color: 'rgb(var(--fg-muted))' }}
+      >
+        {transfer.bytes !== undefined ? formatBytes(transfer.bytes) : ''}
+      </span>
       <div className="flex items-center gap-2 shrink-0">
         <div className="w-24 h-1 rounded-full overflow-hidden" style={{ backgroundColor: 'rgb(var(--border))' }}>
           <div
@@ -1925,8 +1926,10 @@ function PendingUploadRow({ transfer }: { transfer: TransferEntry }) {
           {failed ? 'Failed' : transfer.pct !== null ? `${verb} ${transfer.pct}%` : `${verb}…`}
         </span>
       </div>
-      {/* Keeps the status column aligned with RecordRow's action buttons. */}
-      <div className="w-[88px] shrink-0" aria-hidden="true" />
+      {/* Same width as RecordRow's action buttons (24px each, 2px apart), so
+          the status column lines up (R6-2): encrypted rows have download + ✕,
+          classic rows also copy + open. */}
+      <div className={`${encrypted ? 'w-[50px]' : 'w-[102px]'} shrink-0`} aria-hidden="true" />
     </div>
   )
 }
@@ -3766,9 +3769,12 @@ export default function Drive() {
       {/* Uploads still in their first step (R5-2) — same row treatment as
           a record that is storing on the network. */}
       {pendingUploads.length > 0 && (
-        <div className="divide-y" style={{ borderColor: 'rgb(var(--border))' }}>
+        <div
+          className={`divide-y ${visibleRecords.length > 0 ? 'border-b' : ''}`}
+          style={{ borderColor: 'rgb(var(--border))' }}
+        >
           {pendingUploads.map(t => (
-            <PendingUploadRow key={t.id} transfer={t} />
+            <PendingUploadRow key={t.id} transfer={t} encrypted={driveMetadata.isEncrypted(activeDriveId)} />
           ))}
         </div>
       )}
