@@ -278,9 +278,10 @@ export default function WebsitePublisher() {
       useTransfersStore.getState().update(transferId, { pct })
     }
 
-    try {
-      let batchID: string
+    // Declared out here so the failure bell can say whether storage is paid for.
+    let batchID: string | undefined
 
+    try {
       if (reusableStamp) {
         batchID = reusableStamp.batchID
       } else {
@@ -297,7 +298,7 @@ export default function WebsitePublisher() {
       const uploadResult = await upload({
         entries: content.entries,
         type: 'website',
-        driveId: batchID,
+        driveId: batchID!,
         name: siteName,
         indexDocument: content.indexDocument,
         feedEnabled,
@@ -315,16 +316,27 @@ export default function WebsitePublisher() {
           type: 'info',
           title: 'Website published',
           body: `“${siteName}” is live on Swarm.`,
-          link: PUBLISH_JOB_HREF,
+          // Durable: the job lives in memory, the drive's record survives reloads.
+          link: `/drive?open=${batchID}`,
         })
         .catch(() => undefined)
     } catch (err) {
-      usePublishJob.getState().patch(jobId, {
-        status: 'failed',
-        error: err instanceof Error ? err.message : 'Something went wrong',
-      })
+      const message = err instanceof Error ? err.message : 'Something went wrong'
+
+      usePublishJob.getState().patch(jobId, { status: 'failed', error: message })
       useTransfersStore.getState().finish(transferId, 'failed')
       setStep('options')
+      // The user may be elsewhere — a failure must not vanish with the card.
+      serverApi
+        .createNotification({
+          type: 'info',
+          title: 'Publishing failed',
+          body: `“${siteName}” wasn’t published: ${message}${
+            batchID ? ' Its storage is paid for — Publish again reuses it.' : ''
+          }`,
+          link: PUBLISH_JOB_HREF,
+        })
+        .catch(() => undefined)
     }
   }
 

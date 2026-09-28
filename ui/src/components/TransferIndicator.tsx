@@ -58,7 +58,10 @@ export default function TransferIndicator() {
       {transfers.map(card => {
         // The publish card during its storing step shows that step's live
         // numbers (%, time left, paused/resuming).
-        const t = card.id === jobCardId && jobTag && card.status === 'active' ? { ...jobTag, name: card.name } : card
+        const t =
+          card.id === jobCardId && jobTag?.status === 'active' && card.status === 'active'
+            ? { ...jobTag, name: card.name }
+            : card
 
         return (
           <button
