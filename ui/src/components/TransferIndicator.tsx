@@ -1,7 +1,7 @@
 import { ArrowDownToLine, ArrowUpFromLine, Check } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 
-import { UPLOAD_PAUSED } from '../lib/transfer-labels'
+import { waitLabel } from '../lib/transfer-labels'
 import { etaText, type TransferEntry, useTransfersStore } from '../store/transfers'
 
 /** Where clicking a transfer goes (R5-1): its own drive, not just "Drive" (a no-op when already there). */
@@ -18,7 +18,9 @@ function statusText(t: TransferEntry): string {
 
   if (t.status === 'failed') return 'Failed'
 
-  if (t.paused) return UPLOAD_PAUSED
+  const waiting = waitLabel(t.waiting)
+
+  if (waiting) return waiting
 
   const verb = t.label ?? (t.kind === 'upload' ? 'Storing' : 'Saving')
   const pct = t.pct !== null ? ` · ${t.pct}%` : '…'
@@ -56,8 +58,8 @@ export default function TransferIndicator() {
           ) : t.kind === 'upload' ? (
             <ArrowUpFromLine
               size={12}
-              className={`shrink-0 ${t.paused ? '' : 'animate-pulse'}`}
-              style={{ color: t.paused ? 'rgb(var(--sidebar-fg-muted))' : 'rgb(var(--accent))' }}
+              className={`shrink-0 ${t.waiting === 'node' ? '' : 'animate-pulse'}`}
+              style={{ color: t.waiting ? 'rgb(var(--sidebar-fg-muted))' : 'rgb(var(--accent))' }}
             />
           ) : (
             <ArrowDownToLine size={12} className="shrink-0 animate-pulse" style={{ color: 'rgb(var(--accent))' }} />

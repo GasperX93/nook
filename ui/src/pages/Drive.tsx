@@ -82,7 +82,7 @@ import { friendlyError } from '../lib/friendly-error'
 import {
   savingLabel,
   UPLOAD_ENCRYPTED,
-  UPLOAD_PAUSED,
+  waitLabel,
   UPLOAD_STEP_LOCAL,
   UPLOAD_STEP_NETWORK,
 } from '../lib/transfer-labels'
@@ -1307,20 +1307,22 @@ function RecordRow({
               className="h-full rounded-full transition-all"
               style={{
                 width: `${Math.max(propagating?.pct ?? 0, 2)}%`,
-                backgroundColor: propagating?.paused ? 'rgb(var(--fg-muted))' : 'rgb(var(--accent))',
+                backgroundColor: propagating?.waiting ? 'rgb(var(--fg-muted))' : 'rgb(var(--accent))',
               }}
             />
           </div>
           <span
-            title={propagating?.paused ? UPLOAD_PAUSED : (transferEta ?? undefined)}
+            title={waitLabel(propagating?.waiting) ?? transferEta ?? undefined}
             className="text-[10px] uppercase tracking-widest font-semibold w-24 text-right whitespace-nowrap tabular-nums"
-            style={{ color: propagating?.paused ? 'rgb(var(--fg-muted))' : 'rgb(var(--accent))' }}
+            style={{ color: propagating?.waiting ? 'rgb(var(--fg-muted))' : 'rgb(var(--accent))' }}
           >
-            {propagating?.paused
+            {propagating?.waiting === 'node'
               ? 'Paused'
-              : propagating?.pct !== null && propagating?.pct !== undefined
-                ? `Storing ${propagating.pct}%`
-                : 'Storing…'}
+              : propagating?.waiting === 'resuming'
+                ? 'Resuming…'
+                : propagating?.pct !== null && propagating?.pct !== undefined
+                  ? `Storing ${propagating.pct}%`
+                  : 'Storing…'}
           </span>
         </div>
       ) : (
@@ -2261,11 +2263,13 @@ function AddFilePanel({
         <div className="flex items-center gap-2">
           <RefreshCw
             size={13}
-            className={`shrink-0 ${propagationTransfer?.paused ? '' : 'animate-spin'}`}
-            style={{ color: propagationTransfer?.paused ? 'rgb(var(--fg-muted))' : 'rgb(var(--accent))' }}
+            className={`shrink-0 ${propagationTransfer?.waiting === 'node' ? '' : 'animate-spin'}`}
+            style={{ color: propagationTransfer?.waiting ? 'rgb(var(--fg-muted))' : 'rgb(var(--accent))' }}
           />
           <p className="text-sm tabular-nums" style={{ color: 'rgb(var(--fg-muted))' }}>
-            {propagationTransfer?.paused ? `Step 2 of 2 · ${UPLOAD_PAUSED}` : phase || 'Preparing…'}
+            {propagationTransfer?.waiting
+              ? `Step 2 of 2 · ${waitLabel(propagationTransfer.waiting)}`
+              : phase || 'Preparing…'}
             {/* Step 2 shows its own numbers in the visual below. */}
             {!propagationTransfer && progress !== null && progress > 0 && ` — ${progress}%`}
           </p>

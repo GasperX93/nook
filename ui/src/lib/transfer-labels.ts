@@ -23,3 +23,14 @@ export const UPLOAD_ENCRYPTED = 'Encrypting & storing on the network…'
 
 /** An upload waiting for a stopped or restarting Bee node (R6-3) — it resumes by itself. */
 export const UPLOAD_PAUSED = 'Paused — waiting for your node'
+/** The node is back but still reconnecting before it pushes again (R7-1). */
+export const UPLOAD_RESUMING = 'Resuming — your node is reconnecting…'
+
+/** Label for an upload that is waiting on its node, or null when pieces are moving. */
+export function waitLabel(wait: 'node' | 'resuming' | undefined): string | null {
+  if (wait === 'node') return UPLOAD_PAUSED
+
+  if (wait === 'resuming') return UPLOAD_RESUMING
+
+  return null
+}
