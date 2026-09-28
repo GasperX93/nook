@@ -1888,6 +1888,17 @@ type UploadType = 'file' | 'folder'
  * uploads still copying to the local node. Mirrors RecordRow's "Storing"
  * treatment so every upload looks the same whatever the drive type.
  */
+/**
+ * Pieces an encrypted upload of `bytes` makes: 4 KB data pieces plus the
+ * tree above them (encrypted references are 64 bytes → 64 per level) and a
+ * few for the manifest. An estimate — shown with "~".
+ */
+function estimateEncryptedPieces(bytes: number): number {
+  const data = Math.max(1, Math.ceil(bytes / 4096))
+
+  return data + Math.ceil(data / 63) + 4
+}
+
 function PendingUploadRow({ transfer, encrypted }: { transfer: TransferEntry; encrypted: boolean }) {
   const failed = transfer.status === 'failed'
   const verb = transfer.label ?? 'Storing'
@@ -1985,6 +1996,13 @@ function AddFilePanel({
   const propagationTransfer = useTransfersStore(state =>
     propagationTagUid === null ? undefined : state.transfers.find(t => t.id === `tag:${propagationTagUid}`),
   )
+  // Encrypted uploads are one direct step (no tag): their entry carries
+  // pieces estimated from the bytes Bee has accepted — it only takes more as
+  // it pushes — so they get the same visual as a regular upload (R7-2).
+  const [encryptedUpId, setEncryptedUpId] = useState<string | null>(null)
+  const encryptedTransfer = useTransfersStore(state =>
+    encryptedUpId === null ? undefined : state.transfers.find(t => t.id === encryptedUpId),
+  )
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const dirInputRef = useRef<HTMLInputElement>(null)
@@ -2012,9 +2030,18 @@ function AddFilePanel({
       phase: encrypted ? UPLOAD_ENCRYPTED : UPLOAD_STEP_LOCAL,
       label: encrypted ? 'Encrypting' : 'Copying',
     })
+    const totalBytes = entries.reduce((sum, e) => sum + e.file.size, 0)
+    const estPieces = estimateEncryptedPieces(totalBytes) + (type === 'folder' ? entries.length : 0)
+
+    setEncryptedUpId(encrypted ? upId : null)
     const onUploadPct = (pct: number) => {
       setProgress(pct)
-      useTransfersStore.getState().update(upId, { pct })
+
+      if (encrypted) {
+        useTransfersStore.getState().chunkProgress(upId, Math.round((pct / 100) * estPieces), estPieces)
+      } else {
+        useTransfersStore.getState().update(upId, { pct })
+      }
     }
 
     // For folder uploads inject a generated directory listing so /bzz/{hash}/ resolves
@@ -2254,6 +2281,9 @@ function AddFilePanel({
     }
   }
 
+  const visualTransfer =
+    propagationTransfer ?? (encryptedTransfer && phase === UPLOAD_ENCRYPTED ? encryptedTransfer : undefined)
+
   if (uploading) {
     return (
       <div
@@ -2270,14 +2300,14 @@ function AddFilePanel({
             {propagationTransfer?.waiting
               ? `Step 2 of 2 · ${waitLabel(propagationTransfer.waiting)}`
               : phase || 'Preparing…'}
-            {/* Step 2 shows its own numbers in the visual below. */}
-            {!propagationTransfer && progress !== null && progress > 0 && ` — ${progress}%`}
+            {/* Step 2 and encrypted uploads show their own numbers in the visual below. */}
+            {!visualTransfer && progress !== null && progress > 0 && ` — ${progress}%`}
           </p>
         </div>
         {/* Stage 2 (#4): the propagation gets the full honest visual — real
             chunk counts, coarse ETA, dots moving at the network's real pace. */}
-        {propagationTransfer ? (
-          <PropagationVisual transfer={propagationTransfer} />
+        {visualTransfer ? (
+          <PropagationVisual transfer={visualTransfer} approxTotal={!propagationTransfer} />
         ) : (
           progress !== null && (
             <div className="h-1 rounded-full" style={{ backgroundColor: 'rgb(var(--border))' }}>
