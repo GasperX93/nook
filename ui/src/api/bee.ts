@@ -380,13 +380,23 @@ export function depthToBytes(depth: number): number {
   return NOOK_DISPLAY_CAPACITY[depth] ?? EFFECTIVE_CAPACITY[depth] ?? (1 << depth) * 4096
 }
 
-/** Human-readable user-facing capacity for a given stamp depth */
-export function depthToCapacity(depth: number): string {
+/**
+ * The size a drive is sold as (R7-6): the purchase label for Nook's own
+ * sizes, so the list says "2.6 GB" for a drive bought as "2.6 GB"; decimal
+ * bytes for other depths.
+ */
+export function driveSizeLabel(depth: number): string {
+  const preset = SIZE_PRESETS.find(p => p.depth === depth)
+
+  if (preset) return preset.label
   const bytes = depthToBytes(depth)
 
-  if (bytes >= 1_073_741_824) return `${(bytes / 1_073_741_824).toFixed(1)} GB`
+  return bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.round(bytes / 1e6)} MB`
+}
 
-  return `${(bytes / 1_048_576).toFixed(0)} MB`
+/** Human-readable user-facing capacity for a given stamp depth (same as driveSizeLabel, R7-6). */
+export function depthToCapacity(depth: number): string {
+  return driveSizeLabel(depth)
 }
 
 /**

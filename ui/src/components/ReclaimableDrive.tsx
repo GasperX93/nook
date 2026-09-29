@@ -18,11 +18,12 @@ import {
 import React, { useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 
-import { beeApi, getBeeUrl, type Stamp, depthToBytes } from '../api/bee'
+import { beeApi, getBeeUrl, type Stamp, depthToBytes, driveSizeLabel } from '../api/bee'
 import { serverApi, type ReclaimableDrive, type ReclaimableFile } from '../api/server'
 import { fileListToEntries, readDroppedDirectory, type FileEntry } from '../utils/directory'
 import { useTransfersStore } from '../store/transfers'
 import { friendlyError } from '../lib/friendly-error'
+import { formatBytes } from '../lib/format-bytes'
 import { savingLabel } from '../lib/transfer-labels'
 import PropagationVisual from './PropagationVisual'
 
@@ -39,16 +40,6 @@ const downloadListeners = new Set<() => void>()
 
 function notifyDownloadListeners() {
   downloadListeners.forEach(listener => listener())
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-
-  if (bytes < 1_048_576) return `${(bytes / 1024).toFixed(1)} KB`
-
-  if (bytes < 1_073_741_824) return `${(bytes / 1_048_576).toFixed(1)} MB`
-
-  return `${(bytes / 1_073_741_824).toFixed(2)} GB`
 }
 
 function ttlToDays(seconds: number): string {
@@ -351,7 +342,9 @@ export function ReclaimableDriveCard({
                   : undefined
               }
             >
-              {usedBytes > 0 ? `${formatBytes(usedBytes)} / ${formatBytes(capacityBytes)}` : formatBytes(capacityBytes)}
+              {usedBytes > 0
+                ? `${formatBytes(usedBytes)} / ${driveSizeLabel(drive.depth)}`
+                : driveSizeLabel(drive.depth)}
             </span>
           )}
           {!expired && ttlSeconds !== null && (

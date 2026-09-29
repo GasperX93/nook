@@ -167,6 +167,10 @@ export function useUpload() {
     let uploadHistoryAddress: string | undefined
     let uploadTagUid: number | undefined
 
+    // Outages don't use up attempts — up to a point: a Bee that keeps going
+    // down mid-copy must not retry forever (R8-3 follow-up).
+    let freeRetries = 3
+
     for (let attempt = 1; attempt <= 8; attempt++) {
       try {
         await pauseWhileBeeDown(onPhase)
@@ -186,8 +190,10 @@ export function useUpload() {
 
         // Bee went down mid-copy: wait for it and try again without using up
         // an attempt — an outage isn't a failed upload (R8-3).
-        if (await pauseWhileBeeDown(onPhase)) attempt--
-        else if (attempt === 8) throw err
+        if (freeRetries > 0 && (await pauseWhileBeeDown(onPhase))) {
+          freeRetries--
+          attempt--
+        } else if (attempt === 8) throw err
         // stamp issuer may not be loaded yet — retry
       }
     }

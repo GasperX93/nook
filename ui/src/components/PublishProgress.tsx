@@ -6,7 +6,7 @@
  * address) show elapsed time and a rotating fact instead of a fake bar.
  */
 import { Check } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import { UPLOAD_PAUSED, UPLOAD_RESUMING, UPLOAD_STEP_LOCAL, UPLOAD_STEP_NETWORK } from '../lib/transfer-labels'
 import type { TransferEntry } from '../store/transfers'
@@ -50,6 +50,8 @@ function mmss(ms: number): string {
 
 interface Props {
   phase: string
+  /** The last real step's phase (kept by the publish job) — what a pause interrupted. */
+  stepPhase?: string
   fileCount: number
   uploadProgress: number | null
   propagationTransfer?: TransferEntry
@@ -59,6 +61,7 @@ interface Props {
 
 export default function PublishProgress({
   phase,
+  stepPhase,
   fileCount,
   uploadProgress,
   propagationTransfer,
@@ -67,11 +70,9 @@ export default function PublishProgress({
 }: Props) {
   // Paused / resuming (R8-3) isn't a step of its own — the list stays on the
   // step the outage interrupted instead of jumping back to "Get storage ready".
+  // The job remembers that step, so it holds even if the page is reopened mid-pause.
   const waiting = phase === UPLOAD_PAUSED || phase === UPLOAD_RESUMING
-  const lastStep = useRef<StepId>(stepOf(phase))
-
-  if (!waiting) lastStep.current = stepOf(phase)
-  const current = lastStep.current
+  const current = stepOf(waiting && stepPhase ? stepPhase : phase)
   const steps: StepId[] = [
     ...(skippedBuy ? [] : ['buy' as const]),
     'ready',

@@ -41,6 +41,7 @@ import {
   plurToBzz,
   SIZE_PRESETS,
   stampFillRatio,
+  driveSizeLabel,
   topicFromString,
   waitForRetrievable,
   waitWhileBeeDown,
@@ -80,6 +81,7 @@ import { Switch } from '../components/ui/switch'
 import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { useSidebar } from '../components/ui/sidebar'
 import { friendlyError } from '../lib/friendly-error'
+import { formatBytes } from '../lib/format-bytes'
 import {
   savingLabel,
   UPLOAD_ENCRYPTED,
@@ -95,16 +97,11 @@ import {
 // Why "used" can read higher than the sum of your files: it shows network
 // storage RESERVED (chunk + version overhead, quantized to bucket slots), not
 // logical file bytes. On small drives the smallest step is capacity/32.
+// How full, as Bee measures it (R7-6): a drive is full when its fullest part
+// is, so this can differ from what the files add up to — which the file count
+// shows next to it.
 const USAGE_TOOLTIP =
-  'Network storage reserved — includes chunk and version overhead, so it may read higher than your file sizes on small drives.'
-
-function formatBytes(bytes: number): string {
-  if (bytes >= 1_073_741_824) return `${(bytes / 1_073_741_824).toFixed(1)} GB`
-
-  if (bytes >= 1_048_576) return `${(bytes / 1_048_576).toFixed(1)} MB`
-
-  return `${(bytes / 1024).toFixed(0)} KB`
-}
+  'How full the drive is, as your node measures it. A drive fills unevenly, so this can read higher or lower than your files add up to.'
 
 function timeUntil(ms: number): { label: string; urgent: boolean } {
   const diff = ms - Date.now()
@@ -1575,7 +1572,10 @@ function DriveCard({
 
     if (rootFiles.length > 0) parts.push(`${rootFiles.length} file${rootFiles.length !== 1 ? 's' : ''}`)
 
-    return parts.join(', ') || '0 files'
+    // What your files add up to (R7-6) — next to how full the drive is.
+    const filesBytes = records.reduce((sum, r) => sum + (r.size ?? 0), 0)
+
+    return (parts.join(', ') || '0 files') + (filesBytes > 0 ? ` · ${formatBytes(filesBytes)}` : '')
   })()
 
   function renderInlineFolder(folder: DriveFolder, depth: number): React.ReactElement {
@@ -1862,7 +1862,7 @@ function DriveCard({
             />
           </div>
           <span style={{ color: isFull ? '#ef4444' : 'rgb(var(--fg-muted))' }} title={USAGE_TOOLTIP}>
-            {usedBytes > 0 ? `${formatBytes(usedBytes)} / ${formatBytes(capacityBytes)}` : formatBytes(capacityBytes)}
+            {usedBytes > 0 ? `${driveSizeLabel(stamp.depth)} · ${utilizationPct}% full` : driveSizeLabel(stamp.depth)}
           </span>
           {stamp.usable && (
             // The TTL pill is the extend affordance (#22b): where urgency
@@ -2130,6 +2130,10 @@ function AddFilePanel({
       let uploadHistoryAddress: string | undefined
       let uploadTagUid: number | undefined
 
+      // Outages don't use up attempts — at most 3 times, so a Bee that keeps
+      // going down mid-copy can't retry forever (R8-3 follow-up).
+      let freeRetries = 3
+
       for (let attempt = 1; attempt <= 4; attempt++) {
         try {
           await waitWhileBeeDown(onBeeWait)
@@ -2145,8 +2149,10 @@ function AddFilePanel({
           break
         } catch (err) {
           // Bee went down mid-copy: wait and retry without using up an attempt.
-          if (await waitWhileBeeDown(onBeeWait)) attempt--
-          else if (attempt === 4) throw err
+          if (freeRetries > 0 && (await waitWhileBeeDown(onBeeWait))) {
+            freeRetries--
+            attempt--
+          } else if (attempt === 4) throw err
         }
       }
 

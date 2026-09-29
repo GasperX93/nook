@@ -65,30 +65,30 @@ describe('depthToCapacity', () => {
   })
 
   it('returns effective capacity for depth 19 (~110 MB)', () => {
-    expect(depthToCapacity(19)).toBe('107 MB')
+    expect(depthToCapacity(19)).toBe('112 MB')
   })
 
   it('returns effective capacity for depth 20 (~680 MB)', () => {
-    expect(depthToCapacity(20)).toBe('656 MB')
+    expect(depthToCapacity(20)).toBe('688 MB')
   })
 
   it('returns the Nook-advertised "2.6 GB" capacity for depth 22 (overbuy table)', () => {
     // Under variable overbuy, depth 22 is the new "2.6 GB" preset.
     // Effective at depth 22 is ~7.7 GB; we advertise less for headroom.
-    expect(depthToCapacity(22)).toBe('2.4 GB')
+    expect(depthToCapacity(22)).toBe('2.6 GB')
   })
 
   it('returns "7.7 GB" for depth 23', () => {
-    expect(depthToCapacity(23)).toBe('7.2 GB')
+    expect(depthToCapacity(23)).toBe('7.7 GB')
   })
 
   it('returns "16 GB" for depth 24', () => {
-    expect(depthToCapacity(24)).toBe('14.9 GB')
+    expect(depthToCapacity(24)).toBe('16 GB')
   })
 
   it('falls back to theoretical for unknown depths', () => {
     // depth 16 not in lookup → theoretical: 2^16 * 4096 = 256 MB
-    expect(depthToCapacity(16)).toBe('256 MB')
+    expect(depthToCapacity(16)).toBe('268 MB')
   })
 })
 

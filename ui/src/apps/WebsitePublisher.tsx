@@ -7,6 +7,7 @@ import { useAppStore } from '../store/app'
 import { useUpload } from '../hooks/useUpload'
 import ENSModal from '../components/ENSModal'
 import { bzzLink } from '../lib/ens-gateway'
+import { formatBytes } from '../lib/format-bytes'
 import PublishProgress from '../components/PublishProgress'
 import { serverApi } from '../api/server'
 import { UPLOAD_PAUSED, UPLOAD_RESUMING, UPLOAD_STEP_LOCAL, UPLOAD_STEP_NETWORK } from '../lib/transfer-labels'
@@ -55,14 +56,6 @@ function cardLabel(phase: string): string {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function formatBytes(bytes: number): string {
-  if (bytes >= 1_073_741_824) return `${(bytes / 1_073_741_824).toFixed(1)} GB`
-
-  if (bytes >= 1_048_576) return `${(bytes / 1_048_576).toFixed(1)} MB`
-
-  return `${(bytes / 1024).toFixed(0)} KB`
-}
 
 function PlanButton({ label, selected, onClick }: { label: string; selected: boolean; onClick: () => void }) {
   return (
@@ -273,7 +266,10 @@ export default function WebsitePublisher() {
     // Everything below keeps running when the user leaves this page — it
     // only writes to the stores, never to this component.
     const onPhase = (phase: string) => {
-      usePublishJob.getState().patch(jobId, { phase })
+      const waiting = phase === UPLOAD_PAUSED || phase === UPLOAD_RESUMING
+
+      // Remember the step a pause interrupts — the page may be reopened mid-pause.
+      usePublishJob.getState().patch(jobId, waiting ? { phase } : { phase, stepPhase: phase })
       useTransfersStore.getState().update(transferId, { phase, label: cardLabel(phase), pct: null })
     }
     const onProgress = (pct: number | null) => {
@@ -688,6 +684,7 @@ export default function WebsitePublisher() {
       {view === 'publishing' && job && (
         <PublishProgress
           phase={job.phase}
+          stepPhase={job.stepPhase}
           fileCount={job.fileCount}
           uploadProgress={job.uploadProgress}
           propagationTransfer={propagationTransfer}

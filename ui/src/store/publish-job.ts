@@ -26,6 +26,8 @@ export interface PublishJob {
   siteName: string
   status: 'running' | 'done' | 'failed'
   phase: string
+  /** The last real step's phase — what a Paused/Resuming phase interrupted (R8-3). */
+  stepPhase?: string
   uploadProgress: number | null
   tagUid: number | null
   skippedBuy: boolean
