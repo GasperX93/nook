@@ -22,6 +22,7 @@ import { beeApi, getBeeUrl, type Stamp, depthToBytes, driveSizeLabel } from '../
 import { serverApi, type ReclaimableDrive, type ReclaimableFile } from '../api/server'
 import { fileListToEntries, readDroppedDirectory, type FileEntry } from '../utils/directory'
 import { useTransfersStore } from '../store/transfers'
+import { followReclaimableJob, reclaimableJobTransferId } from '../store/reclaimable-jobs'
 import { friendlyError } from '../lib/friendly-error'
 import { formatBytes } from '../lib/format-bytes'
 import { savingLabel } from '../lib/transfer-labels'
@@ -772,62 +773,61 @@ export function ReclaimableDriveView({
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<ReclaimableFile | null>(null)
   const [copiedRef, setCopiedRef] = useState<string | null>(null)
-  const pollRef = useRef<number | null>(null)
+  // A job for this drive already running (started here earlier, before a
+  // page change or reload) — the panel re-attaches to it.
+  const runningJob = useTransfersStore(state =>
+    state.transfers.find(t => t.id.startsWith('rjob:') && t.driveId === drive.batchId && t.status === 'active'),
+  )
   const name = customName || drive.label || `${drive.batchId.slice(0, 8)}…`
   const expired = drive.expired === true
 
-  useEffect(
-    () => () => {
-      if (pollRef.current) window.clearInterval(pollRef.current)
-    },
-    [],
-  )
+  useEffect(() => {
+    if (runningJob && !jobTransferId) {
+      setJobTransferId(runningJob.id)
+      setUploading({ name: runningJob.name, estimate: runningJob.chunksTotal ?? 0 })
+    }
+  }, [runningJob?.id])
+
+  // The job ended (followed globally, store/reclaimable-jobs).
+  useEffect(() => {
+    if (!jobTransferId) return
+
+    if (!jobTransfer) {
+      // Dropped without an outcome (the backend forgot the job) — the list
+      // shows whatever landed.
+      setJobTransferId(null)
+      setUploading(null)
+      refreshDrives()
+
+      return
+    }
+
+    if (jobTransfer.status === 'failed') {
+      setUploading(null)
+      setUploadError(jobTransfer.phase || 'Upload failed')
+    } else if (jobTransfer.status === 'done') {
+      // Keep the uploading panel up until the refetched list actually
+      // contains the file — dropping it first flashes "No files yet".
+      void queryClient.invalidateQueries({ queryKey: ['server', 'reclaimable'] }).then(() => setUploading(null))
+    }
+  }, [jobTransferId, jobTransfer?.status, Boolean(jobTransfer)])
 
   function refreshDrives() {
     queryClient.invalidateQueries({ queryKey: ['server', 'reclaimable'] })
   }
 
-  function pollJob(uploadId: string, assignFolderId: string | null, jobName = 'Upload', jobEstimate = 0) {
-    // Mirror the job into the global tracker (#5) so the sidebar shows it
-    // from any page. The job itself is server-side and survives navigation
-    // regardless — this is purely visibility.
-    const transferId = `rjob:${uploadId}`
-
-    setJobTransferId(transferId)
-
-    useTransfersStore
-      .getState()
-      .begin({ id: transferId, kind: 'upload', name: jobName, driveId: drive.batchId, phase: 'Uploading…' })
-    pollRef.current = window.setInterval(async () => {
-      try {
-        const job = await serverApi.getReclaimableUpload(uploadId)
-
-        if (jobEstimate > 0) {
-          useTransfersStore.getState().chunkProgress(transferId, job.chunksUploaded, jobEstimate)
-        }
-
-        if (job.status !== 'uploading') {
-          if (pollRef.current) window.clearInterval(pollRef.current)
-          useTransfersStore.getState().finish(transferId, job.status === 'error' ? 'failed' : 'done')
-
-          if (job.status === 'error') {
-            setUploading(null)
-            setUploadError(friendlyError(job.error, 'Upload failed'))
-          } else {
-            // Uploaded while a folder was open → it lives there
-            if (assignFolderId && job.reference) {
-              await serverApi.moveReclaimableFile(drive.batchId, job.reference, assignFolderId).catch(() => undefined)
-            }
-            // Keep the uploading panel up until the refetched list actually
-            // contains the file — dropping it first flashes "No files yet".
-            await queryClient.invalidateQueries({ queryKey: ['server', 'reclaimable'] })
-            setUploading(null)
-          }
-        }
-      } catch {
-        // transient poll failure — keep polling
-      }
-    }, 1000)
+  function followJob(uploadId: string, assignFolderId: string | null, jobName: string, jobEstimate: number) {
+    // The job runs in Nook's backend; its progress is followed globally so
+    // leaving the drive never freezes it (the sidebar reaches 100% from any
+    // page, and a revisit re-attaches this panel).
+    setJobTransferId(reclaimableJobTransferId(uploadId))
+    followReclaimableJob({
+      uploadId,
+      name: jobName,
+      driveId: drive.batchId,
+      estimate: jobEstimate,
+      folderId: assignFolderId,
+    })
   }
 
   async function createFolder() {
@@ -860,7 +860,7 @@ export function ReclaimableDriveView({
     setUploading({ name: uploadFile.name, estimate: estimateChunks(uploadFile.size) })
     try {
       const { uploadId } = await serverApi.uploadReclaimableFile(drive.batchId, uploadFile)
-      pollJob(uploadId, openFolderId, uploadFile.name, estimateChunks(uploadFile.size))
+      followJob(uploadId, openFolderId, uploadFile.name, estimateChunks(uploadFile.size))
     } catch (err) {
       setUploading(null)
       setUploadError(friendlyError(err, 'Upload failed'))
@@ -884,7 +884,7 @@ export function ReclaimableDriveView({
       setStaging(null)
       setUploading({ name: folderName, estimate: estimateChunks(totalBytes) + entries.length })
       const { uploadId } = await serverApi.commitReclaimableStage(stageId, folderName)
-      pollJob(uploadId, openFolderId, folderName, estimateChunks(totalBytes) + entries.length)
+      followJob(uploadId, openFolderId, folderName, estimateChunks(totalBytes) + entries.length)
     } catch (err) {
       setStaging(null)
       setUploading(null)

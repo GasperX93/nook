@@ -17,6 +17,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { weiToDai } from '../api/bee'
 import { resumePendingPropagation } from '../store/transfers'
+import { resumeReclaimableJobs } from '../store/reclaimable-jobs'
 import TransferIndicator from './TransferIndicator'
 import {
   useReclaimableDrives,
@@ -175,8 +176,10 @@ export default function Layout() {
 
   // Re-attach to propagations interrupted by a quit — tags live on the Bee
   // node, so an unfinished network push resumes visibly (#5).
+  // Deletable-drive jobs run in the backend; re-attach their progress after a reload.
   useEffect(() => {
     resumePendingPropagation()
+    resumeReclaimableJobs()
   }, [])
 
   // Unlock notification audio on the first user gesture so a background chirp
