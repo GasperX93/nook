@@ -1034,13 +1034,12 @@ export default function ShareModal({
                           several identities on one node, not a contact. */}
                       {oldKeyOwner && (
                         <span
-                          className="block text-[10.5px]"
-                          style={{ color: '#d97706' }}
-                          title={`${oldKeyOwner.nickname} reinstalled Nook, which gave them a new node. This access points to their old one, so they can't open the drive with it.`}
+                          className="block text-[11px] leading-snug mt-0.5"
+                          style={{ color: reshared ? 'rgb(var(--fg-muted))' : '#d97706' }}
                         >
                           {reshared
-                            ? `${oldKeyOwner.nickname}'s old node — already shared to the new one`
-                            : `${oldKeyOwner.nickname} reinstalled Nook — this is their old node`}
+                            ? `Old node — not needed any more. ${oldKeyOwner.nickname} has access on their new one.`
+                            : `${oldKeyOwner.nickname} reinstalled Nook, so this access points to their old node — they can't open the drive. Share again gives their new node access; they'll get it in Messages.`}
                         </span>
                       )}
                       {contact && granteeIsAmbiguous(key) && (
@@ -1058,15 +1057,27 @@ export default function ShareModal({
                         </span>
                       )}
                     </span>
-                    {statusPill(status)}
+                    {/* F-5: an old node's grant is not "access" for the person. */}
+                    {oldKeyOwner ? (
+                      reshared ? null : (
+                        <span
+                          className="text-[10.5px] px-2 py-0.5 rounded-full whitespace-nowrap"
+                          style={{ backgroundColor: 'rgba(245,158,11,0.12)', color: '#d97706' }}
+                        >
+                          No access
+                        </span>
+                      )
+                    ) : (
+                      statusPill(status)
+                    )}
                     <span className="flex items-center gap-2 shrink-0 text-[11px]">
                       {/* F-3: one click shares to their current node and notifies them. */}
                       {oldKeyOwner && !reshared && (
                         <button
                           onClick={async () => handleGrant(oldKeyOwner.id)}
                           disabled={loading}
-                          className="font-medium hover:underline disabled:opacity-50"
-                          style={{ color: 'rgb(var(--fg))' }}
+                          className="px-2.5 py-1 rounded-md font-semibold disabled:opacity-50"
+                          style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
                           title={`Share this drive to ${oldKeyOwner.nickname}'s current node and let them know`}
                         >
                           Share again

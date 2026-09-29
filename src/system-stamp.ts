@@ -60,6 +60,25 @@ let inFlight = false
 
 const STATE_FILE = 'system-stamp.json'
 
+/**
+ * The reserve just bought (F-6). Bee can take a while to list a new batch,
+ * and until it does the existence check below sees nothing — without this, a
+ * wallet that still covers another reserve would buy a second one, and the
+ * dashboard fell back to "add about 3 xBZZ" in the meantime.
+ */
+const JUST_BOUGHT_MS = 30 * 60_000
+let justBought: { batchId: string; at: number } | null = null
+
+/** When the reserve was bought, while it may not be listed yet (for /status). */
+export function reserveJustBoughtAt(now = Date.now()): number | null {
+  return justBought && now - justBought.at < JUST_BOUGHT_MS ? justBought.at : null
+}
+
+/** Tests only. */
+export function resetJustBoughtForTests(): void {
+  justBought = null
+}
+
 function lowFundsAlreadyNotified(): boolean {
   try {
     return (
@@ -116,6 +135,9 @@ export async function runSystemStampCheck(beeFetch: BeeFetch = realBeeFetch): Pr
 
     if ((stamps ?? []).some(s => s.label === SYSTEM_STAMP_LABEL)) return 'exists'
 
+    // Bought moments ago but not listed yet — never buy twice.
+    if (reserveJustBoughtAt() !== null) return 'exists'
+
     // Never act on a lagging chain view — price and wallet would be stale.
     const chainRes = await beeFetch('/chainstate')
 
@@ -168,6 +190,8 @@ export async function runSystemStampCheck(beeFetch: BeeFetch = realBeeFetch): Pr
       return 'failed'
     }
     const { batchID } = (await buyRes.json()) as { batchID: string }
+
+    justBought = { batchId: batchID, at: Date.now() }
 
     // Auto-renew ON by default — this space expiring means unreachable
     // identity and lost unsent messages; opting out lives in Settings.

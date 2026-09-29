@@ -13,6 +13,7 @@ import {
   X,
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { weiToDai } from '../api/bee'
 import { resumePendingPropagation } from '../store/transfers'
@@ -88,6 +89,7 @@ export default function Layout() {
   const { isError: beeOffline, isPending: beeChecking, isSuccess: beeOnline } = useBeeHealth()
   const { data: peers } = usePeers()
   const { data: status } = useStatus()
+  const queryClient = useQueryClient()
   // Known to be Nook's own node on the ports — not a foreign one (R5-11), and
   // not unknown yet: nothing below may act on another node's data.
   const ownNode = status !== undefined && !status.foreignBee
@@ -104,7 +106,12 @@ export default function Layout() {
   // (~2 min of blocks). Asking for money that's already spent contradicts
   // the "reserved space set aside" bell — show a neutral settling state
   // instead of the amber funding ask (test-run finding #1).
-  const reserveSettingUp = noUsableMessagingSpace && (stamps ?? []).some(s => isSystemStamp(s) && !s.usable)
+  // …also right after the purchase, before Bee lists the new batch at all
+  // (F-6): the wallet already shows less than 2 xBZZ, so without this the
+  // amber "add about 3 xBZZ" banner came back next to the "set aside" bell.
+  const reserveSettingUp =
+    noUsableMessagingSpace &&
+    ((stamps ?? []).some(s => isSystemStamp(s) && !s.usable) || Boolean(status?.reserveBoughtAt))
   const noMessagingSpace = noUsableMessagingSpace && !reserveSettingUp
   const { data: walletForReserve } = useWallet()
   // Funds present for the reserve (#13, reworked per round-3 feedback): the
@@ -123,7 +130,11 @@ export default function Layout() {
     if (!fundsReadyForReserve || reserveNudged.current) return
     reserveNudged.current = true
     // Fire-and-forget: the server monitor is the backstop either way.
-    serverApi.createSystemStamp().catch(() => undefined)
+    serverApi
+      .createSystemStamp()
+      // Show the new batch as soon as Bee lists it, not on the next 30 s poll.
+      .then(async () => queryClient.invalidateQueries({ queryKey: ['bee', 'stamps'] }))
+      .catch(() => undefined)
   }, [fundsReadyForReserve])
   // One blue state from "funds arrived" through "bought, confirming":
   const reserveInProgress = reserveSettingUp || fundsReadyForReserve

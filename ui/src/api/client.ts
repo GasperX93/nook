@@ -62,6 +62,8 @@ export interface Status {
   funding?: FundingState
   /** Another Bee node holds Nook's ports (R5-11) — the dashboard blocks on this. */
   foreignBee?: ForeignBee | null
+  /** The messaging reserve was just bought and may not be listed by Bee yet (F-6). */
+  reserveBoughtAt?: number | null
 }
 
 export interface ForeignBee {

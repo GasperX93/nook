@@ -539,13 +539,27 @@ function BuyDriveModal({
 
 // ─── ExtendModal ───────────────────────────────────────────────────────────────
 
-function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) {
+function ExtendModal({
+  stamp,
+  onClose,
+  deletable = false,
+}: {
+  stamp: Stamp
+  onClose: () => void
+  deletable?: boolean
+}) {
   // Capacity options: only depths strictly larger than current AND only when the
   // user-facing capacity is also larger. With Nook's overbuy, a legacy depth-19
   // "110 MB" stamp shouldn't see "110 MB (depth 21)" as an extend option — same
   // displayed capacity, just a more expensive same-label drive.
   const currentDisplayBytes = depthToBytes(stamp.depth)
-  const capacityOptions = SIZE_PRESETS.filter(s => s.depth > stamp.depth && depthToBytes(s.depth) > currentDisplayBytes)
+  // Deletable drives never change size: their slot ledger is laid out for the
+  // drive's depth, and a dilute would hand out slots it doesn't track. The
+  // /bee-api guard refuses it too, but the dashboard calls Bee directly in the
+  // packaged app — so the option must not exist here.
+  const capacityOptions = deletable
+    ? []
+    : SIZE_PRESETS.filter(s => s.depth > stamp.depth && depthToBytes(s.depth) > currentDisplayBytes)
   const [capacityEnabled, setCapacityEnabled] = useState(false)
   const [capacityIdx, setCapacityIdx] = useState(0)
   const [durationEnabled, setDurationEnabled] = useState(false)
@@ -744,7 +758,9 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
           )}
           {capacityOptions.length === 0 && (
             <p className="text-[11px]" style={{ color: 'rgb(var(--fg-muted))' }}>
-              Drive is already at the maximum size.
+              {deletable
+                ? 'Deletable drives keep their size — delete files to free space, or create a new drive.'
+                : 'Drive is already at the maximum size.'}
             </p>
           )}
         </div>
@@ -3031,6 +3047,10 @@ export default function Drive() {
   const extendingStamp = showExtendModal
     ? (stamps ?? []).find(s => s.batchID.toLowerCase() === showExtendModal.toLowerCase())
     : null
+  const extendingDeletable = Boolean(
+    extendingStamp &&
+    (reclaimableData ?? []).some(d => d.batchId.toLowerCase() === extendingStamp.batchID.toLowerCase()),
+  )
 
   // Search: flat list across active drives only (exclude expired stamps)
   const activeBatchIds = new Set(allStamps.map(s => s.batchID))
@@ -3289,7 +3309,9 @@ export default function Drive() {
             }}
           />
         )}
-        {extendingStamp && <ExtendModal stamp={extendingStamp} onClose={() => setShowExtendModal(null)} />}
+        {extendingStamp && (
+          <ExtendModal stamp={extendingStamp} deletable={extendingDeletable} onClose={() => setShowExtendModal(null)} />
+        )}
         {showShareModal &&
           (() => {
             const meta = driveMetadata.get(showShareModal)
@@ -3379,7 +3401,9 @@ export default function Drive() {
           onBack={() => setActiveDriveId(null)}
         />
         {/* Bell deep link opens the drive with the Extend modal on top (#138) */}
-        {extendingStamp && <ExtendModal stamp={extendingStamp} onClose={() => setShowExtendModal(null)} />}
+        {extendingStamp && (
+          <ExtendModal stamp={extendingStamp} deletable={extendingDeletable} onClose={() => setShowExtendModal(null)} />
+        )}
       </>
     )
   }
@@ -3963,7 +3987,9 @@ export default function Drive() {
           )
         })()}
       {/* Bell deep link opens the drive with the Extend modal on top (#138) */}
-      {extendingStamp && <ExtendModal stamp={extendingStamp} onClose={() => setShowExtendModal(null)} />}
+      {extendingStamp && (
+        <ExtendModal stamp={extendingStamp} deletable={extendingDeletable} onClose={() => setShowExtendModal(null)} />
+      )}
     </div>
   )
 }
