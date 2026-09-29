@@ -462,6 +462,7 @@ async function writeBody(dest: string, data: UploadBody): Promise<number> {
 
 export async function startUpload(batchId: string, fileName: string, data: UploadBody): Promise<UploadJob> {
   const entry = await requireAliveBatch(batchId)
+  sweepOrphanTempDirs()
   // The temp file carries the real file name (inside a throwaway dir)
   // because etherchunk records the upload path in its registry.
   const dir = await mkdtemp(path.join(tmpdir(), 'nook-reclaimable-'))
@@ -503,6 +504,38 @@ function sweepStages(): void {
       stages.delete(id)
     }
   })
+  sweepOrphanTempDirs(now)
+}
+
+/** Older than any upload runs — a live upload's temp dir is never touched. */
+const ORPHAN_TEMP_AGE_MS = 24 * 60 * 60_000
+
+/**
+ * Temp dirs left by earlier sessions: stages that were never committed
+ * (cancelled, failed, or open when Nook quit — `stages` lives in memory, so
+ * after a restart nothing else removes them) and upload dirs whose cleanup
+ * never ran.
+ */
+export function sweepOrphanTempDirs(now = Date.now()): void {
+  const tmp = tmpdir()
+  const live = new Set(Array.from(stages.values(), stage => stage.dir))
+
+  try {
+    for (const name of readdirSync(tmp)) {
+      if (!name.startsWith('nook-reclaimable-')) continue
+      const dir = path.join(tmp, name)
+
+      if (live.has(dir)) continue
+
+      try {
+        if (now - statSync(dir).mtimeMs > ORPHAN_TEMP_AGE_MS) rmSync(dir, { recursive: true, force: true })
+      } catch {
+        // Gone already, or not ours to remove — skip.
+      }
+    }
+  } catch (error) {
+    logger.warn(`reclaimable: could not sweep temp dirs: ${error}`)
+  }
 }
 
 export async function createUploadStage(batchId: string): Promise<{ stageId: string }> {

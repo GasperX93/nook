@@ -22,7 +22,9 @@ jest.mock('../src/config', () => ({
   readWalletPasswordOrThrow: () => 'password',
 }))
 
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'fs'
+import { tmpdir } from 'os'
+import * as path from 'path'
 import { Readable } from 'stream'
 
 import {
@@ -43,6 +45,7 @@ import {
   setEtherchunkModuleForTests,
   setValidityFetchForTests,
   startUpload,
+  sweepOrphanTempDirs,
 } from '../src/reclaimable'
 import {
   listReclaimableBatches,
@@ -494,6 +497,19 @@ describe('folder upload staging', () => {
     await expect(addFileToStage(stageId, '../escape.txt', Buffer.from('x'))).rejects.toThrow('Invalid file path')
     await expect(addFileToStage(stageId, '/etc/passwd', Buffer.from('x'))).rejects.toThrow('Invalid file path')
     await expect(addFileToStage(stageId, 'ok/../../escape.txt', Buffer.from('x'))).rejects.toThrow('Invalid file path')
+  })
+
+  test('leftover temp dirs from earlier sessions are swept, fresh ones kept', () => {
+    const old = mkdtempSync(path.join(tmpdir(), 'nook-reclaimable-stage-'))
+    const fresh = mkdtempSync(path.join(tmpdir(), 'nook-reclaimable-'))
+    const twoDaysAgo = (Date.now() - 2 * 24 * 60 * 60_000) / 1000
+
+    utimesSync(old, twoDaysAgo, twoDaysAgo)
+    sweepOrphanTempDirs()
+
+    expect(existsSync(old)).toBe(false)
+    expect(existsSync(fresh)).toBe(true)
+    rmSync(fresh, { recursive: true, force: true })
   })
 
   test('empty or unknown stages are refused', async () => {

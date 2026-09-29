@@ -69,7 +69,6 @@ import { getWalletActivity } from './wallet-activity'
 import { getStatus } from './status'
 import { resetCrashLoop } from './supervisor'
 import { fetchWithTimeout } from './fetch-timeout'
-import { swap } from './swap'
 
 const UI_DIST = path.join(__dirname, '..', '..', 'ui')
 
@@ -1211,31 +1210,6 @@ export function runServer() {
       logger.error(error)
       context.status = 500
       context.body = { message: (error as Error).message || 'Failed to withdraw from chequebook' }
-    }
-  })
-
-  router.post('/swap', async context => {
-    const blockchainRpcEndpoint = nookRpcUrl()
-    const privateKeyString = await getPrivateKey()
-    try {
-      await swap(privateKeyString, (context.request.body as Record<string, string>).dai, '10000', blockchainRpcEndpoint)
-      context.body = { success: true }
-    } catch (error) {
-      logger.error(error)
-      const msg = (error as Error).message ?? ''
-      let friendly = 'Failed to swap'
-
-      if (msg.includes('REPLACEMENT_UNDERPRICED') || msg.includes('replacement transaction underpriced')) {
-        friendly = 'A previous transaction is still pending. Please wait a moment and try again.'
-      } else if (msg.includes('INSUFFICIENT_FUNDS') || msg.includes('insufficient funds')) {
-        friendly = 'Insufficient funds to cover gas fees.'
-      } else if (msg.includes('UNPREDICTABLE_GAS_LIMIT')) {
-        friendly = 'Transaction failed — make sure no other Bee node is running on the same port.'
-      } else if (msg) {
-        friendly = msg
-      }
-      context.status = 500
-      context.body = { message: friendly }
     }
   })
 

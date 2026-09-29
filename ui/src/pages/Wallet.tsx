@@ -24,7 +24,6 @@ const WEI_PER_DAI = 10n ** 18n
 import { api } from '../api/client'
 import { serverApi } from '../api/server'
 import { useAddresses, useBeeHealth, useChequebookBalance, useWallet } from '../api/queries'
-import { useAppStore } from '../store/app'
 import { WIDGET_THEME } from '../theme'
 
 export default function Wallet() {
@@ -34,10 +33,6 @@ export default function Wallet() {
   const { isSuccess: beeOnline } = useBeeHealth()
   const { data: chequebook } = useChequebookBalance()
   const [copiedAddr, setCopiedAddr] = useState(false)
-  const [swapAmount, setSwapAmount] = useState('')
-  const [swapping, setSwapping] = useState(false)
-  const [swapError, setSwapError] = useState<string | null>(null)
-  const [swapDone, setSwapDone] = useState(false)
   const [giftCode, setGiftCode] = useState('')
   const [redeeming, setRedeeming] = useState(false)
   const [redeemError, setRedeemError] = useState<string | null>(null)
@@ -111,32 +106,6 @@ export default function Wallet() {
     navigator.clipboard.writeText(address)
     setCopiedAddr(true)
     setTimeout(() => setCopiedAddr(false), 2000)
-  }
-
-  async function swap() {
-    if (!swapAmount) return
-    setSwapping(true)
-    setSwapError(null)
-    setSwapDone(false)
-    try {
-      const apiKey = useAppStore.getState().apiKey
-      const res = await fetch('/swap', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(apiKey ? { authorization: apiKey } : {}) },
-        body: JSON.stringify({ dai: swapAmount }),
-      })
-
-      if (!res.ok) throw new Error(`Swap failed: ${res.status}`)
-      setSwapDone(true)
-      setSwapAmount('')
-      queryClient.invalidateQueries({ queryKey: ['bee', 'wallet'] })
-      followActivity()
-      setTimeout(() => setSwapDone(false), 3000)
-    } catch (err) {
-      setSwapError(err instanceof Error ? err.message : 'Swap failed')
-    } finally {
-      setSwapping(false)
-    }
   }
 
   async function redeem() {
