@@ -9,7 +9,7 @@ import ENSModal from '../components/ENSModal'
 import { bzzLink } from '../lib/ens-gateway'
 import PublishProgress from '../components/PublishProgress'
 import { serverApi } from '../api/server'
-import { UPLOAD_STEP_LOCAL, UPLOAD_STEP_NETWORK } from '../lib/transfer-labels'
+import { UPLOAD_PAUSED, UPLOAD_RESUMING, UPLOAD_STEP_LOCAL, UPLOAD_STEP_NETWORK } from '../lib/transfer-labels'
 import {
   type BoughtStamp,
   loadBoughtStamp,
@@ -40,6 +40,9 @@ interface SelectedContent {
 
 /** The short step name on the sidebar card, from the publish phase. */
 function cardLabel(phase: string): string {
+  // A paused publish says so on its card, whichever step Bee stopped in (R8-3).
+  if (phase === UPLOAD_PAUSED || phase === UPLOAD_RESUMING) return phase
+
   if (phase.startsWith('Buying')) return 'Buying storage'
 
   if (phase === UPLOAD_STEP_LOCAL || phase.startsWith('Encrypting')) return 'Copying'

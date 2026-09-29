@@ -1,8 +1,14 @@
-import { beeApi, topicFromString } from '../api/bee'
+import { beeApi, topicFromString, waitWhileBeeDown } from '../api/bee'
 import { serverApi } from '../api/server'
 import { followTagPropagation } from '../store/transfers'
 import { detectIndexDocument, type FileEntry } from '../utils/directory'
-import { UPLOAD_ENCRYPTED, UPLOAD_STEP_LOCAL, UPLOAD_STEP_NETWORK } from '../lib/transfer-labels'
+import {
+  UPLOAD_ENCRYPTED,
+  UPLOAD_PAUSED,
+  UPLOAD_RESUMING,
+  UPLOAD_STEP_LOCAL,
+  UPLOAD_STEP_NETWORK,
+} from '../lib/transfer-labels'
 import { useUploadHistory } from './useUploadHistory'
 
 export interface UploadOptions {
@@ -32,13 +38,22 @@ export interface UploadResult {
   actHistoryRef?: string
 }
 
+/** Pause while Bee is stopped or restarting, saying so (R8-3). Returns whether it waited. */
+async function pauseWhileBeeDown(onPhase?: (phase: string) => void): Promise<boolean> {
+  return waitWhileBeeDown(wait => onPhase?.(wait === 'node' ? UPLOAD_PAUSED : UPLOAD_RESUMING))
+}
+
 /**
  * Poll until the stamp is usable, with elapsed-time feedback.
- * Throws if stamp does not become usable within 2 minutes.
+ * Throws if stamp does not become usable within 2 minutes of Bee being up —
+ * time with Bee stopped is a pause, not part of the wait (R8-3).
  */
 async function pollStampUsable(id: string, onPhase?: (phase: string) => void): Promise<void> {
-  for (let i = 0; i < 60; i++) {
-    const elapsed = i * 2
+  let elapsed = 0
+
+  while (elapsed < 120) {
+    let paused = false
+
     onPhase?.(`Waiting for storage confirmation… ${elapsed > 0 ? `(${elapsed}s)` : ''}`.trim())
 
     try {
@@ -46,10 +61,14 @@ async function pollStampUsable(id: string, onPhase?: (phase: string) => void): P
 
       if (s.usable) return
     } catch {
-      // stamp not yet confirmed — keep polling
+      // stamp not yet confirmed — or Bee is down (then it's a pause, not waiting)
+      if (await pauseWhileBeeDown(onPhase)) paused = true
     }
 
-    await new Promise(r => setTimeout(r, 2000))
+    if (!paused) {
+      await new Promise(r => setTimeout(r, 2000))
+      elapsed += 2
+    }
   }
 
   throw new Error('Stamp did not become usable after 2 minutes. It may be expired or invalid.')
@@ -79,8 +98,10 @@ export function useUpload() {
 
     // After stamp reports usable, Bee's upload endpoint needs additional time
     // to propagate internally (~1-2 min per official Swarm tooling guidance).
-    // Count down visibly so the user knows we're not stuck.
+    // Count down visibly so the user knows we're not stuck. The count holds
+    // while Bee is down — it's Bee's own warm-up we're waiting out (R8-3).
     for (let s = 60; s > 0; s--) {
+      if (s % 5 === 0) await pauseWhileBeeDown(onPhase)
       onPhase?.(`Preparing storage… ${s}s`)
       await new Promise(r => setTimeout(r, 1000))
     }
@@ -148,6 +169,7 @@ export function useUpload() {
 
     for (let attempt = 1; attempt <= 8; attempt++) {
       try {
+        await pauseWhileBeeDown(onPhase)
         const result = await doUpload(attempt)
         reference = result.reference
         uploadHistoryAddress = result.historyAddress
@@ -162,7 +184,10 @@ export function useUpload() {
         // Overissued stamp cannot be recovered by retrying — fail immediately
         if (msg.includes('overissued') || msg.includes('402')) throw err
 
-        if (attempt === 8) throw err
+        // Bee went down mid-copy: wait for it and try again without using up
+        // an attempt — an outage isn't a failed upload (R8-3).
+        if (await pauseWhileBeeDown(onPhase)) attempt--
+        else if (attempt === 8) throw err
         // stamp issuer may not be loaded yet — retry
       }
     }

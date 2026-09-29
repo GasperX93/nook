@@ -7,7 +7,7 @@ vi.mock('./client', () => ({ api: { getBeeReadiness: () => readiness() } }))
 // The app store touches localStorage at import; this module doesn't need it.
 vi.mock('../store/app', () => ({ useAppStore: { getState: () => ({}) } }))
 
-import { waitForTagPropagation } from './bee'
+import { waitForTagPropagation, waitWhileBeeDown } from './bee'
 
 type Step = { tag: { split: number; seen: number; synced: number } } | 'down' | 'error'
 
@@ -133,5 +133,32 @@ describe('waitForTagPropagation (R5-13)', () => {
     const res = await waitForTagPropagation(1, undefined, { pollMs: 0, maxStalledPolls: 5 })
 
     expect(res.complete).toBe(false)
+  })
+})
+
+describe('waitWhileBeeDown (R8-3)', () => {
+  it('returns at once, without reporting, when Bee is ready', async () => {
+    readiness.mockResolvedValue({ ready: true })
+    const onWait = vi.fn()
+
+    expect(await waitWhileBeeDown(onWait, { pollMs: 0 })).toBe(false)
+    expect(onWait).not.toHaveBeenCalled()
+  })
+
+  it('pauses while Bee is down or not ready, then says it is resuming', async () => {
+    readiness
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValueOnce({ ready: false })
+      .mockResolvedValue({ ready: true })
+    const onWait = vi.fn()
+
+    expect(await waitWhileBeeDown(onWait, { pollMs: 0 })).toBe(true)
+    expect(onWait.mock.calls).toEqual([['node'], ['resuming']])
+  })
+
+  it('gives up on a Bee that stays down beyond the bound', async () => {
+    readiness.mockResolvedValue({ ready: false })
+
+    await expect(waitWhileBeeDown(undefined, { pollMs: 0, maxMs: 0 })).rejects.toThrow('unavailable')
   })
 })

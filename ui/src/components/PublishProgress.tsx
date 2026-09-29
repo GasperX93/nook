@@ -6,9 +6,9 @@
  * address) show elapsed time and a rotating fact instead of a fake bar.
  */
 import { Check } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
-import { UPLOAD_STEP_LOCAL, UPLOAD_STEP_NETWORK } from '../lib/transfer-labels'
+import { UPLOAD_PAUSED, UPLOAD_RESUMING, UPLOAD_STEP_LOCAL, UPLOAD_STEP_NETWORK } from '../lib/transfer-labels'
 import type { TransferEntry } from '../store/transfers'
 import PropagationVisual from './PropagationVisual'
 
@@ -65,7 +65,13 @@ export default function PublishProgress({
   skippedBuy,
   feedEnabled,
 }: Props) {
-  const current = stepOf(phase)
+  // Paused / resuming (R8-3) isn't a step of its own — the list stays on the
+  // step the outage interrupted instead of jumping back to "Get storage ready".
+  const waiting = phase === UPLOAD_PAUSED || phase === UPLOAD_RESUMING
+  const lastStep = useRef<StepId>(stepOf(phase))
+
+  if (!waiting) lastStep.current = stepOf(phase)
+  const current = lastStep.current
   const steps: StepId[] = [
     ...(skippedBuy ? [] : ['buy' as const]),
     'ready',
@@ -141,7 +147,7 @@ export default function PublishProgress({
         </p>
 
         {current === 'store' && propagationTransfer ? (
-          <PropagationVisual transfer={propagationTransfer} />
+          <PropagationVisual transfer={propagationTransfer} subject="site" />
         ) : current === 'copy' && uploadProgress !== null ? (
           <div className="space-y-1.5">
             <div className="h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: 'rgb(var(--border))' }}>

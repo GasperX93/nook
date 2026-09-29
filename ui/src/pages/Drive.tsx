@@ -43,6 +43,7 @@ import {
   stampFillRatio,
   topicFromString,
   waitForRetrievable,
+  waitWhileBeeDown,
   type Stamp,
 } from '../api/bee'
 import { type AutoExtendEntry, serverApi } from '../api/server'
@@ -82,6 +83,8 @@ import { friendlyError } from '../lib/friendly-error'
 import {
   savingLabel,
   UPLOAD_ENCRYPTED,
+  UPLOAD_PAUSED,
+  UPLOAD_RESUMING,
   waitLabel,
   UPLOAD_STEP_LOCAL,
   UPLOAD_STEP_NETWORK,
@@ -161,18 +164,31 @@ async function downloadFromSwarm(
   setTimeout(() => URL.revokeObjectURL(url), 10_000)
 }
 
-async function pollStampUsable(id: string, onPhase?: (p: string) => void): Promise<void> {
-  for (let i = 0; i < 30; i++) {
-    const elapsed = i * 2
+/** Time with Bee stopped is a pause, not part of the 60 s wait (R8-3). */
+async function pollStampUsable(
+  id: string,
+  onPhase?: (p: string) => void,
+  onBeeWait?: (wait: 'node' | 'resuming') => void,
+): Promise<void> {
+  let elapsed = 0
+
+  while (elapsed < 60) {
+    let paused = false
+
     onPhase?.(`Waiting for drive to be ready… ${elapsed > 0 ? `(${elapsed}s)` : ''}`.trim())
     try {
       const s = await beeApi.getStamp(id)
 
       if (s.usable) return
     } catch {
-      // not yet confirmed
+      // not yet confirmed — or Bee is down (then it's a pause, not waiting)
+      if (await waitWhileBeeDown(onBeeWait)) paused = true
     }
-    await new Promise(r => setTimeout(r, 2000))
+
+    if (!paused) {
+      await new Promise(r => setTimeout(r, 2000))
+      elapsed += 2
+    }
   }
   throw new Error('Drive did not become ready. Please try again.')
 }
@@ -2048,8 +2064,15 @@ function AddFilePanel({
     const uploadEntries = type === 'folder' ? [...entries, generateFolderIndex(name, entries)] : entries
     const indexDocument = type === 'folder' ? '_index.html' : undefined
 
+    // Bee stopped before the network step (R8-3): the panel and the sidebar
+    // card say "Paused", and the outage doesn't use up waits or attempts.
+    const onBeeWait = (wait: 'node' | 'resuming') => {
+      setPhase(wait === 'node' ? UPLOAD_PAUSED : UPLOAD_RESUMING)
+      useTransfersStore.getState().update(upId, { waiting: wait === 'node' ? 'node' : undefined })
+    }
+
     try {
-      await pollStampUsable(driveId, setPhase)
+      await pollStampUsable(driveId, setPhase, onBeeWait)
 
       let currentHistoryRef = actHistoryRef
 
@@ -2109,6 +2132,7 @@ function AddFilePanel({
 
       for (let attempt = 1; attempt <= 4; attempt++) {
         try {
+          await waitWhileBeeDown(onBeeWait)
           const result = await doUpload(attempt)
           reference = result.reference
           uploadHistoryAddress = result.historyAddress
@@ -2120,7 +2144,9 @@ function AddFilePanel({
           }
           break
         } catch (err) {
-          if (attempt === 4) throw err
+          // Bee went down mid-copy: wait and retry without using up an attempt.
+          if (await waitWhileBeeDown(onBeeWait)) attempt--
+          else if (attempt === 4) throw err
         }
       }
 

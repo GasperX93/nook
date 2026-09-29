@@ -15,10 +15,11 @@ import { etaText, type TransferEntry } from '../store/transfers'
 
 // Node vocabulary throughout (#15, user-corrected): Nook runs a LIGHT node
 // that doesn't store others' data — never claim "computers like yours".
-const FACTS = [
-  'Your file is split into thousands of pieces…',
+// A published site is many files — its facts say "site", not "file" (R8-4).
+const factsFor = (subject: 'file' | 'site') => [
+  `Your ${subject} is split into thousands of pieces…`,
   'Each piece is stored by a different Bee node on the Swarm network…',
-  'No single node ever holds your whole file…',
+  `No single node ever holds your whole ${subject}…`,
   'Once every piece is confirmed, anyone you share with can fetch it…',
   'Storage nodes earn xBZZ for keeping your pieces — that’s what your drive pays for…',
 ]
@@ -38,11 +39,15 @@ function currentRate(t: TransferEntry): number {
 export default function PropagationVisual({
   transfer,
   approxTotal = false,
+  subject = 'file',
 }: {
   transfer: TransferEntry
   /** The total is an estimate from the file size (deletable drives) — shown as "~". */
   approxTotal?: boolean
+  /** What is being stored — the website publisher says "site". */
+  subject?: 'file' | 'site'
 }) {
+  const FACTS = useMemo(() => factsFor(subject), [subject])
   const [factIdx, setFactIdx] = useState(0)
 
   useEffect(() => {

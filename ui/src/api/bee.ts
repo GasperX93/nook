@@ -71,6 +71,41 @@ async function beeIsReady(): Promise<boolean> {
   }
 }
 
+/**
+ * The steps before the network push — stamp check, countdown, local copy —
+ * must pause while Bee is stopped or restarting, not count the outage as
+ * waiting time or failed attempts (R8-3). Returns at once when Bee is ready;
+ * otherwise polls readiness until it is, bounded by `maxMs` like the push
+ * itself. `onWait` gets 'node' when the pause starts and 'resuming' when Bee
+ * is back — the same states the push reports. Returns whether it waited.
+ */
+export async function waitWhileBeeDown(
+  onWait?: (wait: 'node' | 'resuming') => void,
+  opts: { pollMs?: number; maxMs?: number } = {},
+): Promise<boolean> {
+  const pollMs = opts.pollMs ?? 2000
+  const maxMs = opts.maxMs ?? 15 * 60_000
+  const since = Date.now()
+  let waited = false
+
+  while (!(await beeIsReady())) {
+    if (!waited) {
+      waited = true
+      onWait?.('node')
+    }
+
+    if (Date.now() - since >= maxMs) {
+      const mins = Math.round(maxMs / 60_000)
+      throw new Error(`Your Bee node has been unavailable for ${mins} minutes. Start it and try again.`)
+    }
+    await new Promise(r => setTimeout(r, pollMs))
+  }
+
+  if (waited) onWait?.('resuming')
+
+  return waited
+}
+
 /** What an upload's network push is waiting on (see waitForTagPropagation). */
 export type TagWait = 'node' | 'resuming' | null
 
