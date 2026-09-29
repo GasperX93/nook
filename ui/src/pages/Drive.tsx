@@ -904,12 +904,22 @@ function UpdateFeedModal({ record, onClose }: { record: UploadRecord; onClose: (
   const [copied, setCopied] = useState(false)
   const [status, setStatus] = useState(UPLOAD_STEP_LOCAL)
   const [pct, setPct] = useState<number | null>(null)
+  // Step 2 (storing on the network) — the modal shows the same visual as the
+  // drive's upload panel.
+  const [storingTagUid, setStoringTagUid] = useState<number | null>(null)
+  const storingTransfer = useTransfersStore(state =>
+    storingTagUid === null ? undefined : state.transfers.find(t => t.id === `tag:${storingTagUid}`),
+  )
+  // Closed with "Keep going in the background": the update finishes anyway
+  // and reports through the bell instead.
+  const closedRef = useRef(false)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const dirInputRef = useRef<HTMLInputElement>(null)
 
   const { update } = useUploadHistory()
   const isSite = record.type === 'website'
+  const subject = isSite ? 'site' : 'file'
 
   async function handleDrop(e: React.DragEvent) {
     e.preventDefault()
@@ -1017,6 +1027,25 @@ function UpdateFeedModal({ record, onClose }: { record: UploadRecord; onClose: (
         { attempts: 8, delayMs: 10_000, ...retry },
       )
 
+      // Store on the network FIRST, then move the address — as a first
+      // publish does: pointing people at a version that is only on this node
+      // gives them a half-loaded site. A stall is soft (same as first
+      // publish): Bee keeps pushing in the background and the address moves.
+      if (tagUid !== undefined) {
+        useTransfersStore.getState().remove(upId)
+        update(record.id, { pendingTagUid: tagUid })
+        setStatus(UPLOAD_STEP_NETWORK)
+        setPct(null)
+        setStoringTagUid(tagUid)
+        const { complete } = await followTagPropagation(tagUid, record.name, stampId)
+
+        setStoringTagUid(null)
+
+        if (!complete) setStatus('Still storing in the background…')
+      } else {
+        useTransfersStore.getState().finish(upId)
+      }
+
       setStatus('Pointing the permanent address to the new version…')
       setPct(null)
       const topicHex = await topicFromString(record.feedTopic ?? record.name)
@@ -1026,30 +1055,39 @@ function UpdateFeedModal({ record, onClose }: { record: UploadRecord; onClose: (
         delayMs: 5000,
         ...retry,
       })
-      update(record.id, {
-        hash: reference,
-        size: content.size,
-        uploadedAt: Date.now(),
-        ...(tagUid !== undefined ? { pendingTagUid: tagUid } : {}),
-      })
+      update(record.id, { hash: reference, size: content.size, uploadedAt: Date.now() })
 
-      if (tagUid !== undefined) {
-        useTransfersStore.getState().remove(upId)
-        void followTagPropagation(tagUid, record.name, stampId)
-      } else {
-        useTransfersStore.getState().finish(upId)
+      if (closedRef.current) {
+        serverApi
+          .createNotification({
+            type: 'info',
+            title: isSite ? 'Site updated' : 'New version published',
+            body: `“${record.name}” now shows the new version.`,
+            link: `/drive?open=${stampId}`,
+          })
+          .catch(() => undefined)
       }
       setPhase('done')
     } catch (err) {
       useTransfersStore.getState().finish(upId, 'failed')
+      setStoringTagUid(null)
       const raw = err instanceof Error ? err.message : ''
       const match = raw.match(/"message":"([^"]+)"/)
+      const message = isDriveFullError(err)
+        ? 'This drive is full — extend it, or publish the new version to a new drive.'
+        : `Could not publish the update: ${match ? match[1] : friendlyError(err, 'unknown error')}`
 
-      setError(
-        isDriveFullError(err)
-          ? 'This drive is full — extend it, or publish the new version to a new drive.'
-          : `Could not publish the update: ${match ? match[1] : friendlyError(err, 'unknown error')}`,
-      )
+      if (closedRef.current) {
+        serverApi
+          .createNotification({
+            type: 'info',
+            title: `“${record.name}” wasn’t updated`,
+            body: message,
+            link: `/drive?open=${stampId}`,
+          })
+          .catch(() => undefined)
+      }
+      setError(message)
       setPhase('select')
     }
   }
@@ -1161,10 +1199,15 @@ function UpdateFeedModal({ record, onClose }: { record: UploadRecord; onClose: (
           <div className="flex flex-col items-center gap-3 py-6">
             <RefreshCw size={20} className="animate-spin" style={{ color: 'rgb(var(--accent))' }} />
             <p className="text-sm text-center" style={{ color: 'rgb(var(--fg-muted))' }}>
-              {status}
-              {pct !== null ? ` ${pct}%` : ''}
+              {storingTransfer?.waiting ? `Step 2 of 2 · ${waitLabel(storingTransfer.waiting)}` : status}
+              {pct !== null && !storingTransfer ? ` ${pct}%` : ''}
             </p>
-            {pct !== null && (
+            {storingTransfer && (
+              <div className="w-full">
+                <PropagationVisual transfer={storingTransfer} subject={subject} />
+              </div>
+            )}
+            {pct !== null && !storingTransfer && (
               <div
                 className="w-full h-1.5 rounded-full overflow-hidden"
                 style={{ backgroundColor: 'rgb(var(--border))' }}
@@ -1175,6 +1218,19 @@ function UpdateFeedModal({ record, onClose }: { record: UploadRecord; onClose: (
                 />
               </div>
             )}
+            <p className="text-xs text-center" style={{ color: 'rgb(var(--fg-muted))' }}>
+              {isSite ? 'The site' : 'It'} switches to the new version once it’s stored on the network.
+            </p>
+            <button
+              onClick={() => {
+                closedRef.current = true
+                onClose()
+              }}
+              className="text-xs underline"
+              style={{ color: 'rgb(var(--fg-muted))' }}
+            >
+              Keep going in the background
+            </button>
           </div>
         )}
 
