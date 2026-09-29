@@ -263,6 +263,9 @@ export const serverApi = {
   createReclaimableFolder: async (batchId: string, name: string) =>
     serverPost<ReclaimableFolder>(`/reclaimable/${batchId}/folders`, { name }),
 
+  renameReclaimableFolder: async (batchId: string, folderId: string, name: string) =>
+    serverPatch<{ id: string; name: string }>(`/reclaimable/${batchId}/folders/${folderId}`, { name }),
+
   deleteReclaimableFolder: async (batchId: string, folderId: string) => {
     const response = await fetch(`/reclaimable/${batchId}/folders/${folderId}`, {
       method: 'DELETE',
@@ -309,7 +312,8 @@ export const serverApi = {
 
   // ─── Wallet activity (#139) ─────────────────────────────────────────────
 
-  getWalletActivity: async () => serverGet<WalletActivity>('/wallet-activity'),
+  /** `fresh` skips the server's 1-minute cache — right after moving funds (R7-4). */
+  getWalletActivity: async (fresh = false) => serverGet<WalletActivity>(`/wallet-activity${fresh ? '?fresh=1' : ''}`),
 
   // ─── Notifications (#138) — the bell's event feed ───────────────────────
 

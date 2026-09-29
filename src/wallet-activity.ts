@@ -87,6 +87,12 @@ interface LedgerEntry {
   label: string
 }
 
+/**
+ * xBZZ moved from the wallet into the node's chequebook, which pays other
+ * nodes for bandwidth (off-chain cheques — those never touch the wallet).
+ */
+const BANDWIDTH_DEPOSIT = 'Bandwidth deposit'
+
 function ledgerEntries(): LedgerEntry[] {
   const entries: LedgerEntry[] = []
 
@@ -100,7 +106,7 @@ function ledgerEntries(): LedgerEntry[] {
 
       entries.push({ amountPlur: BigInt(plur), at: n.createdAt, label: `Automatic drive extension${name}` })
     } else if (n.type === 'chequebook-funded') {
-      entries.push({ amountPlur: BigInt(plur), at: n.createdAt, label: 'Chequebook top-up (bandwidth)' })
+      entries.push({ amountPlur: BigInt(plur), at: n.createdAt, label: BANDWIDTH_DEPOSIT })
     }
   }
 
@@ -143,6 +149,25 @@ function labelFor(
   if (row.counterparty === POSTAGE_CONTRACT) return 'Drive purchase or extension'
 
   return undefined
+}
+
+/**
+ * The node's own chequebook contract. Every deposit into it is bandwidth
+ * money — including the ones Nook's ledger never saw (Bee's first deposit
+ * when it deploys the chequebook, manual ones), which the amount+time match
+ * alone left unlabeled.
+ */
+async function chequebookAddress(beeFetch: ActivityFetch): Promise<string | null> {
+  try {
+    const res = await beeFetch('http://127.0.0.1:1633/chequebook/address')
+
+    if (!res.ok) return null
+    const body = (await res.json()) as { chequebookAddress?: string }
+
+    return body.chequebookAddress ? body.chequebookAddress.toLowerCase() : null
+  } catch {
+    return null
+  }
 }
 
 // ─── Chain-decoded labels (history) ──────────────────────────────────────────
@@ -255,8 +280,11 @@ const realBeeFetch: ActivityFetch = async url => {
 export async function getWalletActivity(
   fetchFn: ActivityFetch = realFetch,
   beeFetch: ActivityFetch = realBeeFetch,
+  opts: { fresh?: boolean } = {},
 ): Promise<WalletActivity> {
-  if (cache && Date.now() - cache.at < CACHE_MS) return cache.data
+  // `fresh`: the UI just moved funds and is waiting for the tx to show up
+  // (R7-4) — skip the minute-long cache for these few follow-up reads.
+  if (!opts.fresh && cache && Date.now() - cache.at < CACHE_MS) return cache.data
 
   const address = readNodeWalletAddress()
   const ledger = ledgerEntries()
@@ -294,6 +322,15 @@ export async function getWalletActivity(
 
       row.label = labelFor(row, value, ledger, row.hash ? ops.get(row.hash) : undefined, names)
       rows.push(row)
+    }
+
+    // Deposits into the node’s chequebook that the ledger didn’t label —
+    // bandwidth money from any source. Looked up only when there’s one to label.
+    const unlabeledOut = rows.filter(r => r.direction === 'out' && r.asset === 'xBZZ' && !r.label)
+    const chequebook = unlabeledOut.length > 0 ? await chequebookAddress(beeFetch) : null
+
+    for (const r of unlabeledOut) {
+      if (chequebook && r.counterparty === chequebook) r.label = BANDWIDTH_DEPOSIT
     }
 
     // Native xDAI movements. Zero-value txs are the wrappers of token

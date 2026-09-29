@@ -144,7 +144,7 @@ export async function mayLaunchBee(): Promise<boolean> {
     return false
   }
 
-  if (foreign) logger.info('The other Bee node is gone — starting Nook’s own node')
+  if (foreign) logger.info('The other Bee node is gone — Nook’s ports are free again')
   foreign = null
 
   if (state.kind === 'own') {

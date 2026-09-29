@@ -72,6 +72,44 @@ async function beeIsReady(): Promise<boolean> {
 }
 
 /**
+ * The steps before the network push — stamp check, countdown, local copy —
+ * must pause while Bee is stopped or restarting, not count the outage as
+ * waiting time or failed attempts (R8-3). Returns at once when Bee is ready;
+ * otherwise polls readiness until it is, bounded by `maxMs` like the push
+ * itself. `onWait` gets 'node' when the pause starts and 'resuming' when Bee
+ * is back — the same states the push reports. Returns whether it waited.
+ */
+export async function waitWhileBeeDown(
+  onWait?: (wait: 'node' | 'resuming') => void,
+  opts: { pollMs?: number; maxMs?: number } = {},
+): Promise<boolean> {
+  const pollMs = opts.pollMs ?? 2000
+  const maxMs = opts.maxMs ?? 15 * 60_000
+  const since = Date.now()
+  let waited = false
+
+  while (!(await beeIsReady())) {
+    if (!waited) {
+      waited = true
+      onWait?.('node')
+    }
+
+    if (Date.now() - since >= maxMs) {
+      const mins = Math.round(maxMs / 60_000)
+      throw new Error(`Your Bee node has been unavailable for ${mins} minutes. Start it and try again.`)
+    }
+    await new Promise(r => setTimeout(r, pollMs))
+  }
+
+  if (waited) onWait?.('resuming')
+
+  return waited
+}
+
+/** What an upload's network push is waiting on (see waitForTagPropagation). */
+export type TagWait = 'node' | 'resuming' | null
+
+/**
  * Poll a tag until the upload is fully propagated (#92). swarm-cli's pattern:
  * poll every second, and RESET the patience counter whenever progress advances,
  * so slow networks don't time out spuriously — only genuine stalls do.
@@ -84,8 +122,12 @@ async function beeIsReady(): Promise<boolean> {
  * `maxNotReadyMs` — instead of giving up after a minute and leaving the row
  * frozen until the 5-minute resume loop. Bee finishes the push by itself
  * after a restart (verified: tag 653 reached 100%), so the row should too.
- * `onWaiting(true)` fires when that waiting starts and `onWaiting(false)` once
- * pieces land again, so the UI can say "paused" instead of "storing" (R6-3).
+ * `onWaiting` says what the wait is about, so the UI never claims "storing"
+ * while nothing can move (R6-3, R7-1): 'node' = Bee is stopped or not ready
+ * yet, 'resuming' = Bee is ready again but hasn't started pushing (it first
+ * reconnects to peers and catches up — often a minute or two), null = pieces
+ * are landing. While recovering, readiness is checked on every poll (a local
+ * call) so the label doesn't flip back and forth.
  */
 export async function waitForTagPropagation(
   uid: number,
@@ -95,7 +137,7 @@ export async function waitForTagPropagation(
     maxStalledPolls?: number
     maxNotReadyMs?: number
     onTag?: (tag: UploadTag) => void
-    onWaiting?: (waiting: boolean) => void
+    onWaiting?: (wait: TagWait) => void
   } = {},
 ): Promise<{ complete: boolean; tag: UploadTag | null }> {
   const pollMs = opts.pollMs ?? 1000
@@ -105,18 +147,17 @@ export async function waitForTagPropagation(
   let stalled = 0
   let tag: UploadTag | null = null
   let notReadySince: number | null = null
-  let waiting = false
+  let wait: TagWait = null
 
-  const setWaiting = (next: boolean) => {
-    if (next === waiting) return
-    waiting = next
+  const setWait = (next: TagWait) => {
+    if (next === wait) return
+    wait = next
     opts.onWaiting?.(next)
   }
   const sleep = async (): Promise<void> => new Promise(r => setTimeout(r, pollMs))
-  /** Bee is down or warming up: wait without counting it, within the bound. */
-  const waitingOnBee = () => {
+  /** Waiting on Bee (down, warming up, reconnecting) isn't a stall — but it is bounded. */
+  const withinBound = () => {
     notReadySince ??= Date.now()
-    setWaiting(true)
 
     return Date.now() - notReadySince < maxNotReadyMs
   }
@@ -137,7 +178,13 @@ export async function waitForTagPropagation(
         best = done
         stalled = 0
         notReadySince = null
-        setWaiting(false)
+        setWait(null)
+      } else if (wait !== null) {
+        // Recovering from an outage: Bee answers but nothing moves until it
+        // is ready AND has reconnected. Not a stall; say which of the two.
+        if (!withinBound()) break
+        setWait((await beeIsReady()) ? 'resuming' : 'node')
+        stalled = 0
       } else {
         stalled++
       }
@@ -146,14 +193,18 @@ export async function waitForTagPropagation(
       // and the no-progress streak from before the outage starts over, or a
       // slow push could give up seconds after Bee comes back.
       if (!(error instanceof TypeError)) stalled++
-      else if (!waitingOnBee()) break
-      else stalled = 0
+      else {
+        if (!withinBound()) break
+        setWait('node')
+        stalled = 0
+      }
     }
 
     // Before a no-progress streak runs out, check whether Bee is simply not
     // ready (just restarted, re-syncing) — that's not a stall either.
     if (stalled > 0 && stalled % 10 === 0 && !(await beeIsReady())) {
-      if (!waitingOnBee()) break
+      if (!withinBound()) break
+      setWait('node')
       stalled = 0
     }
     await sleep()
@@ -329,13 +380,23 @@ export function depthToBytes(depth: number): number {
   return NOOK_DISPLAY_CAPACITY[depth] ?? EFFECTIVE_CAPACITY[depth] ?? (1 << depth) * 4096
 }
 
-/** Human-readable user-facing capacity for a given stamp depth */
-export function depthToCapacity(depth: number): string {
+/**
+ * The size a drive is sold as (R7-6): the purchase label for Nook's own
+ * sizes, so the list says "2.6 GB" for a drive bought as "2.6 GB"; decimal
+ * bytes for other depths.
+ */
+export function driveSizeLabel(depth: number): string {
+  const preset = SIZE_PRESETS.find(p => p.depth === depth)
+
+  if (preset) return preset.label
   const bytes = depthToBytes(depth)
 
-  if (bytes >= 1_073_741_824) return `${(bytes / 1_073_741_824).toFixed(1)} GB`
+  return bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.round(bytes / 1e6)} MB`
+}
 
-  return `${(bytes / 1_048_576).toFixed(0)} MB`
+/** Human-readable user-facing capacity for a given stamp depth (same as driveSizeLabel, R7-6). */
+export function depthToCapacity(depth: number): string {
+  return driveSizeLabel(depth)
 }
 
 /**

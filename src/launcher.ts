@@ -36,12 +36,37 @@ const livenessProbes = {
   },
 }
 
+/** A watch-only port check is running (it can take seconds — never overlap). */
+let watchInFlight = false
+
+/**
+ * The user stopped Nook's node (F-1): don't start anything, but keep an eye
+ * on its ports. Another app's node (e.g. Swarm Desktop) can take them while
+ * ours is off, and without this check nothing noticed — the dashboard showed
+ * that node's drives as if they were Nook's. mayLaunchBee() only records what
+ * it finds (foreign → blocking screen, gone → cleared); it never launches.
+ */
+async function watchPortsWhileStopped(): Promise<void> {
+  if (watchInFlight) return
+  watchInFlight = true
+
+  try {
+    await mayLaunchBee()
+  } finally {
+    watchInFlight = false
+  }
+}
+
 export function runKeepAliveLoop() {
   setInterval(async () => {
     const now = Date.now()
 
-    if (!BeeManager.isRunning() && BeeManager.shouldRestart()) {
-      if (canAttemptStart(now)) runLauncher()
+    if (!BeeManager.isRunning()) {
+      if (BeeManager.shouldRestart()) {
+        if (canAttemptStart(now)) runLauncher()
+      } else {
+        await watchPortsWhileStopped()
+      }
 
       return
     }

@@ -7,7 +7,7 @@ vi.mock('./client', () => ({ api: { getBeeReadiness: () => readiness() } }))
 // The app store touches localStorage at import; this module doesn't need it.
 vi.mock('../store/app', () => ({ useAppStore: { getState: () => ({}) } }))
 
-import { waitForTagPropagation } from './bee'
+import { waitForTagPropagation, waitWhileBeeDown } from './bee'
 
 type Step = { tag: { split: number; seen: number; synced: number } } | 'down' | 'error'
 
@@ -60,7 +60,7 @@ describe('waitForTagPropagation (R5-13)', () => {
 
     await waitForTagPropagation(1, undefined, { pollMs: 0, onWaiting })
 
-    expect(onWaiting.mock.calls).toEqual([[true], [false]])
+    expect(onWaiting.mock.calls).toEqual([['node'], [null]])
   })
 
   it('starts the no-progress count over after an outage', async () => {
@@ -72,6 +72,29 @@ describe('waitForTagPropagation (R5-13)', () => {
     const res = await waitForTagPropagation(1, undefined, { pollMs: 0, maxStalledPolls: 60 })
 
     expect(res.complete).toBe(true)
+  })
+
+  it('says "resuming" while Bee is ready again but nothing moves yet (R7-1)', async () => {
+    // Down, then back and ready but no progress for a while, then progress.
+    scriptTags([tag(1), 'down', ...Array(90).fill(tag(1)), tag(40), tag(100)])
+    readiness.mockResolvedValue({ ready: true })
+    const onWaiting = vi.fn()
+
+    const res = await waitForTagPropagation(1, undefined, { pollMs: 0, maxStalledPolls: 60, onWaiting })
+
+    // No flip-flop, and it did not give up during the 90 quiet polls.
+    expect(onWaiting.mock.calls).toEqual([['node'], ['resuming'], [null]])
+    expect(res.complete).toBe(true)
+  })
+
+  it('stays "paused" while Bee answers but is not ready yet', async () => {
+    scriptTags([tag(1), 'down', ...Array(5).fill(tag(1)), tag(100)])
+    readiness.mockResolvedValue({ ready: false })
+    const onWaiting = vi.fn()
+
+    await waitForTagPropagation(1, undefined, { pollMs: 0, onWaiting })
+
+    expect(onWaiting.mock.calls).toEqual([['node']])
   })
 
   it('does not call it a stall while Bee is up but not ready (re-syncing)', async () => {
@@ -110,5 +133,32 @@ describe('waitForTagPropagation (R5-13)', () => {
     const res = await waitForTagPropagation(1, undefined, { pollMs: 0, maxStalledPolls: 5 })
 
     expect(res.complete).toBe(false)
+  })
+})
+
+describe('waitWhileBeeDown (R8-3)', () => {
+  it('returns at once, without reporting, when Bee is ready', async () => {
+    readiness.mockResolvedValue({ ready: true })
+    const onWait = vi.fn()
+
+    expect(await waitWhileBeeDown(onWait, { pollMs: 0 })).toBe(false)
+    expect(onWait).not.toHaveBeenCalled()
+  })
+
+  it('pauses while Bee is down or not ready, then says it is resuming', async () => {
+    readiness
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValueOnce({ ready: false })
+      .mockResolvedValue({ ready: true })
+    const onWait = vi.fn()
+
+    expect(await waitWhileBeeDown(onWait, { pollMs: 0 })).toBe(true)
+    expect(onWait.mock.calls).toEqual([['node'], ['resuming']])
+  })
+
+  it('gives up on a Bee that stays down beyond the bound', async () => {
+    readiness.mockResolvedValue({ ready: false })
+
+    await expect(waitWhileBeeDown(undefined, { pollMs: 0, maxMs: 0 })).rejects.toThrow('unavailable')
   })
 })

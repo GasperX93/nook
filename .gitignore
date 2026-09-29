@@ -25,3 +25,4 @@ api-key.txt
 # Test-run debris (specs mock env-paths into test/data)
 test/data/
 !test/data/.gitkeep
+test/data-registry/

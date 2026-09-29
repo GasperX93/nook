@@ -92,11 +92,14 @@ export default function Messages({ initialContactId, hideContactList, hideThread
   // drives an inline "Publish & send" so the user needn't leave for the Identity tab.
   const [needsPublish, setNeedsPublish] = useState(false)
   const [publishing, setPublishing] = useState(false)
+  // Invite written to the mailbox but its on-chain notice failed — retry only
+  // the notice (re-sending would put a second invite in their mailbox).
+  const [pendingPing, setPendingPing] = useState<{ contactId: string; name: string } | null>(null)
   // Phase label shown while an invite is in flight — the publish + mailbox
   // writes happen before the on-chain ping confirms, so without this the gap looks stuck.
   const [sendStatus, setSendStatus] = useState<string | null>(null)
   // Pre-filled share link when the user clicks "Add drive" on a drive-share card
-  const [importingLink, setImportingLink] = useState<string | null>(null)
+  const [importingLink, setImportingLink] = useState<{ link: string; driveName?: string } | null>(null)
   // Invitation acceptance state — nickname input + in-flight flag
   const [inviteNickname, setInviteNickname] = useState('')
   const [acceptingInvite, setAcceptingInvite] = useState(false)
@@ -331,7 +334,9 @@ export default function Messages({ initialContactId, hideContactList, hideThread
     if (!isInviteState && !trimmed) return
 
     if (!stampId) {
-      setError('No usable stamp — buy one in Account → My Storage')
+      setError(
+        'Messages need a small reserved space — add about 3 xBZZ on the Wallet page and Nook sets it up automatically.',
+      )
 
       return
     }
@@ -399,20 +404,19 @@ export default function Messages({ initialContactId, hideContactList, hideThread
         })
       })
 
-      // Fire the on-chain wake-up so the recipient discovers this invite even
-      // if they haven't added us yet. Signed + paid by the node wallet; the
-      // server resolves only after one confirmation, so a returned hash means
-      // the ping is on-chain ("sent" means sent).
-      setSendStatus('Notifying on Gnosis Chain…')
-      const provider = createNodeNotifyProvider()
-      const recipientPubKey = hexToBytes(selected.walletPublicKey)
-      // Include our display name so the recipient's invitation shows who's
-      // reaching out (payload is ECIES-encrypted to them — not public on-chain).
-      await registry.sendNotification(provider, REGISTRY_ADDRESS, recipientPubKey, selected.id, {
-        sender: myAddr,
-        name,
-      } as Parameters<typeof registry.sendNotification>[4])
-      recordInviteSent(selected.id)
+      // The invite is in their mailbox — show it as sent now, whatever the
+      // on-chain notice does next.
+      setThreads(prev => appendSent(prev, selected.id, body))
+      setDraft('')
+
+      try {
+        await sendInvitePing(selected, name)
+      } catch (e) {
+        setPendingPing({ contactId: selected.id, name })
+        setError(`Your invite is sent, but the notice on Gnosis Chain didn’t go out — ${friendlyError(e)}`)
+
+        return
+      }
 
       // Invite fully succeeded — lock in the display name for future invites.
       if (nameIsNew) {
@@ -420,11 +424,47 @@ export default function Messages({ initialContactId, hideContactList, hideThread
         setMyDisplayNameState(name)
         setPendingNicknameInput('')
       }
-
-      setThreads(prev => appendSent(prev, selected.id, body))
-      setDraft('')
     } catch (e) {
       setError(friendlyError(e))
+    } finally {
+      setSending(false)
+      setSendStatus(null)
+    }
+  }
+
+  // Fire the on-chain wake-up so the recipient discovers the invite even if
+  // they haven't added us yet. Signed + paid by the node wallet; the server
+  // resolves only after one confirmation, so a returned hash means the ping is
+  // on-chain ("sent" means sent).
+  async function sendInvitePing(contact: NookContact, name: string) {
+    if (!signer) return
+    setSendStatus('Notifying on Gnosis Chain…')
+    const provider = createNodeNotifyProvider()
+    const recipientPubKey = hexToBytes(contact.walletPublicKey)
+    // Include our display name so the recipient's invitation shows who's
+    // reaching out (payload is ECIES-encrypted to them — not public on-chain).
+    await registry.sendNotification(provider, REGISTRY_ADDRESS, recipientPubKey, contact.id, {
+      sender: signer.getAddress(),
+      name,
+    } as Parameters<typeof registry.sendNotification>[4])
+    recordInviteSent(contact.id)
+    setPendingPing(null)
+  }
+
+  async function handleRetryPing() {
+    if (!pendingPing || !selected || selected.id !== pendingPing.contactId) return
+    setSending(true)
+    setError(null)
+    try {
+      await sendInvitePing(selected, pendingPing.name)
+
+      if (!myDisplayName) {
+        setMyDisplayName(pendingPing.name)
+        setMyDisplayNameState(pendingPing.name)
+        setPendingNicknameInput('')
+      }
+    } catch (e) {
+      setError(`The notice on Gnosis Chain didn’t go out — ${friendlyError(e)}`)
     } finally {
       setSending(false)
       setSendStatus(null)
@@ -628,7 +668,7 @@ export default function Messages({ initialContactId, hideContactList, hideThread
                         m={m}
                         counterpartName={selected.nickname}
                         time={formatTime(m.ts)}
-                        onAdd={link => setImportingLink(link)}
+                        onAdd={(link, driveName) => setImportingLink({ link, driveName })}
                         onOpen={() => navigate('/drive?tab=shared')}
                         status={renderDeliveryStatus(m)}
                       />
@@ -657,6 +697,12 @@ export default function Messages({ initialContactId, hideContactList, hideThread
                 <p className="text-xs mb-2" style={{ color: needsPublish ? 'rgb(var(--fg-muted))' : '#ef4444' }}>
                   {error}
                 </p>
+              )}
+
+              {pendingPing && pendingPing.contactId === selected.id && !sending && (
+                <Button onClick={handleRetryPing} size="sm" className="mb-2">
+                  Retry notice
+                </Button>
               )}
 
               {needsPublish && (
@@ -838,7 +884,8 @@ export default function Messages({ initialContactId, hideContactList, hideThread
 
       {importingLink && (
         <AddSharedDriveModal
-          initialLink={importingLink}
+          initialLink={importingLink.link}
+          initialName={importingLink.driveName}
           onClose={() => setImportingLink(null)}
           onAdd={drive => sharedDrives.add(drive)}
         />

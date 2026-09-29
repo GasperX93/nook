@@ -8,7 +8,7 @@
 import { Check } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
-import { UPLOAD_STEP_LOCAL, UPLOAD_STEP_NETWORK } from '../lib/transfer-labels'
+import { UPLOAD_PAUSED, UPLOAD_RESUMING, UPLOAD_STEP_LOCAL, UPLOAD_STEP_NETWORK } from '../lib/transfer-labels'
 import type { TransferEntry } from '../store/transfers'
 import PropagationVisual from './PropagationVisual'
 
@@ -24,7 +24,7 @@ const STEP_LABEL: Record<StepId, string> = {
 
 const FACTS = [
   'Your site will live on Swarm, not on a server — nobody can take it down.',
-  'Storage is paid upfront, on Gnosis Chain — no subscription.',
+  'Storage is paid upfront — no subscription.',
   'Every file is split into pieces and spread across Bee nodes worldwide.',
   'With a permanent address, updating the site keeps the same link.',
 ]
@@ -50,6 +50,8 @@ function mmss(ms: number): string {
 
 interface Props {
   phase: string
+  /** The last real step's phase (kept by the publish job) — what a pause interrupted. */
+  stepPhase?: string
   fileCount: number
   uploadProgress: number | null
   propagationTransfer?: TransferEntry
@@ -59,13 +61,18 @@ interface Props {
 
 export default function PublishProgress({
   phase,
+  stepPhase,
   fileCount,
   uploadProgress,
   propagationTransfer,
   skippedBuy,
   feedEnabled,
 }: Props) {
-  const current = stepOf(phase)
+  // Paused / resuming (R8-3) isn't a step of its own — the list stays on the
+  // step the outage interrupted instead of jumping back to "Get storage ready".
+  // The job remembers that step, so it holds even if the page is reopened mid-pause.
+  const waiting = phase === UPLOAD_PAUSED || phase === UPLOAD_RESUMING
+  const current = stepOf(waiting && stepPhase ? stepPhase : phase)
   const steps: StepId[] = [
     ...(skippedBuy ? [] : ['buy' as const]),
     'ready',
@@ -88,6 +95,11 @@ export default function PublishProgress({
 
   const factIdx = Math.floor(now / 8000) % FACTS.length
   const measurable = current === 'copy' || (current === 'store' && propagationTransfer)
+  // One timer (R5-5): when the phase carries its own countdown ("Preparing
+  // storage… 37s"), the step list doesn't add a second, disagreeing clock.
+  const phaseHasCountdown = /\d+s$/.test(phase)
+  // The step list already says where we are — drop "Step N of 2 · ".
+  const phaseText = phase.replace(/^Step \d+ of \d+ · /, '')
 
   return (
     <div className="flex flex-col gap-5 py-10 max-w-md mx-auto w-full">
@@ -116,7 +128,7 @@ export default function PublishProgress({
                 )}
               </span>
               {STEP_LABEL[id]}
-              {active && !measurable && (
+              {active && !measurable && !phaseHasCountdown && (
                 <span className="ml-auto text-xs tabular-nums font-normal" style={{ color: 'rgb(var(--fg-muted))' }}>
                   {mmss(now - startedAt)}
                 </span>
@@ -131,12 +143,12 @@ export default function PublishProgress({
         style={{ backgroundColor: 'rgb(var(--bg-surface))', borderColor: 'rgb(var(--border))' }}
       >
         <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
-          {phase || 'Publishing…'}
+          {phaseText || 'Publishing…'}
           {fileCount > 0 && current !== 'store' && ` · ${fileCount} files`}
         </p>
 
         {current === 'store' && propagationTransfer ? (
-          <PropagationVisual transfer={propagationTransfer} />
+          <PropagationVisual transfer={propagationTransfer} subject="site" />
         ) : current === 'copy' && uploadProgress !== null ? (
           <div className="space-y-1.5">
             <div className="h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: 'rgb(var(--border))' }}>
@@ -153,7 +165,7 @@ export default function PublishProgress({
           <>
             {current === 'buy' && (
               <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-                This usually takes 1–3 minutes — Nook is paying for the space on Gnosis Chain.
+                This usually takes 1–3 minutes — Nook is paying for the space on the Swarm network.
               </p>
             )}
             <p className="text-xs italic" style={{ color: 'rgb(var(--fg-muted))' }}>

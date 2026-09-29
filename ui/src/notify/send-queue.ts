@@ -1,16 +1,14 @@
 /**
- * Per-feed mailbox send serialization.
+ * Per-recipient send serialization.
  *
- * mailbox.send does a read-modify-write of the WHOLE message array on a single
- * feed (read existing → append → re-upload → repoint feed). Two rapid sends to
- * the same recipient race: the second reads the array before the first's feed
- * update lands, appends to the stale copy, and overwrites the first → the
- * earlier message is silently lost.
+ * Each message goes to its own feed index, taken from a persisted
+ * per-recipient cursor (`send-message.ts`). Two sends to the same recipient
+ * running at once would both read the same cursor and collide on the same
+ * index — one of the two messages is lost.
  *
- * Chaining sends per recipient (the feed is sender→recipient, sender fixed)
- * makes each read-modify-write complete before the next begins, so appends
- * stack instead of clobbering. Different recipients = different feeds = no race,
- * so they run independently.
+ * Chaining sends per recipient makes each read-cursor → write → advance
+ * complete before the next begins. Different recipients = different feeds and
+ * cursors = no race, so they run independently.
  */
 const chains = new Map<string, Promise<unknown>>()
 

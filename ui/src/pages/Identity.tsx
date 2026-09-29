@@ -57,7 +57,11 @@ export default function Identity() {
 
     if (!addresses) return setPublishError('Bee node not reachable')
 
-    if (!stampId) return setPublishError('Buy a drive first to enable publishing')
+    if (!stampId) {
+      return setPublishError(
+        'Publishing needs a small reserved space — add about 3 xBZZ on the Wallet page and Nook sets it up automatically.',
+      )
+    }
 
     setPublishing(true)
     setPublishError(null)

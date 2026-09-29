@@ -29,7 +29,6 @@
     "open:ui": "node devkit.mjs open:ui",
     "purge:data": "node devkit.mjs purge:data",
     "purge:logs": "node devkit.mjs purge:logs",
-    "docs:build": "node docs/build.mjs",
     "clean": "rimraf dist out",
     "depcheck": "depcheck . && depcheck ui/",
     "lint": "eslint --fix \"src/**/*.ts\" && cd ui && npm run lint",

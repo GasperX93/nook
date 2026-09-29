@@ -17,7 +17,6 @@ export default defineConfig(({ command }) => ({
       '/config': 'http://localhost:3054',
       '/logs': 'http://localhost:3054',
       '/restart': 'http://localhost:3054',
-      '/swap': 'http://localhost:3054',
       '/redeem': 'http://localhost:3054',
       '/withdraw': 'http://localhost:3054',
       '/notify-ping': 'http://localhost:3054',

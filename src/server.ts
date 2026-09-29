@@ -14,6 +14,7 @@ import { ethers } from 'ethers'
 import PACKAGE_JSON from '../package.json'
 import { getApiKey } from './api-key'
 import {
+  friendlyChainError,
   BATCH_CREATE_GAS_LIMIT,
   isNotifyCalldata,
   redeemGiftCode,
@@ -40,6 +41,7 @@ import {
 } from './reclaimable-registry'
 import {
   addFileToStage,
+  EmptyUploadError,
   assignFileToFolder,
   commitUploadStage,
   createReclaimableFolder,
@@ -50,6 +52,7 @@ import {
   getUploadJob,
   listReclaimableDrives,
   removeExpiredDrive,
+  renameReclaimableFolder,
   startUpload,
 } from './reclaimable'
 import { getAutoExtendSettings, setAutoExtendSetting } from './extend-monitor'
@@ -67,7 +70,6 @@ import { getWalletActivity } from './wallet-activity'
 import { getStatus } from './status'
 import { resetCrashLoop } from './supervisor'
 import { fetchWithTimeout } from './fetch-timeout'
-import { swap } from './swap'
 
 const UI_DIST = path.join(__dirname, '..', '..', 'ui')
 
@@ -378,7 +380,7 @@ export function runServer() {
     } catch (error) {
       logger.error(error)
       const msg = (error as Error).message ?? ''
-      let friendly = 'Failed to redeem gift code'
+      let friendly = friendlyChainError(msg) ?? 'Failed to redeem gift code'
 
       if (msg.includes('REPLACEMENT_UNDERPRICED') || msg.includes('replacement transaction underpriced')) {
         friendly = 'A previous transaction is still pending. Please wait a moment and try again.'
@@ -386,7 +388,7 @@ export function runServer() {
         friendly = 'A previous transaction just completed. Please try again.'
       } else if (msg.includes('INSUFFICIENT_FUNDS') || msg.includes('insufficient funds')) {
         friendly = 'Gift wallet has insufficient funds to cover gas fees.'
-      } else if (msg) {
+      } else if (msg && !friendlyChainError(msg)) {
         friendly = msg
       }
       context.status = 500
@@ -417,7 +419,7 @@ export function runServer() {
       logger.error(error)
       context.status = 500
       context.body = {
-        message: 'Could not publish the feed update. Check that your stamp has storage left and try again.',
+        message: 'Could not update the permanent address. Check that the drive has space left and try again.',
       }
     }
   })
@@ -577,7 +579,7 @@ export function runServer() {
 
   // ─── Wallet activity (#139) — audit surface for automatic spending ────────
   router.get('/wallet-activity', async context => {
-    context.body = await getWalletActivity()
+    context.body = await getWalletActivity(undefined, undefined, { fresh: context.query.fresh === '1' })
   })
 
   // ─── Notifications (#138) — the bell's event feed ─────────────────────────
@@ -683,22 +685,19 @@ export function runServer() {
       return
     }
 
-    const chunks: Buffer[] = []
-
-    for await (const chunk of context.req) chunks.push(chunk as Buffer)
-
-    if (chunks.length === 0) {
-      context.status = 400
-      context.body = { message: 'request body is required' }
-
-      return
-    }
-
     try {
-      const job = await startUpload(context.params.batch, fileName, Buffer.concat(chunks))
+      // Streamed straight to disk — a multi-GB file must not sit in memory.
+      const job = await startUpload(context.params.batch, fileName, context.req)
       context.body = { uploadId: job.id }
     } catch (error) {
       logger.error(error)
+
+      if (error instanceof EmptyUploadError) {
+        context.status = 400
+        context.body = { message: error.message }
+
+        return
+      }
 
       if (error instanceof ExpiredDriveError) {
         context.status = 410
@@ -740,12 +739,8 @@ export function runServer() {
       return
     }
 
-    const chunks: Buffer[] = []
-
-    for await (const chunk of context.req) chunks.push(chunk as Buffer)
-
     try {
-      context.body = addFileToStage(context.params.id, relPath, Buffer.concat(chunks))
+      context.body = await addFileToStage(context.params.id, relPath, context.req)
     } catch (error) {
       logger.error(error)
       context.status = 400
@@ -801,6 +796,25 @@ export function runServer() {
       logger.error(error)
       context.status = 404
       context.body = { message: 'Not a reclaimable drive' }
+    }
+  })
+
+  router.patch('/reclaimable/:batch/folders/:id', context => {
+    const { name } = context.request.body as { name?: string }
+
+    if (!name?.trim()) {
+      context.status = 400
+      context.body = { message: 'name is required' }
+
+      return
+    }
+    try {
+      context.body = renameReclaimableFolder(context.params.batch, context.params.id, name)
+    } catch (error) {
+      logger.error(error)
+      const message = String((error as Error).message ?? error)
+      context.status = message === 'Unknown folder' ? 404 : 400
+      context.body = { message }
     }
   })
 
@@ -1157,7 +1171,7 @@ export function runServer() {
     } catch (error) {
       logger.error(error)
       const msg = (error as Error).message ?? ''
-      let friendly = 'Withdraw failed'
+      let friendly = friendlyChainError(msg) ?? 'Withdraw failed'
 
       if (msg.includes('REPLACEMENT_UNDERPRICED') || msg.includes('replacement transaction underpriced')) {
         friendly = 'A previous transaction is still pending. Please wait a moment and try again.'
@@ -1165,7 +1179,7 @@ export function runServer() {
         friendly = 'Insufficient funds to cover gas fees.'
       } else if (msg.includes('UNPREDICTABLE_GAS_LIMIT')) {
         friendly = 'Transaction failed — make sure no other Bee node is running on the same port.'
-      } else if (msg) {
+      } else if (msg && !friendlyChainError(msg)) {
         friendly = msg
       }
       context.status = 500
@@ -1216,31 +1230,6 @@ export function runServer() {
       logger.error(error)
       context.status = 500
       context.body = { message: (error as Error).message || 'Failed to withdraw from chequebook' }
-    }
-  })
-
-  router.post('/swap', async context => {
-    const blockchainRpcEndpoint = nookRpcUrl()
-    const privateKeyString = await getPrivateKey()
-    try {
-      await swap(privateKeyString, (context.request.body as Record<string, string>).dai, '10000', blockchainRpcEndpoint)
-      context.body = { success: true }
-    } catch (error) {
-      logger.error(error)
-      const msg = (error as Error).message ?? ''
-      let friendly = 'Failed to swap'
-
-      if (msg.includes('REPLACEMENT_UNDERPRICED') || msg.includes('replacement transaction underpriced')) {
-        friendly = 'A previous transaction is still pending. Please wait a moment and try again.'
-      } else if (msg.includes('INSUFFICIENT_FUNDS') || msg.includes('insufficient funds')) {
-        friendly = 'Insufficient funds to cover gas fees.'
-      } else if (msg.includes('UNPREDICTABLE_GAS_LIMIT')) {
-        friendly = 'Transaction failed — make sure no other Bee node is running on the same port.'
-      } else if (msg) {
-        friendly = msg
-      }
-      context.status = 500
-      context.body = { message: friendly }
     }
   })
 

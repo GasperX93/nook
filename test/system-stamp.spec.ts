@@ -22,7 +22,13 @@ import { getAutoExtendSettings } from '../src/extend-monitor'
 import { getMode } from '../src/funding-monitor'
 import { loadNotifications } from '../src/notifications'
 import { loadPurchases } from '../src/purchases'
-import { type BeeFetch, runSystemStampCheck, SYSTEM_STAMP_LABEL } from '../src/system-stamp'
+import {
+  type BeeFetch,
+  reserveJustBoughtAt,
+  resetJustBoughtForTests,
+  runSystemStampCheck,
+  SYSTEM_STAMP_LABEL,
+} from '../src/system-stamp'
 
 // #130 contract: buy exactly one labeled system batch, only in light mode with
 // a synced chain and sufficient funds; enable auto-renew; record everything.
@@ -54,10 +60,9 @@ function makeBee(overrides: { existing?: boolean; lag?: number; bzz?: string; bu
     }
 
     if (path.startsWith('/chainstate')) {
-      return new Response(
-        JSON.stringify({ chainTip: 1000, block: 1000 - (overrides.lag ?? 0), currentPrice: '100' }),
-        { status: 200 },
-      )
+      return new Response(JSON.stringify({ chainTip: 1000, block: 1000 - (overrides.lag ?? 0), currentPrice: '100' }), {
+        status: 200,
+      })
     }
 
     if (path.startsWith('/wallet')) {
@@ -70,7 +75,10 @@ function makeBee(overrides: { existing?: boolean; lag?: number; bzz?: string; bu
   return { fetch, buys }
 }
 
-beforeEach(cleanUp)
+beforeEach(() => {
+  cleanUp()
+  resetJustBoughtForTests()
+})
 afterAll(cleanUp)
 
 describe('system stamp (#130)', () => {
@@ -90,6 +98,16 @@ describe('system stamp (#130)', () => {
     // Ledger + bell record
     expect(loadPurchases()[0]).toMatchObject({ kind: 'create', batchId: BATCH, label: SYSTEM_STAMP_LABEL })
     expect(loadNotifications()[0].title).toContain('identity & messages')
+  })
+
+  it('never buys twice while Bee has not listed the new batch yet (F-6)', async () => {
+    const bee = makeBee({})
+
+    expect(await runSystemStampCheck(bee.fetch)).toBe('bought')
+    // Bee still lists no system batch a minute later — the purchase must hold.
+    expect(await runSystemStampCheck(bee.fetch)).toBe('exists')
+    expect(bee.buys).toHaveLength(1)
+    expect(reserveJustBoughtAt()).not.toBeNull()
   })
 
   it('never buys beside an existing system batch', async () => {

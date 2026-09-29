@@ -19,6 +19,8 @@ interface AddSharedDriveModalProps {
   myPublicKey?: string
   /** Pre-fill the share-link textarea (e.g. when opened from a Messages drive-share card) */
   initialLink?: string
+  /** Pre-fill the name (still editable) — the drive's name from that card (R6-5) */
+  initialName?: string
   onClose: () => void
   onAdd: (drive: {
     name: string
@@ -31,9 +33,15 @@ interface AddSharedDriveModalProps {
   }) => void
 }
 
-export default function AddSharedDriveModal({ myPublicKey, initialLink, onClose, onAdd }: AddSharedDriveModalProps) {
+export default function AddSharedDriveModal({
+  myPublicKey,
+  initialLink,
+  initialName,
+  onClose,
+  onAdd,
+}: AddSharedDriveModalProps) {
   const [link, setLink] = useState(initialLink ?? '')
-  const [name, setName] = useState('')
+  const [name, setName] = useState(initialName ?? '')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [copiedKey, setCopiedKey] = useState(false)

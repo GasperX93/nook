@@ -17,6 +17,7 @@ import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Switch } from '../components/ui/switch'
 import { serverApi } from '../api/server'
+import { FEEDBACK_URL } from '../lib/links'
 import { isSystemStamp } from '../lib/system-stamp'
 import { useAppStore } from '../store/app'
 
@@ -392,6 +393,25 @@ export default function Settings() {
             )}
           </div>
 
+          {/* Troubleshooting (R5-9) — the logs page was only reachable from
+              error banners and Developer mode. */}
+          <div
+            className="rounded-xl border p-5 flex items-center justify-between gap-4"
+            style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
+          >
+            <div>
+              <p className="text-sm mb-1" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Troubleshooting
+              </p>
+              <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                See what your node and Nook are doing — useful when something doesn’t work.
+              </p>
+            </div>
+            <Button size="sm" variant="secondary" onClick={() => navigate('/logs')}>
+              View logs
+            </Button>
+          </div>
+
           {/* Version info */}
           <div className="rounded-xl border p-5 space-y-3" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
             <p className="text-sm mb-1" style={{ color: 'rgb(var(--fg-muted))' }}>
@@ -434,7 +454,7 @@ export default function Settings() {
                 GitHub
               </a>
               <a
-                href="https://github.com/GasperX93/nook/issues/new/choose"
+                href={FEEDBACK_URL}
                 target="_blank"
                 rel="noreferrer"
                 className="flex items-center gap-2 text-xs transition-colors hover:underline"

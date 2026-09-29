@@ -4,9 +4,10 @@ import { Check, Copy, Mail, MessageSquare, Pencil, Plus, Search, Send, Share2, T
 import { useEffect, useMemo, useState } from 'react'
 
 import Messages, { ConnectionStatusBadge } from '../apps/Messages'
-import { useAddresses, useStamps } from '../api/queries'
+import { useAddresses, useReclaimableDrives, useStamps } from '../api/queries'
 import { useDerivedKey } from '../hooks/useDerivedKey'
 import { bytesToHex } from '../lib/hex'
+import { pickMessagingStamp } from '../lib/system-stamp'
 import { movedFromLegacyIdentity } from '../notify/active-identity'
 import { deriveConnectionState, getMyDisplayName, hasInboundSince, markInviteAccepted } from '../notify/contact-state'
 import { sendInviteAck } from '../notify/invite-ack'
@@ -44,6 +45,7 @@ export default function Contacts() {
   const { data: addresses } = useAddresses()
   const [myLinkCopied, setMyLinkCopied] = useState(false)
   const { data: stamps } = useStamps()
+  const { data: reclaimable } = useReclaimableDrives()
   const [contacts, setContacts] = useState<NookContact[]>(() => loadContacts())
 
   // Phase 4: contacts are namespaced per derived identity. When the identity
@@ -220,9 +222,11 @@ export default function Contacts() {
 
       // Tell the sender we accepted — flips their side from "waiting" to
       // "connected" (best-effort; no on-chain cost, we're mutual contacts now).
-      const stampId = (stamps ?? []).find(s => s.usable)?.batchID ?? ''
+      // Same space as every other message — never a deletable drive (its
+      // slots are ledger-managed; a Bee-stamped write is refused, #99).
+      const stampId = pickMessagingStamp(stamps, new Set((reclaimable ?? []).map(d => d.batchId)))?.batchID ?? ''
 
-      if (signer) {
+      if (signer && stampId) {
         void sendInviteAck(bee, signer, stampId, senderContact, getMyDisplayName() || swarmIdAccount?.name || '')
       }
     } catch (e) {

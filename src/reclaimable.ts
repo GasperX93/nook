@@ -1,8 +1,19 @@
 import { Binary } from 'cafe-utility'
 import Wallet from 'ethereumjs-wallet'
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs'
+import {
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'fs'
 import { mkdtemp, readFile } from 'fs/promises'
 import { tmpdir } from 'os'
+import { pipeline } from 'stream/promises'
 import * as path from 'path'
 import { randomUUID } from 'crypto'
 
@@ -422,14 +433,49 @@ function runUploadJob(entry: ReclaimableBatch, displayName: string, uploadPath: 
   return job
 }
 
-export async function startUpload(batchId: string, fileName: string, data: Buffer): Promise<UploadJob> {
+/** An upload body: a buffer, or the request stream itself (piped to disk, never held in memory). */
+export type UploadBody = Buffer | NodeJS.ReadableStream
+
+export class EmptyUploadError extends Error {
+  constructor() {
+    super('request body is required')
+  }
+}
+
+/** Write the body to `dest`, returning its size. A stream that fails midway leaves no partial file. */
+async function writeBody(dest: string, data: UploadBody): Promise<number> {
+  if (Buffer.isBuffer(data)) {
+    writeFileSync(dest, data)
+
+    return data.length
+  }
+
+  try {
+    await pipeline(data, createWriteStream(dest))
+  } catch (error) {
+    rmSync(dest, { force: true })
+    throw error
+  }
+
+  return statSync(dest).size
+}
+
+export async function startUpload(batchId: string, fileName: string, data: UploadBody): Promise<UploadJob> {
   const entry = await requireAliveBatch(batchId)
+  sweepOrphanTempDirs()
   // The temp file carries the real file name (inside a throwaway dir)
   // because etherchunk records the upload path in its registry.
   const dir = await mkdtemp(path.join(tmpdir(), 'nook-reclaimable-'))
-  writeFileSync(path.join(dir, path.basename(fileName)), data)
+  const file = path.join(dir, path.basename(fileName))
 
-  return runUploadJob(entry, fileName, path.join(dir, path.basename(fileName)), dir)
+  try {
+    if ((await writeBody(file, data)) === 0) throw new EmptyUploadError()
+  } catch (error) {
+    rmSync(dir, { recursive: true, force: true })
+    throw error
+  }
+
+  return runUploadJob(entry, fileName, file, dir)
 }
 
 // ─── Folder upload staging ───────────────────────────────────────────────────
@@ -458,6 +504,38 @@ function sweepStages(): void {
       stages.delete(id)
     }
   })
+  sweepOrphanTempDirs(now)
+}
+
+/** Older than any upload runs — a live upload's temp dir is never touched. */
+const ORPHAN_TEMP_AGE_MS = 24 * 60 * 60_000
+
+/**
+ * Temp dirs left by earlier sessions: stages that were never committed
+ * (cancelled, failed, or open when Nook quit — `stages` lives in memory, so
+ * after a restart nothing else removes them) and upload dirs whose cleanup
+ * never ran.
+ */
+export function sweepOrphanTempDirs(now = Date.now()): void {
+  const tmp = tmpdir()
+  const live = new Set(Array.from(stages.values(), stage => stage.dir))
+
+  try {
+    for (const name of readdirSync(tmp)) {
+      if (!name.startsWith('nook-reclaimable-')) continue
+      const dir = path.join(tmp, name)
+
+      if (live.has(dir)) continue
+
+      try {
+        if (now - statSync(dir).mtimeMs > ORPHAN_TEMP_AGE_MS) rmSync(dir, { recursive: true, force: true })
+      } catch {
+        // Gone already, or not ours to remove — skip.
+      }
+    }
+  } catch (error) {
+    logger.warn(`reclaimable: could not sweep temp dirs: ${error}`)
+  }
 }
 
 export async function createUploadStage(batchId: string): Promise<{ stageId: string }> {
@@ -470,7 +548,11 @@ export async function createUploadStage(batchId: string): Promise<{ stageId: str
   return { stageId: stage.id }
 }
 
-export function addFileToStage(stageId: string, relPath: string, data: Buffer): { fileCount: number } {
+export async function addFileToStage(
+  stageId: string,
+  relPath: string,
+  data: UploadBody,
+): Promise<{ fileCount: number }> {
   const stage = stages.get(stageId)
 
   if (!stage) {
@@ -490,7 +572,7 @@ export function addFileToStage(stageId: string, relPath: string, data: Buffer): 
     throw new Error(`Invalid file path: ${relPath}`)
   }
   mkdirSync(path.dirname(dest), { recursive: true })
-  writeFileSync(dest, data)
+  await writeBody(dest, data)
   stage.fileCount += 1
 
   return { fileCount: stage.fileCount }
@@ -633,6 +715,28 @@ export function createReclaimableFolder(batchId: string, name: string): { id: st
   writeAllFolders(all)
 
   return folder
+}
+
+/** Rename a folder — Nook's own label, nothing on Swarm changes. */
+export function renameReclaimableFolder(batchId: string, folderId: string, name: string): { id: string; name: string } {
+  const entry = requireRegisteredBatch(batchId)
+  const all = readAllFolders()
+  const drive = driveFolders(all, entry.batchId)
+  const folder = drive.folders.find(f => f.id === folderId)
+  const trimmed = name.trim()
+
+  if (!folder) {
+    throw new Error('Unknown folder')
+  }
+
+  if (!trimmed) {
+    throw new Error('Folder name is required')
+  }
+  folder.name = trimmed
+  all[entry.batchId] = drive
+  writeAllFolders(all)
+
+  return { id: folder.id, name: folder.name }
 }
 
 export function deleteReclaimableFolder(batchId: string, folderId: string): void {

@@ -22,7 +22,6 @@ import {
   Rss,
   Search,
   Share2,
-  Trash2,
   Upload,
   Users,
   X,
@@ -41,8 +40,10 @@ import {
   plurToBzz,
   SIZE_PRESETS,
   stampFillRatio,
+  driveSizeLabel,
   topicFromString,
   waitForRetrievable,
+  waitWhileBeeDown,
   type Stamp,
 } from '../api/bee'
 import { type AutoExtendEntry, serverApi } from '../api/server'
@@ -74,15 +75,21 @@ import {
 import AddSharedDriveModal from '../components/AddSharedDriveModal'
 import ENSModal from '../components/ENSModal'
 import { ExpiredDriveRow, ReclaimableDriveCard, ReclaimableDriveView } from '../components/ReclaimableDrive'
+import FolderCard from '../components/FolderCard'
 import ShareModal from '../components/ShareModal'
 import { Switch } from '../components/ui/switch'
 import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { useSidebar } from '../components/ui/sidebar'
 import { friendlyError } from '../lib/friendly-error'
+import { formatBytes } from '../lib/format-bytes'
+import { isDriveFullError, withUploadRetries } from '../lib/upload-retry'
 import {
+  rowStatusLabel,
   savingLabel,
   UPLOAD_ENCRYPTED,
   UPLOAD_PAUSED,
+  UPLOAD_RESUMING,
+  waitLabel,
   UPLOAD_STEP_LOCAL,
   UPLOAD_STEP_NETWORK,
 } from '../lib/transfer-labels'
@@ -92,16 +99,11 @@ import {
 // Why "used" can read higher than the sum of your files: it shows network
 // storage RESERVED (chunk + version overhead, quantized to bucket slots), not
 // logical file bytes. On small drives the smallest step is capacity/32.
+// How full, as Bee measures it (R7-6): a drive is full when its fullest part
+// is, so this can differ from what the files add up to — which the file count
+// shows next to it.
 const USAGE_TOOLTIP =
-  'Network storage reserved — includes chunk and version overhead, so it may read higher than your file sizes on small drives.'
-
-function formatBytes(bytes: number): string {
-  if (bytes >= 1_073_741_824) return `${(bytes / 1_073_741_824).toFixed(1)} GB`
-
-  if (bytes >= 1_048_576) return `${(bytes / 1_048_576).toFixed(1)} MB`
-
-  return `${(bytes / 1024).toFixed(0)} KB`
-}
+  'How full the drive is, as your node measures it. A drive fills unevenly, so this can read higher or lower than your files add up to.'
 
 function timeUntil(ms: number): { label: string; urgent: boolean } {
   const diff = ms - Date.now()
@@ -161,18 +163,31 @@ async function downloadFromSwarm(
   setTimeout(() => URL.revokeObjectURL(url), 10_000)
 }
 
-async function pollStampUsable(id: string, onPhase?: (p: string) => void): Promise<void> {
-  for (let i = 0; i < 30; i++) {
-    const elapsed = i * 2
+/** Time with Bee stopped is a pause, not part of the 60 s wait (R8-3). */
+async function pollStampUsable(
+  id: string,
+  onPhase?: (p: string) => void,
+  onBeeWait?: (wait: 'node' | 'resuming') => void,
+): Promise<void> {
+  let elapsed = 0
+
+  while (elapsed < 60) {
+    let paused = false
+
     onPhase?.(`Waiting for drive to be ready… ${elapsed > 0 ? `(${elapsed}s)` : ''}`.trim())
     try {
       const s = await beeApi.getStamp(id)
 
       if (s.usable) return
     } catch {
-      // not yet confirmed
+      // not yet confirmed — or Bee is down (then it's a pause, not waiting)
+      if (await waitWhileBeeDown(onBeeWait)) paused = true
     }
-    await new Promise(r => setTimeout(r, 2000))
+
+    if (!paused) {
+      await new Promise(r => setTimeout(r, 2000))
+      elapsed += 2
+    }
   }
   throw new Error('Drive did not become ready. Please try again.')
 }
@@ -526,13 +541,27 @@ function BuyDriveModal({
 
 // ─── ExtendModal ───────────────────────────────────────────────────────────────
 
-function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) {
+function ExtendModal({
+  stamp,
+  onClose,
+  deletable = false,
+}: {
+  stamp: Stamp
+  onClose: () => void
+  deletable?: boolean
+}) {
   // Capacity options: only depths strictly larger than current AND only when the
   // user-facing capacity is also larger. With Nook's overbuy, a legacy depth-19
   // "110 MB" stamp shouldn't see "110 MB (depth 21)" as an extend option — same
   // displayed capacity, just a more expensive same-label drive.
   const currentDisplayBytes = depthToBytes(stamp.depth)
-  const capacityOptions = SIZE_PRESETS.filter(s => s.depth > stamp.depth && depthToBytes(s.depth) > currentDisplayBytes)
+  // Deletable drives never change size: their slot ledger is laid out for the
+  // drive's depth, and a dilute would hand out slots it doesn't track. The
+  // /bee-api guard refuses it too, but the dashboard calls Bee directly in the
+  // packaged app — so the option must not exist here.
+  const capacityOptions = deletable
+    ? []
+    : SIZE_PRESETS.filter(s => s.depth > stamp.depth && depthToBytes(s.depth) > currentDisplayBytes)
   const [capacityEnabled, setCapacityEnabled] = useState(false)
   const [capacityIdx, setCapacityIdx] = useState(0)
   const [durationEnabled, setDurationEnabled] = useState(false)
@@ -731,7 +760,9 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
           )}
           {capacityOptions.length === 0 && (
             <p className="text-[11px]" style={{ color: 'rgb(var(--fg-muted))' }}>
-              Drive is already at the maximum size.
+              {deletable
+                ? 'Deletable drives keep their size — delete files to free space, or create a new drive.'
+                : 'Drive is already at the maximum size.'}
             </p>
           )}
         </div>
@@ -854,6 +885,11 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
 
 // ─── UpdateFeedModal ───────────────────────────────────────────────────────────
 
+/** A new version of a record being published — shown on that record's row. */
+function updateTransferId(recordId: string): string {
+  return `upd:${recordId}`
+}
+
 interface UpdateContent {
   entries: FileEntry[]
   size: number
@@ -866,11 +902,24 @@ function UpdateFeedModal({ record, onClose }: { record: UploadRecord; onClose: (
   const [phase, setPhase] = useState<'select' | 'updating' | 'done'>('select')
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+  const [status, setStatus] = useState(UPLOAD_STEP_LOCAL)
+  const [pct, setPct] = useState<number | null>(null)
+  // Step 2 (storing on the network) — the modal shows the same visual as the
+  // drive's upload panel.
+  const [storingTagUid, setStoringTagUid] = useState<number | null>(null)
+  const storingTransfer = useTransfersStore(state =>
+    storingTagUid === null ? undefined : state.transfers.find(t => t.id === `tag:${storingTagUid}`),
+  )
+  // Closed with "Keep going in the background": the update finishes anyway
+  // and reports through the bell instead.
+  const closedRef = useRef(false)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const dirInputRef = useRef<HTMLInputElement>(null)
 
   const { update } = useUploadHistory()
+  const isSite = record.type === 'website'
+  const subject = isSite ? 'site' : 'file'
 
   async function handleDrop(e: React.DragEvent) {
     e.preventDefault()
@@ -914,28 +963,131 @@ function UpdateFeedModal({ record, onClose }: { record: UploadRecord; onClose: (
     if (!content) return
     setPhase('updating')
     setError(null)
+    setPct(0)
     const stampId = record.driveId
-    try {
-      let reference: string
+    // Same as a first upload (R7-2): a global transfer from the first byte, so
+    // the sidebar shows it from any page; the tag entry takes over once the
+    // new version is on this node. Its own id kind — it shows on the site's
+    // row, not as a new in-progress row.
+    const upId = updateTransferId(record.id)
+    const transfers = useTransfersStore.getState()
 
-      if (record.type === 'file') {
-        const res = await beeApi.uploadFile(content.entries[0].file, stampId)
-        reference = res.reference
+    transfers.begin({
+      id: upId,
+      kind: 'upload',
+      name: record.name,
+      driveId: stampId,
+      bytes: content.size,
+      phase: UPLOAD_STEP_LOCAL,
+      label: 'Updating',
+    })
+    const onPct = (value: number) => {
+      setPct(value)
+      useTransfersStore.getState().update(upId, { pct: value })
+    }
+    const onBeeWait = (wait: 'node' | 'resuming') => {
+      setStatus(wait === 'node' ? UPLOAD_PAUSED : UPLOAD_RESUMING)
+      useTransfersStore.getState().update(upId, { waiting: wait === 'node' ? 'node' : undefined })
+    }
+    const retry = {
+      pause: async () => waitWhileBeeDown(onBeeWait),
+      onRetry: (n: number) => setStatus(`Trying again… (${n})`),
+    }
+
+    try {
+      // Same safeguards as a first upload: wait out a stopped node, retry a
+      // failed copy (Bee still says "ready" for a few seconds after a stop),
+      // stop at once on a full drive, and follow the new version to the network.
+      const { reference, tagUid } = await withUploadRetries(
+        async () => {
+          setStatus(UPLOAD_STEP_LOCAL)
+          onPct(0)
+          let uid: number | undefined
+
+          try {
+            uid = (await beeApi.createTag()).uid
+          } catch {
+            // No tag — the update still works, just without network progress.
+          }
+          const res =
+            record.type === 'file'
+              ? await beeApi.uploadFileWithProgress(content.entries[0].file, stampId, onPct, true, uid)
+              : await beeApi.uploadCollectionWithProgress(
+                  content.entries,
+                  stampId,
+                  {
+                    ...(isSite ? { indexDocument: content.indexDocument, errorDocument: '404.html' } : {}),
+                    tagUid: uid,
+                  },
+                  onPct,
+                )
+
+          return { reference: res.reference, tagUid: uid }
+        },
+        { attempts: 8, delayMs: 10_000, ...retry },
+      )
+
+      // Store on the network FIRST, then move the address — as a first
+      // publish does: pointing people at a version that is only on this node
+      // gives them a half-loaded site. A stall is soft (same as first
+      // publish): Bee keeps pushing in the background and the address moves.
+      if (tagUid !== undefined) {
+        useTransfersStore.getState().remove(upId)
+        update(record.id, { pendingTagUid: tagUid })
+        setStatus(UPLOAD_STEP_NETWORK)
+        setPct(null)
+        setStoringTagUid(tagUid)
+        const { complete } = await followTagPropagation(tagUid, record.name, stampId)
+
+        setStoringTagUid(null)
+
+        if (!complete) setStatus('Still storing in the background…')
       } else {
-        const opts =
-          record.type === 'website' ? { indexDocument: content.indexDocument, errorDocument: '404.html' } : undefined
-        const res = await beeApi.uploadCollection(content.entries, stampId, opts)
-        reference = res.reference
+        useTransfersStore.getState().finish(upId)
       }
 
+      setStatus('Pointing the permanent address to the new version…')
+      setPct(null)
       const topicHex = await topicFromString(record.feedTopic ?? record.name)
-      await serverApi.createFeedUpdate(topicHex, reference, stampId)
-      update(record.id, { hash: reference })
+
+      await withUploadRetries(async () => serverApi.createFeedUpdate(topicHex, reference, stampId), {
+        attempts: 3,
+        delayMs: 5000,
+        ...retry,
+      })
+      update(record.id, { hash: reference, size: content.size, uploadedAt: Date.now() })
+
+      if (closedRef.current) {
+        serverApi
+          .createNotification({
+            type: 'info',
+            title: isSite ? 'Site updated' : 'New version published',
+            body: `“${record.name}” now shows the new version.`,
+            link: `/drive?open=${stampId}`,
+          })
+          .catch(() => undefined)
+      }
       setPhase('done')
     } catch (err) {
+      useTransfersStore.getState().finish(upId, 'failed')
+      setStoringTagUid(null)
       const raw = err instanceof Error ? err.message : ''
       const match = raw.match(/"message":"([^"]+)"/)
-      setError(match ? match[1] : 'Could not publish the update. Please try again.')
+      const message = isDriveFullError(err)
+        ? 'This drive is full — extend it, or publish the new version to a new drive.'
+        : `Could not publish the update: ${match ? match[1] : friendlyError(err, 'unknown error')}`
+
+      if (closedRef.current) {
+        serverApi
+          .createNotification({
+            type: 'info',
+            title: `“${record.name}” wasn’t updated`,
+            body: message,
+            link: `/drive?open=${stampId}`,
+          })
+          .catch(() => undefined)
+      }
+      setError(message)
       setPhase('select')
     }
   }
@@ -956,10 +1108,11 @@ function UpdateFeedModal({ record, onClose }: { record: UploadRecord; onClose: (
         <div>
           <div className="flex items-center gap-2 mb-1">
             <Rss size={14} style={{ color: 'rgb(var(--accent))' }} />
-            <p className="text-sm font-semibold">Update feed</p>
+            <p className="text-sm font-semibold">{isSite ? 'Update site' : 'Publish a new version'}</p>
           </div>
           <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-            {record.name} · {record.feedTopic ?? record.name}
+            {record.name}
+            {record.feedTopic && record.feedTopic !== record.name ? ` · ${record.feedTopic}` : ''}
           </p>
         </div>
 
@@ -1045,9 +1198,39 @@ function UpdateFeedModal({ record, onClose }: { record: UploadRecord; onClose: (
         {phase === 'updating' && (
           <div className="flex flex-col items-center gap-3 py-6">
             <RefreshCw size={20} className="animate-spin" style={{ color: 'rgb(var(--accent))' }} />
-            <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
-              Uploading and updating feed…
+            <p className="text-sm text-center" style={{ color: 'rgb(var(--fg-muted))' }}>
+              {storingTransfer?.waiting ? `Step 2 of 2 · ${waitLabel(storingTransfer.waiting)}` : status}
+              {pct !== null && !storingTransfer ? ` ${pct}%` : ''}
             </p>
+            {storingTransfer && (
+              <div className="w-full">
+                <PropagationVisual transfer={storingTransfer} subject={subject} />
+              </div>
+            )}
+            {pct !== null && !storingTransfer && (
+              <div
+                className="w-full h-1.5 rounded-full overflow-hidden"
+                style={{ backgroundColor: 'rgb(var(--border))' }}
+              >
+                <div
+                  className="h-full transition-all"
+                  style={{ width: `${pct}%`, backgroundColor: 'rgb(var(--accent))' }}
+                />
+              </div>
+            )}
+            <p className="text-xs text-center" style={{ color: 'rgb(var(--fg-muted))' }}>
+              {isSite ? 'The site' : 'It'} switches to the new version once it’s stored on the network.
+            </p>
+            <button
+              onClick={() => {
+                closedRef.current = true
+                onClose()
+              }}
+              className="text-xs underline"
+              style={{ color: 'rgb(var(--fg-muted))' }}
+            >
+              Keep going in the background
+            </button>
           </div>
         )}
 
@@ -1060,13 +1243,10 @@ function UpdateFeedModal({ record, onClose }: { record: UploadRecord; onClose: (
               >
                 <Check size={14} color="#4ade80" />
               </div>
-              <p className="text-sm font-medium">Feed updated</p>
+              <p className="text-sm font-medium">{isSite ? 'Site updated' : 'New version published'}</p>
             </div>
             {record.feedManifestAddress && (
               <div className="rounded-lg border p-3 space-y-2" style={{ backgroundColor: 'rgb(var(--bg))' }}>
-                <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-                  Feed address (unchanged)
-                </p>
                 <p className="font-mono text-xs break-all">{record.feedManifestAddress}</p>
                 <div className="flex gap-2">
                   <button
@@ -1127,6 +1307,8 @@ interface RecordRowProps {
   onDownload: (id: string, hash: string, name: string) => void
   onRemove: (id: string) => void
   onSetENS?: (id: string) => void
+  /** Keep the ENS button's slot on every row when the list holds a website, so the columns line up. */
+  reserveEnsSlot?: boolean
   onDragStart?: (e: React.DragEvent, id: string) => void
   onDragEnd?: () => void
 }
@@ -1142,6 +1324,7 @@ function RecordRow({
   onDownload,
   onRemove,
   onSetENS,
+  reserveEnsSlot = false,
   onDragStart,
   onDragEnd,
 }: RecordRowProps) {
@@ -1156,6 +1339,12 @@ function RecordRow({
   const propagating = useTransfersStore(state =>
     record.pendingTagUid !== undefined ? state.transfers.find(t => t.id === `tag:${record.pendingTagUid}`) : undefined,
   )
+  // A new version of this site/file being published (Update content): shown
+  // on this row, not as a second in-progress row.
+  const updating = useTransfersStore(state =>
+    state.transfers.find(t => t.id === updateTransferId(record.id) && t.status === 'active'),
+  )
+  const rowTransfer = updating ?? propagating
   // This row's own download (R4-14): several can run at once, so each row
   // reads its own tracker entry instead of one page-wide "active download".
   const downloadPct = useTransfersStore(state => {
@@ -1168,6 +1357,7 @@ function RecordRow({
   const transferEta = useTransfersStore(state => {
     const t =
       state.transfers.find(x => x.id === `dl:${record.id}` && x.status === 'active') ??
+      state.transfers.find(x => x.id === updateTransferId(record.id) && x.status === 'active') ??
       (record.pendingTagUid !== undefined
         ? state.transfers.find(x => x.id === `tag:${record.pendingTagUid}`)
         : undefined)
@@ -1255,7 +1445,7 @@ function RecordRow({
 
       {/* Size */}
       <span
-        className="text-xs shrink-0 hidden sm:block w-14 text-right tabular-nums"
+        className="text-xs shrink-0 hidden sm:block w-[4.5rem] text-right whitespace-nowrap tabular-nums"
         style={{ color: 'rgb(var(--fg-muted))' }}
       >
         {formatBytes(record.size)}
@@ -1298,7 +1488,7 @@ function RecordRow({
             Retry
           </button>
         </div>
-      ) : record.pendingTagUid !== undefined ? (
+      ) : updating || record.pendingTagUid !== undefined ? (
         // Still spreading to the network (#23) — same prominent treatment as
         // downloads, driven by the tracker entry this record's tag feeds.
         <div className="flex items-center gap-2 shrink-0">
@@ -1306,21 +1496,17 @@ function RecordRow({
             <div
               className="h-full rounded-full transition-all"
               style={{
-                width: `${Math.max(propagating?.pct ?? 0, 2)}%`,
-                backgroundColor: propagating?.paused ? 'rgb(var(--fg-muted))' : 'rgb(var(--accent))',
+                width: `${Math.max(rowTransfer?.pct ?? 0, 2)}%`,
+                backgroundColor: rowTransfer?.waiting ? 'rgb(var(--fg-muted))' : 'rgb(var(--accent))',
               }}
             />
           </div>
           <span
-            title={propagating?.paused ? UPLOAD_PAUSED : (transferEta ?? undefined)}
+            title={waitLabel(rowTransfer?.waiting) ?? transferEta ?? undefined}
             className="text-[10px] uppercase tracking-widest font-semibold w-24 text-right whitespace-nowrap tabular-nums"
-            style={{ color: propagating?.paused ? 'rgb(var(--fg-muted))' : 'rgb(var(--accent))' }}
+            style={{ color: rowTransfer?.waiting ? 'rgb(var(--fg-muted))' : 'rgb(var(--accent))' }}
           >
-            {propagating?.paused
-              ? 'Paused'
-              : propagating?.pct !== null && propagating?.pct !== undefined
-                ? `Storing ${propagating.pct}%`
-                : 'Storing…'}
+            {rowStatusLabel(rowTransfer?.waiting, rowTransfer?.pct ?? null, updating ? 'Updating' : 'Storing')}
           </span>
         </div>
       ) : (
@@ -1337,16 +1523,18 @@ function RecordRow({
 
       {/* Actions */}
       <div className="flex items-center gap-0.5 shrink-0">
-        {record.type === 'website' && onSetENS && (
+        {record.type === 'website' && onSetENS ? (
           <button
             onClick={() => onSetENS(record.id)}
             title={record.ensDomain ? `Update ENS (${record.ensDomain})` : 'Set ENS domain'}
-            className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors mr-1"
+            className="flex items-center justify-center gap-1 w-16 py-0.5 rounded text-[10px] font-medium transition-colors mr-1"
             style={{ color: 'rgb(var(--fg-muted))' }}
           >
             <Globe size={11} />
             {record.ensDomain ? 'ENS' : 'Set ENS'}
           </button>
+        ) : (
+          reserveEnsSlot && <span className="w-16 mr-1 shrink-0" aria-hidden="true" />
         )}
         {!isEnc && (
           <button
@@ -1557,7 +1745,10 @@ function DriveCard({
 
     if (rootFiles.length > 0) parts.push(`${rootFiles.length} file${rootFiles.length !== 1 ? 's' : ''}`)
 
-    return parts.join(', ') || '0 files'
+    // What your files add up to (R7-6) — next to how full the drive is.
+    const filesBytes = records.reduce((sum, r) => sum + (r.size ?? 0), 0)
+
+    return (parts.join(', ') || '0 files') + (filesBytes > 0 ? ` · ${formatBytes(filesBytes)}` : '')
   })()
 
   function renderInlineFolder(folder: DriveFolder, depth: number): React.ReactElement {
@@ -1844,7 +2035,7 @@ function DriveCard({
             />
           </div>
           <span style={{ color: isFull ? '#ef4444' : 'rgb(var(--fg-muted))' }} title={USAGE_TOOLTIP}>
-            {usedBytes > 0 ? `${formatBytes(usedBytes)} / ${formatBytes(capacityBytes)}` : formatBytes(capacityBytes)}
+            {usedBytes > 0 ? `${driveSizeLabel(stamp.depth)} · ${utilizationPct}% full` : driveSizeLabel(stamp.depth)}
           </span>
           {stamp.usable && (
             // The TTL pill is the extend affordance (#22b): where urgency
@@ -1886,7 +2077,26 @@ type UploadType = 'file' | 'folder'
  * uploads still copying to the local node. Mirrors RecordRow's "Storing"
  * treatment so every upload looks the same whatever the drive type.
  */
-function PendingUploadRow({ transfer }: { transfer: TransferEntry }) {
+/**
+ * Pieces an encrypted upload of `bytes` makes: 4 KB data pieces plus the
+ * tree above them (encrypted references are 64 bytes → 64 per level) and a
+ * few for the manifest. An estimate — shown with "~".
+ */
+function estimateEncryptedPieces(bytes: number): number {
+  const data = Math.max(1, Math.ceil(bytes / 4096))
+
+  return data + Math.ceil(data / 63) + 4
+}
+
+function PendingUploadRow({
+  transfer,
+  encrypted,
+  reserveEnsSlot = false,
+}: {
+  transfer: TransferEntry
+  encrypted: boolean
+  reserveEnsSlot?: boolean
+}) {
   const failed = transfer.status === 'failed'
   const verb = transfer.label ?? 'Storing'
 
@@ -1902,31 +2112,93 @@ function PendingUploadRow({ transfer }: { transfer: TransferEntry }) {
           <File size={12} style={{ color: 'rgb(var(--fg-muted))' }} />
         )}
       </div>
-      <span className="flex-1 min-w-0 text-sm truncate">{transfer.name}</span>
-      {transfer.bytes !== undefined && (
-        <span className="text-xs shrink-0 tabular-nums" style={{ color: 'rgb(var(--fg-muted))' }}>
-          {formatBytes(transfer.bytes)}
-        </span>
-      )}
+      <span className="flex-1 min-w-0 text-xs font-medium truncate">{transfer.name}</span>
+      <span
+        className="text-xs shrink-0 hidden sm:block w-[4.5rem] text-right whitespace-nowrap tabular-nums"
+        style={{ color: 'rgb(var(--fg-muted))' }}
+      >
+        {transfer.bytes !== undefined ? formatBytes(transfer.bytes) : ''}
+      </span>
       <div className="flex items-center gap-2 shrink-0">
         <div className="w-24 h-1 rounded-full overflow-hidden" style={{ backgroundColor: 'rgb(var(--border))' }}>
           <div
             className="h-full rounded-full transition-all"
             style={{
               width: `${Math.max(transfer.pct ?? 0, 2)}%`,
-              backgroundColor: failed ? '#ef4444' : 'rgb(var(--accent))',
+              backgroundColor: failed ? '#ef4444' : transfer.waiting ? 'rgb(var(--fg-muted))' : 'rgb(var(--accent))',
             }}
           />
         </div>
         <span
           className="text-[10px] uppercase tracking-widest font-semibold w-24 text-right whitespace-nowrap tabular-nums"
-          style={{ color: failed ? '#ef4444' : 'rgb(var(--accent))' }}
+          style={{ color: failed ? '#ef4444' : transfer.waiting ? 'rgb(var(--fg-muted))' : 'rgb(var(--accent))' }}
         >
-          {failed ? 'Failed' : transfer.pct !== null ? `${verb} ${transfer.pct}%` : `${verb}…`}
+          {failed ? 'Failed' : rowStatusLabel(transfer.waiting, transfer.pct, verb)}
         </span>
       </div>
-      {/* Keeps the status column aligned with RecordRow's action buttons. */}
-      <div className="w-[88px] shrink-0" aria-hidden="true" />
+      {/* Same width as RecordRow's action group (R6-2): buttons are 24px, 2px
+          apart — encrypted rows have download + ✕ (50px), classic rows also
+          copy + open (102px); the ENS slot adds 64px + 4px margin + 2px gap
+          when the list holds a site. */}
+      <div
+        className="shrink-0"
+        style={{ width: (encrypted ? 50 : 102) + (reserveEnsSlot ? 70 : 0) }}
+        aria-hidden="true"
+      />
+    </div>
+  )
+}
+
+/**
+ * The upload panel, re-attached (consistency with deletable drives): coming
+ * back to a drive while one of its uploads runs shows the same panel the
+ * upload form showed — same step titles, same visual — driven by the global
+ * tracker entry, so leaving the drive never loses the view of it.
+ */
+function ResumedUploadPanel({ transfer }: { transfer: TransferEntry }) {
+  const networkStep = transfer.id.startsWith('tag:')
+  const encrypting = transfer.label === 'Encrypting'
+  const showVisual = networkStep || encrypting
+  const title = transfer.waiting
+    ? `${networkStep ? 'Step 2 of 2 · ' : ''}${waitLabel(transfer.waiting)}`
+    : networkStep
+      ? UPLOAD_STEP_NETWORK
+      : encrypting
+        ? UPLOAD_ENCRYPTED
+        : UPLOAD_STEP_LOCAL
+
+  return (
+    <div
+      className="max-w-xl rounded-xl border p-6 mb-4 space-y-3"
+      style={{ backgroundColor: 'rgb(var(--bg-surface))', borderColor: 'rgb(var(--border))' }}
+    >
+      <div className="flex items-center gap-2">
+        <RefreshCw
+          size={13}
+          className={`shrink-0 ${transfer.waiting === 'node' ? '' : 'animate-spin'}`}
+          style={{ color: transfer.waiting ? 'rgb(var(--fg-muted))' : 'rgb(var(--accent))' }}
+        />
+        <p className="text-sm tabular-nums truncate" style={{ color: 'rgb(var(--fg-muted))' }}>
+          {title}
+          {!showVisual && !transfer.waiting && transfer.pct !== null && transfer.pct > 0 && ` — ${transfer.pct}%`}
+        </p>
+      </div>
+      <p className="text-xs font-medium truncate" style={{ color: 'rgb(var(--fg))' }}>
+        {transfer.name}
+      </p>
+      {showVisual ? (
+        <PropagationVisual transfer={transfer} approxTotal={!networkStep} />
+      ) : (
+        <div className="h-1 rounded-full" style={{ backgroundColor: 'rgb(var(--border))' }}>
+          <div
+            className="h-1 rounded-full transition-all"
+            style={{
+              width: `${Math.max(transfer.pct ?? 0, 2)}%`,
+              backgroundColor: transfer.waiting ? 'rgb(var(--fg-muted))' : 'rgb(var(--accent))',
+            }}
+          />
+        </div>
+      )}
     </div>
   )
 }
@@ -1944,12 +2216,31 @@ interface AddFileProps {
   folderId?: string
 }
 
+/** Text safe inside HTML (file and folder names can contain < > & " '). */
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
 function generateFolderIndex(name: string, entries: FileEntry[]): FileEntry {
-  const rows = entries.map(e => `<li><a href="${e.path}">${e.path}</a></li>`).join('\n')
+  // Names are escaped for display; links are percent-encoded per path segment
+  // so spaces, # and ? in file names still resolve.
+  const rows = entries
+    .map(e => {
+      const href = e.path.split('/').map(encodeURIComponent).join('/')
+
+      return `<li><a href="${escapeHtml(href)}">${escapeHtml(e.path)}</a></li>`
+    })
+    .join('\n')
+  const title = escapeHtml(name)
   const html = `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>${name}</title>
+<html><head><meta charset="utf-8"><title>${title}</title>
 <style>body{font-family:system-ui,sans-serif;max-width:800px;margin:40px auto;padding:0 20px}h1{font-weight:500;margin-bottom:20px}ul{list-style:none;padding:0}li{padding:6px 0;border-bottom:1px solid #eee}a{text-decoration:none;color:#0066cc}a:hover{text-decoration:underline}</style>
-</head><body><h1>${name}</h1><ul>
+</head><body><h1>${title}</h1><ul>
 ${rows}
 </ul></body></html>`
   // Use globalThis.File to avoid conflict with the lucide-react File icon import
@@ -1980,6 +2271,13 @@ function AddFilePanel({
   const propagationTransfer = useTransfersStore(state =>
     propagationTagUid === null ? undefined : state.transfers.find(t => t.id === `tag:${propagationTagUid}`),
   )
+  // Encrypted uploads are one direct step (no tag): their entry carries
+  // pieces estimated from the bytes Bee has accepted — it only takes more as
+  // it pushes — so they get the same visual as a regular upload (R7-2).
+  const [encryptedUpId, setEncryptedUpId] = useState<string | null>(null)
+  const encryptedTransfer = useTransfersStore(state =>
+    encryptedUpId === null ? undefined : state.transfers.find(t => t.id === encryptedUpId),
+  )
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const dirInputRef = useRef<HTMLInputElement>(null)
@@ -2007,27 +2305,37 @@ function AddFilePanel({
       phase: encrypted ? UPLOAD_ENCRYPTED : UPLOAD_STEP_LOCAL,
       label: encrypted ? 'Encrypting' : 'Copying',
     })
+    const totalBytes = entries.reduce((sum, e) => sum + e.file.size, 0)
+    const estPieces = estimateEncryptedPieces(totalBytes) + (type === 'folder' ? entries.length : 0)
+
+    setEncryptedUpId(encrypted ? upId : null)
     const onUploadPct = (pct: number) => {
       setProgress(pct)
-      useTransfersStore.getState().update(upId, { pct })
+
+      if (encrypted) {
+        useTransfersStore.getState().chunkProgress(upId, Math.round((pct / 100) * estPieces), estPieces)
+      } else {
+        useTransfersStore.getState().update(upId, { pct })
+      }
     }
 
     // For folder uploads inject a generated directory listing so /bzz/{hash}/ resolves
     const uploadEntries = type === 'folder' ? [...entries, generateFolderIndex(name, entries)] : entries
     const indexDocument = type === 'folder' ? '_index.html' : undefined
 
+    // Bee stopped before the network step (R8-3): the panel and the sidebar
+    // card say "Paused", and the outage doesn't use up waits or attempts.
+    const onBeeWait = (wait: 'node' | 'resuming') => {
+      setPhase(wait === 'node' ? UPLOAD_PAUSED : UPLOAD_RESUMING)
+      useTransfersStore.getState().update(upId, { waiting: wait === 'node' ? 'node' : undefined })
+    }
+
     try {
-      await pollStampUsable(driveId, setPhase)
+      await pollStampUsable(driveId, setPhase, onBeeWait)
 
       let currentHistoryRef = actHistoryRef
 
-      async function doUpload(
-        attempt: number,
-      ): Promise<{ reference: string; historyAddress?: string; tagUid?: number }> {
-        if (attempt > 1) {
-          setPhase(`Finalising storage… (retry ${attempt - 1})`)
-          await new Promise(r => setTimeout(r, 5000))
-        }
+      async function doUpload(): Promise<{ reference: string; historyAddress?: string; tagUid?: number }> {
         setPhase(encrypted ? UPLOAD_ENCRYPTED : UPLOAD_STEP_LOCAL)
         setProgress(0)
 
@@ -2071,25 +2379,21 @@ function AddFilePanel({
         return { reference: res.reference, tagUid }
       }
 
-      let reference!: string
-      let uploadHistoryAddress: string | undefined
-      let uploadTagUid: number | undefined
+      // Outages don't use up attempts — at most 3 times, so a Bee that keeps
+      // going down mid-copy can't retry forever (R8-3 follow-up).
+      const result = await withUploadRetries(doUpload, {
+        attempts: 4,
+        delayMs: 5000,
+        pause: async () => waitWhileBeeDown(onBeeWait),
+        onRetry: retry => setPhase(`Finalising storage… (retry ${retry})`),
+      })
+      const reference = result.reference
+      const uploadHistoryAddress = result.historyAddress
+      const uploadTagUid = result.tagUid
 
-      for (let attempt = 1; attempt <= 4; attempt++) {
-        try {
-          const result = await doUpload(attempt)
-          reference = result.reference
-          uploadHistoryAddress = result.historyAddress
-          uploadTagUid = result.tagUid
-
-          if (uploadHistoryAddress) {
-            currentHistoryRef = uploadHistoryAddress
-            onActHistoryUpdate?.(uploadHistoryAddress)
-          }
-          break
-        } catch (err) {
-          if (attempt === 4) throw err
-        }
+      if (uploadHistoryAddress) {
+        currentHistoryRef = uploadHistoryAddress
+        onActHistoryUpdate?.(uploadHistoryAddress)
       }
 
       // NOTE (#93): encrypted content refs are ACT-encrypted POINTERS, not
@@ -2249,6 +2553,9 @@ function AddFilePanel({
     }
   }
 
+  const visualTransfer =
+    propagationTransfer ?? (encryptedTransfer && phase === UPLOAD_ENCRYPTED ? encryptedTransfer : undefined)
+
   if (uploading) {
     return (
       <div
@@ -2258,19 +2565,21 @@ function AddFilePanel({
         <div className="flex items-center gap-2">
           <RefreshCw
             size={13}
-            className={`shrink-0 ${propagationTransfer?.paused ? '' : 'animate-spin'}`}
-            style={{ color: propagationTransfer?.paused ? 'rgb(var(--fg-muted))' : 'rgb(var(--accent))' }}
+            className={`shrink-0 ${propagationTransfer?.waiting === 'node' ? '' : 'animate-spin'}`}
+            style={{ color: propagationTransfer?.waiting ? 'rgb(var(--fg-muted))' : 'rgb(var(--accent))' }}
           />
           <p className="text-sm tabular-nums" style={{ color: 'rgb(var(--fg-muted))' }}>
-            {propagationTransfer?.paused ? `Step 2 of 2 · ${UPLOAD_PAUSED}` : phase || 'Preparing…'}
-            {/* Step 2 shows its own numbers in the visual below. */}
-            {!propagationTransfer && progress !== null && progress > 0 && ` — ${progress}%`}
+            {propagationTransfer?.waiting
+              ? `Step 2 of 2 · ${waitLabel(propagationTransfer.waiting)}`
+              : phase || 'Preparing…'}
+            {/* Step 2 and encrypted uploads show their own numbers in the visual below. */}
+            {!visualTransfer && progress !== null && progress > 0 && ` — ${progress}%`}
           </p>
         </div>
         {/* Stage 2 (#4): the propagation gets the full honest visual — real
             chunk counts, coarse ETA, dots moving at the network's real pace. */}
-        {propagationTransfer ? (
-          <PropagationVisual transfer={propagationTransfer} />
+        {visualTransfer ? (
+          <PropagationVisual transfer={visualTransfer} approxTotal={!propagationTransfer} />
         ) : (
           progress !== null && (
             <div className="h-1 rounded-full" style={{ backgroundColor: 'rgb(var(--border))' }}>
@@ -2360,6 +2669,11 @@ function AddFilePanel({
 // ─── Main component ────────────────────────────────────────────────────────────
 
 // ─── SharedDriveCard ──────────────────────────────────────────────────────────
+
+/** A shared-drive download's transfer id: one per row — identical files share an address. */
+function sharedDownloadId(driveId: string, ref: string, row: number): string {
+  return `dl:shared:${driveId}:${ref}:${row}`
+}
 
 function SharedDriveCard({
   drive,
@@ -2491,10 +2805,12 @@ function SharedDriveCard({
     localStorage.setItem('nook-shared-drives', JSON.stringify(updated))
   }
 
-  async function downloadFile(ref: string, _fileHistoryRef: string, fileName: string) {
+  async function downloadFile(ref: string, _fileHistoryRef: string, fileName: string, row: number) {
     // Tracked globally (#18): shared downloads get the same sidebar presence
-    // and re-attach behavior as the other row types.
-    const transferId = `dl:shared:${ref}`
+    // and re-attach behavior as the other row types. Keyed by row, not only
+    // by address — identical files share one Swarm address, and only the row
+    // that was clicked is downloading.
+    const transferId = sharedDownloadId(drive.id, ref, row)
     const transfers = useTransfersStore.getState()
 
     transfers.begin({ id: transferId, kind: 'download', name: fileName, phase: 'Downloading…' })
@@ -2670,11 +2986,11 @@ function SharedDriveCard({
 
       {expanded && drive.files && (
         <div className="border-t py-2 px-6" style={{ borderColor: 'rgb(var(--border))' }}>
-          {drive.files.map(file => {
-            const dl = sharedDownloads.find(t => t.id === `dl:shared:${file.reference}`)
+          {drive.files.map((file, row) => {
+            const dl = sharedDownloads.find(t => t.id === sharedDownloadId(drive.id, file.reference, row))
 
             return (
-              <div key={file.reference} className="flex items-center gap-3 px-2 py-2">
+              <div key={`${file.reference}:${row}`} className="flex items-center gap-3 px-2 py-2">
                 <Lock size={12} style={{ color: 'rgb(var(--accent))' }} />
                 <span className="text-xs font-medium flex-1 truncate">{file.name}</span>
                 <span className="text-xs shrink-0" style={{ color: 'rgb(var(--fg-muted))' }}>
@@ -2690,7 +3006,7 @@ function SharedDriveCard({
                   </span>
                 ) : (
                   <button
-                    onClick={async () => downloadFile(file.reference, file.historyRef, file.name)}
+                    onClick={async () => downloadFile(file.reference, file.historyRef, file.name, row)}
                     className="shrink-0 w-6 h-6 flex items-center justify-center rounded transition-colors"
                     style={{ color: 'rgb(var(--fg-muted))' }}
                     title="Download"
@@ -2797,8 +3113,6 @@ export default function Drive() {
   const [openFolderId, setOpenFolderId] = useState<string | null>(null)
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dragOverId, setDragOverId] = useState<string | 'root' | null>(null)
-  const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null)
-  const [renameValue, setRenameValue] = useState('')
   const [creatingFolder, setCreatingFolder] = useState(false)
   const [newFolderName, setNewFolderName] = useState('')
 
@@ -2926,8 +3240,10 @@ export default function Drive() {
   async function handleDownload(id: string, hash: string, name: string) {
     const transferId = `dl:${id}`
     const transfers = useTransfersStore.getState()
+    // The drive the file is in — the sidebar indicator opens it (R5-1).
+    const downloadDriveId = records.find(r => r.id === id)?.driveId ?? activeDriveId ?? undefined
 
-    transfers.begin({ id: transferId, kind: 'download', name, phase: 'Downloading…' })
+    transfers.begin({ id: transferId, kind: 'download', name, driveId: downloadDriveId, phase: 'Downloading…' })
     transfers.update(transferId, { pct: 0 })
     setDownloadErrors(({ [id]: _cleared, ...rest }) => rest)
     try {
@@ -2960,6 +3276,10 @@ export default function Drive() {
   const extendingStamp = showExtendModal
     ? (stamps ?? []).find(s => s.batchID.toLowerCase() === showExtendModal.toLowerCase())
     : null
+  const extendingDeletable = Boolean(
+    extendingStamp &&
+    (reclaimableData ?? []).some(d => d.batchId.toLowerCase() === extendingStamp.batchID.toLowerCase()),
+  )
 
   // Search: flat list across active drives only (exclude expired stamps)
   const activeBatchIds = new Set(allStamps.map(s => s.batchID))
@@ -3057,6 +3377,7 @@ export default function Drive() {
                     onDownload={handleDownload}
                     onRemove={remove}
                     onSetENS={setEnsRecordId}
+                    reserveEnsSlot={searchResults.some(r => r.type === 'website')}
                   />
                 ))}
               </div>
@@ -3218,7 +3539,9 @@ export default function Drive() {
             }}
           />
         )}
-        {extendingStamp && <ExtendModal stamp={extendingStamp} onClose={() => setShowExtendModal(null)} />}
+        {extendingStamp && (
+          <ExtendModal stamp={extendingStamp} deletable={extendingDeletable} onClose={() => setShowExtendModal(null)} />
+        )}
         {showShareModal &&
           (() => {
             const meta = driveMetadata.get(showShareModal)
@@ -3308,25 +3631,14 @@ export default function Drive() {
           onBack={() => setActiveDriveId(null)}
         />
         {/* Bell deep link opens the drive with the Extend modal on top (#138) */}
-        {extendingStamp && <ExtendModal stamp={extendingStamp} onClose={() => setShowExtendModal(null)} />}
+        {extendingStamp && (
+          <ExtendModal stamp={extendingStamp} deletable={extendingDeletable} onClose={() => setShowExtendModal(null)} />
+        )}
       </>
     )
   }
 
   // ── Folder helpers ───────────────────────────────────────────────────────────
-
-  function startRename(folder: DriveFolder) {
-    setRenamingFolderId(folder.id)
-    setRenameValue(folder.name)
-  }
-
-  function commitRename() {
-    if (renamingFolderId && renameValue.trim()) {
-      renameFolder(renamingFolderId, renameValue.trim())
-    }
-    setRenamingFolderId(null)
-    setRenameValue('')
-  }
 
   function commitNewFolder() {
     if (newFolderName.trim() && activeDriveId) {
@@ -3377,6 +3689,7 @@ export default function Drive() {
     onDownload: handleDownload,
     onRemove: remove,
     onSetENS: setEnsRecordId,
+    reserveEnsSlot: driveRecords.some(r => r.type === 'website'),
     onDragStart: handleRecordDragStart,
     onDragEnd: () => {
       setDraggingId(null)
@@ -3385,86 +3698,30 @@ export default function Drive() {
   }
 
   function renderFolder(folder: DriveFolder, depth: number): React.ReactElement {
-    const isOver = dragOverId === folder.id
     const childFolders = folders.filter(f => f.parentFolderId === folder.id)
     const folderRecords = driveRecords.filter(r => r.folderId === folder.id)
-    const count = folderRecords.length + childFolders.length
-    const py = depth === 0 ? 'py-2.5' : 'py-2'
 
     return (
-      <div key={folder.id}>
-        <div
-          onClick={() => {
-            if (renamingFolderId !== folder.id) setOpenFolderId(folder.id)
-          }}
-          onDragOver={e => {
-            e.preventDefault()
-            setDragOverId(folder.id)
-          }}
-          onDragLeave={e => {
-            if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverId(null)
-          }}
-          onDrop={e => handleFolderDrop(e, folder.id)}
-          className={`rounded-lg border px-4 ${py} flex items-center gap-2 cursor-pointer select-none transition-colors`}
-          style={{
-            backgroundColor: isOver ? 'rgba(247,104,8,0.08)' : 'rgb(var(--bg-surface))',
-            borderColor: isOver ? 'rgb(var(--accent))' : 'rgb(var(--border))',
-            outline: isOver ? '2px solid rgb(var(--accent))' : 'none',
-            outlineOffset: '-2px',
-          }}
-        >
-          <FolderOpen size={13} style={{ color: 'rgb(var(--fg-muted))' }} />
-          {renamingFolderId === folder.id ? (
-            <input
-              type="text"
-              autoFocus
-              value={renameValue}
-              onClick={e => e.stopPropagation()}
-              onChange={e => setRenameValue(e.target.value)}
-              onKeyDown={e => {
-                e.stopPropagation()
-
-                if (e.key === 'Enter') commitRename()
-
-                if (e.key === 'Escape') {
-                  setRenamingFolderId(null)
-                  setRenameValue('')
-                }
-              }}
-              onBlur={commitRename}
-              className="flex-1 bg-transparent text-sm focus:outline-none"
-              style={{ color: 'rgb(var(--fg))' }}
-            />
-          ) : (
-            <span className="flex-1 text-sm font-medium">{folder.name}</span>
-          )}
-          <span className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-            {count > 0 ? count : ''}
-          </span>
-          <button
-            onClick={e => {
-              e.stopPropagation()
-              startRename(folder)
-            }}
-            title="Rename"
-            className="w-6 h-6 flex items-center justify-center rounded transition-colors"
-            style={{ color: 'rgb(var(--fg-muted))' }}
-          >
-            <Pencil size={11} />
-          </button>
-          <button
-            onClick={e => {
-              e.stopPropagation()
-              removeFolder(folder.id, folders)
-            }}
-            title="Delete folder — files inside move back to the drive root"
-            className="w-6 h-6 flex items-center justify-center rounded hover:text-red-400 transition-colors"
-            style={{ color: 'rgb(var(--fg-muted))' }}
-          >
-            <Trash2 size={11} />
-          </button>
-        </div>
-      </div>
+      <FolderCard
+        key={folder.id}
+        name={folder.name}
+        files={folderRecords.length}
+        folders={childFolders.length}
+        compact={depth > 0}
+        highlighted={dragOverId === folder.id}
+        deleteTitle="Delete folder — files inside move back to the drive root"
+        onOpen={() => setOpenFolderId(folder.id)}
+        onRename={name => renameFolder(folder.id, name)}
+        onDelete={() => removeFolder(folder.id, folders)}
+        onDragOver={e => {
+          e.preventDefault()
+          setDragOverId(folder.id)
+        }}
+        onDragLeave={e => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverId(null)
+        }}
+        onDrop={e => handleFolderDrop(e, folder.id)}
+      />
     )
   }
 
@@ -3481,6 +3738,17 @@ export default function Drive() {
   const visibleRecords = openFolderId
     ? driveRecords.filter(r => r.folderId === openFolderId)
     : driveRecords.filter(r => !r.folderId)
+  // Newest upload still running for this drive: a new upload, its network
+  // step, or a site update.
+  const resumedUpload = allTransfers
+    .filter(
+      t =>
+        t.status === 'active' &&
+        t.kind === 'upload' &&
+        t.driveId === activeDriveId &&
+        (t.id.startsWith('up:') || t.id.startsWith('tag:') || t.id.startsWith('upd:')),
+    )
+    .sort((a, b) => b.startedAt - a.startedAt)[0]
   const pendingUploads = allTransfers.filter(
     t =>
       t.id.startsWith('up:') &&
@@ -3643,7 +3911,9 @@ export default function Drive() {
         </div>
       )}
 
-      {/* Inline upload panel */}
+      {/* Inline upload panel — or, when it's closed, the panel of an upload
+          that is still running for this drive (re-attached from the tracker). */}
+      {!addingFile && resumedUpload && <ResumedUploadPanel transfer={resumedUpload} />}
       {addingFile && (
         <AddFilePanel
           driveId={activeDriveId}
@@ -3764,9 +4034,17 @@ export default function Drive() {
       {/* Uploads still in their first step (R5-2) — same row treatment as
           a record that is storing on the network. */}
       {pendingUploads.length > 0 && (
-        <div className="divide-y" style={{ borderColor: 'rgb(var(--border))' }}>
+        <div
+          className={`divide-y ${visibleRecords.length > 0 ? 'border-b' : ''}`}
+          style={{ borderColor: 'rgb(var(--border))' }}
+        >
           {pendingUploads.map(t => (
-            <PendingUploadRow key={t.id} transfer={t} />
+            <PendingUploadRow
+              key={t.id}
+              transfer={t}
+              encrypted={driveMetadata.isEncrypted(activeDriveId)}
+              reserveEnsSlot={commonRowProps.reserveEnsSlot}
+            />
           ))}
         </div>
       )}
@@ -3889,7 +4167,9 @@ export default function Drive() {
           )
         })()}
       {/* Bell deep link opens the drive with the Extend modal on top (#138) */}
-      {extendingStamp && <ExtendModal stamp={extendingStamp} onClose={() => setShowExtendModal(null)} />}
+      {extendingStamp && (
+        <ExtendModal stamp={extendingStamp} deletable={extendingDeletable} onClose={() => setShowExtendModal(null)} />
+      )}
     </div>
   )
 }

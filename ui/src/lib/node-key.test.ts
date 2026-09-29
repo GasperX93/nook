@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { NookContact } from '../notify/types'
-import { contactsForNodeKey, stripKeyPrefix } from './node-key'
+import { contactsForNodeKey, grantTarget, stripKeyPrefix } from './node-key'
 
 // #122: a rotated Nook identity leaves two contacts sharing one node key.
 // The lookup must return the NEWEST first — first-found routed share
@@ -44,5 +44,24 @@ describe('contactsForNodeKey', () => {
 
   it('returns empty for an unknown key', () => {
     expect(contactsForNodeKey([contact('0xaaa', '02' + X, 1)], '02' + 'ef'.repeat(32))).toEqual([])
+  })
+})
+
+describe('grantTarget (F-3: reinstalled recipient)', () => {
+  const OLD = '02' + 'ee'.repeat(32)
+  const NEW = '02' + 'ff'.repeat(32)
+  const martin: NookContact = { ...contact('0xmartin', NEW, 1), previousBeeKeys: [OLD] }
+
+  it('flags a grant to someone’s old node so it can be shared again', () => {
+    expect(grantTarget(OLD, [martin], [OLD])).toEqual({ kind: 'old-node', contact: martin, alreadyReshared: false })
+  })
+
+  it('knows when their current node already has access', () => {
+    expect(grantTarget(OLD, [martin], [OLD, NEW])).toMatchObject({ kind: 'old-node', alreadyReshared: true })
+    expect(grantTarget(NEW, [martin], [OLD, NEW])).toMatchObject({ kind: 'current', contact: martin })
+  })
+
+  it('leaves strangers as unknown', () => {
+    expect(grantTarget('02' + '11'.repeat(32), [martin], [])).toEqual({ kind: 'unknown' })
   })
 })

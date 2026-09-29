@@ -1,7 +1,7 @@
 import { FileBox } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
-import { UPLOAD_PAUSED } from '../lib/transfer-labels'
+import { UPLOAD_PAUSED, UPLOAD_RESUMING } from '../lib/transfer-labels'
 import { etaText, type TransferEntry } from '../store/transfers'
 
 /**
@@ -15,10 +15,11 @@ import { etaText, type TransferEntry } from '../store/transfers'
 
 // Node vocabulary throughout (#15, user-corrected): Nook runs a LIGHT node
 // that doesn't store others' data — never claim "computers like yours".
-const FACTS = [
-  'Your file is split into thousands of encrypted pieces…',
+// A published site is many files — its facts say "site", not "file" (R8-4).
+const factsFor = (subject: 'file' | 'site') => [
+  `Your ${subject} is split into thousands of pieces…`,
   'Each piece is stored by a different Bee node on the Swarm network…',
-  'No single node ever holds your whole file…',
+  `No single node ever holds your whole ${subject}…`,
   'Once every piece is confirmed, anyone you share with can fetch it…',
   'Storage nodes earn xBZZ for keeping your pieces — that’s what your drive pays for…',
 ]
@@ -35,7 +36,18 @@ function currentRate(t: TransferEntry): number {
   return (lastDone - firstDone) / ((lastTs - firstTs) / 1000)
 }
 
-export default function PropagationVisual({ transfer }: { transfer: TransferEntry }) {
+export default function PropagationVisual({
+  transfer,
+  approxTotal = false,
+  subject = 'file',
+}: {
+  transfer: TransferEntry
+  /** The total is an estimate from the file size (deletable drives) — shown as "~". */
+  approxTotal?: boolean
+  /** What is being stored — the website publisher says "site". */
+  subject?: 'file' | 'site'
+}) {
+  const FACTS = useMemo(() => factsFor(subject), [subject])
   const [factIdx, setFactIdx] = useState(0)
 
   useEffect(() => {
@@ -46,14 +58,14 @@ export default function PropagationVisual({ transfer }: { transfer: TransferEntr
 
   const rate = currentRate(transfer)
   // Dot travel time: idle 0 (paused), slow trickle 2.6s, brisk 1s.
-  // Paused (R6-3): Bee is down, the last samples still show a rate — freeze.
-  const duration = transfer.paused || rate <= 0 ? 0 : rate > 400 ? 1 : rate > 100 ? 1.6 : 2.6
+  // Waiting on the node (R6-3, R7-1): the last samples still show a rate — freeze.
+  const duration = transfer.waiting || rate <= 0 ? 0 : rate > 400 ? 1 : rate > 100 ? 1.6 : 2.6
   const eta = etaText(transfer)
   const counts = useMemo(() => {
     if (transfer.chunksTotal === undefined || transfer.chunksDone === undefined) return null
 
-    return `${transfer.chunksDone.toLocaleString()} of ${transfer.chunksTotal.toLocaleString()} pieces stored`
-  }, [transfer.chunksDone, transfer.chunksTotal])
+    return `${transfer.chunksDone.toLocaleString()} of ${approxTotal ? '~' : ''}${transfer.chunksTotal.toLocaleString()} pieces stored`
+  }, [transfer.chunksDone, transfer.chunksTotal, approxTotal])
 
   return (
     <div className="space-y-2">
@@ -104,7 +116,11 @@ export default function PropagationVisual({ transfer }: { transfer: TransferEntr
       </p>
 
       <p className="text-[11px]" style={{ color: 'rgb(var(--fg-muted))' }}>
-        {transfer.paused ? `${UPLOAD_PAUSED} — it continues by itself once the node is back.` : FACTS[factIdx]}
+        {transfer.waiting === 'node'
+          ? `${UPLOAD_PAUSED} — it continues by itself once the node is back.`
+          : transfer.waiting === 'resuming'
+            ? `${UPLOAD_RESUMING} This can take a minute or two after a restart.`
+            : FACTS[factIdx]}
       </p>
     </div>
   )

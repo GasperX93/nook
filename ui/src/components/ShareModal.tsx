@@ -12,7 +12,7 @@ import { topicFromString, waitForRetrievable } from '../api/bee'
 import { useWallet } from '../api/queries'
 import { serverApi } from '../api/server'
 import { bytesToHex, hexToBytes } from '../lib/hex'
-import { contactForOldNodeKey, contactsForNodeKey, stripKeyPrefix } from '../lib/node-key'
+import { contactsForNodeKey, grantTarget, stripKeyPrefix } from '../lib/node-key'
 import { useDerivedKey } from '../hooks/useDerivedKey'
 import { REGISTRY_ADDRESS } from '../notify/constants'
 import { deriveConnectionState, getMyDisplayName, hasInboundSince } from '../notify/contact-state'
@@ -197,6 +197,45 @@ export default function ShareModal({
     .map<[string, string]>(c => [c.beePublicKey, c.nickname])
     .slice(0, 6)
 
+  // F-3: a grant is tied to the person's NODE key, and a reinstall makes a new
+  // one — their old grant silently stops working while the list still shows
+  // their name. Once per dialog open, look up every contact on the list and
+  // record a changed key: the row then reads as their old key, with Share again.
+  const keysChecked = useRef(false)
+
+  useEffect(() => {
+    if (keysChecked.current || grantees.length === 0) return
+    keysChecked.current = true
+    const people = grantees
+      .filter(g => !isMyKey(g))
+      .map(g => contactForGrantee(g))
+      .filter((c): c is NookContact => Boolean(c && isEthAddress(c.id)))
+
+    void Promise.all(
+      people.map(async c => {
+        try {
+          const fresh = await identity.resolve(bee, c.id)
+
+          if (fresh && stripKeyPrefix(fresh.beePublicKey) !== stripKeyPrefix(c.beePublicKey)) {
+            updateContactKeys(loadContacts(), c.id, {
+              walletPublicKey: fresh.walletPublicKey,
+              beePublicKey: fresh.beePublicKey,
+            })
+
+            return true
+          }
+        } catch {
+          // Lookup failed — keep showing the cached state.
+        }
+
+        return false
+      }),
+    ).then(changed => {
+      if (changed.some(Boolean)) setContacts(loadContacts())
+    })
+    // eslint-disable-next-line
+  }, [grantees])
+
   // Load existing grantees on first render
   if (!loadedGrantees && granteeRef) {
     setLoadedGrantees(true)
@@ -252,8 +291,10 @@ export default function ShareModal({
     }
   }
 
-  async function handleGrant() {
-    const input = newKey.trim()
+  async function handleGrant(inputOverride?: unknown) {
+    // Called from the button/Enter (no input → the text box) or by Share
+    // again with the person's Nook address (F-3).
+    const input = (typeof inputOverride === 'string' ? inputOverride : newKey).trim()
     let key = input
     // The recipient we can notify (needs a wallet public key for ECDH). Captured
     // across all three input paths so we can notify inline when the box is checked.
@@ -321,6 +362,14 @@ export default function ShareModal({
         const alreadyContact = contacts.some(c => c.id.toLowerCase() === input.toLowerCase())
         const isSelf = signer?.getAddress().toLowerCase() === input.toLowerCase()
         const existing = contacts.find(c => c.id.toLowerCase() === input.toLowerCase())
+
+        // Known contact with a new node key (reinstall) — remember it (F-3).
+        if (existing && stripKeyPrefix(existing.beePublicKey) !== stripKeyPrefix(resolved.beePublicKey)) {
+          updateContactKeys(contacts, existing.id, {
+            walletPublicKey: resolved.walletPublicKey,
+            beePublicKey: resolved.beePublicKey,
+          })
+        }
 
         if (!isSelf) {
           grantedContact = {
@@ -956,9 +1005,103 @@ export default function ShareModal({
               others.map(key => {
                 const label = findLabel(key)
                 const contact = contactForGrantee(key)
-                const oldKeyOwner = contact ? undefined : contactForOldNodeKey(contacts, key)
+                const target = grantTarget(key, contacts, grantees)
+                const oldKeyOwner = target.kind === 'old-node' ? target.contact : undefined
+                const reshared = target.kind === 'old-node' && target.alreadyReshared
                 const status = contact ? notifyStatus[contact.id] : undefined
                 const name = label || `${key.slice(0, 6)}…${key.slice(-4)}`
+                const shortKey = `${stripKeyPrefix(key).slice(0, 6)}…${stripKeyPrefix(key).slice(-4)}`
+
+                // F-5 (redesign): a grant to someone's OLD node (they
+                // reinstalled). Name them, explain in one line, and keep the
+                // destructive action away from the one they want.
+                if (oldKeyOwner) {
+                  const nick = oldKeyOwner.nickname
+                  const removeOld = (
+                    <button
+                      onClick={async () => handleRevoke(key)}
+                      disabled={loading}
+                      className="text-[11px] hover:underline disabled:opacity-50 whitespace-nowrap"
+                      style={{ color: 'rgb(var(--fg-muted))' }}
+                      title="Revoke the grant to their old node"
+                    >
+                      Remove old access
+                    </button>
+                  )
+
+                  return (
+                    <div key={key} className="px-3 py-2.5 space-y-2">
+                      <div className="flex items-center gap-2.5">
+                        <span
+                          className="w-7 h-7 rounded-full grid place-items-center text-[11px] font-semibold shrink-0"
+                          style={
+                            reshared
+                              ? { backgroundColor: 'rgb(var(--border))', color: 'rgb(var(--fg-muted))' }
+                              : { backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }
+                          }
+                        >
+                          {nick.charAt(0).toUpperCase()}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span
+                            className="block text-sm font-medium truncate"
+                            style={{ color: reshared ? 'rgb(var(--fg-muted))' : 'rgb(var(--fg))' }}
+                          >
+                            {reshared ? `${nick} — old node` : nick}
+                          </span>
+                          <span
+                            className="block text-[10.5px] truncate"
+                            title={key}
+                            style={{ color: 'rgb(var(--fg-muted))' }}
+                          >
+                            {reshared ? (
+                              `Not needed any more — ${nick} has access on their new one.`
+                            ) : (
+                              <>
+                                old node · <span className="font-mono">{shortKey}</span>
+                              </>
+                            )}
+                          </span>
+                        </span>
+                        {reshared ? (
+                          removeOld
+                        ) : (
+                          <span
+                            className="text-[10.5px] px-2 py-0.5 rounded-full whitespace-nowrap"
+                            style={{ backgroundColor: 'rgba(245,158,11,0.12)', color: '#d97706' }}
+                          >
+                            No access
+                          </span>
+                        )}
+                      </div>
+                      {!reshared && (
+                        <div
+                          className="rounded-md px-3 py-2 space-y-2"
+                          style={{ backgroundColor: 'rgba(245,158,11,0.08)' }}
+                        >
+                          <p className="text-[11px] leading-snug" style={{ color: '#b45309' }}>
+                            {nick} reinstalled Nook, so this access is for their old node and they can't open the drive.
+                          </p>
+                          <div className="flex items-center gap-4">
+                            <button
+                              onClick={async () => handleGrant(oldKeyOwner.id)}
+                              disabled={loading}
+                              className="px-2.5 py-1 rounded-md text-[11px] font-semibold disabled:opacity-50"
+                              style={{
+                                backgroundColor: 'rgb(var(--accent))',
+                                color: 'rgb(var(--primary-foreground))',
+                              }}
+                              title={`Give ${nick}'s new node access — they'll get the drive in Messages`}
+                            >
+                              Share again
+                            </button>
+                            {removeOld}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )
+                }
 
                 return (
                   <div key={key} className="flex items-center gap-2.5 px-3 py-2.5">
@@ -979,17 +1122,8 @@ export default function ShareModal({
                       >
                         {contact ? shortAddr(contact.id) : `key …${stripKeyPrefix(key).slice(-6)}`}
                       </span>
-                      {/* Kept diagnostics (#8/#122): old key after a reinstall,
-                          several identities on one node, not a contact. */}
-                      {oldKeyOwner && (
-                        <span
-                          className="block text-[10.5px]"
-                          style={{ color: '#d97706' }}
-                          title={`This grant targets ${oldKeyOwner.nickname}'s previous sharing key (from before a reinstall) — they can't open the drive with it. Remove this row; sharing again already uses their current key.`}
-                        >
-                          {oldKeyOwner.nickname}&apos;s old key
-                        </span>
-                      )}
+                      {/* Kept diagnostics (#8/#122): several identities on one
+                          node, not a contact. (Old node after a reinstall: above.) */}
                       {contact && granteeIsAmbiguous(key) && (
                         <span
                           className="block text-[10.5px]"
@@ -999,7 +1133,7 @@ export default function ShareModal({
                           2+ identities → {contact.nickname}
                         </span>
                       )}
-                      {!contact && !oldKeyOwner && (
+                      {!contact && (
                         <span className="block text-[10.5px]" style={{ color: 'rgb(var(--fg-muted))' }}>
                           Not in your contacts — add them to send updates
                         </span>

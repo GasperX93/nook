@@ -117,7 +117,7 @@ async function checkAndFundChequebook() {
     const suppressBell = Boolean(lastFunded && Date.now() - lastFunded.createdAt <= NOTIFY_SUPPRESS_MS)
     const notification = pushNotification({
       type: 'chequebook-funded',
-      title: 'Bandwidth chequebook topped up',
+      title: 'Bandwidth deposit',
       body: `${(Number(depositAmount / BigInt('1000000000000')) / 10_000).toFixed(2)} xBZZ moved from your wallet to the bandwidth chequebook.`,
       data: { amountPlur: depositAmount.toString() },
     })

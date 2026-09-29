@@ -23,3 +23,27 @@ export const UPLOAD_ENCRYPTED = 'Encrypting & storing on the network…'
 
 /** An upload waiting for a stopped or restarting Bee node (R6-3) — it resumes by itself. */
 export const UPLOAD_PAUSED = 'Paused — waiting for your node'
+/** The node is back but still reconnecting before it pushes again (R7-1). */
+export const UPLOAD_RESUMING = 'Resuming — your node is reconnecting…'
+
+/** Label for an upload that is waiting on its node, or null when pieces are moving. */
+export function waitLabel(wait: 'node' | 'resuming' | undefined): string | null {
+  if (wait === 'node') return UPLOAD_PAUSED
+
+  if (wait === 'resuming') return UPLOAD_RESUMING
+
+  return null
+}
+
+/**
+ * Short status for a row's status column (uppercase, fixed width): a waiting
+ * upload says so instead of showing its last percentage — "Copying 100%"
+ * while Bee is stopped read as finished.
+ */
+export function rowStatusLabel(wait: 'node' | 'resuming' | undefined, pct: number | null, verb: string): string {
+  if (wait === 'node') return 'Paused'
+
+  if (wait === 'resuming') return 'Resuming…'
+
+  return pct !== null ? `${verb} ${pct}%` : `${verb}…`
+}

@@ -1,8 +1,15 @@
-import { beeApi, topicFromString } from '../api/bee'
+import { beeApi, topicFromString, waitWhileBeeDown } from '../api/bee'
 import { serverApi } from '../api/server'
 import { followTagPropagation } from '../store/transfers'
 import { detectIndexDocument, type FileEntry } from '../utils/directory'
-import { UPLOAD_ENCRYPTED, UPLOAD_STEP_LOCAL, UPLOAD_STEP_NETWORK } from '../lib/transfer-labels'
+import { withUploadRetries } from '../lib/upload-retry'
+import {
+  UPLOAD_ENCRYPTED,
+  UPLOAD_PAUSED,
+  UPLOAD_RESUMING,
+  UPLOAD_STEP_LOCAL,
+  UPLOAD_STEP_NETWORK,
+} from '../lib/transfer-labels'
 import { useUploadHistory } from './useUploadHistory'
 
 export interface UploadOptions {
@@ -32,13 +39,22 @@ export interface UploadResult {
   actHistoryRef?: string
 }
 
+/** Pause while Bee is stopped or restarting, saying so (R8-3). Returns whether it waited. */
+async function pauseWhileBeeDown(onPhase?: (phase: string) => void): Promise<boolean> {
+  return waitWhileBeeDown(wait => onPhase?.(wait === 'node' ? UPLOAD_PAUSED : UPLOAD_RESUMING))
+}
+
 /**
  * Poll until the stamp is usable, with elapsed-time feedback.
- * Throws if stamp does not become usable within 2 minutes.
+ * Throws if stamp does not become usable within 2 minutes of Bee being up —
+ * time with Bee stopped is a pause, not part of the wait (R8-3).
  */
 async function pollStampUsable(id: string, onPhase?: (phase: string) => void): Promise<void> {
-  for (let i = 0; i < 60; i++) {
-    const elapsed = i * 2
+  let elapsed = 0
+
+  while (elapsed < 120) {
+    let paused = false
+
     onPhase?.(`Waiting for storage confirmation… ${elapsed > 0 ? `(${elapsed}s)` : ''}`.trim())
 
     try {
@@ -46,17 +62,23 @@ async function pollStampUsable(id: string, onPhase?: (phase: string) => void): P
 
       if (s.usable) return
     } catch {
-      // stamp not yet confirmed — keep polling
+      // stamp not yet confirmed — or Bee is down (then it's a pause, not waiting)
+      if (await pauseWhileBeeDown(onPhase)) paused = true
     }
 
-    await new Promise(r => setTimeout(r, 2000))
+    if (!paused) {
+      await new Promise(r => setTimeout(r, 2000))
+      elapsed += 2
+    }
   }
 
-  throw new Error('Stamp did not become usable after 2 minutes. It may be expired or invalid.')
+  throw new Error(
+    'The storage for this site didn’t become ready within 2 minutes. Try again — your storage is already paid for.',
+  )
 }
 
 export function useUpload() {
-  const { add: addRecord, update: updateRecord, setEnsDomain } = useUploadHistory()
+  const { records, add: addRecord, update: updateRecord, setEnsDomain } = useUploadHistory()
 
   async function upload(options: UploadOptions): Promise<UploadResult> {
     const {
@@ -79,8 +101,10 @@ export function useUpload() {
 
     // After stamp reports usable, Bee's upload endpoint needs additional time
     // to propagate internally (~1-2 min per official Swarm tooling guidance).
-    // Count down visibly so the user knows we're not stuck.
+    // Count down visibly so the user knows we're not stuck. The count holds
+    // while Bee is down — it's Bee's own warm-up we're waiting out (R8-3).
     for (let s = 60; s > 0; s--) {
+      if (s % 5 === 0) await pauseWhileBeeDown(onPhase)
       onPhase?.(`Preparing storage… ${s}s`)
       await new Promise(r => setTimeout(r, 1000))
     }
@@ -89,12 +113,7 @@ export function useUpload() {
     // even after the stamp reports as usable via REST.
     let currentHistoryRef = actHistoryRef
 
-    async function doUpload(attempt: number): Promise<{ reference: string; historyAddress?: string; tagUid?: number }> {
-      if (attempt > 1) {
-        onPhase?.(`Finalising storage… (retry ${attempt - 1})`)
-        await new Promise(r => setTimeout(r, 10000))
-      }
-
+    async function doUpload(): Promise<{ reference: string; historyAddress?: string; tagUid?: number }> {
       onPhase?.(encrypted ? UPLOAD_ENCRYPTED : UPLOAD_STEP_LOCAL)
       onProgress?.(0)
 
@@ -142,30 +161,20 @@ export function useUpload() {
       return { reference: res.reference, tagUid }
     }
 
-    let reference!: string
-    let uploadHistoryAddress: string | undefined
-    let uploadTagUid: number | undefined
+    // Outages don't use up attempts — up to a point: a Bee that keeps going
+    // down mid-copy must not retry forever (R8-3 follow-up).
+    const result = await withUploadRetries(doUpload, {
+      attempts: 8,
+      delayMs: 10_000,
+      pause: async () => pauseWhileBeeDown(onPhase),
+      onRetry: retry => onPhase?.(`Finalising storage… (retry ${retry})`),
+    })
+    const reference = result.reference
+    const uploadHistoryAddress = result.historyAddress
+    const uploadTagUid = result.tagUid
 
-    for (let attempt = 1; attempt <= 8; attempt++) {
-      try {
-        const result = await doUpload(attempt)
-        reference = result.reference
-        uploadHistoryAddress = result.historyAddress
-        uploadTagUid = result.tagUid
-
-        // Update history ref for next upload in same session
-        if (uploadHistoryAddress) currentHistoryRef = uploadHistoryAddress
-        break
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : ''
-
-        // Overissued stamp cannot be recovered by retrying — fail immediately
-        if (msg.includes('overissued') || msg.includes('402')) throw err
-
-        if (attempt === 8) throw err
-        // stamp issuer may not be loaded yet — retry
-      }
-    }
+    // Update history ref for next upload in same session
+    if (uploadHistoryAddress) currentHistoryRef = uploadHistoryAddress
 
     // Fetch current stamp TTL to set accurate expiry
     let expiresAt: number
@@ -181,8 +190,12 @@ export function useUpload() {
     // before the long propagation wait so leaving the wizard can't lose it.
     // Feed details are patched in below once created.
     const pendingTag = uploadTagUid !== undefined && !encrypted ? uploadTagUid : undefined
-    const recordId = crypto.randomUUID()
-    addRecord({
+    // A retry after a failed later step (e.g. the permanent address) uploads
+    // the same content to the same drive — Swarm gives it the same address —
+    // so it updates that record instead of adding a duplicate.
+    const existing = records.find(r => r.driveId === driveId && r.hash === reference && r.type === type)
+    const recordId = existing?.id ?? crypto.randomUUID()
+    const record = {
       id: recordId,
       name,
       hash: reference,
@@ -195,7 +208,10 @@ export function useUpload() {
       isEncrypted: encrypted || undefined,
       actHistoryRef: uploadHistoryAddress || undefined,
       ...(pendingTag !== undefined ? { pendingTagUid: pendingTag } : {}),
-    })
+    }
+
+    if (existing) updateRecord(recordId, record)
+    else addRecord(record)
 
     // Stage 2 (#92): the XHR bar only measured bytes reaching the LOCAL node.
     // For deferred uploads, follow the tag until the content is actually on the

@@ -5,6 +5,7 @@ import {
   Globe,
   HardDrive,
   Mail,
+  MessageSquare,
   RefreshCw,
   Settings,
   Terminal,
@@ -12,9 +13,11 @@ import {
   X,
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { weiToDai } from '../api/bee'
 import { resumePendingPropagation } from '../store/transfers'
+import { resumeReclaimableJobs } from '../store/reclaimable-jobs'
 import TransferIndicator from './TransferIndicator'
 import {
   useReclaimableDrives,
@@ -29,6 +32,7 @@ import { serverApi } from '../api/server'
 import { useDerivedKey } from '../hooks/useDerivedKey'
 import { useAutoPublish } from '../hooks/useAutoPublish'
 import { useInboxPolling } from '../hooks/useInboxPolling'
+import { FEEDBACK_URL } from '../lib/links'
 import { isSystemStamp, pickMessagingStamp } from '../lib/system-stamp'
 import { useOutboxDrain } from '../hooks/useOutboxDrain'
 import { hasKnownIdentity, hasLegacyIdentityPendingMove } from '../notify/active-identity'
@@ -42,11 +46,13 @@ import NotificationBell from './NotificationBell'
 import SwarmIdChip from './SwarmIdChip'
 import SwarmIdDialog from './SwarmIdDialog'
 import ForeignBeeScreen from './ForeignBeeScreen'
+import NookWordmark from './NookWordmark'
 import Onboarding from './Onboarding'
 import {
   Sidebar,
   SidebarFooter,
   SidebarHeader,
+  SidebarLinkItem,
   SidebarMenuItem,
   SidebarProvider,
   SidebarSection,
@@ -54,6 +60,7 @@ import {
   SidebarSeparator,
   SidebarSpacer,
   SidebarTrigger,
+  useSidebar,
 } from './ui/sidebar'
 
 const storageNavItems = [
@@ -72,10 +79,18 @@ const MOVE_NOTICE_DISMISSED_KEY = 'nook-swarm-id-move-notice-dismissed'
 
 const appNavItems = [{ to: '/apps/website-publisher', icon: Globe, label: 'Publish website' }]
 
+/** Same wordmark as the product site and promo video — smaller when the sidebar is collapsed (80px). */
+function SidebarWordmark() {
+  const { expanded } = useSidebar()
+
+  return <NookWordmark height={expanded ? 14 : 10} className="mb-2.5 text-sidebar-foreground" />
+}
+
 export default function Layout() {
   const { isError: beeOffline, isPending: beeChecking, isSuccess: beeOnline } = useBeeHealth()
   const { data: peers } = usePeers()
   const { data: status } = useStatus()
+  const queryClient = useQueryClient()
   // Known to be Nook's own node on the ports — not a foreign one (R5-11), and
   // not unknown yet: nothing below may act on another node's data.
   const ownNode = status !== undefined && !status.foreignBee
@@ -92,7 +107,12 @@ export default function Layout() {
   // (~2 min of blocks). Asking for money that's already spent contradicts
   // the "reserved space set aside" bell — show a neutral settling state
   // instead of the amber funding ask (test-run finding #1).
-  const reserveSettingUp = noUsableMessagingSpace && (stamps ?? []).some(s => isSystemStamp(s) && !s.usable)
+  // …also right after the purchase, before Bee lists the new batch at all
+  // (F-6): the wallet already shows less than 2 xBZZ, so without this the
+  // amber "add about 3 xBZZ" banner came back next to the "set aside" bell.
+  const reserveSettingUp =
+    noUsableMessagingSpace &&
+    ((stamps ?? []).some(s => isSystemStamp(s) && !s.usable) || Boolean(status?.reserveBoughtAt))
   const noMessagingSpace = noUsableMessagingSpace && !reserveSettingUp
   const { data: walletForReserve } = useWallet()
   // Funds present for the reserve (#13, reworked per round-3 feedback): the
@@ -111,7 +131,11 @@ export default function Layout() {
     if (!fundsReadyForReserve || reserveNudged.current) return
     reserveNudged.current = true
     // Fire-and-forget: the server monitor is the backstop either way.
-    serverApi.createSystemStamp().catch(() => undefined)
+    serverApi
+      .createSystemStamp()
+      // Show the new batch as soon as Bee lists it, not on the next 30 s poll.
+      .then(async () => queryClient.invalidateQueries({ queryKey: ['bee', 'stamps'] }))
+      .catch(() => undefined)
   }, [fundsReadyForReserve])
   // One blue state from "funds arrived" through "bought, confirming":
   const reserveInProgress = reserveSettingUp || fundsReadyForReserve
@@ -152,8 +176,10 @@ export default function Layout() {
 
   // Re-attach to propagations interrupted by a quit — tags live on the Bee
   // node, so an unfinished network push resumes visibly (#5).
+  // Deletable-drive jobs run in the backend; re-attach their progress after a reload.
   useEffect(() => {
     resumePendingPropagation()
+    resumeReclaimableJobs()
   }, [])
 
   // Unlock notification audio on the first user gesture so a background chirp
@@ -258,8 +284,23 @@ export default function Layout() {
 
   const showOnboarding = !onboardingCompleted || (onboardingCompleted && !startupDone)
 
-  const dotColor = beeChecking ? 'rgb(var(--border))' : isSyncing ? '#f97316' : beeOnline ? '#4ade80' : '#ef4444'
-  const dotLabel = beeChecking ? '···' : isSyncing ? 'sync' : beeOnline ? 'live' : 'off'
+  // Another node on Nook's ports (R7-3): whatever answers health/peers is
+  // THAT node, so its "live" says nothing about ours — which isn't running.
+  const blocked = Boolean(status?.foreignBee)
+  const dotColor = blocked
+    ? '#ef4444'
+    : beeChecking
+      ? 'rgb(var(--border))'
+      : isSyncing
+        ? '#f97316'
+        : beeOnline
+          ? '#4ade80'
+          : '#ef4444'
+  const dotLabel = blocked ? 'blocked' : beeChecking ? '···' : isSyncing ? 'sync' : beeOnline ? 'live' : 'off'
+  const dotTitle = blocked
+    ? 'Another node is using Nook’s ports — your node isn’t running'
+    : `Bee node: ${dotLabel}${beeOnline ? ` · ${peerCount} peers` : ''}`
+  const dotGlow = beeOnline && !blocked
 
   return (
     <SidebarProvider>
@@ -267,15 +308,12 @@ export default function Layout() {
         {/* Sidebar */}
         <Sidebar>
           <SidebarHeader>
-            <span className="text-[10px] font-bold uppercase tracking-widest mb-2 text-sidebar-foreground">Nook</span>
+            <SidebarWordmark />
             {/* Node status dot */}
-            <div
-              className="flex flex-col items-center gap-1 mb-3"
-              title={`Bee node: ${dotLabel}${beeOnline ? ` · ${peerCount} peers` : ''}`}
-            >
+            <div className="flex flex-col items-center gap-1 mb-3" title={dotTitle}>
               <div
                 className="w-2 h-2 rounded-full transition-colors"
-                style={{ backgroundColor: dotColor, boxShadow: beeOnline ? `0 0 6px ${dotColor}` : 'none' }}
+                style={{ backgroundColor: dotColor, boxShadow: dotGlow ? `0 0 6px ${dotColor}` : 'none' }}
               />
               <span className="text-[8px] uppercase tracking-widest font-semibold" style={{ color: dotColor }}>
                 {dotLabel}
@@ -332,6 +370,7 @@ export default function Layout() {
           <SidebarFooter>
             <SidebarSection>
               <SidebarMenuItem to={settingsNavItem.to} icon={settingsNavItem.icon} label={settingsNavItem.label} />
+              <SidebarLinkItem href={FEEDBACK_URL} icon={MessageSquare} label="Send feedback" />
             </SidebarSection>
             <div className="pt-2">
               <SidebarTrigger />

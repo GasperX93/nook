@@ -5,7 +5,7 @@
  * encrypted state is the Swarm metadata feed, but localStorage provides fast
  * local lookup without requiring wallet connection.
  */
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 const STORAGE_KEY = 'nook-drive-metadata'
 
@@ -55,8 +55,31 @@ function persist(data: Record<string, LocalDriveMetadata>) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
 }
 
+const CHANGED_EVENT = 'nook:drive-metadata-changed'
+
+/**
+ * Storage-first write, same as useUploadHistory's persistRecords: saving
+ * inside a React state updater did nothing once the Drive page had unmounted
+ * — an encrypted upload finishing after the user navigated away never saved
+ * its new ACT history ref, and the next share or upload built on the stale
+ * one. Write localStorage from its current contents, then tell every mounted
+ * instance to reload.
+ */
+function write(mutate: (data: Record<string, LocalDriveMetadata>) => Record<string, LocalDriveMetadata>) {
+  persist(mutate(load()))
+  window.dispatchEvent(new Event(CHANGED_EVENT))
+}
+
 export function useDriveMetadata() {
   const [metadata, setMetadata] = useState<Record<string, LocalDriveMetadata>>(load)
+
+  useEffect(() => {
+    const reload = () => setMetadata(load())
+
+    window.addEventListener(CHANGED_EVENT, reload)
+
+    return () => window.removeEventListener(CHANGED_EVENT, reload)
+  }, [])
 
   function get(batchId: string): LocalDriveMetadata | undefined {
     return metadata[batchId]
@@ -67,32 +90,17 @@ export function useDriveMetadata() {
   }
 
   function set(batchId: string, data: LocalDriveMetadata) {
-    setMetadata(prev => {
-      const next = { ...prev, [batchId]: data }
-
-      persist(next)
-
-      return next
-    })
+    write(all => ({ ...all, [batchId]: data }))
   }
 
   function update(batchId: string, partial: Partial<LocalDriveMetadata>) {
-    setMetadata(prev => {
-      const existing = prev[batchId] ?? { encrypted: false }
-      const next = { ...prev, [batchId]: { ...existing, ...partial } }
-
-      persist(next)
-
-      return next
-    })
+    write(all => ({ ...all, [batchId]: { ...(all[batchId] ?? { encrypted: false }), ...partial } }))
   }
 
   function remove(batchId: string) {
-    setMetadata(prev => {
-      const next = { ...prev }
+    write(all => {
+      const next = { ...all }
       delete next[batchId]
-
-      persist(next)
 
       return next
     })
