@@ -12,7 +12,7 @@ import { topicFromString, waitForRetrievable } from '../api/bee'
 import { useWallet } from '../api/queries'
 import { serverApi } from '../api/server'
 import { bytesToHex, hexToBytes } from '../lib/hex'
-import { contactForOldNodeKey, contactsForNodeKey, stripKeyPrefix } from '../lib/node-key'
+import { contactsForNodeKey, grantTarget, stripKeyPrefix } from '../lib/node-key'
 import { useDerivedKey } from '../hooks/useDerivedKey'
 import { REGISTRY_ADDRESS } from '../notify/constants'
 import { deriveConnectionState, getMyDisplayName, hasInboundSince } from '../notify/contact-state'
@@ -197,6 +197,45 @@ export default function ShareModal({
     .map<[string, string]>(c => [c.beePublicKey, c.nickname])
     .slice(0, 6)
 
+  // F-3: a grant is tied to the person's NODE key, and a reinstall makes a new
+  // one — their old grant silently stops working while the list still shows
+  // their name. Once per dialog open, look up every contact on the list and
+  // record a changed key: the row then reads as their old key, with Share again.
+  const keysChecked = useRef(false)
+
+  useEffect(() => {
+    if (keysChecked.current || grantees.length === 0) return
+    keysChecked.current = true
+    const people = grantees
+      .filter(g => !isMyKey(g))
+      .map(g => contactForGrantee(g))
+      .filter((c): c is NookContact => Boolean(c && isEthAddress(c.id)))
+
+    void Promise.all(
+      people.map(async c => {
+        try {
+          const fresh = await identity.resolve(bee, c.id)
+
+          if (fresh && stripKeyPrefix(fresh.beePublicKey) !== stripKeyPrefix(c.beePublicKey)) {
+            updateContactKeys(loadContacts(), c.id, {
+              walletPublicKey: fresh.walletPublicKey,
+              beePublicKey: fresh.beePublicKey,
+            })
+
+            return true
+          }
+        } catch {
+          // Lookup failed — keep showing the cached state.
+        }
+
+        return false
+      }),
+    ).then(changed => {
+      if (changed.some(Boolean)) setContacts(loadContacts())
+    })
+    // eslint-disable-next-line
+  }, [grantees])
+
   // Load existing grantees on first render
   if (!loadedGrantees && granteeRef) {
     setLoadedGrantees(true)
@@ -252,8 +291,10 @@ export default function ShareModal({
     }
   }
 
-  async function handleGrant() {
-    const input = newKey.trim()
+  async function handleGrant(inputOverride?: unknown) {
+    // Called from the button/Enter (no input → the text box) or by Share
+    // again with the person's Nook address (F-3).
+    const input = (typeof inputOverride === 'string' ? inputOverride : newKey).trim()
     let key = input
     // The recipient we can notify (needs a wallet public key for ECDH). Captured
     // across all three input paths so we can notify inline when the box is checked.
@@ -321,6 +362,14 @@ export default function ShareModal({
         const alreadyContact = contacts.some(c => c.id.toLowerCase() === input.toLowerCase())
         const isSelf = signer?.getAddress().toLowerCase() === input.toLowerCase()
         const existing = contacts.find(c => c.id.toLowerCase() === input.toLowerCase())
+
+        // Known contact with a new node key (reinstall) — remember it (F-3).
+        if (existing && stripKeyPrefix(existing.beePublicKey) !== stripKeyPrefix(resolved.beePublicKey)) {
+          updateContactKeys(contacts, existing.id, {
+            walletPublicKey: resolved.walletPublicKey,
+            beePublicKey: resolved.beePublicKey,
+          })
+        }
 
         if (!isSelf) {
           grantedContact = {
@@ -956,7 +1005,9 @@ export default function ShareModal({
               others.map(key => {
                 const label = findLabel(key)
                 const contact = contactForGrantee(key)
-                const oldKeyOwner = contact ? undefined : contactForOldNodeKey(contacts, key)
+                const target = grantTarget(key, contacts, grantees)
+                const oldKeyOwner = target.kind === 'old-node' ? target.contact : undefined
+                const reshared = target.kind === 'old-node' && target.alreadyReshared
                 const status = contact ? notifyStatus[contact.id] : undefined
                 const name = label || `${key.slice(0, 6)}…${key.slice(-4)}`
 
@@ -985,9 +1036,11 @@ export default function ShareModal({
                         <span
                           className="block text-[10.5px]"
                           style={{ color: '#d97706' }}
-                          title={`This grant targets ${oldKeyOwner.nickname}'s previous sharing key (from before a reinstall) — they can't open the drive with it. Remove this row; sharing again already uses their current key.`}
+                          title={`${oldKeyOwner.nickname} reinstalled Nook, which gave them a new node. This access points to their old one, so they can't open the drive with it.`}
                         >
-                          {oldKeyOwner.nickname}&apos;s old key
+                          {reshared
+                            ? `${oldKeyOwner.nickname}'s old node — already shared to the new one`
+                            : `${oldKeyOwner.nickname} reinstalled Nook — this is their old node`}
                         </span>
                       )}
                       {contact && granteeIsAmbiguous(key) && (
@@ -1007,6 +1060,18 @@ export default function ShareModal({
                     </span>
                     {statusPill(status)}
                     <span className="flex items-center gap-2 shrink-0 text-[11px]">
+                      {/* F-3: one click shares to their current node and notifies them. */}
+                      {oldKeyOwner && !reshared && (
+                        <button
+                          onClick={async () => handleGrant(oldKeyOwner.id)}
+                          disabled={loading}
+                          className="font-medium hover:underline disabled:opacity-50"
+                          style={{ color: 'rgb(var(--fg))' }}
+                          title={`Share this drive to ${oldKeyOwner.nickname}'s current node and let them know`}
+                        >
+                          Share again
+                        </button>
+                      )}
                       {contact?.walletPublicKey && (
                         <button
                           onClick={async () => {
