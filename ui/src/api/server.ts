@@ -263,6 +263,9 @@ export const serverApi = {
   createReclaimableFolder: async (batchId: string, name: string) =>
     serverPost<ReclaimableFolder>(`/reclaimable/${batchId}/folders`, { name }),
 
+  renameReclaimableFolder: async (batchId: string, folderId: string, name: string) =>
+    serverPatch<{ id: string; name: string }>(`/reclaimable/${batchId}/folders/${folderId}`, { name }),
+
   deleteReclaimableFolder: async (batchId: string, folderId: string) => {
     const response = await fetch(`/reclaimable/${batchId}/folders/${folderId}`, {
       method: 'DELETE',

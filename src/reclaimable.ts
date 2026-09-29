@@ -717,6 +717,28 @@ export function createReclaimableFolder(batchId: string, name: string): { id: st
   return folder
 }
 
+/** Rename a folder — Nook's own label, nothing on Swarm changes. */
+export function renameReclaimableFolder(batchId: string, folderId: string, name: string): { id: string; name: string } {
+  const entry = requireRegisteredBatch(batchId)
+  const all = readAllFolders()
+  const drive = driveFolders(all, entry.batchId)
+  const folder = drive.folders.find(f => f.id === folderId)
+  const trimmed = name.trim()
+
+  if (!folder) {
+    throw new Error('Unknown folder')
+  }
+
+  if (!trimmed) {
+    throw new Error('Folder name is required')
+  }
+  folder.name = trimmed
+  all[entry.batchId] = drive
+  writeAllFolders(all)
+
+  return { id: folder.id, name: folder.name }
+}
+
 export function deleteReclaimableFolder(batchId: string, folderId: string): void {
   const entry = requireRegisteredBatch(batchId)
   const all = readAllFolders()

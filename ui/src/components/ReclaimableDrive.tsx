@@ -26,6 +26,7 @@ import { followReclaimableJob, reclaimableJobTransferId } from '../store/reclaim
 import { friendlyError } from '../lib/friendly-error'
 import { formatBytes } from '../lib/format-bytes'
 import { savingLabel } from '../lib/transfer-labels'
+import FolderCard from './FolderCard'
 import PropagationVisual from './PropagationVisual'
 
 // Reclaimable drives (#99): the server stamps chunks client-side and keeps a
@@ -588,7 +589,7 @@ function FileRow({
 
       {/* Size (approximate — from the ledger's chunk count) */}
       <span
-        className="text-xs shrink-0 hidden sm:block w-14 text-right tabular-nums"
+        className="text-xs shrink-0 hidden sm:block w-[4.5rem] text-right whitespace-nowrap tabular-nums"
         style={{ color: 'rgb(var(--fg-muted))' }}
       >
         ~{formatBytes(file.chunkCount * 4096)}
@@ -1183,9 +1184,19 @@ export function ReclaimableDriveView({
       {!openFolder && drive.folders.length > 0 && (
         <div className="space-y-1 mb-3">
           {drive.folders.map(folder => (
-            <div
+            <FolderCard
               key={folder.id}
-              onClick={() => setOpenFolderId(folder.id)}
+              name={folder.name}
+              files={folderCounts.get(folder.id) ?? 0}
+              highlighted={dragOverTarget === folder.id}
+              deleteTitle="Delete folder — files inside move back to the drive"
+              onOpen={() => setOpenFolderId(folder.id)}
+              onRename={newName =>
+                void serverApi
+                  .renameReclaimableFolder(drive.batchId, folder.id, newName)
+                  .then(refreshDrives, err => setUploadError(friendlyError(err, 'Could not rename the folder')))
+              }
+              onDelete={() => void serverApi.deleteReclaimableFolder(drive.batchId, folder.id).then(refreshDrives)}
               onDragOver={
                 draggingRef
                   ? e => {
@@ -1205,27 +1216,22 @@ export function ReclaimableDriveView({
                     }
                   : undefined
               }
-              className="flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer transition-colors hover:bg-white/[0.03] group/folder"
-              style={dragOverTarget === folder.id ? { backgroundColor: 'rgba(247,104,8,0.08)' } : undefined}
-            >
-              <FolderOpen size={13} style={{ color: 'rgb(var(--fg-muted))' }} />
-              <span className="text-xs font-medium flex-1 truncate">{folder.name}</span>
-              <span className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-                {folderCounts.get(folder.id) ?? 0} file{(folderCounts.get(folder.id) ?? 0) === 1 ? '' : 's'}
-              </span>
-              <button
-                onClick={e => {
-                  e.stopPropagation()
-                  void serverApi.deleteReclaimableFolder(drive.batchId, folder.id).then(refreshDrives)
-                }}
-                title="Remove folder (files move back to the drive)"
-                className="w-6 h-6 flex items-center justify-center rounded opacity-0 group-hover/folder:opacity-100 transition-opacity hover:text-red-400"
-                style={{ color: 'rgb(var(--fg-muted))' }}
-              >
-                <Trash2 size={12} />
-              </button>
-            </div>
+            />
           ))}
+        </div>
+      )}
+
+      {/* Files / folder separator — same as regular drives */}
+      {!openFolder && drive.folders.length > 0 && visibleFiles.length > 0 && (
+        <div className="flex items-center gap-2 px-1 py-2">
+          <div className="h-px flex-1" style={{ backgroundColor: 'rgb(var(--border))' }} />
+          <span
+            className="text-[10px] uppercase tracking-widest font-semibold px-1"
+            style={{ color: 'rgb(var(--fg-muted))' }}
+          >
+            Files
+          </span>
+          <div className="h-px flex-1" style={{ backgroundColor: 'rgb(var(--border))' }} />
         </div>
       )}
 

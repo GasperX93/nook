@@ -42,6 +42,7 @@ import {
   listReclaimableDrives,
   rebuildFreeBitmapIfMissing,
   removeExpiredDrive,
+  renameReclaimableFolder,
   setEtherchunkModuleForTests,
   setValidityFetchForTests,
   startUpload,
@@ -420,6 +421,24 @@ describe('organizational folders', () => {
 
     const stored = JSON.parse(readFileSync('test/data/etherchunk/folders.json', 'utf-8'))
     expect(stored[BATCH].assignments).toEqual({})
+  })
+
+  test('renaming a folder keeps its files in it', async () => {
+    setEtherchunkModuleForTests(makeFakeEtherchunk() as any)
+    const folder = createReclaimableFolder(BATCH, 'Photos')
+    assignFileToFolder(BATCH, ROOT, folder.id)
+
+    expect(renameReclaimableFolder(BATCH, folder.id, '  Holidays ')).toEqual({ id: folder.id, name: 'Holidays' })
+    const [drive] = await listReclaimableDrives()
+    expect(drive.folders).toEqual([{ id: folder.id, name: 'Holidays' }])
+    expect(drive.files[0].folderId).toBe(folder.id)
+  })
+
+  test('renaming refuses an unknown folder or an empty name', () => {
+    const folder = createReclaimableFolder(BATCH, 'Photos')
+
+    expect(() => renameReclaimableFolder(BATCH, 'nope', 'X')).toThrow('Unknown folder')
+    expect(() => renameReclaimableFolder(BATCH, folder.id, '   ')).toThrow('required')
   })
 
   test('empty folder names are refused', () => {

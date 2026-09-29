@@ -52,6 +52,7 @@ import {
   getUploadJob,
   listReclaimableDrives,
   removeExpiredDrive,
+  renameReclaimableFolder,
   startUpload,
 } from './reclaimable'
 import { getAutoExtendSettings, setAutoExtendSetting } from './extend-monitor'
@@ -795,6 +796,25 @@ export function runServer() {
       logger.error(error)
       context.status = 404
       context.body = { message: 'Not a reclaimable drive' }
+    }
+  })
+
+  router.patch('/reclaimable/:batch/folders/:id', context => {
+    const { name } = context.request.body as { name?: string }
+
+    if (!name?.trim()) {
+      context.status = 400
+      context.body = { message: 'name is required' }
+
+      return
+    }
+    try {
+      context.body = renameReclaimableFolder(context.params.batch, context.params.id, name)
+    } catch (error) {
+      logger.error(error)
+      const message = String((error as Error).message ?? error)
+      context.status = message === 'Unknown folder' ? 404 : 400
+      context.body = { message }
     }
   })
 
