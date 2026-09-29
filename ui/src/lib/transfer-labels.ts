@@ -34,3 +34,16 @@ export function waitLabel(wait: 'node' | 'resuming' | undefined): string | null 
 
   return null
 }
+
+/**
+ * Short status for a row's status column (uppercase, fixed width): a waiting
+ * upload says so instead of showing its last percentage — "Copying 100%"
+ * while Bee is stopped read as finished.
+ */
+export function rowStatusLabel(wait: 'node' | 'resuming' | undefined, pct: number | null, verb: string): string {
+  if (wait === 'node') return 'Paused'
+
+  if (wait === 'resuming') return 'Resuming…'
+
+  return pct !== null ? `${verb} ${pct}%` : `${verb}…`
+}

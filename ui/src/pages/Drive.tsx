@@ -22,7 +22,6 @@ import {
   Rss,
   Search,
   Share2,
-  Trash2,
   Upload,
   Users,
   X,
@@ -76,6 +75,7 @@ import {
 import AddSharedDriveModal from '../components/AddSharedDriveModal'
 import ENSModal from '../components/ENSModal'
 import { ExpiredDriveRow, ReclaimableDriveCard, ReclaimableDriveView } from '../components/ReclaimableDrive'
+import FolderCard from '../components/FolderCard'
 import ShareModal from '../components/ShareModal'
 import { Switch } from '../components/ui/switch'
 import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs'
@@ -84,6 +84,7 @@ import { friendlyError } from '../lib/friendly-error'
 import { formatBytes } from '../lib/format-bytes'
 import { isDriveFullError, withUploadRetries } from '../lib/upload-retry'
 import {
+  rowStatusLabel,
   savingLabel,
   UPLOAD_ENCRYPTED,
   UPLOAD_PAUSED,
@@ -884,6 +885,11 @@ function ExtendModal({
 
 // ─── UpdateFeedModal ───────────────────────────────────────────────────────────
 
+/** A new version of a record being published — shown on that record's row. */
+function updateTransferId(recordId: string): string {
+  return `upd:${recordId}`
+}
+
 interface UpdateContent {
   entries: FileEntry[]
   size: number
@@ -951,8 +957,9 @@ function UpdateFeedModal({ record, onClose }: { record: UploadRecord; onClose: (
     const stampId = record.driveId
     // Same as a first upload (R7-2): a global transfer from the first byte, so
     // the sidebar shows it from any page; the tag entry takes over once the
-    // new version is on this node.
-    const upId = `up:${crypto.randomUUID()}`
+    // new version is on this node. Its own id kind — it shows on the site's
+    // row, not as a new in-progress row.
+    const upId = updateTransferId(record.id)
     const transfers = useTransfersStore.getState()
 
     transfers.begin({
@@ -962,7 +969,7 @@ function UpdateFeedModal({ record, onClose }: { record: UploadRecord; onClose: (
       driveId: stampId,
       bytes: content.size,
       phase: UPLOAD_STEP_LOCAL,
-      label: 'Copying',
+      label: 'Updating',
     })
     const onPct = (value: number) => {
       setPct(value)
@@ -1184,9 +1191,6 @@ function UpdateFeedModal({ record, onClose }: { record: UploadRecord; onClose: (
             </div>
             {record.feedManifestAddress && (
               <div className="rounded-lg border p-3 space-y-2" style={{ backgroundColor: 'rgb(var(--bg))' }}>
-                <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-                  Permanent address (unchanged)
-                </p>
                 <p className="font-mono text-xs break-all">{record.feedManifestAddress}</p>
                 <div className="flex gap-2">
                   <button
@@ -1279,6 +1283,12 @@ function RecordRow({
   const propagating = useTransfersStore(state =>
     record.pendingTagUid !== undefined ? state.transfers.find(t => t.id === `tag:${record.pendingTagUid}`) : undefined,
   )
+  // A new version of this site/file being published (Update content): shown
+  // on this row, not as a second in-progress row.
+  const updating = useTransfersStore(state =>
+    state.transfers.find(t => t.id === updateTransferId(record.id) && t.status === 'active'),
+  )
+  const rowTransfer = updating ?? propagating
   // This row's own download (R4-14): several can run at once, so each row
   // reads its own tracker entry instead of one page-wide "active download".
   const downloadPct = useTransfersStore(state => {
@@ -1291,6 +1301,7 @@ function RecordRow({
   const transferEta = useTransfersStore(state => {
     const t =
       state.transfers.find(x => x.id === `dl:${record.id}` && x.status === 'active') ??
+      state.transfers.find(x => x.id === updateTransferId(record.id) && x.status === 'active') ??
       (record.pendingTagUid !== undefined
         ? state.transfers.find(x => x.id === `tag:${record.pendingTagUid}`)
         : undefined)
@@ -1378,7 +1389,7 @@ function RecordRow({
 
       {/* Size */}
       <span
-        className="text-xs shrink-0 hidden sm:block w-14 text-right tabular-nums"
+        className="text-xs shrink-0 hidden sm:block w-[4.5rem] text-right whitespace-nowrap tabular-nums"
         style={{ color: 'rgb(var(--fg-muted))' }}
       >
         {formatBytes(record.size)}
@@ -1421,7 +1432,7 @@ function RecordRow({
             Retry
           </button>
         </div>
-      ) : record.pendingTagUid !== undefined ? (
+      ) : updating || record.pendingTagUid !== undefined ? (
         // Still spreading to the network (#23) — same prominent treatment as
         // downloads, driven by the tracker entry this record's tag feeds.
         <div className="flex items-center gap-2 shrink-0">
@@ -1429,23 +1440,17 @@ function RecordRow({
             <div
               className="h-full rounded-full transition-all"
               style={{
-                width: `${Math.max(propagating?.pct ?? 0, 2)}%`,
-                backgroundColor: propagating?.waiting ? 'rgb(var(--fg-muted))' : 'rgb(var(--accent))',
+                width: `${Math.max(rowTransfer?.pct ?? 0, 2)}%`,
+                backgroundColor: rowTransfer?.waiting ? 'rgb(var(--fg-muted))' : 'rgb(var(--accent))',
               }}
             />
           </div>
           <span
-            title={waitLabel(propagating?.waiting) ?? transferEta ?? undefined}
+            title={waitLabel(rowTransfer?.waiting) ?? transferEta ?? undefined}
             className="text-[10px] uppercase tracking-widest font-semibold w-24 text-right whitespace-nowrap tabular-nums"
-            style={{ color: propagating?.waiting ? 'rgb(var(--fg-muted))' : 'rgb(var(--accent))' }}
+            style={{ color: rowTransfer?.waiting ? 'rgb(var(--fg-muted))' : 'rgb(var(--accent))' }}
           >
-            {propagating?.waiting === 'node'
-              ? 'Paused'
-              : propagating?.waiting === 'resuming'
-                ? 'Resuming…'
-                : propagating?.pct !== null && propagating?.pct !== undefined
-                  ? `Storing ${propagating.pct}%`
-                  : 'Storing…'}
+            {rowStatusLabel(rowTransfer?.waiting, rowTransfer?.pct ?? null, updating ? 'Updating' : 'Storing')}
           </span>
         </div>
       ) : (
@@ -2053,7 +2058,7 @@ function PendingUploadRow({
       </div>
       <span className="flex-1 min-w-0 text-xs font-medium truncate">{transfer.name}</span>
       <span
-        className="text-xs shrink-0 hidden sm:block w-14 text-right tabular-nums"
+        className="text-xs shrink-0 hidden sm:block w-[4.5rem] text-right whitespace-nowrap tabular-nums"
         style={{ color: 'rgb(var(--fg-muted))' }}
       >
         {transfer.bytes !== undefined ? formatBytes(transfer.bytes) : ''}
@@ -2064,15 +2069,15 @@ function PendingUploadRow({
             className="h-full rounded-full transition-all"
             style={{
               width: `${Math.max(transfer.pct ?? 0, 2)}%`,
-              backgroundColor: failed ? '#ef4444' : 'rgb(var(--accent))',
+              backgroundColor: failed ? '#ef4444' : transfer.waiting ? 'rgb(var(--fg-muted))' : 'rgb(var(--accent))',
             }}
           />
         </div>
         <span
           className="text-[10px] uppercase tracking-widest font-semibold w-24 text-right whitespace-nowrap tabular-nums"
-          style={{ color: failed ? '#ef4444' : 'rgb(var(--accent))' }}
+          style={{ color: failed ? '#ef4444' : transfer.waiting ? 'rgb(var(--fg-muted))' : 'rgb(var(--accent))' }}
         >
-          {failed ? 'Failed' : transfer.pct !== null ? `${verb} ${transfer.pct}%` : `${verb}…`}
+          {failed ? 'Failed' : rowStatusLabel(transfer.waiting, transfer.pct, verb)}
         </span>
       </div>
       {/* Same width as RecordRow's action group (R6-2): buttons are 24px, 2px
@@ -2084,6 +2089,60 @@ function PendingUploadRow({
         style={{ width: (encrypted ? 50 : 102) + (reserveEnsSlot ? 70 : 0) }}
         aria-hidden="true"
       />
+    </div>
+  )
+}
+
+/**
+ * The upload panel, re-attached (consistency with deletable drives): coming
+ * back to a drive while one of its uploads runs shows the same panel the
+ * upload form showed — same step titles, same visual — driven by the global
+ * tracker entry, so leaving the drive never loses the view of it.
+ */
+function ResumedUploadPanel({ transfer }: { transfer: TransferEntry }) {
+  const networkStep = transfer.id.startsWith('tag:')
+  const encrypting = transfer.label === 'Encrypting'
+  const showVisual = networkStep || encrypting
+  const title = transfer.waiting
+    ? `${networkStep ? 'Step 2 of 2 · ' : ''}${waitLabel(transfer.waiting)}`
+    : networkStep
+      ? UPLOAD_STEP_NETWORK
+      : encrypting
+        ? UPLOAD_ENCRYPTED
+        : UPLOAD_STEP_LOCAL
+
+  return (
+    <div
+      className="max-w-xl rounded-xl border p-6 mb-4 space-y-3"
+      style={{ backgroundColor: 'rgb(var(--bg-surface))', borderColor: 'rgb(var(--border))' }}
+    >
+      <div className="flex items-center gap-2">
+        <RefreshCw
+          size={13}
+          className={`shrink-0 ${transfer.waiting === 'node' ? '' : 'animate-spin'}`}
+          style={{ color: transfer.waiting ? 'rgb(var(--fg-muted))' : 'rgb(var(--accent))' }}
+        />
+        <p className="text-sm tabular-nums truncate" style={{ color: 'rgb(var(--fg-muted))' }}>
+          {title}
+          {!showVisual && !transfer.waiting && transfer.pct !== null && transfer.pct > 0 && ` — ${transfer.pct}%`}
+        </p>
+      </div>
+      <p className="text-xs font-medium truncate" style={{ color: 'rgb(var(--fg))' }}>
+        {transfer.name}
+      </p>
+      {showVisual ? (
+        <PropagationVisual transfer={transfer} approxTotal={!networkStep} />
+      ) : (
+        <div className="h-1 rounded-full" style={{ backgroundColor: 'rgb(var(--border))' }}>
+          <div
+            className="h-1 rounded-full transition-all"
+            style={{
+              width: `${Math.max(transfer.pct ?? 0, 2)}%`,
+              backgroundColor: transfer.waiting ? 'rgb(var(--fg-muted))' : 'rgb(var(--accent))',
+            }}
+          />
+        </div>
+      )}
     </div>
   )
 }
@@ -2998,8 +3057,6 @@ export default function Drive() {
   const [openFolderId, setOpenFolderId] = useState<string | null>(null)
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dragOverId, setDragOverId] = useState<string | 'root' | null>(null)
-  const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null)
-  const [renameValue, setRenameValue] = useState('')
   const [creatingFolder, setCreatingFolder] = useState(false)
   const [newFolderName, setNewFolderName] = useState('')
 
@@ -3527,19 +3584,6 @@ export default function Drive() {
 
   // ── Folder helpers ───────────────────────────────────────────────────────────
 
-  function startRename(folder: DriveFolder) {
-    setRenamingFolderId(folder.id)
-    setRenameValue(folder.name)
-  }
-
-  function commitRename() {
-    if (renamingFolderId && renameValue.trim()) {
-      renameFolder(renamingFolderId, renameValue.trim())
-    }
-    setRenamingFolderId(null)
-    setRenameValue('')
-  }
-
   function commitNewFolder() {
     if (newFolderName.trim() && activeDriveId) {
       addFolder(newFolderName.trim(), activeDriveId, openFolderId ?? undefined)
@@ -3598,86 +3642,30 @@ export default function Drive() {
   }
 
   function renderFolder(folder: DriveFolder, depth: number): React.ReactElement {
-    const isOver = dragOverId === folder.id
     const childFolders = folders.filter(f => f.parentFolderId === folder.id)
     const folderRecords = driveRecords.filter(r => r.folderId === folder.id)
-    const count = folderRecords.length + childFolders.length
-    const py = depth === 0 ? 'py-2.5' : 'py-2'
 
     return (
-      <div key={folder.id}>
-        <div
-          onClick={() => {
-            if (renamingFolderId !== folder.id) setOpenFolderId(folder.id)
-          }}
-          onDragOver={e => {
-            e.preventDefault()
-            setDragOverId(folder.id)
-          }}
-          onDragLeave={e => {
-            if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverId(null)
-          }}
-          onDrop={e => handleFolderDrop(e, folder.id)}
-          className={`rounded-lg border px-4 ${py} flex items-center gap-2 cursor-pointer select-none transition-colors`}
-          style={{
-            backgroundColor: isOver ? 'rgba(247,104,8,0.08)' : 'rgb(var(--bg-surface))',
-            borderColor: isOver ? 'rgb(var(--accent))' : 'rgb(var(--border))',
-            outline: isOver ? '2px solid rgb(var(--accent))' : 'none',
-            outlineOffset: '-2px',
-          }}
-        >
-          <FolderOpen size={13} style={{ color: 'rgb(var(--fg-muted))' }} />
-          {renamingFolderId === folder.id ? (
-            <input
-              type="text"
-              autoFocus
-              value={renameValue}
-              onClick={e => e.stopPropagation()}
-              onChange={e => setRenameValue(e.target.value)}
-              onKeyDown={e => {
-                e.stopPropagation()
-
-                if (e.key === 'Enter') commitRename()
-
-                if (e.key === 'Escape') {
-                  setRenamingFolderId(null)
-                  setRenameValue('')
-                }
-              }}
-              onBlur={commitRename}
-              className="flex-1 bg-transparent text-sm focus:outline-none"
-              style={{ color: 'rgb(var(--fg))' }}
-            />
-          ) : (
-            <span className="flex-1 text-sm font-medium">{folder.name}</span>
-          )}
-          <span className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-            {count > 0 ? count : ''}
-          </span>
-          <button
-            onClick={e => {
-              e.stopPropagation()
-              startRename(folder)
-            }}
-            title="Rename"
-            className="w-6 h-6 flex items-center justify-center rounded transition-colors"
-            style={{ color: 'rgb(var(--fg-muted))' }}
-          >
-            <Pencil size={11} />
-          </button>
-          <button
-            onClick={e => {
-              e.stopPropagation()
-              removeFolder(folder.id, folders)
-            }}
-            title="Delete folder — files inside move back to the drive root"
-            className="w-6 h-6 flex items-center justify-center rounded hover:text-red-400 transition-colors"
-            style={{ color: 'rgb(var(--fg-muted))' }}
-          >
-            <Trash2 size={11} />
-          </button>
-        </div>
-      </div>
+      <FolderCard
+        key={folder.id}
+        name={folder.name}
+        files={folderRecords.length}
+        folders={childFolders.length}
+        compact={depth > 0}
+        highlighted={dragOverId === folder.id}
+        deleteTitle="Delete folder — files inside move back to the drive root"
+        onOpen={() => setOpenFolderId(folder.id)}
+        onRename={name => renameFolder(folder.id, name)}
+        onDelete={() => removeFolder(folder.id, folders)}
+        onDragOver={e => {
+          e.preventDefault()
+          setDragOverId(folder.id)
+        }}
+        onDragLeave={e => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverId(null)
+        }}
+        onDrop={e => handleFolderDrop(e, folder.id)}
+      />
     )
   }
 
@@ -3694,6 +3682,17 @@ export default function Drive() {
   const visibleRecords = openFolderId
     ? driveRecords.filter(r => r.folderId === openFolderId)
     : driveRecords.filter(r => !r.folderId)
+  // Newest upload still running for this drive: a new upload, its network
+  // step, or a site update.
+  const resumedUpload = allTransfers
+    .filter(
+      t =>
+        t.status === 'active' &&
+        t.kind === 'upload' &&
+        t.driveId === activeDriveId &&
+        (t.id.startsWith('up:') || t.id.startsWith('tag:') || t.id.startsWith('upd:')),
+    )
+    .sort((a, b) => b.startedAt - a.startedAt)[0]
   const pendingUploads = allTransfers.filter(
     t =>
       t.id.startsWith('up:') &&
@@ -3856,7 +3855,9 @@ export default function Drive() {
         </div>
       )}
 
-      {/* Inline upload panel */}
+      {/* Inline upload panel — or, when it's closed, the panel of an upload
+          that is still running for this drive (re-attached from the tracker). */}
+      {!addingFile && resumedUpload && <ResumedUploadPanel transfer={resumedUpload} />}
       {addingFile && (
         <AddFilePanel
           driveId={activeDriveId}
