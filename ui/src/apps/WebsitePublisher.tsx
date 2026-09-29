@@ -611,7 +611,15 @@ export default function WebsitePublisher() {
                   {addressClash && (
                     <p className="text-xs mt-2" style={{ color: '#d97706' }}>
                       Your site “{addressClash.name}” already uses this name. Publishing will point its permanent
-                      address to this site instead — choose another name to keep both.
+                      address to this site instead — choose another name to keep both, or{' '}
+                      <button
+                        type="button"
+                        onClick={() => navigate(`/drive?open=${addressClash.driveId}`)}
+                        className="underline font-medium"
+                      >
+                        update “{addressClash.name}”
+                      </button>{' '}
+                      in Drive to replace it.
                     </p>
                   )}
                 </div>
