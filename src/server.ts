@@ -41,6 +41,7 @@ import {
 } from './reclaimable-registry'
 import {
   addFileToStage,
+  EmptyUploadError,
   assignFileToFolder,
   commitUploadStage,
   createReclaimableFolder,
@@ -418,7 +419,7 @@ export function runServer() {
       logger.error(error)
       context.status = 500
       context.body = {
-        message: 'Could not publish the feed update. Check that your stamp has storage left and try again.',
+        message: 'Could not update the permanent address. Check that the drive has space left and try again.',
       }
     }
   })
@@ -684,22 +685,19 @@ export function runServer() {
       return
     }
 
-    const chunks: Buffer[] = []
-
-    for await (const chunk of context.req) chunks.push(chunk as Buffer)
-
-    if (chunks.length === 0) {
-      context.status = 400
-      context.body = { message: 'request body is required' }
-
-      return
-    }
-
     try {
-      const job = await startUpload(context.params.batch, fileName, Buffer.concat(chunks))
+      // Streamed straight to disk — a multi-GB file must not sit in memory.
+      const job = await startUpload(context.params.batch, fileName, context.req)
       context.body = { uploadId: job.id }
     } catch (error) {
       logger.error(error)
+
+      if (error instanceof EmptyUploadError) {
+        context.status = 400
+        context.body = { message: error.message }
+
+        return
+      }
 
       if (error instanceof ExpiredDriveError) {
         context.status = 410
@@ -741,12 +739,8 @@ export function runServer() {
       return
     }
 
-    const chunks: Buffer[] = []
-
-    for await (const chunk of context.req) chunks.push(chunk as Buffer)
-
     try {
-      context.body = addFileToStage(context.params.id, relPath, Buffer.concat(chunks))
+      context.body = await addFileToStage(context.params.id, relPath, context.req)
     } catch (error) {
       logger.error(error)
       context.status = 400

@@ -1,5 +1,7 @@
 import { Contract, ethers, providers } from 'ethers'
 
+import { feeOverrides } from './blockchain'
+
 const contractInterface = [
   {
     inputs: [
@@ -57,6 +59,8 @@ export async function swap(
     {
       value: xdai,
       gasLimit,
+      // Real EIP-1559 fees — ethers' defaults can fall under Gnosis' minimum (F-2).
+      ...(await feeOverrides(provider)),
     },
   )
 

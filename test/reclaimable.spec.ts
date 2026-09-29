@@ -23,9 +23,11 @@ jest.mock('../src/config', () => ({
 }))
 
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { Readable } from 'stream'
 
 import {
   addFileToStage,
+  EmptyUploadError,
   assignFileToFolder,
   buildDirectFetch,
   commitUploadStage,
@@ -172,6 +174,41 @@ describe('reclaimable engine', () => {
 
   test('unregistered batch is refused before any work starts', async () => {
     await expect(startUpload('e'.repeat(64), 'photo.jpg', Buffer.from('data'))).rejects.toThrow('not a registered')
+  })
+
+  test('a streamed body is written to disk as-is, never buffered in the route', async () => {
+    let seen = ''
+    const fake = makeFakeEtherchunk({
+      upload: jest.fn(async (opts: any): Promise<Buffer> => {
+        seen = readFileSync(opts.path, 'utf8')
+
+        return Buffer.from(ROOT, 'hex')
+      }),
+    })
+    setEtherchunkModuleForTests(fake as any)
+
+    const job = await waitForJob((await startUpload(BATCH, 'notes.txt', Readable.from(['part one, ', 'part two']))).id)
+    expect(job.status).toBe('done')
+    expect(seen).toBe('part one, part two')
+  })
+
+  test('an empty body is refused and leaves no temp dir behind', async () => {
+    setEtherchunkModuleForTests(makeFakeEtherchunk() as any)
+    await expect(startUpload(BATCH, 'empty.txt', Readable.from([]))).rejects.toBeInstanceOf(EmptyUploadError)
+  })
+
+  test('a body that breaks off midway fails the request instead of uploading a partial file', async () => {
+    const fake = makeFakeEtherchunk()
+    setEtherchunkModuleForTests(fake as any)
+    const broken = new Readable({
+      read() {
+        this.push('half a file')
+        this.destroy(new Error('aborted'))
+      },
+    })
+
+    await expect(startUpload(BATCH, 'big.bin', broken)).rejects.toThrow('aborted')
+    expect(fake.upload).not.toHaveBeenCalled()
   })
 
   test('mutations on the same batch are serialized', async () => {
@@ -399,8 +436,8 @@ describe('folder upload staging', () => {
     setEtherchunkModuleForTests(fake as any)
 
     const { stageId } = await createUploadStage(BATCH)
-    expect(addFileToStage(stageId, 'site/index.html', Buffer.from('<html/>'))).toEqual({ fileCount: 1 })
-    expect(addFileToStage(stageId, 'site/img/logo.png', Buffer.from('png'))).toEqual({ fileCount: 2 })
+    expect(await addFileToStage(stageId, 'site/index.html', Buffer.from('<html/>'))).toEqual({ fileCount: 1 })
+    expect(await addFileToStage(stageId, 'site/img/logo.png', Buffer.from('png'))).toEqual({ fileCount: 2 })
 
     const job = commitUploadStage(stageId, 'site')
     const finished = await waitForJob(job.id)
@@ -424,8 +461,8 @@ describe('folder upload staging', () => {
     setEtherchunkModuleForTests(fake as any)
 
     const { stageId } = await createUploadStage(BATCH)
-    addFileToStage(stageId, 'charts/a chart.png', Buffer.from('png'))
-    addFileToStage(stageId, 'charts/sub/b.svg', Buffer.from('svg'))
+    await addFileToStage(stageId, 'charts/a chart.png', Buffer.from('png'))
+    await addFileToStage(stageId, 'charts/sub/b.svg', Buffer.from('svg'))
     await waitForJob(commitUploadStage(stageId, 'charts').id)
 
     expect(uploaded!.files).toEqual(['a chart.png', 'index.html', 'sub'])
@@ -447,22 +484,22 @@ describe('folder upload staging', () => {
     setEtherchunkModuleForTests(fake as any)
 
     const { stageId } = await createUploadStage(BATCH)
-    addFileToStage(stageId, 'site/index.html', Buffer.from('<html>mine</html>'))
+    await addFileToStage(stageId, 'site/index.html', Buffer.from('<html>mine</html>'))
     await waitForJob(commitUploadStage(stageId, 'site').id)
     expect(indexContent).toBe('<html>mine</html>')
   })
 
   test('path traversal is rejected', async () => {
     const { stageId } = await createUploadStage(BATCH)
-    expect(() => addFileToStage(stageId, '../escape.txt', Buffer.from('x'))).toThrow('Invalid file path')
-    expect(() => addFileToStage(stageId, '/etc/passwd', Buffer.from('x'))).toThrow('Invalid file path')
-    expect(() => addFileToStage(stageId, 'ok/../../escape.txt', Buffer.from('x'))).toThrow('Invalid file path')
+    await expect(addFileToStage(stageId, '../escape.txt', Buffer.from('x'))).rejects.toThrow('Invalid file path')
+    await expect(addFileToStage(stageId, '/etc/passwd', Buffer.from('x'))).rejects.toThrow('Invalid file path')
+    await expect(addFileToStage(stageId, 'ok/../../escape.txt', Buffer.from('x'))).rejects.toThrow('Invalid file path')
   })
 
   test('empty or unknown stages are refused', async () => {
     const { stageId } = await createUploadStage(BATCH)
     expect(() => commitUploadStage(stageId, 'site')).toThrow('empty')
-    expect(() => addFileToStage('nope', 'a.txt', Buffer.from('x'))).toThrow('Unknown upload stage')
+    await expect(addFileToStage('nope', 'a.txt', Buffer.from('x'))).rejects.toThrow('Unknown upload stage')
     expect(() => commitUploadStage('nope', 'site')).toThrow('Unknown upload stage')
   })
 

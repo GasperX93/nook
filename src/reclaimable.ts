@@ -1,8 +1,19 @@
 import { Binary } from 'cafe-utility'
 import Wallet from 'ethereumjs-wallet'
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs'
+import {
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'fs'
 import { mkdtemp, readFile } from 'fs/promises'
 import { tmpdir } from 'os'
+import { pipeline } from 'stream/promises'
 import * as path from 'path'
 import { randomUUID } from 'crypto'
 
@@ -422,14 +433,48 @@ function runUploadJob(entry: ReclaimableBatch, displayName: string, uploadPath: 
   return job
 }
 
-export async function startUpload(batchId: string, fileName: string, data: Buffer): Promise<UploadJob> {
+/** An upload body: a buffer, or the request stream itself (piped to disk, never held in memory). */
+export type UploadBody = Buffer | NodeJS.ReadableStream
+
+export class EmptyUploadError extends Error {
+  constructor() {
+    super('request body is required')
+  }
+}
+
+/** Write the body to `dest`, returning its size. A stream that fails midway leaves no partial file. */
+async function writeBody(dest: string, data: UploadBody): Promise<number> {
+  if (Buffer.isBuffer(data)) {
+    writeFileSync(dest, data)
+
+    return data.length
+  }
+
+  try {
+    await pipeline(data, createWriteStream(dest))
+  } catch (error) {
+    rmSync(dest, { force: true })
+    throw error
+  }
+
+  return statSync(dest).size
+}
+
+export async function startUpload(batchId: string, fileName: string, data: UploadBody): Promise<UploadJob> {
   const entry = await requireAliveBatch(batchId)
   // The temp file carries the real file name (inside a throwaway dir)
   // because etherchunk records the upload path in its registry.
   const dir = await mkdtemp(path.join(tmpdir(), 'nook-reclaimable-'))
-  writeFileSync(path.join(dir, path.basename(fileName)), data)
+  const file = path.join(dir, path.basename(fileName))
 
-  return runUploadJob(entry, fileName, path.join(dir, path.basename(fileName)), dir)
+  try {
+    if ((await writeBody(file, data)) === 0) throw new EmptyUploadError()
+  } catch (error) {
+    rmSync(dir, { recursive: true, force: true })
+    throw error
+  }
+
+  return runUploadJob(entry, fileName, file, dir)
 }
 
 // ─── Folder upload staging ───────────────────────────────────────────────────
@@ -470,7 +515,11 @@ export async function createUploadStage(batchId: string): Promise<{ stageId: str
   return { stageId: stage.id }
 }
 
-export function addFileToStage(stageId: string, relPath: string, data: Buffer): { fileCount: number } {
+export async function addFileToStage(
+  stageId: string,
+  relPath: string,
+  data: UploadBody,
+): Promise<{ fileCount: number }> {
   const stage = stages.get(stageId)
 
   if (!stage) {
@@ -490,7 +539,7 @@ export function addFileToStage(stageId: string, relPath: string, data: Buffer): 
     throw new Error(`Invalid file path: ${relPath}`)
   }
   mkdirSync(path.dirname(dest), { recursive: true })
-  writeFileSync(dest, data)
+  await writeBody(dest, data)
   stage.fileCount += 1
 
   return { fileCount: stage.fileCount }
