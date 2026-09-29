@@ -14,6 +14,7 @@ import { ethers } from 'ethers'
 import PACKAGE_JSON from '../package.json'
 import { getApiKey } from './api-key'
 import {
+  friendlyChainError,
   BATCH_CREATE_GAS_LIMIT,
   isNotifyCalldata,
   redeemGiftCode,
@@ -378,7 +379,7 @@ export function runServer() {
     } catch (error) {
       logger.error(error)
       const msg = (error as Error).message ?? ''
-      let friendly = 'Failed to redeem gift code'
+      let friendly = friendlyChainError(msg) ?? 'Failed to redeem gift code'
 
       if (msg.includes('REPLACEMENT_UNDERPRICED') || msg.includes('replacement transaction underpriced')) {
         friendly = 'A previous transaction is still pending. Please wait a moment and try again.'
@@ -386,7 +387,7 @@ export function runServer() {
         friendly = 'A previous transaction just completed. Please try again.'
       } else if (msg.includes('INSUFFICIENT_FUNDS') || msg.includes('insufficient funds')) {
         friendly = 'Gift wallet has insufficient funds to cover gas fees.'
-      } else if (msg) {
+      } else if (msg && !friendlyChainError(msg)) {
         friendly = msg
       }
       context.status = 500
@@ -1157,7 +1158,7 @@ export function runServer() {
     } catch (error) {
       logger.error(error)
       const msg = (error as Error).message ?? ''
-      let friendly = 'Withdraw failed'
+      let friendly = friendlyChainError(msg) ?? 'Withdraw failed'
 
       if (msg.includes('REPLACEMENT_UNDERPRICED') || msg.includes('replacement transaction underpriced')) {
         friendly = 'A previous transaction is still pending. Please wait a moment and try again.'
@@ -1165,7 +1166,7 @@ export function runServer() {
         friendly = 'Insufficient funds to cover gas fees.'
       } else if (msg.includes('UNPREDICTABLE_GAS_LIMIT')) {
         friendly = 'Transaction failed — make sure no other Bee node is running on the same port.'
-      } else if (msg) {
+      } else if (msg && !friendlyChainError(msg)) {
         friendly = msg
       }
       context.status = 500

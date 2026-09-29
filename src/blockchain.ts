@@ -1,5 +1,51 @@
-import { Contract, providers, utils, Wallet } from 'ethers'
+import { BigNumber, Contract, providers, utils, Wallet } from 'ethers'
 import { bzzContractInterface } from './contract'
+
+// ── Fees (F-2) ──────────────────────────────────────────────────────────────
+// Gnosis base fees can sit at ~20 wei, and eth_gasPrice answers base + 1 wei.
+// Sending that as the fee cap (what ethers does with `gasPrice`) leaves the
+// validator nothing the moment the base fee ticks up — nodes reject it:
+// "EffectivePriorityFeePerGas too low 0 < 1". So every transaction Nook
+// sends sets EIP-1559 fees itself: a real tip, and a cap with headroom.
+
+/** Smallest tip Nook pays — 1 gwei ≈ 0.00002 xDAI for a plain transfer. */
+export const MIN_PRIORITY_FEE = utils.parseUnits('1', 'gwei')
+
+export interface FeeOverrides {
+  type: 2
+  maxFeePerGas: BigNumber
+  maxPriorityFeePerGas: BigNumber
+}
+
+/** Fees from the latest base fee and the node's suggested tip (pure — tested). */
+export function feesFrom(baseFee: BigNumber, suggestedTip: BigNumber | null): FeeOverrides {
+  const tip = suggestedTip && suggestedTip.gt(MIN_PRIORITY_FEE) ? suggestedTip : MIN_PRIORITY_FEE
+
+  return { type: 2, maxPriorityFeePerGas: tip, maxFeePerGas: baseFee.mul(2).add(tip) }
+}
+
+export async function feeOverrides(provider: providers.JsonRpcProvider): Promise<FeeOverrides> {
+  const block = await provider.getBlock('latest')
+  const baseFee = block.baseFeePerGas ?? (await provider.getGasPrice())
+  let suggested: BigNumber | null = null
+
+  try {
+    suggested = BigNumber.from(await provider.send('eth_maxPriorityFeePerGas', []))
+  } catch {
+    // Not every RPC answers this — the minimum tip is plenty on Gnosis.
+  }
+
+  return feesFrom(baseFee, suggested)
+}
+
+/** A readable message for a failed chain transaction, or null to keep the caller's own. */
+export function friendlyChainError(message: string): string | null {
+  if (/FeeTooLow|fee too low|max fee per gas less than block base fee/i.test(message)) {
+    return 'The network fee changed while sending — please try again.'
+  }
+
+  return null
+}
 
 export async function sendNativeTransaction(
   privateKey: string,
@@ -8,8 +54,8 @@ export async function sendNativeTransaction(
   blockchainRpcEndpoint: string,
 ) {
   const signer = await makeReadySigner(privateKey, blockchainRpcEndpoint)
-  const gasPrice = await signer.getGasPrice()
-  const transaction = await signer.sendTransaction({ to, value, gasPrice })
+  const fees = await feeOverrides(signer.provider as providers.JsonRpcProvider)
+  const transaction = await signer.sendTransaction({ to, value, ...fees })
   const receipt = await transaction.wait(1)
 
   return { transaction, receipt }
@@ -17,9 +63,9 @@ export async function sendNativeTransaction(
 
 export async function sendBzzTransaction(privateKey: string, to: string, value: string, blockchainRpcEndpoint: string) {
   const signer = await makeReadySigner(privateKey, blockchainRpcEndpoint)
-  const gasPrice = await signer.getGasPrice()
+  const fees = await feeOverrides(signer.provider as providers.JsonRpcProvider)
   const bzz = new Contract('0xdBF3Ea6F5beE45c02255B2c26a16F300502F68da', bzzContractInterface, signer)
-  const transaction = await bzz.transfer(to, value, { gasPrice })
+  const transaction = await bzz.transfer(to, value, { ...fees })
   const receipt = await transaction.wait(1)
 
   return { transaction, receipt }
@@ -69,8 +115,8 @@ export async function sendRegistryNotification(privateKey: string, data: string,
 
   for (let attempt = 1; ; attempt++) {
     try {
-      const gasPrice = await signer.getGasPrice()
-      const transaction = await signer.sendTransaction({ to: NOTIFY_REGISTRY_ADDRESS, data, gasPrice })
+      const fees = await feeOverrides(signer.provider as providers.JsonRpcProvider)
+      const transaction = await signer.sendTransaction({ to: NOTIFY_REGISTRY_ADDRESS, data, ...fees })
       const receipt = await transaction.wait(1)
 
       return { transaction, receipt }
@@ -87,14 +133,16 @@ export async function redeemGiftCode(giftCode: string, toAddress: string, blockc
   const provider = new providers.JsonRpcProvider(blockchainRpcEndpoint, 100)
   await provider.ready
   const giftWallet = new Wallet(giftCode, provider)
-  const gasPrice = await provider.getGasPrice()
+  const fees = await feeOverrides(provider)
 
   // Transfer all BZZ
   const bzz = new Contract('0xdBF3Ea6F5beE45c02255B2c26a16F300502F68da', bzzContractInterface, giftWallet)
   const bzzBalance = await bzz.balanceOf(giftWallet.address)
 
   const gasLimit = 21000
-  const gasCost = gasPrice.mul(gasLimit)
+  // Most a plain transfer can cost at these fees — the sweep keeps exactly
+  // this back (the unused part of the cap stays as a few-wei remainder).
+  const gasCost = fees.maxFeePerGas.mul(gasLimit)
 
   // Check initial xDAI balance for empty-code detection
   const xdaiBalanceInitial = await provider.getBalance(giftWallet.address)
@@ -104,16 +152,18 @@ export async function redeemGiftCode(giftCode: string, toAddress: string, blockc
   }
 
   if (bzzBalance.gt(0)) {
-    const tx = await bzz.transfer(toAddress, bzzBalance, { gasPrice })
+    const tx = await bzz.transfer(toAddress, bzzBalance, { ...fees })
     await tx.wait(1)
   }
 
-  // Re-fetch xDAI balance after BZZ transfer (BZZ tx consumed some xDAI for gas)
+  // Re-fetch xDAI balance after BZZ transfer (BZZ tx consumed some xDAI for
+  // gas), with fresh fees — the base fee may have moved in between.
   const xdaiBalanceAfterBzz = await provider.getBalance(giftWallet.address)
-  const xdaiToSend = xdaiBalanceAfterBzz.sub(gasCost)
+  const sweepFees = await feeOverrides(provider)
+  const xdaiToSend = xdaiBalanceAfterBzz.sub(sweepFees.maxFeePerGas.mul(gasLimit))
 
   if (xdaiToSend.gt(0)) {
-    const tx = await giftWallet.sendTransaction({ to: toAddress, value: xdaiToSend, gasPrice, gasLimit })
+    const tx = await giftWallet.sendTransaction({ to: toAddress, value: xdaiToSend, gasLimit, ...sweepFees })
     await tx.wait(1)
   }
 }
