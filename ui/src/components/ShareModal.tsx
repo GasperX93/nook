@@ -1010,6 +1010,98 @@ export default function ShareModal({
                 const reshared = target.kind === 'old-node' && target.alreadyReshared
                 const status = contact ? notifyStatus[contact.id] : undefined
                 const name = label || `${key.slice(0, 6)}…${key.slice(-4)}`
+                const shortKey = `${stripKeyPrefix(key).slice(0, 6)}…${stripKeyPrefix(key).slice(-4)}`
+
+                // F-5 (redesign): a grant to someone's OLD node (they
+                // reinstalled). Name them, explain in one line, and keep the
+                // destructive action away from the one they want.
+                if (oldKeyOwner) {
+                  const nick = oldKeyOwner.nickname
+                  const removeOld = (
+                    <button
+                      onClick={async () => handleRevoke(key)}
+                      disabled={loading}
+                      className="text-[11px] hover:underline disabled:opacity-50 whitespace-nowrap"
+                      style={{ color: 'rgb(var(--fg-muted))' }}
+                      title="Revoke the grant to their old node"
+                    >
+                      Remove old access
+                    </button>
+                  )
+
+                  return (
+                    <div key={key} className="px-3 py-2.5 space-y-2">
+                      <div className="flex items-center gap-2.5">
+                        <span
+                          className="w-7 h-7 rounded-full grid place-items-center text-[11px] font-semibold shrink-0"
+                          style={
+                            reshared
+                              ? { backgroundColor: 'rgb(var(--border))', color: 'rgb(var(--fg-muted))' }
+                              : { backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }
+                          }
+                        >
+                          {nick.charAt(0).toUpperCase()}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span
+                            className="block text-sm font-medium truncate"
+                            style={{ color: reshared ? 'rgb(var(--fg-muted))' : 'rgb(var(--fg))' }}
+                          >
+                            {reshared ? `${nick} — old node` : nick}
+                          </span>
+                          <span
+                            className="block text-[10.5px] truncate"
+                            title={key}
+                            style={{ color: 'rgb(var(--fg-muted))' }}
+                          >
+                            {reshared ? (
+                              `Not needed any more — ${nick} has access on their new one.`
+                            ) : (
+                              <>
+                                old node · <span className="font-mono">{shortKey}</span>
+                              </>
+                            )}
+                          </span>
+                        </span>
+                        {reshared ? (
+                          removeOld
+                        ) : (
+                          <span
+                            className="text-[10.5px] px-2 py-0.5 rounded-full whitespace-nowrap"
+                            style={{ backgroundColor: 'rgba(245,158,11,0.12)', color: '#d97706' }}
+                          >
+                            No access
+                          </span>
+                        )}
+                      </div>
+                      {!reshared && (
+                        <div
+                          className="rounded-md px-3 py-2 space-y-2"
+                          style={{ backgroundColor: 'rgba(245,158,11,0.08)' }}
+                        >
+                          <p className="text-[11px] leading-snug" style={{ color: '#b45309' }}>
+                            {nick} reinstalled Nook, so this access is for their old node and they can't open the drive.
+                          </p>
+                          <div className="flex items-center gap-4">
+                            <button
+                              onClick={async () => handleGrant(oldKeyOwner.id)}
+                              disabled={loading}
+                              className="px-2.5 py-1 rounded-md text-[11px] font-semibold disabled:opacity-50"
+                              style={{
+                                backgroundColor: 'rgb(var(--accent))',
+                                color: 'rgb(var(--primary-foreground))',
+                              }}
+                              title={`Give ${nick}'s new node access — they'll get the drive in Messages`}
+                            >
+                              Share again
+                            </button>
+                            {removeOld}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )
+                }
 
                 return (
                   <div key={key} className="flex items-center gap-2.5 px-3 py-2.5">
@@ -1030,18 +1122,8 @@ export default function ShareModal({
                       >
                         {contact ? shortAddr(contact.id) : `key …${stripKeyPrefix(key).slice(-6)}`}
                       </span>
-                      {/* Kept diagnostics (#8/#122): old key after a reinstall,
-                          several identities on one node, not a contact. */}
-                      {oldKeyOwner && (
-                        <span
-                          className="block text-[11px] leading-snug mt-0.5"
-                          style={{ color: reshared ? 'rgb(var(--fg-muted))' : '#d97706' }}
-                        >
-                          {reshared
-                            ? `Old node — not needed any more. ${oldKeyOwner.nickname} has access on their new one.`
-                            : `${oldKeyOwner.nickname} reinstalled Nook, so this access points to their old node — they can't open the drive. Share again gives their new node access; they'll get it in Messages.`}
-                        </span>
-                      )}
+                      {/* Kept diagnostics (#8/#122): several identities on one
+                          node, not a contact. (Old node after a reinstall: above.) */}
                       {contact && granteeIsAmbiguous(key) && (
                         <span
                           className="block text-[10.5px]"
@@ -1051,38 +1133,14 @@ export default function ShareModal({
                           2+ identities → {contact.nickname}
                         </span>
                       )}
-                      {!contact && !oldKeyOwner && (
+                      {!contact && (
                         <span className="block text-[10.5px]" style={{ color: 'rgb(var(--fg-muted))' }}>
                           Not in your contacts — add them to send updates
                         </span>
                       )}
                     </span>
-                    {/* F-5: an old node's grant is not "access" for the person. */}
-                    {oldKeyOwner ? (
-                      reshared ? null : (
-                        <span
-                          className="text-[10.5px] px-2 py-0.5 rounded-full whitespace-nowrap"
-                          style={{ backgroundColor: 'rgba(245,158,11,0.12)', color: '#d97706' }}
-                        >
-                          No access
-                        </span>
-                      )
-                    ) : (
-                      statusPill(status)
-                    )}
+                    {statusPill(status)}
                     <span className="flex items-center gap-2 shrink-0 text-[11px]">
-                      {/* F-3: one click shares to their current node and notifies them. */}
-                      {oldKeyOwner && !reshared && (
-                        <button
-                          onClick={async () => handleGrant(oldKeyOwner.id)}
-                          disabled={loading}
-                          className="px-2.5 py-1 rounded-md font-semibold disabled:opacity-50"
-                          style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
-                          title={`Share this drive to ${oldKeyOwner.nickname}'s current node and let them know`}
-                        >
-                          Share again
-                        </button>
-                      )}
                       {contact?.walletPublicKey && (
                         <button
                           onClick={async () => {
