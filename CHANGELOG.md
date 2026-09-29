@@ -2,6 +2,8 @@
 
 ## [0.7.0](https://github.com/GasperX93/nook/releases/tag/v0.7.0) (2026-09-29)
 
+New to Nook? Read the [user guide](https://nook-drive.eth.limo/docs.html) and [how Nook works](https://nook-drive.eth.limo/how-it-works.html) on the Nook website — [nook-drive.eth.limo](https://nook-drive.eth.limo).
+
 ### Sign in with Swarm ID
 * **Swarm ID is your Nook identity** — one account you own, used for contacts, messages and being findable. Your Nook address is derived from it, so signing in again after a reinstall gives you the same address. A browser wallet is now only for paying — it never creates or changes your identity.
 * **Findable by default** — during setup Nook publishes your identity for you, so others can reach you by your Nook address.
