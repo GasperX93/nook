@@ -2,6 +2,7 @@ import { beeApi, topicFromString, waitWhileBeeDown } from '../api/bee'
 import { serverApi } from '../api/server'
 import { followTagPropagation } from '../store/transfers'
 import { detectIndexDocument, type FileEntry } from '../utils/directory'
+import { withUploadRetries } from '../lib/upload-retry'
 import {
   UPLOAD_ENCRYPTED,
   UPLOAD_PAUSED,
@@ -112,12 +113,7 @@ export function useUpload() {
     // even after the stamp reports as usable via REST.
     let currentHistoryRef = actHistoryRef
 
-    async function doUpload(attempt: number): Promise<{ reference: string; historyAddress?: string; tagUid?: number }> {
-      if (attempt > 1) {
-        onPhase?.(`Finalising storage… (retry ${attempt - 1})`)
-        await new Promise(r => setTimeout(r, 10000))
-      }
-
+    async function doUpload(): Promise<{ reference: string; historyAddress?: string; tagUid?: number }> {
       onPhase?.(encrypted ? UPLOAD_ENCRYPTED : UPLOAD_STEP_LOCAL)
       onProgress?.(0)
 
@@ -165,40 +161,20 @@ export function useUpload() {
       return { reference: res.reference, tagUid }
     }
 
-    let reference!: string
-    let uploadHistoryAddress: string | undefined
-    let uploadTagUid: number | undefined
-
     // Outages don't use up attempts — up to a point: a Bee that keeps going
     // down mid-copy must not retry forever (R8-3 follow-up).
-    let freeRetries = 3
+    const result = await withUploadRetries(doUpload, {
+      attempts: 8,
+      delayMs: 10_000,
+      pause: async () => pauseWhileBeeDown(onPhase),
+      onRetry: retry => onPhase?.(`Finalising storage… (retry ${retry})`),
+    })
+    const reference = result.reference
+    const uploadHistoryAddress = result.historyAddress
+    const uploadTagUid = result.tagUid
 
-    for (let attempt = 1; attempt <= 8; attempt++) {
-      try {
-        await pauseWhileBeeDown(onPhase)
-        const result = await doUpload(attempt)
-        reference = result.reference
-        uploadHistoryAddress = result.historyAddress
-        uploadTagUid = result.tagUid
-
-        // Update history ref for next upload in same session
-        if (uploadHistoryAddress) currentHistoryRef = uploadHistoryAddress
-        break
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : ''
-
-        // Overissued stamp cannot be recovered by retrying — fail immediately
-        if (msg.includes('overissued') || msg.includes('402')) throw err
-
-        // Bee went down mid-copy: wait for it and try again without using up
-        // an attempt — an outage isn't a failed upload (R8-3).
-        if (freeRetries > 0 && (await pauseWhileBeeDown(onPhase))) {
-          freeRetries--
-          attempt--
-        } else if (attempt === 8) throw err
-        // stamp issuer may not be loaded yet — retry
-      }
-    }
+    // Update history ref for next upload in same session
+    if (uploadHistoryAddress) currentHistoryRef = uploadHistoryAddress
 
     // Fetch current stamp TTL to set accurate expiry
     let expiresAt: number
