@@ -11,6 +11,8 @@ export default defineConfig(({ command }) => ({
     proxy: {
       '/info': 'http://localhost:3054',
       '/status': 'http://localhost:3054',
+      '/funding': 'http://localhost:3054',
+      '/bee-readiness': 'http://localhost:3054',
       '/peers': 'http://localhost:3054',
       '/config': 'http://localhost:3054',
       '/logs': 'http://localhost:3054',

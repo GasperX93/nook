@@ -1,6 +1,7 @@
 import { ArrowDownToLine, ArrowUpFromLine, Check } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 
+import { UPLOAD_PAUSED } from '../lib/transfer-labels'
 import { etaText, useTransfersStore } from '../store/transfers'
 
 /**
@@ -26,7 +27,11 @@ export default function TransferIndicator() {
           {t.status === 'done' ? (
             <Check size={11} className="shrink-0" style={{ color: '#4ade80' }} />
           ) : t.kind === 'upload' ? (
-            <ArrowUpFromLine size={11} className="shrink-0 animate-pulse" style={{ color: 'rgb(var(--accent))' }} />
+            <ArrowUpFromLine
+              size={11}
+              className={`shrink-0 ${t.paused ? '' : 'animate-pulse'}`}
+              style={{ color: t.paused ? 'rgb(var(--sidebar-fg-muted))' : 'rgb(var(--accent))' }}
+            />
           ) : (
             <ArrowDownToLine size={11} className="shrink-0 animate-pulse" style={{ color: 'rgb(var(--accent))' }} />
           )}
@@ -41,10 +46,14 @@ export default function TransferIndicator() {
                 ? t.kind === 'upload'
                   ? 'Stored'
                   : 'Saved'
-                : `${t.kind === 'upload' ? 'Storing' : 'Saving'}${t.pct !== null ? ` · ${t.pct}%` : '…'}${
-                    // Coarse, honest estimate (R4-13) — absent until it's meaningful.
-                    etaText(t) ? ` · ${etaText(t)}` : ''
-                  }`}
+                : t.status === 'failed'
+                  ? 'Failed'
+                  : t.paused
+                    ? UPLOAD_PAUSED
+                    : `${t.label ?? (t.kind === 'upload' ? 'Storing' : 'Saving')}${t.pct !== null ? ` · ${t.pct}%` : '…'}${
+                        // Coarse, honest estimate (R4-13) — absent until it's meaningful.
+                        etaText(t) ? ` · ${etaText(t)}` : ''
+                      }`}
             </span>
           </span>
         </button>

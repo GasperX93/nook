@@ -1,4 +1,5 @@
 import { fetchWithTimeout } from './fetch-timeout'
+import { isOwnBee } from './foreign-bee'
 import { logger } from './logger'
 import { dismissNotification, loadNotifications, pushNotification } from './notifications'
 import { getMode } from './funding-monitor'
@@ -97,6 +98,13 @@ async function checkAndFundChequebook() {
     const depositAmount = maxDeposit < target ? maxDeposit : target
 
     if (depositAmount <= BigInt(0)) return
+
+    // R5-11: never move funds on a node that isn't provably Nook's own.
+    if (!(await isOwnBee())) {
+      logger.error('Chequebook deposit skipped — the node on port 1633 is not Nook’s own')
+
+      return
+    }
 
     logger.info(`Depositing ${depositAmount} PLUR into chequebook`)
     await beePost(`/chequebook/deposit?amount=${depositAmount}`)

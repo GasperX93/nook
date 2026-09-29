@@ -29,7 +29,7 @@ import {
 } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import React, { useEffect, useRef, useState } from 'react'
-import { useLocation } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useAccount } from 'wagmi'
 import {
   beeApi,
@@ -56,7 +56,7 @@ import {
   useWallet,
 } from '../api/queries'
 import { useAppStore } from '../store/app'
-import { etaText, followTagPropagation, useTransfersStore } from '../store/transfers'
+import { etaText, followTagPropagation, type TransferEntry, useTransfersStore } from '../store/transfers'
 import PropagationVisual from '../components/PropagationVisual'
 import { useDerivedKey } from '../hooks/useDerivedKey'
 import { useDriveMetadata } from '../hooks/useDriveMetadata'
@@ -79,7 +79,13 @@ import { Switch } from '../components/ui/switch'
 import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { useSidebar } from '../components/ui/sidebar'
 import { friendlyError } from '../lib/friendly-error'
-import { savingLabel, UPLOAD_ENCRYPTED, UPLOAD_STEP_LOCAL, UPLOAD_STEP_NETWORK } from '../lib/transfer-labels'
+import {
+  savingLabel,
+  UPLOAD_ENCRYPTED,
+  UPLOAD_PAUSED,
+  UPLOAD_STEP_LOCAL,
+  UPLOAD_STEP_NETWORK,
+} from '../lib/transfer-labels'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -663,7 +669,7 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
       const raw = err?.message ?? 'Failed to extend drive.'
       // Bee errors come back as 'Bee API /…: 500 {"code":500,"message":"…"}'
       const inner = raw.match(/"message"\s*:\s*"([^"]+)"/)?.[1]
-      const msg = raw.includes('402') ? 'Insufficient BZZ. Top up your wallet first.' : (inner ?? raw)
+      const msg = raw.includes('402') ? 'Not enough xBZZ. Add xBZZ to your wallet first.' : (inner ?? raw)
 
       setExtendError(msg)
     } finally {
@@ -1299,15 +1305,22 @@ function RecordRow({
           <div className="w-24 h-1 rounded-full overflow-hidden" style={{ backgroundColor: 'rgb(var(--border))' }}>
             <div
               className="h-full rounded-full transition-all"
-              style={{ width: `${Math.max(propagating?.pct ?? 0, 2)}%`, backgroundColor: 'rgb(var(--accent))' }}
+              style={{
+                width: `${Math.max(propagating?.pct ?? 0, 2)}%`,
+                backgroundColor: propagating?.paused ? 'rgb(var(--fg-muted))' : 'rgb(var(--accent))',
+              }}
             />
           </div>
           <span
-            title={transferEta ?? undefined}
+            title={propagating?.paused ? UPLOAD_PAUSED : (transferEta ?? undefined)}
             className="text-[10px] uppercase tracking-widest font-semibold w-24 text-right whitespace-nowrap tabular-nums"
-            style={{ color: 'rgb(var(--accent))' }}
+            style={{ color: propagating?.paused ? 'rgb(var(--fg-muted))' : 'rgb(var(--accent))' }}
           >
-            {propagating?.pct !== null && propagating?.pct !== undefined ? `Storing ${propagating.pct}%` : 'Storing…'}
+            {propagating?.paused
+              ? 'Paused'
+              : propagating?.pct !== null && propagating?.pct !== undefined
+                ? `Storing ${propagating.pct}%`
+                : 'Storing…'}
           </span>
         </div>
       ) : (
@@ -1868,6 +1881,56 @@ function DriveCard({
 
 type UploadType = 'file' | 'folder'
 
+/**
+ * An upload that has no record yet (R5-2) — encrypted uploads, and classic
+ * uploads still copying to the local node. Mirrors RecordRow's "Storing"
+ * treatment so every upload looks the same whatever the drive type.
+ */
+function PendingUploadRow({ transfer }: { transfer: TransferEntry }) {
+  const failed = transfer.status === 'failed'
+  const verb = transfer.label ?? 'Storing'
+
+  return (
+    <div className="px-2 py-2 flex items-center gap-3" title={transfer.phase || undefined}>
+      <div
+        className="w-6 h-6 rounded overflow-hidden flex items-center justify-center shrink-0"
+        style={{ backgroundColor: 'rgb(var(--bg))' }}
+      >
+        {verb === 'Encrypting' ? (
+          <Lock size={12} style={{ color: 'rgb(var(--accent))' }} />
+        ) : (
+          <File size={12} style={{ color: 'rgb(var(--fg-muted))' }} />
+        )}
+      </div>
+      <span className="flex-1 min-w-0 text-sm truncate">{transfer.name}</span>
+      {transfer.bytes !== undefined && (
+        <span className="text-xs shrink-0 tabular-nums" style={{ color: 'rgb(var(--fg-muted))' }}>
+          {formatBytes(transfer.bytes)}
+        </span>
+      )}
+      <div className="flex items-center gap-2 shrink-0">
+        <div className="w-24 h-1 rounded-full overflow-hidden" style={{ backgroundColor: 'rgb(var(--border))' }}>
+          <div
+            className="h-full rounded-full transition-all"
+            style={{
+              width: `${Math.max(transfer.pct ?? 0, 2)}%`,
+              backgroundColor: failed ? '#ef4444' : 'rgb(var(--accent))',
+            }}
+          />
+        </div>
+        <span
+          className="text-[10px] uppercase tracking-widest font-semibold w-24 text-right whitespace-nowrap tabular-nums"
+          style={{ color: failed ? '#ef4444' : 'rgb(var(--accent))' }}
+        >
+          {failed ? 'Failed' : transfer.pct !== null ? `${verb} ${transfer.pct}%` : `${verb}…`}
+        </span>
+      </div>
+      {/* Keeps the status column aligned with RecordRow's action buttons. */}
+      <div className="w-[88px] shrink-0" aria-hidden="true" />
+    </div>
+  )
+}
+
 interface AddFileProps {
   driveId: string
   encrypted?: boolean
@@ -1877,6 +1940,8 @@ interface AddFileProps {
   onActHistoryUpdate?: (historyRef: string) => void
   /** Latest public wrapper ref after the metadata feed update (#93 health checks). */
   onWrapperRef?: (ref: string) => void
+  /** Folder the upload lands in — so its in-progress row shows there (R5-2). */
+  folderId?: string
 }
 
 function generateFolderIndex(name: string, entries: FileEntry[]): FileEntry {
@@ -1901,6 +1966,7 @@ function AddFilePanel({
   onAdd,
   onActHistoryUpdate,
   onWrapperRef,
+  folderId,
 }: AddFileProps) {
   const { data: addresses } = useAddresses()
   const [phase, setPhase] = useState('')
@@ -1923,6 +1989,29 @@ function AddFilePanel({
     setError(null)
     setProgress(null)
 
+    // R5-2: every upload is a global transfer from its first byte — the
+    // sidebar indicator and an in-progress row in the drive show it from any
+    // page, exactly like the network step of classic uploads. Encrypted
+    // uploads are one step; classic uploads hand over to the tag entry
+    // (Step 2) once the local copy lands.
+    const transfers = useTransfersStore.getState()
+    const upId = `up:${crypto.randomUUID()}`
+
+    transfers.begin({
+      id: upId,
+      kind: 'upload',
+      name,
+      driveId,
+      folderId,
+      bytes: entries.reduce((sum, e) => sum + e.file.size, 0),
+      phase: encrypted ? UPLOAD_ENCRYPTED : UPLOAD_STEP_LOCAL,
+      label: encrypted ? 'Encrypting' : 'Copying',
+    })
+    const onUploadPct = (pct: number) => {
+      setProgress(pct)
+      useTransfersStore.getState().update(upId, { pct })
+    }
+
     // For folder uploads inject a generated directory listing so /bzz/{hash}/ resolves
     const uploadEntries = type === 'folder' ? [...entries, generateFolderIndex(name, entries)] : entries
     const indexDocument = type === 'folder' ? '_index.html' : undefined
@@ -1944,11 +2033,15 @@ function AddFilePanel({
 
         if (encrypted) {
           if (type === 'file') {
-            return beeApi.uploadFileWithACT(entries[0].file, driveId, currentHistoryRef, pct => setProgress(pct))
+            return beeApi.uploadFileWithACT(entries[0].file, driveId, currentHistoryRef, onUploadPct)
           }
 
-          return beeApi.uploadCollectionWithACT(uploadEntries, driveId, currentHistoryRef, { indexDocument }, pct =>
-            setProgress(pct),
+          return beeApi.uploadCollectionWithACT(
+            uploadEntries,
+            driveId,
+            currentHistoryRef,
+            { indexDocument },
+            onUploadPct,
           )
         }
 
@@ -1963,19 +2056,16 @@ function AddFilePanel({
         }
 
         if (type === 'file') {
-          const res = await beeApi.uploadFileWithProgress(
-            entries[0].file,
-            driveId,
-            pct => setProgress(pct),
-            true,
-            tagUid,
-          )
+          const res = await beeApi.uploadFileWithProgress(entries[0].file, driveId, onUploadPct, true, tagUid)
 
           return { reference: res.reference, tagUid }
         }
 
-        const res = await beeApi.uploadCollectionWithProgress(uploadEntries, driveId, { indexDocument, tagUid }, pct =>
-          setProgress(pct),
+        const res = await beeApi.uploadCollectionWithProgress(
+          uploadEntries,
+          driveId,
+          { indexDocument, tagUid },
+          onUploadPct,
         )
 
         return { reference: res.reference, tagUid }
@@ -2038,6 +2128,12 @@ function AddFilePanel({
 
       onAdd(newRecord)
 
+      // The record's own row takes over from the in-progress one. Classic:
+      // the tag entry (Step 2) replaces this transfer. Encrypted: it stays in
+      // the sidebar until the shared file list below is updated too.
+      if (!encrypted && uploadTagUid !== undefined) useTransfersStore.getState().remove(upId)
+      else useTransfersStore.getState().update(upId, { recordId: newRecord.id })
+
       if (!encrypted && uploadTagUid !== undefined) {
         // #92 stage 2: follow the tag until the content is on the network —
         // through the global tracker (#4/#5), so the progress survives
@@ -2099,8 +2195,10 @@ function AddFilePanel({
         }
       }
 
+      useTransfersStore.getState().finish(upId)
       onDone()
     } catch (err) {
+      useTransfersStore.getState().finish(upId, 'failed')
       const msg = err instanceof Error ? err.message : 'Upload failed'
 
       if (msg.includes('402') || msg.toLowerCase().includes('overissued')) {
@@ -2158,9 +2256,13 @@ function AddFilePanel({
         style={{ backgroundColor: 'rgb(var(--bg-surface))', borderColor: 'rgb(var(--border))' }}
       >
         <div className="flex items-center gap-2">
-          <RefreshCw size={13} className="animate-spin shrink-0" style={{ color: 'rgb(var(--accent))' }} />
+          <RefreshCw
+            size={13}
+            className={`shrink-0 ${propagationTransfer?.paused ? '' : 'animate-spin'}`}
+            style={{ color: propagationTransfer?.paused ? 'rgb(var(--fg-muted))' : 'rgb(var(--accent))' }}
+          />
           <p className="text-sm tabular-nums" style={{ color: 'rgb(var(--fg-muted))' }}>
-            {phase || 'Preparing…'}
+            {propagationTransfer?.paused ? `Step 2 of 2 · ${UPLOAD_PAUSED}` : phase || 'Preparing…'}
             {/* Step 2 shows its own numbers in the visual below. */}
             {!propagationTransfer && progress !== null && progress > 0 && ` — ${progress}%`}
           </p>
@@ -2608,6 +2710,11 @@ function SharedDriveCard({
 export default function Drive() {
   const { toggle: toggleSidebar } = useSidebar()
   const { data: stamps } = useStamps()
+  const { data: wallet } = useWallet()
+  const navigate = useNavigate()
+  // Setup finishes on xDAI alone, but a drive needs xBZZ (R6-4): say so up
+  // front instead of letting "New drive" fail.
+  const noBzz = wallet !== undefined && BigInt(wallet.bzzBalance || '0') === BigInt(0)
   const { data: reclaimableData } = useReclaimableDrives()
   const {
     records,
@@ -2843,6 +2950,9 @@ export default function Drive() {
 
   const activeDrive = activeDriveId ? allStamps.find(s => s.batchID === activeDriveId) : null
   const driveRecords = activeDriveId ? records.filter(r => r.driveId === activeDriveId) : []
+  // Uploads still in their first step (R5-2): shown as rows in their drive
+  // until the upload's record takes over. Select the stable list, filter below.
+  const allTransfers = useTransfersStore(state => state.transfers)
 
   const updatingRecord = records.find(r => r.id === updatingId)
   // Search the unfiltered stamp list: Extend must also work for reclaimable
@@ -2982,16 +3092,28 @@ export default function Drive() {
             <div>
               <p className="text-sm font-medium">No drives yet</p>
               <p className="text-xs mt-1" style={{ color: 'rgb(var(--fg-muted))' }}>
-                Create a drive to start storing files.
+                {noBzz
+                  ? 'Add xBZZ to your node wallet to create your first drive — it pays for the storage.'
+                  : 'Create a drive to start storing files.'}
               </p>
             </div>
-            <button
-              onClick={() => setShowBuyModal(true)}
-              className="mt-2 px-4 py-2 rounded-lg text-sm font-semibold"
-              style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
-            >
-              New drive
-            </button>
+            {noBzz ? (
+              <button
+                onClick={() => navigate('/account?tab=wallet')}
+                className="mt-2 px-4 py-2 rounded-lg text-sm font-semibold"
+                style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
+              >
+                Open wallet
+              </button>
+            ) : (
+              <button
+                onClick={() => setShowBuyModal(true)}
+                className="mt-2 px-4 py-2 rounded-lg text-sm font-semibold"
+                style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
+              >
+                New drive
+              </button>
+            )}
           </div>
         ) : (
           /* Drive list */
@@ -3359,6 +3481,14 @@ export default function Drive() {
   const visibleRecords = openFolderId
     ? driveRecords.filter(r => r.folderId === openFolderId)
     : driveRecords.filter(r => !r.folderId)
+  const pendingUploads = allTransfers.filter(
+    t =>
+      t.id.startsWith('up:') &&
+      t.driveId === activeDriveId &&
+      !t.recordId &&
+      t.status !== 'done' &&
+      (t.folderId ?? null) === (openFolderId ?? null),
+  )
 
   return (
     <div className="p-6">
@@ -3532,6 +3662,7 @@ export default function Drive() {
           onWrapperRef={ref => {
             driveMetadata.update(activeDriveId, { lastWrapperRef: ref })
           }}
+          folderId={openFolderId ?? undefined}
         />
       )}
 
@@ -3630,6 +3761,16 @@ export default function Drive() {
         </div>
       )}
 
+      {/* Uploads still in their first step (R5-2) — same row treatment as
+          a record that is storing on the network. */}
+      {pendingUploads.length > 0 && (
+        <div className="divide-y" style={{ borderColor: 'rgb(var(--border))' }}>
+          {pendingUploads.map(t => (
+            <PendingUploadRow key={t.id} transfer={t} />
+          ))}
+        </div>
+      )}
+
       {/* File list */}
       {visibleRecords.length > 0 ? (
         <div
@@ -3656,7 +3797,7 @@ export default function Drive() {
             <RecordRow key={record.id} record={record} liveExpiresAt={liveExpiresAt(record)} {...commonRowProps} />
           ))}
         </div>
-      ) : visibleFolders.length === 0 && !addingFile && !creatingFolder ? (
+      ) : visibleFolders.length === 0 && pendingUploads.length === 0 && !addingFile && !creatingFolder ? (
         openFolderId ? (
           <div
             className="rounded-lg border-2 border-dashed px-4 py-10 text-center"

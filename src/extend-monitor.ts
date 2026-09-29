@@ -2,6 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from 'fs'
 
 import { readConfigYaml } from './config'
 import { fetchWithTimeout } from './fetch-timeout'
+import { isOwnBee } from './foreign-bee'
 import { logger } from './logger'
 import { pushNotification } from './notifications'
 import { getPath } from './path'
@@ -422,6 +423,13 @@ async function checkOneBatch(
     const fresh = await readTtl(beeFetch, batchId)
 
     if (fresh === 'gone' || fresh === null || !shouldExtend(entry, fresh.ttl)) return BigInt(0)
+
+    // R5-11: never pay from a node that isn't provably Nook's own.
+    if (!(await isOwnBee())) {
+      logger.error(`auto-extend: ${batchId.slice(0, 8)} skipped — the node on port 1633 is not Nook’s own`)
+
+      return BigInt(0)
+    }
 
     // Chain transaction — generous timeout, mined before Bee responds.
     const topup = await beeFetch(`/stamps/topup/${batchId}/${amount.toString()}`, { method: 'PATCH' }, 180_000)

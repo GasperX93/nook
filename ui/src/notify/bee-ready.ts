@@ -10,7 +10,7 @@
  * Gating sends on /readiness === 'ready' holds the message until the node can
  * actually deliver it.
  */
-import { beeApi } from '../api/bee'
+import { api } from '../api/client'
 
 export async function waitForBeeReady(opts: { timeoutMs?: number; intervalMs?: number } = {}): Promise<boolean> {
   const timeoutMs = opts.timeoutMs ?? 20_000
@@ -19,9 +19,10 @@ export async function waitForBeeReady(opts: { timeoutMs?: number; intervalMs?: n
 
   for (;;) {
     try {
-      const r = await beeApi.readiness()
-
-      if (r?.status === 'ready') return true
+      // Through Nook's backend, which always answers 200 — Bee's own
+      // /readiness answers 400 while warming up, and the browser logs every
+      // one as a console error during minutes of polling (R5-15).
+      if ((await api.getBeeReadiness()).ready) return true
     } catch {
       // starting / not reachable yet — keep waiting
     }

@@ -8,6 +8,7 @@ import {
   useConfig,
   useInfo,
   usePeers,
+  useRestart,
   useStamps,
   useTopology,
   useUpdateConfig,
@@ -21,7 +22,18 @@ import { useAppStore } from '../store/app'
 
 type SettingsTab = 'general' | 'network'
 
-const DEFAULT_RPC = 'https://rpc.gnosischain.com'
+/**
+ * The backend RPC relay Bee points at in "automatic" mode (src/rpc-endpoints.ts
+ * RPC_RELAY_URL): a public RPC with an automatic backup (R5-3/R5-14). Any
+ * other URL is the user's own — even one Nook once used as its default: the
+ * backend moves those to the relay once at startup, so one still in the
+ * config was chosen here (R6-1).
+ */
+const RPC_RELAY_URL = 'http://127.0.0.1:3054/rpc'
+
+function isAutomaticRpc(value: unknown): boolean {
+  return typeof value !== 'string' || value === '' || value === RPC_RELAY_URL
+}
 
 export default function Settings() {
   const [searchParams] = useSearchParams()
@@ -47,7 +59,11 @@ export default function Settings() {
   const { data: topology } = useTopology()
   const { data: addresses } = useAddresses()
 
+  const [rpcMode, setRpcMode] = useState<'automatic' | 'custom'>('automatic')
   const [rpcDraft, setRpcDraft] = useState('')
+  const [rpcError, setRpcError] = useState<string | null>(null)
+  const [rpcNeedsRestart, setRpcNeedsRestart] = useState(false)
+  const restart = useRestart()
   const { data: stamps, refetch: refetchStamps } = useStamps()
 
   // A reserve bought while this page is open should appear without a manual
@@ -97,27 +113,45 @@ export default function Settings() {
     void setAutoRenew(next)
   }
 
-  const [rpcSaved, setRpcSaved] = useState(false)
-
   const { devMode, setDevMode, theme, setTheme, notificationSound, setNotificationSound } = useAppStore()
+
+  // Before funding (ultra-light) Bee deliberately has no RPC configured —
+  // Nook's funding monitor uses the automatic connection and sets Bee up when
+  // it switches to light mode — so the choice is only offered once funded.
+  const nodeFunded = config?.['swap-enable'] === true || config?.['swap-enable'] === 'true'
+  const savedRpc = config?.['blockchain-rpc-endpoint']
+  const savedMode: 'automatic' | 'custom' = isAutomaticRpc(savedRpc) ? 'automatic' : 'custom'
 
   useEffect(() => {
     if (config) {
-      setRpcDraft((config['blockchain-rpc-endpoint'] as string | undefined) ?? DEFAULT_RPC)
+      setRpcMode(savedMode)
+      setRpcDraft(savedMode === 'custom' ? (savedRpc as string) : '')
     }
+    // eslint-disable-next-line
   }, [config])
+
+  const rpcChanged =
+    rpcMode !== savedMode || (rpcMode === 'custom' && rpcDraft.trim() !== ((savedRpc as string | undefined) ?? ''))
 
   function saveRpc() {
     if (!config) return
-    const url = rpcDraft.trim() || DEFAULT_RPC
-    setRpcDraft(url)
+    setRpcError(null)
+    let url = RPC_RELAY_URL
+
+    if (rpcMode === 'custom') {
+      url = rpcDraft.trim()
+
+      if (!/^https?:\/\/\S+$/i.test(url)) {
+        setRpcError('Enter a full address starting with https:// (or http://)')
+
+        return
+      }
+    }
     updateConfig.mutate(
       { ...config, 'blockchain-rpc-endpoint': url },
       {
-        onSuccess: () => {
-          setRpcSaved(true)
-          setTimeout(() => setRpcSaved(false), 2000)
-        },
+        onSuccess: () => setRpcNeedsRestart(true),
+        onError: () => setRpcError("Couldn't save — is Nook's background service running?"),
       },
     )
   }
@@ -257,14 +291,15 @@ export default function Settings() {
             </Button>
           </div>
 
-          {/* Blockchain RPC URL */}
+          {/* Blockchain connection (R5-3/R5-14): automatic = public RPC with
+              an automatic backup via Nook's relay; custom = the user's own. */}
           <div className="rounded-xl border p-5 space-y-4" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
             <div>
               <p className="text-sm mb-1" style={{ color: 'rgb(var(--fg-muted))' }}>
-                Blockchain RPC URL
+                Blockchain connection (RPC)
               </p>
               <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-                Gnosis Chain RPC endpoint used for wallet and swap.
+                How your node reaches Gnosis Chain — for storage purchases, payments to other nodes and your wallet.
               </p>
             </div>
             {isLoading ? (
@@ -275,23 +310,84 @@ export default function Settings() {
               <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
                 Nook backend not available.
               </p>
+            ) : !nodeFunded ? (
+              <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Nook uses the automatic connection until your node wallet is funded. You can choose your own after that.
+              </p>
             ) : (
-              <div className="flex gap-3">
-                <Input
-                  value={rpcDraft}
-                  onChange={e => setRpcDraft(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && saveRpc()}
-                  placeholder={DEFAULT_RPC}
-                  className="font-mono text-xs"
-                />
-                <Button
-                  onClick={saveRpc}
-                  disabled={updateConfig.isPending}
-                  variant={rpcSaved ? 'secondary' : 'default'}
-                  size="sm"
-                >
-                  {rpcSaved ? 'Saved' : 'Save'}
-                </Button>
+              <div className="space-y-3">
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="rpc-mode"
+                    className="mt-1"
+                    checked={rpcMode === 'automatic'}
+                    onChange={() => {
+                      setRpcMode('automatic')
+                      setRpcError(null)
+                    }}
+                  />
+                  <span>
+                    <span className="text-sm block">Automatic (recommended)</span>
+                    <span className="text-xs block" style={{ color: 'rgb(var(--fg-muted))' }}>
+                      A public connection, with an automatic backup when it's busy.
+                    </span>
+                  </span>
+                </label>
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="rpc-mode"
+                    className="mt-1"
+                    checked={rpcMode === 'custom'}
+                    onChange={() => {
+                      setRpcMode('custom')
+                      setRpcError(null)
+                    }}
+                  />
+                  <span className="flex-1 min-w-0">
+                    <span className="text-sm block">Your own RPC</span>
+                    <span className="text-xs block" style={{ color: 'rgb(var(--fg-muted))' }}>
+                      For example from a provider account. Nook uses it as-is, with no backup.
+                    </span>
+                  </span>
+                </label>
+                {rpcMode === 'custom' && (
+                  <Input
+                    value={rpcDraft}
+                    onChange={e => {
+                      setRpcDraft(e.target.value)
+                      setRpcError(null)
+                    }}
+                    onKeyDown={e => e.key === 'Enter' && saveRpc()}
+                    placeholder="https://…"
+                    className="font-mono text-xs"
+                    aria-label="Your RPC address"
+                  />
+                )}
+                {rpcError && (
+                  <p className="text-xs" style={{ color: '#ef4444' }}>
+                    {rpcError}
+                  </p>
+                )}
+                {rpcNeedsRestart && !rpcChanged ? (
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                      Saved — restart your node to use it.
+                    </p>
+                    <Button
+                      size="sm"
+                      onClick={() => restart.mutate(undefined, { onSuccess: () => setRpcNeedsRestart(false) })}
+                      disabled={restart.isPending}
+                    >
+                      {restart.isPending ? 'Restarting…' : 'Restart node'}
+                    </Button>
+                  </div>
+                ) : (
+                  <Button onClick={saveRpc} disabled={updateConfig.isPending || !rpcChanged} size="sm">
+                    Save
+                  </Button>
+                )}
               </div>
             )}
           </div>

@@ -13,6 +13,8 @@ jest.mock('../src/config', () => ({
 }))
 jest.mock('../src/notify', () => ({ createNotification: jest.fn() }))
 jest.mock('../src/funding-monitor', () => ({ getMode: jest.fn(() => 'light') }))
+// The node on 1633 is Nook's own in these tests (the R5-11 spending guard).
+jest.mock('../src/foreign-bee', () => ({ isOwnBee: jest.fn(async () => true) }))
 
 import { mkdirSync, rmSync } from 'fs'
 

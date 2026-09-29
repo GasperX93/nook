@@ -2,19 +2,43 @@ import type { NotifyProvider } from '@swarm-notify/sdk'
 import type { WalletClient } from 'viem'
 
 import { serverApi } from '../api/server'
-import { GNOSIS_RPC_URL, REGISTRY_ADDRESS } from './constants'
+import { GNOSIS_RPC_FALLBACK_URL, GNOSIS_RPC_URL, REGISTRY_ADDRESS } from './constants'
+
+/** Answers that mean "this endpoint can't serve it — try the other one" (same rules as src/rpc.ts). */
+const TRY_OTHER =
+  /rate.?limit|too many requests|limit exceeded|request limit|capacity|block range|range limit|range is too large|exceed maximum/i
 
 async function rpcCall<T>(method: string, params: unknown[]): Promise<T> {
-  const res = await fetch(GNOSIS_RPC_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
-  })
-  const json = (await res.json()) as { result?: T; error?: { message: string } }
+  const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method, params })
+  const endpoints = [GNOSIS_RPC_URL, GNOSIS_RPC_FALLBACK_URL]
+  let lastError: Error | null = null
 
-  if (json.error) throw new Error(`Gnosis RPC ${method} failed: ${json.error.message}`)
+  for (const url of endpoints) {
+    try {
+      const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body })
 
-  return json.result as T
+      if (res.status === 429 || res.status >= 500) {
+        lastError = new Error(`Gnosis RPC ${method} failed: HTTP ${res.status}`)
+        continue
+      }
+      const json = (await res.json()) as { result?: T; error?: { code?: number; message: string } }
+
+      if (json.error) {
+        lastError = new Error(`Gnosis RPC ${method} failed: ${json.error.message}`)
+
+        if (json.error.code === -32005 || TRY_OTHER.test(json.error.message)) continue
+        throw lastError
+      }
+
+      return json.result as T
+    } catch (error) {
+      // Network failure → try the other endpoint; a real RPC error → rethrow.
+      if (error === lastError) throw error
+      lastError = error as Error
+    }
+  }
+
+  throw lastError ?? new Error(`Gnosis RPC ${method} failed`)
 }
 
 const toHex = (n: number) => `0x${n.toString(16)}`

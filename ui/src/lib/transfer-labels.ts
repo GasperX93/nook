@@ -20,3 +20,6 @@ export const UPLOAD_STEP_NETWORK = 'Step 2 of 2 · Storing on the Swarm network'
 
 /** Encrypted uploads are pushed straight to the network — one step, no local stage. */
 export const UPLOAD_ENCRYPTED = 'Encrypting & storing on the network…'
+
+/** An upload waiting for a stopped or restarting Bee node (R6-3) — it resumes by itself. */
+export const UPLOAD_PAUSED = 'Paused — waiting for your node'

@@ -28,6 +28,15 @@ export interface TransferEntry {
   chunksDone?: number
   chunksTotal?: number
   status: 'active' | 'done' | 'failed'
+  /** Bee is stopped or not ready yet: nothing moves until it's back (R6-3). */
+  paused?: boolean
+  /** Short verb for compact places (sidebar): 'Copying' / 'Encrypting' / 'Storing'. Default by kind. */
+  label?: string
+  /** Uploads started from a drive (R5-2): shown as an in-progress row in that drive/folder. */
+  bytes?: number
+  folderId?: string
+  /** Set once the upload's record exists — the real row takes over from the in-progress one. */
+  recordId?: string
   startedAt: number
   /** Rolling [timestampMs, chunksDone] samples for the rate/ETA estimate. */
   samples: [number, number][]
@@ -35,8 +44,13 @@ export interface TransferEntry {
 
 interface TransfersState {
   transfers: TransferEntry[]
-  begin: (t: Pick<TransferEntry, 'id' | 'kind' | 'name'> & Partial<Pick<TransferEntry, 'driveId' | 'phase'>>) => void
-  update: (id: string, changes: Partial<Pick<TransferEntry, 'phase' | 'pct'>>) => void
+  begin: (
+    t: Pick<TransferEntry, 'id' | 'kind' | 'name'> &
+      Partial<Pick<TransferEntry, 'driveId' | 'phase' | 'label' | 'bytes' | 'folderId'>>,
+  ) => void
+  update: (id: string, changes: Partial<Pick<TransferEntry, 'phase' | 'pct' | 'label' | 'recordId' | 'paused'>>) => void
+  /** Drop an entry at once (no "done" linger) — e.g. when a follow-up entry takes over. */
+  remove: (id: string) => void
   /** Progress in chunks — also feeds the rate samples for the ETA. */
   chunkProgress: (id: string, done: number, total: number) => void
   finish: (id: string, status?: 'done' | 'failed') => void
@@ -76,6 +90,8 @@ export const useTransfersStore = create<TransfersState>((set, get) => ({
       }),
     })),
 
+  remove: id => set(state => ({ transfers: state.transfers.filter(t => t.id !== id) })),
+
   finish: (id, status = 'done') => {
     set(state => ({ transfers: state.transfers.map(t => (t.id === id ? { ...t, status, pct: 100 } : t)) }))
     // Linger briefly so "done" is visible, then drop the entry.
@@ -92,7 +108,7 @@ export const useTransfersStore = create<TransfersState>((set, get) => ({
  * rate collapses (the stall path owns that story).
  */
 export function etaText(t: TransferEntry): string | null {
-  if (t.chunksTotal === undefined || t.chunksDone === undefined || t.samples.length < 2) return null
+  if (t.paused || t.chunksTotal === undefined || t.chunksDone === undefined || t.samples.length < 2) return null
   const [firstTs, firstDone] = t.samples[0]
   const [lastTs, lastDone] = t.samples[t.samples.length - 1]
   const spanMs = lastTs - firstTs
@@ -164,13 +180,15 @@ export async function followTagPropagation(
   try {
     const { complete, tag } = await waitForTagPropagation(tagUid, onPct, {
       onTag: t => useTransfersStore.getState().chunkProgress(id, t.seen + t.synced, t.split),
+      onWaiting: paused => useTransfersStore.getState().update(id, { paused }),
     })
 
     if (complete) {
       markPropagated(id, tagUid, name, driveId)
     } else {
-      useTransfersStore.getState().update(id, { phase: 'Still storing in the background…' })
-      useTransfersStore.getState().finish(id)
+      // Not "done": the row keeps its "Storing" state and the resume loop
+      // follows it again — a green "Stored" here would contradict both.
+      useTransfersStore.getState().remove(id)
       scheduleResume()
     }
 
