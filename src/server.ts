@@ -7,19 +7,31 @@ import koaBodyparser from 'koa-bodyparser'
 import mount from 'koa-mount'
 import serve from 'koa-static'
 import * as path from 'path'
+import { Readable } from 'stream'
 
 import { ethers } from 'ethers'
 
 import PACKAGE_JSON from '../package.json'
 import { getApiKey } from './api-key'
-import { redeemGiftCode, sendBzzTransaction, sendNativeTransaction } from './blockchain'
+import {
+  friendlyChainError,
+  BATCH_CREATE_GAS_LIMIT,
+  isNotifyCalldata,
+  redeemGiftCode,
+  sendBzzTransaction,
+  sendNativeTransaction,
+  sendRegistryNotification,
+} from './blockchain'
 import { clearIdentityCache, isIdentityCacheAvailable, readIdentityCache, writeIdentityCache } from './identity-cache'
 import { readConfigYaml, readWalletPasswordOrThrow, writeConfigYaml } from './config'
+import { getForeignBee } from './foreign-bee'
+import { checkFundingNow } from './funding-monitor'
 import { runLauncher } from './launcher'
 import { BeeManager } from './lifecycle'
 import { logger, readNookLogs, readBeeLogs, subscribeLogServerRequests } from './logger'
 import { getPath } from './path'
 import { port } from './port'
+import { nookRpcUrl, rpcRelayMiddleware } from './rpc'
 import {
   MIN_RECLAIMABLE_DEPTH,
   RECLAIMABLE_WRITE_BLOCKED_MESSAGE,
@@ -29,6 +41,7 @@ import {
 } from './reclaimable-registry'
 import {
   addFileToStage,
+  EmptyUploadError,
   assignFileToFolder,
   commitUploadStage,
   createReclaimableFolder,
@@ -39,12 +52,24 @@ import {
   getUploadJob,
   listReclaimableDrives,
   removeExpiredDrive,
+  renameReclaimableFolder,
   startUpload,
 } from './reclaimable'
+import { getAutoExtendSettings, setAutoExtendSetting } from './extend-monitor'
+import {
+  dismissNotification,
+  loadNotifications,
+  markNotificationsRead,
+  type NotificationType,
+  pushNotification,
+} from './notifications'
+import { getUpdateInfo } from './update-checker'
+import { runSystemStampCheck } from './system-stamp'
+import { purchaseCostPlur, recordPurchase } from './purchases'
+import { getWalletActivity } from './wallet-activity'
 import { getStatus } from './status'
 import { resetCrashLoop } from './supervisor'
 import { fetchWithTimeout } from './fetch-timeout'
-import { swap } from './swap'
 
 const UI_DIST = path.join(__dirname, '..', '..', 'ui')
 
@@ -78,6 +103,13 @@ function friendlyBatchCreationError(error: unknown): string {
     return 'Your node is still starting up. Please wait a moment and try again.'
   }
 
+  // Bee's generic 500 for a purchase that failed on-chain (R4-6: e.g. out of
+  // gas while the network cleaned up expired batches). Bee returns it for
+  // several failure points, so don't promise what was or wasn't charged.
+  if (beeMessage.toLowerCase().includes('cannot create batch')) {
+    return 'The purchase failed on the network — this can happen when the network is busy. Check your balance on the Wallet page, then try again.'
+  }
+
   return 'Failed to create drive. Please try again.'
 }
 
@@ -99,6 +131,10 @@ export function runServer() {
   })
   app.use(mount('/dashboard', serve(UI_DIST)))
 
+  // Gnosis RPC relay with automatic fallback (R5-3/R5-14) — Bee's
+  // blockchain-rpc-endpoint points here. Before bodyparser: raw body.
+  app.use(rpcRelayMiddleware)
+
   // Pass-through proxy: /bee-api/* → http://127.0.0.1:1633/*
   // Mirrors the Vite dev proxy so renderer code can use `${origin}/bee-api`
   // unchanged in both dev (Vite, port 3002) and prod (Koa, port 3054). Without
@@ -111,6 +147,16 @@ export function runServer() {
       return
     }
     const beePath = context.path.replace(/^\/bee-api/, '')
+
+    // Another node holds Nook's ports (R5-11): the dashboard's background work
+    // (identity auto-publish, message sends, inbox reads) must not run against
+    // it — a republish would pin the user's identity to that node's key.
+    if (getForeignBee()) {
+      context.status = 503
+      context.body = { message: 'Another Bee node is using Nook’s ports — Nook is not talking to it' }
+
+      return
+    }
 
     // Reclaimable-drive batches are stamped client-side against a local slot
     // ledger; a Bee-stamped write to one allocates slots the ledger can't see
@@ -129,29 +175,38 @@ export function runServer() {
     for (const [k, v] of Object.entries(context.headers)) {
       if (typeof v === 'string') headers[k.toLowerCase()] = v
     }
-    // Strip headers Koa / fetch will recompute or that confuse Bee
+    // Strip headers Koa / fetch will recompute or that confuse Bee.
     delete headers.host
     delete headers['content-length']
     delete headers.connection
     delete headers['accept-encoding']
+    // undici refuses requests carrying Expect (curl adds '100-continue' on
+    // large bodies) — browsers never send it, CLI clients always do.
+    delete headers.expect
     const hasBody = ['POST', 'PUT', 'PATCH'].includes(context.method)
-    // Buffer the request body — avoids edge cases with streaming + duplex: 'half'
-    let body: Uint8Array | undefined
 
-    if (hasBody) {
-      const chunks: Buffer[] = []
+    // STREAM both directions (big-file findings, 2026-09-21): buffering the
+    // whole body peaked at ~3.5× the file size in RSS and hit a hard
+    // RangeError wall at 2GB (`new Uint8Array` allocation), while Bee itself
+    // ingests 2GB happily. Streaming keeps memory flat regardless of size.
+    const body = hasBody ? (Readable.toWeb(context.req) as unknown as BodyInit) : undefined
 
-      for await (const chunk of context.req) chunks.push(chunk as Buffer)
-      body = chunks.length > 0 ? new Uint8Array(Buffer.concat(chunks)) : undefined
-    }
+    // Long deadline for content transfers (a 5-minute cap killed a stalled
+    // 100MB download and would kill any big upload on a home uplink); short
+    // for control-plane calls, so nothing hangs forever (#94).
+    const isTransfer = /^\/(bzz|bytes|chunks|soc)\b/.test(beePath)
+    const timeoutMs = isTransfer ? 60 * 60_000 : 5 * 60_000
 
     try {
-      // Generous deadline: uploads/downloads through the proxy can be large,
-      // but nothing should hang forever (#94).
       const res = await fetchWithTimeout(
         url,
-        { method: context.method, headers, body: body as BodyInit | undefined },
-        5 * 60_000,
+        {
+          method: context.method,
+          headers,
+          body,
+          ...(hasBody ? { duplex: 'half' } : {}),
+        } as RequestInit,
+        timeoutMs,
       )
 
       context.status = res.status
@@ -168,9 +223,12 @@ export function runServer() {
         if (key.startsWith('access-control-')) return
         context.set(key, value)
       })
-      // Buffer response too — Bee API responses are small enough and this
-      // avoids Web Stream / Node Stream conversion issues
-      context.body = Buffer.from(await res.arrayBuffer())
+      // Stream the response back — Koa serves Node Readables natively.
+      context.body = res.body ? Readable.fromWeb(res.body as Parameters<typeof Readable.fromWeb>[0]) : null
+
+      // #139: a successful topup through the proxy moved BZZ on-chain —
+      // record it (fire-and-forget) so the Activity list can name the drive.
+      if (res.status < 300) void observeProxiedTopup(context.method, beePath)
     } catch (e) {
       logger.error(`bee-api proxy failed for ${url}: ${(e as Error).message}`)
       context.status = 502
@@ -220,6 +278,27 @@ export function runServer() {
   // Authenticated endpoints
   router.get('/status', context => {
     context.body = getStatus()
+  })
+
+  // Onboarding's "I've sent funds — check now" (R5-15): run the funding
+  // monitor's balance check immediately — the check that actually decides
+  // the step — instead of waiting for its next 15 s poll.
+  router.post('/funding/check', async context => {
+    context.body = await checkFundingNow()
+  })
+
+  // Bee readiness, always answered 200 (R5-15): Bee itself answers 400 while
+  // it warms up / re-syncs, and the browser prints every one of those as a
+  // red console error when the dashboard polls it directly for minutes.
+  router.get('/bee-readiness', async context => {
+    try {
+      const res = await fetchWithTimeout('http://127.0.0.1:1633/readiness', {}, 5_000)
+      const json = (await res.json().catch(() => ({}))) as { status?: string }
+
+      context.body = { ready: res.ok && json.status === 'ready' }
+    } catch {
+      context.body = { ready: false }
+    }
   })
   router.get('/identity-cache', context => {
     context.body = {
@@ -293,9 +372,7 @@ export function runServer() {
 
       return
     }
-    const config = readConfigYaml()
-    const blockchainRpcEndpoint =
-      (Reflect.get(config, 'blockchain-rpc-endpoint') as string) || 'https://rpc.gnosischain.com'
+    const blockchainRpcEndpoint = nookRpcUrl()
     try {
       const { ethereum: nodeAddress } = await makeBee().getNodeAddresses()
       await redeemGiftCode(giftCode, nodeAddress.toString(), blockchainRpcEndpoint)
@@ -303,7 +380,7 @@ export function runServer() {
     } catch (error) {
       logger.error(error)
       const msg = (error as Error).message ?? ''
-      let friendly = 'Failed to redeem gift code'
+      let friendly = friendlyChainError(msg) ?? 'Failed to redeem gift code'
 
       if (msg.includes('REPLACEMENT_UNDERPRICED') || msg.includes('replacement transaction underpriced')) {
         friendly = 'A previous transaction is still pending. Please wait a moment and try again.'
@@ -311,7 +388,7 @@ export function runServer() {
         friendly = 'A previous transaction just completed. Please try again.'
       } else if (msg.includes('INSUFFICIENT_FUNDS') || msg.includes('insufficient funds')) {
         friendly = 'Gift wallet has insufficient funds to cover gas fees.'
-      } else if (msg) {
+      } else if (msg && !friendlyChainError(msg)) {
         friendly = msg
       }
       context.status = 500
@@ -342,7 +419,7 @@ export function runServer() {
       logger.error(error)
       context.status = 500
       context.body = {
-        message: 'Could not publish the feed update. Check that your stamp has storage left and try again.',
+        message: 'Could not update the permanent address. Check that the drive has space left and try again.',
       }
     }
   })
@@ -418,7 +495,19 @@ export function runServer() {
     }
 
     try {
-      const batchID = await makeBee().createPostageBatch(amount, depth, { immutableFlag: Boolean(immutable), label })
+      const batchID = await makeBee().createPostageBatch(
+        amount,
+        depth,
+        { immutableFlag: Boolean(immutable), label },
+        { headers: { 'Gas-Limit': BATCH_CREATE_GAS_LIMIT } },
+      )
+
+      recordPurchase({
+        kind: 'create',
+        batchId: batchID.toString(),
+        label,
+        amountPlur: purchaseCostPlur(amount, depth),
+      })
       context.body = { batchID: batchID.toString() }
     } catch (error) {
       logger.error(error)
@@ -459,7 +548,16 @@ export function runServer() {
     try {
       // Always immutable: slot reuse works there (spike-verified) and it
       // matches the default drive type everywhere else in Nook.
-      const batchID = (await makeBee().createPostageBatch(amount, depth, { immutableFlag: true, label })).toString()
+      const batchID = (
+        await makeBee().createPostageBatch(
+          amount,
+          depth,
+          { immutableFlag: true, label },
+          { headers: { 'Gas-Limit': BATCH_CREATE_GAS_LIMIT } },
+        )
+      ).toString()
+
+      recordPurchase({ kind: 'create', batchId: batchID, label, amountPlur: purchaseCostPlur(amount, depth) })
       registerReclaimableBatch({
         batchId: batchID,
         depth,
@@ -479,6 +577,100 @@ export function runServer() {
     context.body = { drives: await listReclaimableDrives() }
   })
 
+  // ─── Wallet activity (#139) — audit surface for automatic spending ────────
+  router.get('/wallet-activity', async context => {
+    context.body = await getWalletActivity(undefined, undefined, { fresh: context.query.fresh === '1' })
+  })
+
+  // ─── Notifications (#138) — the bell's event feed ─────────────────────────
+  // Update availability (phase 1): the Settings row renders from this.
+  router.get('/update', context => {
+    context.body = getUpdateInfo()
+  })
+
+  // Manual reserve creation (#13): the banner's "Create it now" — runs the
+  // same guarded purchase pass the monitor uses (light mode, chain synced,
+  // no existing batch, funds cover cost), immediately instead of on the next
+  // 60s tick. Safe to spam: every guard re-checks server-side.
+  router.post('/system-stamp/create', async context => {
+    const result = await runSystemStampCheck()
+
+    context.body = { result, created: result === 'bought' }
+  })
+
+  router.get('/notifications', context => {
+    // Dismissed events stay in the store (the Activity list labels from
+    // them) but are the user's "done with this" — the panel never re-shows.
+    context.body = { notifications: loadNotifications().filter(n => n.dismissedAt === undefined) }
+  })
+
+  router.post('/notifications/read', context => {
+    const { ids } = (context.request.body ?? {}) as { ids?: string[] }
+
+    context.body = { marked: markNotificationsRead(Array.isArray(ids) ? ids : undefined) }
+  })
+
+  router.post('/notifications/dismiss', context => {
+    const { id } = (context.request.body ?? {}) as { id?: string }
+
+    if (typeof id !== 'string' || !id) {
+      context.status = 400
+      context.body = { message: 'id is required' }
+
+      return
+    }
+    context.body = { dismissed: dismissNotification(id) }
+  })
+
+  // Client-created events (future types like connection requests) join the
+  // same permanent feed. Desktop firing stays a server-side decision.
+  router.post('/notifications', context => {
+    const { type, title, body, link, data } = (context.request.body ?? {}) as Record<string, unknown>
+
+    if (typeof type !== 'string' || typeof title !== 'string' || typeof body !== 'string') {
+      context.status = 400
+      context.body = { message: 'type, title and body are required' }
+
+      return
+    }
+    try {
+      context.body = {
+        notification: pushNotification({
+          type: type as NotificationType,
+          title,
+          body,
+          link: typeof link === 'string' ? link : undefined,
+          data: typeof data === 'object' && data !== null ? (data as Record<string, string | number>) : undefined,
+        }),
+      }
+    } catch (error) {
+      context.status = 400
+      context.body = { message: String((error as Error).message ?? error) }
+    }
+  })
+
+  // ─── Auto-extend (#129) — per-drive settings for the extend monitor ───────
+  router.get('/auto-extend', context => {
+    context.body = { settings: getAutoExtendSettings() }
+  })
+
+  router.put('/auto-extend/:batch', context => {
+    const { enabled, months } = (context.request.body ?? {}) as { enabled?: boolean; months?: number }
+
+    if (typeof enabled !== 'boolean' || typeof months !== 'number') {
+      context.status = 400
+      context.body = { message: 'enabled (boolean) and months (number) are required' }
+
+      return
+    }
+    try {
+      context.body = { entry: setAutoExtendSetting(context.params.batch, enabled, months) }
+    } catch (error) {
+      context.status = 400
+      context.body = { message: String((error as Error).message ?? error) }
+    }
+  })
+
   // Raw octet-stream body (bodyparser ignores it, so the stream is intact);
   // file name travels in the query. Returns a job id immediately — the upload
   // pushes every chunk directly (receipt-backed), and the UI polls the job for
@@ -493,22 +685,19 @@ export function runServer() {
       return
     }
 
-    const chunks: Buffer[] = []
-
-    for await (const chunk of context.req) chunks.push(chunk as Buffer)
-
-    if (chunks.length === 0) {
-      context.status = 400
-      context.body = { message: 'request body is required' }
-
-      return
-    }
-
     try {
-      const job = await startUpload(context.params.batch, fileName, Buffer.concat(chunks))
+      // Streamed straight to disk — a multi-GB file must not sit in memory.
+      const job = await startUpload(context.params.batch, fileName, context.req)
       context.body = { uploadId: job.id }
     } catch (error) {
       logger.error(error)
+
+      if (error instanceof EmptyUploadError) {
+        context.status = 400
+        context.body = { message: error.message }
+
+        return
+      }
 
       if (error instanceof ExpiredDriveError) {
         context.status = 410
@@ -550,12 +739,8 @@ export function runServer() {
       return
     }
 
-    const chunks: Buffer[] = []
-
-    for await (const chunk of context.req) chunks.push(chunk as Buffer)
-
     try {
-      context.body = addFileToStage(context.params.id, relPath, Buffer.concat(chunks))
+      context.body = await addFileToStage(context.params.id, relPath, context.req)
     } catch (error) {
       logger.error(error)
       context.status = 400
@@ -611,6 +796,25 @@ export function runServer() {
       logger.error(error)
       context.status = 404
       context.body = { message: 'Not a reclaimable drive' }
+    }
+  })
+
+  router.patch('/reclaimable/:batch/folders/:id', context => {
+    const { name } = context.request.body as { name?: string }
+
+    if (!name?.trim()) {
+      context.status = 400
+      context.body = { message: 'name is required' }
+
+      return
+    }
+    try {
+      context.body = renameReclaimableFolder(context.params.batch, context.params.id, name)
+    } catch (error) {
+      logger.error(error)
+      const message = String((error as Error).message ?? error)
+      context.status = message === 'Unknown folder' ? 404 : 400
+      context.body = { message }
     }
   })
 
@@ -774,11 +978,20 @@ export function runServer() {
         return
       }
 
-      const buffer = await response.arrayBuffer()
+      // STREAM (#18): buffering the whole file here meant a silent multi-GB
+      // wait (and matching RSS) before the browser saw byte one. Forward
+      // content-length so the client can render real progress.
       const contentType = response.headers.get('content-type')
+      const contentLength = response.headers.get('content-length')
+      const disposition = response.headers.get('content-disposition')
 
       if (contentType) context.type = contentType
-      context.body = Buffer.from(buffer)
+
+      if (contentLength) context.set('Content-Length', contentLength)
+
+      if (disposition) context.set('Content-Disposition', disposition)
+      context.status = 200
+      context.body = response.body ? Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]) : null
     } catch (error) {
       logger.error(error)
       context.status = 500
@@ -891,6 +1104,44 @@ export function runServer() {
     }
   })
 
+  // First-contact ping (swarm-notify registry) paid by the node wallet, so
+  // messaging needs no external wallet. Destination is fixed server-side and
+  // only notify(bytes32,bytes) calldata is accepted — this route can never
+  // make the node key sign anything else.
+  router.post('/notify-ping', async context => {
+    const { data } = context.request.body as { data?: unknown }
+
+    if (!isNotifyCalldata(data)) {
+      context.status = 400
+      context.body = { message: 'Not a registry notify call' }
+
+      return
+    }
+    const blockchainRpcEndpoint = nookRpcUrl()
+    const privateKeyString = await getPrivateKey()
+
+    try {
+      const { transaction } = await sendRegistryNotification(privateKeyString, data, blockchainRpcEndpoint)
+
+      context.body = { success: true, txHash: transaction.hash }
+    } catch (error) {
+      logger.error(error)
+      const code = (error as { code?: string })?.code
+      const message = String((error as { message?: string })?.message ?? error)
+
+      if (code === 'INSUFFICIENT_FUNDS' || /insufficient funds/i.test(message)) {
+        context.status = 402
+        context.body = {
+          message: 'Your node wallet needs a little xDAI to notify new contacts — add some on the Wallet page.',
+        }
+
+        return
+      }
+      context.status = 500
+      context.body = { message: 'Could not send the notification on Gnosis Chain — try again in a moment.' }
+    }
+  })
+
   router.post('/withdraw', async context => {
     const { token, amount, to } = context.request.body as { token: string; amount: string; to: string }
 
@@ -907,10 +1158,7 @@ export function runServer() {
 
       return
     }
-
-    const config = readConfigYaml()
-    const blockchainRpcEndpoint =
-      (Reflect.get(config, 'blockchain-rpc-endpoint') as string) || 'https://rpc.gnosischain.com'
+    const blockchainRpcEndpoint = nookRpcUrl()
     const privateKeyString = await getPrivateKey()
 
     try {
@@ -923,7 +1171,7 @@ export function runServer() {
     } catch (error) {
       logger.error(error)
       const msg = (error as Error).message ?? ''
-      let friendly = 'Withdraw failed'
+      let friendly = friendlyChainError(msg) ?? 'Withdraw failed'
 
       if (msg.includes('REPLACEMENT_UNDERPRICED') || msg.includes('replacement transaction underpriced')) {
         friendly = 'A previous transaction is still pending. Please wait a moment and try again.'
@@ -931,7 +1179,7 @@ export function runServer() {
         friendly = 'Insufficient funds to cover gas fees.'
       } else if (msg.includes('UNPREDICTABLE_GAS_LIMIT')) {
         friendly = 'Transaction failed — make sure no other Bee node is running on the same port.'
-      } else if (msg) {
+      } else if (msg && !friendlyChainError(msg)) {
         friendly = msg
       }
       context.status = 500
@@ -985,33 +1233,6 @@ export function runServer() {
     }
   })
 
-  router.post('/swap', async context => {
-    const config = readConfigYaml()
-    const blockchainRpcEndpoint =
-      (Reflect.get(config, 'blockchain-rpc-endpoint') as string) || 'https://rpc.gnosischain.com'
-    const privateKeyString = await getPrivateKey()
-    try {
-      await swap(privateKeyString, (context.request.body as Record<string, string>).dai, '10000', blockchainRpcEndpoint)
-      context.body = { success: true }
-    } catch (error) {
-      logger.error(error)
-      const msg = (error as Error).message ?? ''
-      let friendly = 'Failed to swap'
-
-      if (msg.includes('REPLACEMENT_UNDERPRICED') || msg.includes('replacement transaction underpriced')) {
-        friendly = 'A previous transaction is still pending. Please wait a moment and try again.'
-      } else if (msg.includes('INSUFFICIENT_FUNDS') || msg.includes('insufficient funds')) {
-        friendly = 'Insufficient funds to cover gas fees.'
-      } else if (msg.includes('UNPREDICTABLE_GAS_LIMIT')) {
-        friendly = 'Transaction failed — make sure no other Bee node is running on the same port.'
-      } else if (msg) {
-        friendly = msg
-      }
-      context.status = 500
-      context.body = { message: friendly }
-    }
-  })
-
   app.use(router.routes())
   app.use(router.allowedMethods())
   const server = app.listen(port.value)
@@ -1035,6 +1256,31 @@ async function createFeedUpdate(topicHex: string, referenceHex: string, stampId:
   const manifest = await bee.createFeedManifest(stampId, topicHex, wallet.address)
 
   return manifest.toString()
+}
+
+/**
+ * #139: manual "Extend duration" reaches Bee as PATCH /stamps/topup/{id}/{amount}
+ * through the /bee-api proxy (auto-extend calls Bee directly and records its
+ * own charge-executed event — no double counting). The batch lookup supplies
+ * the depth for the exact cost and the drive's current name.
+ */
+async function observeProxiedTopup(method: string, beePath: string): Promise<void> {
+  const match = method === 'PATCH' && /^\/stamps\/topup\/([0-9a-fA-F]{64})\/(\d+)$/.exec(beePath)
+
+  if (!match) return
+
+  try {
+    const batch = await makeBee().getPostageBatch(match[1])
+
+    recordPurchase({
+      kind: 'topup',
+      batchId: match[1],
+      label: batch.label || undefined,
+      amountPlur: purchaseCostPlur(match[2], batch.depth),
+    })
+  } catch (error) {
+    logger.info(`could not record topup for activity labels: ${error}`)
+  }
 }
 
 function makeBee(): Bee {

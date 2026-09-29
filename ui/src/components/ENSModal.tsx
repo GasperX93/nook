@@ -1,9 +1,11 @@
+import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { AlertTriangle, Check, ChevronDown, ExternalLink, Globe, RefreshCw, X } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { namehash } from 'viem'
 import { useAccount, usePublicClient, useSwitchChain, useWalletClient } from 'wagmi'
 import { getWalletClient } from '@wagmi/core'
 import { mainnet } from 'wagmi/chains'
+import { bzzLink } from '../lib/ens-gateway'
 import { wagmiConfig } from '../wagmi'
 import { Button } from './ui/button'
 
@@ -94,6 +96,7 @@ interface ENSModalProps {
 
 export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, currentDomain, onLinked }: ENSModalProps) {
   const { address, isConnected, chainId } = useAccount()
+  const { openConnectModal } = useConnectModal()
   // ENS lives on Ethereum mainnet — pin reads to mainnet's RPC so lookups work
   // regardless of which chain the wallet is connected to (e.g. Gnosis). The wallet
   // is only switched to mainnet at write time, in linkDomain().
@@ -203,6 +206,17 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
         args: [namehash(name), encoded],
       })
       setTxHash(tx)
+      // Sent is not linked: wait for the transaction to be mined, and only a
+      // successful receipt counts (a reverted setContenthash links nothing).
+      setState('pending')
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: tx })
+
+      if (receipt.status !== 'success') {
+        setError('The transaction failed on Ethereum — the domain was not linked. You can try again.')
+        setState('error')
+
+        return
+      }
       setState('success')
       onLinked(name)
     } catch (err) {
@@ -233,7 +247,7 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
     <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={onClose}>
       <div className="absolute inset-0 bg-black/60" />
       <div
-        className="relative rounded-xl border p-6 w-full max-w-md space-y-5"
+        className="relative rounded-xl border p-6 w-full max-w-md space-y-5 max-h-[calc(100vh-2rem)] max-w-[calc(100vw-2rem)] overflow-y-auto"
         style={{ backgroundColor: 'rgb(var(--bg-surface))', borderColor: 'rgb(var(--border))' }}
         onClick={e => e.stopPropagation()}
       >
@@ -248,11 +262,16 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
         </div>
 
         {/* Not connected */}
+        {/* ENS lives on Ethereum mainnet, paid with ETH — the one place Nook
+            still needs an external wallet (the node wallet only holds xDAI). */}
         {!isConnected && (
-          <div className="text-center py-6">
+          <div className="text-center py-6 space-y-3">
             <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-              Connect your wallet first using the button in the top bar.
+              Linking an ENS domain needs the Ethereum wallet that owns it.
             </p>
+            <Button size="sm" onClick={openConnectModal} disabled={!openConnectModal}>
+              Connect wallet
+            </Button>
           </div>
         )}
 
@@ -492,17 +511,23 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
                   {ensName}.limo
                   <ExternalLink size={10} />
                 </a>
-                <a
-                  href={`https://${ensName}.bzz.link`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1.5 text-xs font-medium transition-colors hover:underline"
-                  style={{ color: 'rgb(var(--accent))' }}
-                >
-                  <Globe size={12} />
-                  {ensName}.bzz.link
-                  <ExternalLink size={10} />
-                </a>
+                {bzzLink(ensName) && (
+                  <a
+                    href={bzzLink(ensName)!.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 text-xs font-medium transition-colors hover:underline"
+                    style={{ color: 'rgb(var(--accent))' }}
+                  >
+                    <Globe size={12} />
+                    {bzzLink(ensName)!.label}
+                    <ExternalLink size={10} />
+                  </a>
+                )}
+                {/* R5-7: gateways cache ENS lookups for a few minutes. */}
+                <p className="text-[11px]" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  It can take a few minutes to show up. If you see an older version, refresh in a minute.
+                </p>
                 {txHash && (
                   <div>
                     <a

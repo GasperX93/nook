@@ -1,23 +1,27 @@
 import { Bee } from '@ethersphere/bee-js'
 import { identity, mailbox, registry } from '@swarm-notify/sdk'
-import { FileText, Mail, Send } from 'lucide-react'
+import { Mail, Send } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { getWalletClient, switchChain, waitForTransactionReceipt } from '@wagmi/core'
-import { useWalletClient } from 'wagmi'
 
-import { useAddresses, useStamps } from '../api/queries'
+import { useReclaimableDrives, useAddresses, useStamps } from '../api/queries'
 import AddSharedDriveModal from '../components/AddSharedDriveModal'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Textarea } from '../components/ui/textarea'
+import DriveMessageCard from '../components/DriveMessageCard'
 import { useSharedDrives } from '../hooks/useSharedDrives'
+import { useNavigate } from 'react-router-dom'
+
 import { useDerivedKey } from '../hooks/useDerivedKey'
+import { pickMessagingStamp } from '../lib/system-stamp'
 import { hexToBytes } from '../lib/hex'
-import { GNOSIS_CHAIN_ID, REGISTRY_ADDRESS } from '../notify/constants'
+import { REGISTRY_ADDRESS } from '../notify/constants'
 import {
   defaultInviteMessage,
   deriveConnectionState,
+  hasInboundSince,
   getMyDisplayName,
+  markInviteAccepted,
   recordInviteSent,
   setMyDisplayName,
   type ConnectionState,
@@ -29,11 +33,10 @@ import { queueAndDeliver, retryOutboxEntry } from '../notify/deliver'
 import { appendSent, loadReadCursors, loadThreads, markRead, type StoredMessage, unreadCount } from '../notify/messages'
 import { sendMailboxMessage } from '../notify/send-message'
 import { waitForBeeReady } from '../notify/bee-ready'
-import { createNotifyProvider } from '../notify/provider'
+import { createNodeNotifyProvider } from '../notify/provider'
 import { publishIdentity } from '../notify/publish-identity'
 import { addContact, isIdentityPublished, loadContacts } from '../notify/storage'
 import { toLibraryContact, type NookContact } from '../notify/types'
-import { wagmiConfig } from '../wagmi'
 
 const BEE_URL = `${window.location.origin}/bee-api`
 
@@ -41,22 +44,11 @@ function short(s: string, n = 6): string {
   return s.length <= n * 2 + 3 ? s : `${s.slice(0, n)}…${s.slice(-n)}`
 }
 
-// Turn a raw wallet/viem error into a one-line, user-facing message. Without
-// this, the full viem dump (chain/from/to/data/Version) leaks into the UI.
+// Turn a raw send error into a one-line, user-facing message. The node-wallet
+// ping route already returns friendly text (e.g. the no-xDAI case); this keeps
+// any other raw dump out of the UI.
 function friendlyError(e: unknown): string {
   const raw = (e as Error)?.message ?? ''
-
-  if (/user rejected|user denied|rejected the request|denied transaction/i.test(raw)) {
-    return 'Invite cancelled — you declined the wallet prompt.'
-  }
-
-  if (/insufficient funds|exceeds the balance|gas required exceeds|cannot estimate gas/i.test(raw)) {
-    return 'Not enough xDAI to send the on-chain invite. Top up in Account → Wallet.'
-  }
-  // viem BaseError exposes a clean one-liner; fall back to the first line.
-  const short = (e as { shortMessage?: string })?.shortMessage
-
-  if (typeof short === 'string' && short) return short
 
   return raw.split('\n')[0].slice(0, 200) || 'Something went wrong. Please try again.'
 }
@@ -79,7 +71,8 @@ interface MessagesProps {
 }
 
 export default function Messages({ initialContactId, hideContactList, hideThreadHeader }: MessagesProps = {}) {
-  const { signer, derive, deriving, walletConnected } = useDerivedKey()
+  const { signer, signIn, deriving, swarmIdAccount } = useDerivedKey()
+  const navigate = useNavigate()
   const { data: stamps } = useStamps()
   const { data: addresses } = useAddresses()
 
@@ -99,11 +92,14 @@ export default function Messages({ initialContactId, hideContactList, hideThread
   // drives an inline "Publish & send" so the user needn't leave for the Identity tab.
   const [needsPublish, setNeedsPublish] = useState(false)
   const [publishing, setPublishing] = useState(false)
+  // Invite written to the mailbox but its on-chain notice failed — retry only
+  // the notice (re-sending would put a second invite in their mailbox).
+  const [pendingPing, setPendingPing] = useState<{ contactId: string; name: string } | null>(null)
   // Phase label shown while an invite is in flight — the publish + mailbox
-  // writes happen before the wallet popup, so without this the gap looks stuck.
+  // writes happen before the on-chain ping confirms, so without this the gap looks stuck.
   const [sendStatus, setSendStatus] = useState<string | null>(null)
   // Pre-filled share link when the user clicks "Add drive" on a drive-share card
-  const [importingLink, setImportingLink] = useState<string | null>(null)
+  const [importingLink, setImportingLink] = useState<{ link: string; driveName?: string } | null>(null)
   // Invitation acceptance state — nickname input + in-flight flag
   const [inviteNickname, setInviteNickname] = useState('')
   const [acceptingInvite, setAcceptingInvite] = useState(false)
@@ -119,13 +115,17 @@ export default function Messages({ initialContactId, hideContactList, hideThread
   const [invitePreview, setInvitePreview] = useState<InvitePreview>({ loading: false })
   const sharedDrives = useSharedDrives()
   const scrollRef = useRef<HTMLDivElement>(null)
-  const { data: walletClient } = useWalletClient()
 
   // Sender's display name — used in the default invite template "X would
   // like to connect" and shown to the recipient when they receive the
   // invitation. Captured inline on first invite send, then reused.
   const [myDisplayName, setMyDisplayNameState] = useState<string>(() => getMyDisplayName())
   const [pendingNicknameInput, setPendingNicknameInput] = useState('')
+  // R4-9: no saved invite name yet → offer the Swarm ID account name (the same
+  // name contact links carry) so Send invite works right away; "change" opens
+  // the input pre-filled. Saved as the display name once an invite succeeds.
+  const suggestedName = swarmIdAccount?.name?.trim() ?? ''
+  const [editingName, setEditingName] = useState(false)
 
   // Hide invitations from senders who are already contacts. Otherwise an old
   // invitation row pinned to the top of the list (created before the contact
@@ -139,12 +139,15 @@ export default function Messages({ initialContactId, hideContactList, hideThread
     return pendingInvitations(invitations).filter(i => !known.has(i.senderAddr))
   }, [invitations, contacts])
 
-  const stampId = (stamps ?? []).find(s => s.usable)?.batchID ?? ''
+  const { data: reclaimableForStamp } = useReclaimableDrives()
+  const stampId = pickMessagingStamp(stamps, new Set((reclaimableForStamp ?? []).map(d => d.batchId)))?.batchID ?? ''
   const selected = contacts.find(c => c.id === selectedId) ?? null
   const selectedThread = selected ? (threads[selected.id.toLowerCase()] ?? []) : []
-  const hasInbound = selectedThread.some(m => m.direction === 'received')
+  const hasInbound = selected ? hasInboundSince(selectedThread, selected.addedAt) : false
   const connectionState: ConnectionState = selected ? deriveConnectionState(selected.id, hasInbound) : 'not-connected'
-  const needsNickname = connectionState !== 'connected' && !myDisplayName
+  const needsNickname = connectionState !== 'connected' && !myDisplayName && (!suggestedName || editingName)
+  const invitingAsSuggested =
+    connectionState !== 'connected' && !myDisplayName && Boolean(suggestedName) && !editingName
   // If the selected entry isn't a contact, it might be a pending invitation.
   const selectedInvite = !selected ? (pending.find(i => i.senderAddr === selectedId?.toLowerCase()) ?? null) : null
 
@@ -177,9 +180,13 @@ export default function Messages({ initialContactId, hideContactList, hideThread
       setSelectedId(selectedInvite.senderAddr) // switch into the new conversation
       setInviteNickname('')
 
+      // Accepting establishes the connection on OUR side too (#14) — the
+      // composer must not offer the invite path into this thread.
+      markInviteAccepted(senderContact.id)
+
       // Tell the sender we accepted — flips their side from "waiting" to
       // "connected" (best-effort; no on-chain cost, we're mutual contacts now).
-      if (signer) void sendInviteAck(bee, signer, stampId, senderContact, myDisplayName)
+      if (signer) void sendInviteAck(bee, signer, stampId, senderContact, myDisplayName || suggestedName)
     } catch (e) {
       setError((e as Error).message ?? 'Failed to add contact')
     } finally {
@@ -327,7 +334,9 @@ export default function Messages({ initialContactId, hideContactList, hideThread
     if (!isInviteState && !trimmed) return
 
     if (!stampId) {
-      setError('No usable stamp — buy one in Account → My Storage')
+      setError(
+        'Messages need a small reserved space — add about 3 xBZZ on the Wallet page and Nook sets it up automatically.',
+      )
 
       return
     }
@@ -339,7 +348,7 @@ export default function Messages({ initialContactId, hideContactList, hideThread
     const nameIsNew = isInviteState && !name
 
     if (nameIsNew) {
-      const candidate = pendingNicknameInput.trim()
+      const candidate = (invitingAsSuggested ? suggestedName : pendingNicknameInput).trim()
 
       if (!candidate) {
         setError('Enter your name so the recipient knows who is reaching out.')
@@ -366,13 +375,7 @@ export default function Messages({ initialContactId, hideContactList, hideThread
       return
     }
 
-    // ── Invite: needs a connected wallet + published identity + on-chain ping ──
-    if (!walletClient) {
-      setError('Connect your wallet to send an invite (an on-chain ping is required).')
-
-      return
-    }
-
+    // ── Invite: needs a published identity + on-chain ping (paid by the node wallet) ──
     // The recipient resolves us via our published identity feed to accept the
     // invite. If we haven't published, surface an inline "Publish & send".
     if (!isIdentityPublished(signer.getAddress())) {
@@ -401,35 +404,19 @@ export default function Messages({ initialContactId, hideContactList, hideThread
         })
       })
 
-      // Fire the on-chain wake-up so the recipient discovers this invite even
-      // if they haven't added us yet. Switch to Gnosis just-in-time; re-fetch
-      // the client after (stale across a chain change — same as ENSModal).
-      setSendStatus('Confirm in your wallet…')
+      // The invite is in their mailbox — show it as sent now, whatever the
+      // on-chain notice does next.
+      setThreads(prev => appendSent(prev, selected.id, body))
+      setDraft('')
 
-      if (walletClient.chain?.id !== GNOSIS_CHAIN_ID) {
-        await switchChain(wagmiConfig, { chainId: GNOSIS_CHAIN_ID })
-      }
-      const gnosisClient = await getWalletClient(wagmiConfig, { chainId: GNOSIS_CHAIN_ID })
-      const provider = createNotifyProvider(gnosisClient)
-      const recipientPubKey = hexToBytes(selected.walletPublicKey)
-      // Include our display name so the recipient's invitation shows who's
-      // reaching out (payload is ECIES-encrypted to them — not public on-chain).
-      const notifyTx = await registry.sendNotification(provider, REGISTRY_ADDRESS, recipientPubKey, selected.id, {
-        sender: myAddr,
-        name,
-      } as Parameters<typeof registry.sendNotification>[4])
-      setSendStatus('Confirming on-chain…')
-      // sendNotification resolves on BROADCAST, not mining — wait for the
-      // receipt so "sent" means it actually confirmed.
-      const receipt = await waitForTransactionReceipt(wagmiConfig, {
-        hash: notifyTx as `0x${string}`,
-        chainId: GNOSIS_CHAIN_ID,
-      })
+      try {
+        await sendInvitePing(selected, name)
+      } catch (e) {
+        setPendingPing({ contactId: selected.id, name })
+        setError(`Your invite is sent, but the notice on Gnosis Chain didn’t go out — ${friendlyError(e)}`)
 
-      if (receipt.status !== 'success') {
-        throw new Error(`On-chain invite failed to confirm (tx ${notifyTx}). The recipient was not notified.`)
+        return
       }
-      recordInviteSent(selected.id)
 
       // Invite fully succeeded — lock in the display name for future invites.
       if (nameIsNew) {
@@ -437,11 +424,47 @@ export default function Messages({ initialContactId, hideContactList, hideThread
         setMyDisplayNameState(name)
         setPendingNicknameInput('')
       }
-
-      setThreads(prev => appendSent(prev, selected.id, body))
-      setDraft('')
     } catch (e) {
       setError(friendlyError(e))
+    } finally {
+      setSending(false)
+      setSendStatus(null)
+    }
+  }
+
+  // Fire the on-chain wake-up so the recipient discovers the invite even if
+  // they haven't added us yet. Signed + paid by the node wallet; the server
+  // resolves only after one confirmation, so a returned hash means the ping is
+  // on-chain ("sent" means sent).
+  async function sendInvitePing(contact: NookContact, name: string) {
+    if (!signer) return
+    setSendStatus('Notifying on Gnosis Chain…')
+    const provider = createNodeNotifyProvider()
+    const recipientPubKey = hexToBytes(contact.walletPublicKey)
+    // Include our display name so the recipient's invitation shows who's
+    // reaching out (payload is ECIES-encrypted to them — not public on-chain).
+    await registry.sendNotification(provider, REGISTRY_ADDRESS, recipientPubKey, contact.id, {
+      sender: signer.getAddress(),
+      name,
+    } as Parameters<typeof registry.sendNotification>[4])
+    recordInviteSent(contact.id)
+    setPendingPing(null)
+  }
+
+  async function handleRetryPing() {
+    if (!pendingPing || !selected || selected.id !== pendingPing.contactId) return
+    setSending(true)
+    setError(null)
+    try {
+      await sendInvitePing(selected, pendingPing.name)
+
+      if (!myDisplayName) {
+        setMyDisplayName(pendingPing.name)
+        setMyDisplayNameState(pendingPing.name)
+        setPendingNicknameInput('')
+      }
+    } catch (e) {
+      setError(`The notice on Gnosis Chain didn’t go out — ${friendlyError(e)}`)
     } finally {
       setSending(false)
       setSendStatus(null)
@@ -460,7 +483,7 @@ export default function Messages({ initialContactId, hideContactList, hideThread
     }
 
     if (!stampId) {
-      setError('No usable stamp — buy a drive in Account → My Storage to publish.')
+      setError('Publishing needs a small reserved space — add about 3 xBZZ on the Wallet page.')
 
       return
     }
@@ -486,28 +509,30 @@ export default function Messages({ initialContactId, hideContactList, hideThread
     }
   }
 
-  if (!walletConnected) {
-    return (
-      <div className="flex flex-col p-6 gap-4 max-w-3xl">
-        <h2 className="text-2xl font-semibold">Messages</h2>
-        <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
-          Connect your wallet to see messages.
-        </p>
-      </div>
-    )
-  }
-
   if (!signer) {
     return (
       <div className="flex flex-col p-6 gap-4 max-w-3xl">
         <h2 className="text-2xl font-semibold">Messages</h2>
         <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
-          {deriving
-            ? 'Check your wallet — approve the signature requests to finish setting up your Nook identity.'
-            : 'Set up your Nook identity to start messaging.'}
+          Sign in with Swarm ID to start messaging.
         </p>
-        <Button onClick={async () => derive()} disabled={deriving} className="self-start uppercase tracking-widest">
-          {deriving ? 'Setting up…' : 'Set up Nook identity'}
+        <Button onClick={async () => signIn()} disabled={deriving} className="self-start uppercase tracking-widest">
+          {deriving ? 'Signing in…' : 'Sign in with Swarm ID'}
+        </Button>
+      </div>
+    )
+  }
+
+  if (!stampId) {
+    return (
+      <div className="flex flex-col p-6 gap-4 max-w-3xl">
+        <h2 className="text-2xl font-semibold">Messages</h2>
+        <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
+          Sending messages needs a small reserved space on the network. Add about 3 xBZZ on the Wallet page and Nook
+          sets it up automatically.
+        </p>
+        <Button onClick={() => navigate('/account?tab=wallet')} className="self-start uppercase tracking-widest">
+          Open wallet
         </Button>
       </div>
     )
@@ -636,41 +661,17 @@ export default function Messages({ initialContactId, hideContactList, hideThread
                 </p>
               ) : (
                 selectedThread.map(m => {
-                  if (m.kind === 'drive-share' && m.driveShareLink) {
-                    const isSent = m.direction === 'sent'
-
+                  if (m.kind && m.kind !== 'message' && m.driveShareLink) {
                     return (
-                      <div
+                      <DriveMessageCard
                         key={m.id}
-                        className={`max-w-[80%] rounded-2xl border px-4 py-3 space-y-2 ${isSent ? 'self-end' : 'self-start'}`}
-                        style={{
-                          backgroundColor: 'rgb(var(--bg-surface))',
-                          borderColor: 'rgb(var(--accent))',
-                          color: 'rgb(var(--fg))',
-                        }}
-                      >
-                        <div className="flex items-center gap-2">
-                          <FileText size={14} style={{ color: 'rgb(var(--accent))' }} />
-                          <span className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--accent))' }}>
-                            {isSent ? 'Drive shared' : 'Drive shared with you'}
-                          </span>
-                        </div>
-                        <div>
-                          <p className="text-sm font-semibold">{m.driveName ?? 'Encrypted drive'}</p>
-                          <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-                            {m.fileCount ?? 0} file{m.fileCount === 1 ? '' : 's'}
-                          </p>
-                        </div>
-                        {!isSent && (
-                          <Button onClick={() => setImportingLink(m.driveShareLink!)} size="sm" className="w-full">
-                            Add drive
-                          </Button>
-                        )}
-                        <p className="text-[10px]" style={{ color: 'rgb(var(--fg-muted))' }}>
-                          {formatTime(m.ts)}
-                        </p>
-                        {renderDeliveryStatus(m)}
-                      </div>
+                        m={m}
+                        counterpartName={selected.nickname}
+                        time={formatTime(m.ts)}
+                        onAdd={(link, driveName) => setImportingLink({ link, driveName })}
+                        onOpen={() => navigate('/drive?tab=shared')}
+                        status={renderDeliveryStatus(m)}
+                      />
                     )
                   }
 
@@ -698,6 +699,12 @@ export default function Messages({ initialContactId, hideContactList, hideThread
                 </p>
               )}
 
+              {pendingPing && pendingPing.contactId === selected.id && !sending && (
+                <Button onClick={handleRetryPing} size="sm" className="mb-2">
+                  Retry notice
+                </Button>
+              )}
+
               {needsPublish && (
                 <Button onClick={handlePublishAndSend} disabled={publishing} size="sm" className="mb-2">
                   {publishing ? 'Publishing…' : 'Publish identity & send'}
@@ -711,6 +718,26 @@ export default function Messages({ initialContactId, hideContactList, hideThread
                 >
                   <Send size={12} />
                   {sendStatus}
+                </p>
+              )}
+
+              {invitingAsSuggested && (
+                <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  Inviting as{' '}
+                  <span className="font-semibold" style={{ color: 'rgb(var(--fg))' }}>
+                    {suggestedName}
+                  </span>{' '}
+                  ·{' '}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPendingNicknameInput(suggestedName)
+                      setEditingName(true)
+                    }}
+                    className="underline"
+                  >
+                    change
+                  </button>
                 </p>
               )}
 
@@ -739,8 +766,8 @@ export default function Messages({ initialContactId, hideContactList, hideThread
                   placeholder={
                     connectionState === 'connected'
                       ? `Message ${selected.nickname}…`
-                      : myDisplayName
-                        ? `Optional — defaults to "${myDisplayName} would like to connect"`
+                      : myDisplayName || invitingAsSuggested
+                        ? `Optional — defaults to "${myDisplayName || suggestedName} would like to connect"`
                         : `Optional message — your name will be added`
                   }
                   rows={1}
@@ -857,7 +884,8 @@ export default function Messages({ initialContactId, hideContactList, hideThread
 
       {importingLink && (
         <AddSharedDriveModal
-          initialLink={importingLink}
+          initialLink={importingLink.link}
+          initialName={importingLink.driveName}
           onClose={() => setImportingLink(null)}
           onAdd={drive => sharedDrives.add(drive)}
         />

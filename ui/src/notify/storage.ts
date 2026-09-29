@@ -1,4 +1,5 @@
 import { nsKey } from './active-identity'
+import { clearInviteAccepted, clearInviteSent } from './contact-state'
 import type { NookContact } from './types'
 
 /**
@@ -66,11 +67,42 @@ export function renameContact(contacts: NookContact[], id: string, nickname: str
   return updated
 }
 
+/**
+ * Update a contact's public keys after a fresh identity resolution. Keys go
+ * stale when the contact reinstalls: the wallet-derived id survives but the
+ * bee node key is regenerated, so grants against the cached key are dead.
+ */
+export function updateContactKeys(
+  contacts: NookContact[],
+  id: string,
+  keys: { walletPublicKey: string; beePublicKey: string },
+): NookContact[] {
+  const updated = contacts.map(c => {
+    if (c.id.toLowerCase() !== id.toLowerCase()) return c
+    // Remember the superseded node key so existing grants against it can be
+    // labeled as this person's OLD key instead of an unknown stranger.
+    const previous =
+      c.beePublicKey && c.beePublicKey !== keys.beePublicKey
+        ? [...(c.previousBeeKeys ?? []), c.beePublicKey]
+        : c.previousBeeKeys
+
+    return { ...c, ...keys, ...(previous?.length ? { previousBeeKeys: previous } : {}) }
+  })
+
+  saveContacts(updated)
+
+  return updated
+}
+
 /** Remove a contact by id (case-insensitive). */
 export function removeContact(contacts: NookContact[], id: string): NookContact[] {
   const updated = contacts.filter(c => c.id.toLowerCase() !== id.toLowerCase())
 
   saveContacts(updated)
+  // A re-added contact must start over at "not connected" so the invite (and
+  // its on-chain ping) fires again (R3b-3).
+  clearInviteSent(id)
+  clearInviteAccepted(id)
 
   return updated
 }

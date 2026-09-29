@@ -22,14 +22,13 @@ import {
   Rss,
   Search,
   Share2,
-  Trash2,
   Upload,
   Users,
   X,
 } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import React, { useEffect, useRef, useState } from 'react'
-import { useLocation } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useAccount } from 'wagmi'
 import {
   beeApi,
@@ -41,12 +40,13 @@ import {
   plurToBzz,
   SIZE_PRESETS,
   stampFillRatio,
+  driveSizeLabel,
   topicFromString,
   waitForRetrievable,
-  waitForTagPropagation,
+  waitWhileBeeDown,
   type Stamp,
 } from '../api/bee'
-import { serverApi } from '../api/server'
+import { type AutoExtendEntry, serverApi } from '../api/server'
 import {
   useAddresses,
   useBuyStamp,
@@ -57,9 +57,12 @@ import {
   useWallet,
 } from '../api/queries'
 import { useAppStore } from '../store/app'
+import { etaText, followTagPropagation, type TransferEntry, useTransfersStore } from '../store/transfers'
+import PropagationVisual from '../components/PropagationVisual'
 import { useDerivedKey } from '../hooks/useDerivedKey'
 import { useDriveMetadata } from '../hooks/useDriveMetadata'
 import { useSharedDrives } from '../hooks/useSharedDrives'
+import { isSystemStamp } from '../lib/system-stamp'
 import { useUploadHistory, type DriveFolder, type UploadRecord } from '../hooks/useUploadHistory'
 import { republishDrive } from '../lib/republish'
 import {
@@ -72,26 +75,35 @@ import {
 import AddSharedDriveModal from '../components/AddSharedDriveModal'
 import ENSModal from '../components/ENSModal'
 import { ExpiredDriveRow, ReclaimableDriveCard, ReclaimableDriveView } from '../components/ReclaimableDrive'
+import FolderCard from '../components/FolderCard'
 import ShareModal from '../components/ShareModal'
 import { Switch } from '../components/ui/switch'
 import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { useSidebar } from '../components/ui/sidebar'
+import { friendlyError } from '../lib/friendly-error'
+import { formatBytes } from '../lib/format-bytes'
+import { isDriveFullError, withUploadRetries } from '../lib/upload-retry'
+import {
+  rowStatusLabel,
+  savingLabel,
+  UPLOAD_ENCRYPTED,
+  UPLOAD_PAUSED,
+  UPLOAD_RESUMING,
+  waitLabel,
+  UPLOAD_STEP_LOCAL,
+  UPLOAD_STEP_NETWORK,
+} from '../lib/transfer-labels'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 // Why "used" can read higher than the sum of your files: it shows network
 // storage RESERVED (chunk + version overhead, quantized to bucket slots), not
 // logical file bytes. On small drives the smallest step is capacity/32.
+// How full, as Bee measures it (R7-6): a drive is full when its fullest part
+// is, so this can differ from what the files add up to — which the file count
+// shows next to it.
 const USAGE_TOOLTIP =
-  'Network storage reserved — includes chunk and version overhead, so it may read higher than your file sizes on small drives.'
-
-function formatBytes(bytes: number): string {
-  if (bytes >= 1_073_741_824) return `${(bytes / 1_073_741_824).toFixed(1)} GB`
-
-  if (bytes >= 1_048_576) return `${(bytes / 1_048_576).toFixed(1)} MB`
-
-  return `${(bytes / 1024).toFixed(0)} KB`
-}
+  'How full the drive is, as your node measures it. A drive fills unevenly, so this can read higher or lower than your files add up to.'
 
 function timeUntil(ms: number): { label: string; urgent: boolean } {
   const diff = ms - Date.now()
@@ -151,18 +163,31 @@ async function downloadFromSwarm(
   setTimeout(() => URL.revokeObjectURL(url), 10_000)
 }
 
-async function pollStampUsable(id: string, onPhase?: (p: string) => void): Promise<void> {
-  for (let i = 0; i < 30; i++) {
-    const elapsed = i * 2
+/** Time with Bee stopped is a pause, not part of the 60 s wait (R8-3). */
+async function pollStampUsable(
+  id: string,
+  onPhase?: (p: string) => void,
+  onBeeWait?: (wait: 'node' | 'resuming') => void,
+): Promise<void> {
+  let elapsed = 0
+
+  while (elapsed < 60) {
+    let paused = false
+
     onPhase?.(`Waiting for drive to be ready… ${elapsed > 0 ? `(${elapsed}s)` : ''}`.trim())
     try {
       const s = await beeApi.getStamp(id)
 
       if (s.usable) return
     } catch {
-      // not yet confirmed
+      // not yet confirmed — or Bee is down (then it's a pause, not waiting)
+      if (await waitWhileBeeDown(onBeeWait)) paused = true
     }
-    await new Promise(r => setTimeout(r, 2000))
+
+    if (!paused) {
+      await new Promise(r => setTimeout(r, 2000))
+      elapsed += 2
+    }
   }
   throw new Error('Drive did not become ready. Please try again.')
 }
@@ -187,20 +212,21 @@ function PlanButton({ label, selected, onClick }: { label: string; selected: boo
 
 // ─── ExpiryBar ────────────────────────────────────────────────────────────────
 
-function ExpiryBar({ expiresAt, uploadedAt }: { expiresAt: number; uploadedAt: number }) {
-  const total = expiresAt - uploadedAt
-  const remaining = expiresAt - Date.now()
-  const pct = Math.max(0, Math.min(100, (remaining / total) * 100))
-  const urgent = remaining < 7 * 86_400_000
+/**
+ * Time left on a FIXED one-year scale (R3-6), matching the deletable-drive
+ * card: same time left ⇒ same bar, whatever the file's upload date. Files on
+ * a drive expire together, so a per-file lifetime ratio only confused.
+ */
+function ExpiryBar({ expiresAt }: { expiresAt: number }) {
+  const daysLeft = (expiresAt - Date.now()) / 86_400_000
+  const pct = Math.max(2, Math.min(100, (daysLeft / 365) * 100))
+  const urgent = daysLeft <= 7
 
   return (
     <div className="h-1 rounded-full overflow-hidden w-24" style={{ backgroundColor: 'rgb(var(--border))' }}>
       <div
         className="h-full rounded-full transition-all"
-        style={{
-          width: `${pct}%`,
-          backgroundColor: urgent ? '#ef4444' : pct < 30 ? '#facc15' : '#4ade80',
-        }}
+        style={{ width: `${pct}%`, backgroundColor: urgent ? '#ef4444' : '#4ade80' }}
       />
     </div>
   )
@@ -220,19 +246,23 @@ function BuyDriveModal({
   const buyStamp = useBuyStamp()
   const createReclaimable = useCreateReclaimable()
   const { isConnected } = useAccount()
-  const { derive } = useDerivedKey()
 
   const [driveName, setDriveName] = useState('')
   const [sizeIdx, setSizeIdx] = useState(0)
   const [durationIdx, setDurationIdx] = useState(1)
   const [isEncrypted, setIsEncrypted] = useState(false)
   const [isReclaimable, setIsReclaimable] = useState(false)
+  const [keepAlive, setKeepAlive] = useState(false)
+  // Auto-extend duration (#129): defaults to the purchase duration until the
+  // user explicitly picks one (null = follow the purchase choice above).
+  const [keepAliveIdx, setKeepAliveIdx] = useState<number | null>(null)
   const [buying, setBuying] = useState(false)
   const [buyDone, setBuyDone] = useState(false)
   const [buyError, setBuyError] = useState<string | null>(null)
 
   const selectedSize = SIZE_PRESETS[sizeIdx]
   const selectedDuration = DURATION_PRESETS[durationIdx]
+  const keepAliveDuration = keepAliveIdx === null ? selectedDuration : DURATION_PRESETS[keepAliveIdx]
   const cost = chainState
     ? calcStampCost(
         selectedSize.depth,
@@ -249,9 +279,9 @@ function BuyDriveModal({
 
     // TODO: re-enable when metadata feeds are wired up
     // if (isEncrypted) {
-    //   const derivedSigner = await derive()
+    //   const derivedSigner = await signIn()
     //   if (!derivedSigner) {
-    //     setBuyError('Wallet signature required for encrypted drives')
+    //     setBuyError('Sign in with Swarm ID to create encrypted drives')
     //     return
     //   }
     // }
@@ -259,15 +289,19 @@ function BuyDriveModal({
     setBuying(true)
     setBuyError(null)
     try {
+      let newBatchId: string
+
       if (isReclaimable) {
         // Reclaimable drives are created and registered server-side (#99);
         // their files live in the server ledger, so no local metadata to save.
-        await createReclaimable.mutateAsync({
+        const result = await createReclaimable.mutateAsync({
           amount: cost.amount,
           depth: selectedSize.depth,
           encrypted: isEncrypted,
           label: driveName.trim(),
         })
+
+        newBatchId = result.batchID
       } else {
         const result = await buyStamp.mutateAsync({
           amount: cost.amount,
@@ -276,9 +310,17 @@ function BuyDriveModal({
           label: driveName.trim(),
         })
 
+        newBatchId = result.batchID
         // Save encrypted flag immediately (ACT grantee setup deferred to first upload
         // because the stamp isn't usable yet at this point — it needs on-chain confirmation)
         onCreated?.(result.batchID, isEncrypted)
+      }
+
+      // Auto-extend opt-in (#129): register with the purchase duration.
+      // Best-effort — a failure here must not read as a failed purchase; the
+      // Extend modal can set it later.
+      if (keepAlive) {
+        serverApi.setAutoExtend(newBatchId, true, keepAliveDuration.months).catch(() => undefined)
       }
       setBuyDone(true)
       setTimeout(() => {
@@ -301,98 +343,147 @@ function BuyDriveModal({
       }}
     >
       <div
-        className="rounded-xl border p-6 w-96 space-y-5"
+        className="rounded-xl border p-6 w-96 space-y-5 max-h-[calc(100vh-2rem)] max-w-[calc(100vw-2rem)] overflow-y-auto"
         style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
         onClick={e => e.stopPropagation()}
       >
         <p className="text-sm font-semibold">New drive</p>
 
-        {/* Name */}
-        <div>
-          <p className="text-xs uppercase tracking-widest mb-2" style={{ color: 'rgb(var(--fg-muted))' }}>
-            Drive name <span style={{ color: '#ef4444' }}>*</span>
-          </p>
-          <input
-            type="text"
-            value={driveName}
-            onChange={e => setDriveName(e.target.value)}
-            placeholder="e.g. Website backup, Photos 2024…"
-            className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-none"
-            style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
-            autoFocus
-          />
-        </div>
-
-        {/* Size */}
-        <div>
-          <p className="text-xs uppercase tracking-widest mb-2" style={{ color: 'rgb(var(--fg-muted))' }}>
-            Size
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {SIZE_PRESETS.map((s, i) => (
-              <PlanButton key={s.label} label={s.label} selected={sizeIdx === i} onClick={() => setSizeIdx(i)} />
-            ))}
-          </div>
-        </div>
-
-        {/* Duration */}
-        <div>
-          <p className="text-xs uppercase tracking-widest mb-2" style={{ color: 'rgb(var(--fg-muted))' }}>
-            Duration
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {DURATION_PRESETS.map((d, i) => (
-              <PlanButton
-                key={d.label}
-                label={d.label}
-                selected={durationIdx === i}
-                onClick={() => setDurationIdx(i)}
-              />
-            ))}
-          </div>
-        </div>
-
-        {/* Encrypt */}
-        <label className="flex items-start gap-2 cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={isEncrypted}
-            onChange={e => setIsEncrypted(e.target.checked)}
-            className="mt-0.5 accent-orange-500"
-          />
+        {/* Freeze every input once the purchase is running — the drive is
+            created with the values from the moment Create was pressed, and a
+            live checkbox mid-"Creating…" suggests otherwise (finding #10). */}
+        <fieldset disabled={buying || buyDone} className="space-y-5 border-0 m-0 p-0 min-w-0">
+          {/* Name */}
           <div>
-            <p className="text-xs font-medium">Encrypt this drive</p>
-            <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-              {isReclaimable
-                ? 'Files on this drive are encrypted so only your node can read them.'
-                : 'Files on this drive are encrypted. You can share access with others.'}
+            <p className="text-xs uppercase tracking-widest mb-2" style={{ color: 'rgb(var(--fg-muted))' }}>
+              Drive name <span style={{ color: '#ef4444' }}>*</span>
             </p>
+            <input
+              type="text"
+              value={driveName}
+              onChange={e => setDriveName(e.target.value)}
+              placeholder="e.g. Website backup, Photos 2024…"
+              className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-none"
+              style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
+              autoFocus
+            />
           </div>
-        </label>
 
-        {/* Reclaimable (#99) */}
-        <label className="flex items-start gap-2 cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={isReclaimable}
-            onChange={e => setIsReclaimable(e.target.checked)}
-            className="mt-0.5 accent-orange-500"
-          />
+          {/* Size */}
           <div>
-            <p className="text-xs font-medium">
-              Deletable files{' '}
-              <span
-                className="px-1 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide align-middle"
-                style={{ backgroundColor: 'rgba(74,222,128,0.12)', color: '#4ade80' }}
-              >
-                Beta
-              </span>
+            <p className="text-xs uppercase tracking-widest mb-2" style={{ color: 'rgb(var(--fg-muted))' }}>
+              Size
             </p>
-            <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-              Deleting a file gives you its space back. These drives can't be shared with others (yet).
-            </p>
+            <div className="flex flex-wrap gap-2">
+              {SIZE_PRESETS.map((s, i) => (
+                <PlanButton key={s.label} label={s.label} selected={sizeIdx === i} onClick={() => setSizeIdx(i)} />
+              ))}
+            </div>
           </div>
-        </label>
+
+          {/* Duration */}
+          <div>
+            <p className="text-xs uppercase tracking-widest mb-2" style={{ color: 'rgb(var(--fg-muted))' }}>
+              Duration
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {DURATION_PRESETS.map((d, i) => (
+                <PlanButton
+                  key={d.label}
+                  label={d.label}
+                  selected={durationIdx === i}
+                  onClick={() => setDurationIdx(i)}
+                />
+              ))}
+            </div>
+          </div>
+
+          {/* Encrypt */}
+          <label className="flex items-start gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={isEncrypted}
+              onChange={e => setIsEncrypted(e.target.checked)}
+              className="mt-0.5 accent-orange-500"
+            />
+            <div>
+              <p className="text-xs font-medium">Encrypt this drive</p>
+              <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                {isReclaimable
+                  ? 'Files on this drive are encrypted so only your node can read them.'
+                  : 'Files on this drive are encrypted. You can share access with others.'}
+              </p>
+            </div>
+          </label>
+
+          {/* Reclaimable (#99) */}
+          <label className="flex items-start gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={isReclaimable}
+              onChange={e => setIsReclaimable(e.target.checked)}
+              className="mt-0.5 accent-orange-500"
+            />
+            <div>
+              <p className="text-xs font-medium">
+                Deletable files{' '}
+                <span
+                  className="px-1 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide align-middle"
+                  style={{ backgroundColor: 'rgba(74,222,128,0.12)', color: '#4ade80' }}
+                >
+                  Beta
+                </span>
+              </p>
+              <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Deleting a file gives you its space back. These drives can't be shared with others (yet).
+              </p>
+            </div>
+          </label>
+
+          {/* Auto-extend (#129) */}
+          <label className="flex items-start gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={keepAlive}
+              onChange={e => setKeepAlive(e.target.checked)}
+              className="mt-0.5 accent-orange-500"
+            />
+            <div className="flex-1">
+              <p className="text-xs font-medium">Auto-renew</p>
+              <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                {keepAlive
+                  ? `Extends by ${keepAliveDuration.label.toLowerCase()} whenever less than 10 days remain, paid from your wallet. Change anytime under Extend drive.`
+                  : 'Extends the drive before it expires, paid from your wallet.'}
+              </p>
+              {keepAlive && (
+                <div className="grid grid-cols-4 gap-2 mt-2">
+                  {DURATION_PRESETS.map((d, i) => {
+                    const selected = (keepAliveIdx === null ? durationIdx : keepAliveIdx) === i
+
+                    return (
+                      <button
+                        key={d.label}
+                        type="button"
+                        onClick={e => {
+                          e.preventDefault()
+                          setKeepAliveIdx(i)
+                        }}
+                        className="px-2 py-1.5 rounded-lg border text-xs transition-all"
+                        style={{
+                          borderColor: selected ? 'rgb(var(--accent))' : 'rgb(var(--border))',
+                          backgroundColor: selected ? 'rgba(247,104,8,0.08)' : 'transparent',
+                          color: selected ? 'rgb(var(--fg))' : 'rgb(var(--fg-muted))',
+                        }}
+                      >
+                        {d.label}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          </label>
+        </fieldset>
 
         {/* TODO: re-enable when metadata feeds are wired up */}
         {/* {isEncrypted && !isConnected && <WalletGate />} */}
@@ -423,7 +514,8 @@ function BuyDriveModal({
         <div className="flex gap-3">
           <button
             onClick={onClose}
-            className="flex-1 py-2 rounded-lg text-sm"
+            disabled={buying}
+            className="flex-1 py-2 rounded-lg text-sm disabled:opacity-40"
             style={{ color: 'rgb(var(--fg-muted))' }}
           >
             Cancel
@@ -449,13 +541,27 @@ function BuyDriveModal({
 
 // ─── ExtendModal ───────────────────────────────────────────────────────────────
 
-function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) {
+function ExtendModal({
+  stamp,
+  onClose,
+  deletable = false,
+}: {
+  stamp: Stamp
+  onClose: () => void
+  deletable?: boolean
+}) {
   // Capacity options: only depths strictly larger than current AND only when the
   // user-facing capacity is also larger. With Nook's overbuy, a legacy depth-19
   // "110 MB" stamp shouldn't see "110 MB (depth 21)" as an extend option — same
   // displayed capacity, just a more expensive same-label drive.
   const currentDisplayBytes = depthToBytes(stamp.depth)
-  const capacityOptions = SIZE_PRESETS.filter(s => s.depth > stamp.depth && depthToBytes(s.depth) > currentDisplayBytes)
+  // Deletable drives never change size: their slot ledger is laid out for the
+  // drive's depth, and a dilute would hand out slots it doesn't track. The
+  // /bee-api guard refuses it too, but the dashboard calls Bee directly in the
+  // packaged app — so the option must not exist here.
+  const capacityOptions = deletable
+    ? []
+    : SIZE_PRESETS.filter(s => s.depth > stamp.depth && depthToBytes(s.depth) > currentDisplayBytes)
   const [capacityEnabled, setCapacityEnabled] = useState(false)
   const [capacityIdx, setCapacityIdx] = useState(0)
   const [durationEnabled, setDurationEnabled] = useState(false)
@@ -465,6 +571,40 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
   const { data: chainState } = useChainState()
   const { data: wallet } = useWallet()
   const queryClient = useQueryClient()
+
+  // Auto-extend (#129) — STAGED like the other sections: nothing applies
+  // until the footer button, so Cancel means cancel and the button label can
+  // say exactly what will happen. (An instant-save section here is what made
+  // the first design's purchase button look broken.)
+  const [autoEnabled, setAutoEnabled] = useState(false)
+  const [autoIdx, setAutoIdx] = useState(1)
+  const [autoLoaded, setAutoLoaded] = useState(false)
+  const [autoInfo, setAutoInfo] = useState<AutoExtendEntry | null>(null)
+  const autoOriginal = useRef<{ enabled: boolean; idx: number }>({ enabled: false, idx: 1 })
+
+  useEffect(() => {
+    serverApi
+      .getAutoExtend()
+      .then(({ settings }) => {
+        const entry = settings[stamp.batchID.toLowerCase()]
+
+        if (entry) {
+          const i = DURATION_PRESETS.findIndex(d => d.months === entry.months)
+
+          setAutoEnabled(entry.enabled)
+
+          if (i >= 0) setAutoIdx(i)
+          setAutoInfo(entry)
+          autoOriginal.current = { enabled: entry.enabled, idx: i >= 0 ? i : 1 }
+        }
+        setAutoLoaded(true)
+      })
+      .catch(() => setAutoLoaded(true))
+  }, [stamp.batchID])
+
+  const autoDirty =
+    autoLoaded &&
+    (autoEnabled !== autoOriginal.current.enabled || (autoEnabled && autoIdx !== autoOriginal.current.idx))
 
   const targetDepth = capacityEnabled && capacityOptions[capacityIdx] ? capacityOptions[capacityIdx].depth : stamp.depth
   const willDilute = capacityEnabled && targetDepth > stamp.depth
@@ -498,39 +638,68 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
 
   const bzzBalance = wallet ? Number(plurToBzz(wallet.bzzBalance)) : null
   const canAfford = cost && bzzBalance !== null ? bzzBalance >= Number(cost.bzzCost) : true
-  const canSubmit = (willDilute || totalSecondsToBuy > 0) && canAfford
+  const purchaseStaged = willDilute || totalSecondsToBuy > 0
+  const nothingStaged = !purchaseStaged && !autoDirty
+  // The primary button is NEVER a grey dead-end: with nothing staged it's an
+  // enabled "Done" that just closes. It always says what pressing it does.
+  const canSubmit = nothingStaged || (purchaseStaged ? canAfford : true)
 
-  async function doExtend() {
-    if (!canSubmit) return
+  const buttonLabel = submitting
+    ? purchaseStaged
+      ? 'Extending…'
+      : 'Saving…'
+    : nothingStaged
+      ? 'Done'
+      : purchaseStaged && autoDirty
+        ? 'Extend & save'
+        : purchaseStaged
+          ? 'Extend drive'
+          : 'Save'
+
+  async function doApply() {
+    if (!canSubmit || submitting) return
+
+    if (nothingStaged) {
+      onClose()
+
+      return
+    }
     setExtendError(null)
     setSubmitting(true)
     try {
-      // Topup BEFORE dilute. Diluting halves the per-chunk balance, so if it
-      // would drop below the postage contract's minimum the on-chain tx emits
-      // no BatchDepthIncrease event and Bee returns "cannot dilute batch".
-      // Pre-topping avoids that.
-      //
-      // Per-chunk math: total BZZ cost is unchanged because Bee multiplies
-      // amount × current-chunk-count. Diluting later halves the per-chunk
-      // balance by 2^delta, so we scale the per-chunk amount up by 2^delta
-      // here to land on the same final balance/chunk.
-      if (cost) {
+      if (purchaseStaged && cost) {
+        // Topup BEFORE dilute. Diluting halves the per-chunk balance, so if it
+        // would drop below the postage contract's minimum the on-chain tx emits
+        // no BatchDepthIncrease event and Bee returns "cannot dilute batch".
+        // Pre-topping avoids that.
+        //
+        // Per-chunk math: total BZZ cost is unchanged because Bee multiplies
+        // amount × current-chunk-count. Diluting later halves the per-chunk
+        // balance by 2^delta, so we scale the per-chunk amount up by 2^delta
+        // here to land on the same final balance/chunk.
         const topupAmount =
           willDilute && depthDelta > 0 ? (BigInt(cost.amount) << BigInt(depthDelta)).toString() : cost.amount
+
         await beeApi.topupStamp(stamp.batchID, topupAmount)
+
+        if (willDilute) {
+          await beeApi.diluteStamp(stamp.batchID, targetDepth)
+        }
+        queryClient.refetchQueries({ queryKey: ['bee', 'stamps'] })
+        queryClient.refetchQueries({ queryKey: ['bee', 'wallet'] })
       }
 
-      if (willDilute) {
-        await beeApi.diluteStamp(stamp.batchID, targetDepth)
+      if (autoDirty) {
+        await serverApi.setAutoExtend(stamp.batchID, autoEnabled, DURATION_PRESETS[autoIdx].months)
+        queryClient.invalidateQueries({ queryKey: ['server', 'auto-extend'] })
       }
-      queryClient.refetchQueries({ queryKey: ['bee', 'stamps'] })
-      queryClient.refetchQueries({ queryKey: ['bee', 'wallet'] })
       onClose()
     } catch (err: any) {
       const raw = err?.message ?? 'Failed to extend drive.'
       // Bee errors come back as 'Bee API /…: 500 {"code":500,"message":"…"}'
       const inner = raw.match(/"message"\s*:\s*"([^"]+)"/)?.[1]
-      const msg = raw.includes('402') ? 'Insufficient BZZ. Top up your wallet first.' : (inner ?? raw)
+      const msg = raw.includes('402') ? 'Not enough xBZZ. Add xBZZ to your wallet first.' : (inner ?? raw)
+
       setExtendError(msg)
     } finally {
       setSubmitting(false)
@@ -546,7 +715,7 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
       }}
     >
       <div
-        className="rounded-xl border p-6 w-96 space-y-5"
+        className="rounded-xl border p-6 w-96 space-y-5 max-h-[calc(100vh-2rem)] max-w-[calc(100vw-2rem)] overflow-y-auto"
         style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
         onClick={e => e.stopPropagation()}
       >
@@ -563,7 +732,7 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
         <div>
           <label className="flex items-center justify-between mb-2 cursor-pointer">
             <span className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
-              Extend capacity
+              Add space
             </span>
             <Switch
               checked={capacityEnabled}
@@ -591,7 +760,9 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
           )}
           {capacityOptions.length === 0 && (
             <p className="text-[11px]" style={{ color: 'rgb(var(--fg-muted))' }}>
-              Drive is already at the maximum size.
+              {deletable
+                ? 'Deletable drives keep their size — delete files to free space, or create a new drive.'
+                : 'Drive is already at the maximum size.'}
             </p>
           )}
         </div>
@@ -599,7 +770,7 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
         <div>
           <label className="flex items-center justify-between mb-2 cursor-pointer">
             <span className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
-              Extend duration
+              Add time
             </span>
             <Switch checked={durationEnabled} onCheckedChange={setDurationEnabled} />
           </label>
@@ -620,6 +791,53 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
                 </button>
               ))}
             </div>
+          )}
+        </div>
+
+        {/* Auto-renew (#129) — staged with the rest, applied by the button.
+            Divider (#19): the two above are one-time actions; this is a
+            standing arrangement. */}
+        <div className="h-px" style={{ backgroundColor: 'rgb(var(--border))' }} />
+        <div>
+          <label className="flex items-center justify-between mb-2 cursor-pointer">
+            <span className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
+              Auto-renew
+            </span>
+            <Switch checked={autoEnabled} onCheckedChange={setAutoEnabled} disabled={!autoLoaded} />
+          </label>
+          {autoEnabled && (
+            <>
+              <div className="grid grid-cols-2 gap-2">
+                {DURATION_PRESETS.map((d, i) => (
+                  <button
+                    key={d.label}
+                    onClick={() => setAutoIdx(i)}
+                    className="px-3 py-2 rounded-lg border text-sm transition-all"
+                    style={{
+                      borderColor: autoIdx === i ? 'rgb(var(--accent))' : 'rgb(var(--border))',
+                      backgroundColor: autoIdx === i ? 'rgba(247,104,8,0.08)' : 'transparent',
+                      color: autoIdx === i ? 'rgb(var(--fg))' : 'rgb(var(--fg-muted))',
+                    }}
+                  >
+                    {d.label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[11px] mt-2" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Adds {DURATION_PRESETS[autoIdx].label.toLowerCase()} whenever less than 10 days remain, paid from your
+                wallet. Nook must be running for this to happen.
+              </p>
+            </>
+          )}
+          {autoInfo?.lastExtendedAt && (
+            <p className="text-[11px] mt-1" style={{ color: 'rgb(var(--fg-muted))' }}>
+              Last extended automatically {new Date(autoInfo.lastExtendedAt).toLocaleDateString()}
+            </p>
+          )}
+          {autoEnabled && autoInfo?.lastFailure && (
+            <p className="text-[11px] mt-1" style={{ color: '#ef4444' }}>
+              Last attempt failed: {autoInfo.lastFailure.reason}
+            </p>
           )}
         </div>
 
@@ -652,12 +870,12 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
             Cancel
           </button>
           <button
-            onClick={doExtend}
+            onClick={doApply}
             disabled={submitting || !canSubmit}
             className="flex-1 py-2 rounded-lg text-sm font-semibold disabled:opacity-40"
             style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
           >
-            {submitting ? 'Extending…' : 'Extend drive'}
+            {buttonLabel}
           </button>
         </div>
       </div>
@@ -666,6 +884,11 @@ function ExtendModal({ stamp, onClose }: { stamp: Stamp; onClose: () => void }) 
 }
 
 // ─── UpdateFeedModal ───────────────────────────────────────────────────────────
+
+/** A new version of a record being published — shown on that record's row. */
+function updateTransferId(recordId: string): string {
+  return `upd:${recordId}`
+}
 
 interface UpdateContent {
   entries: FileEntry[]
@@ -679,11 +902,24 @@ function UpdateFeedModal({ record, onClose }: { record: UploadRecord; onClose: (
   const [phase, setPhase] = useState<'select' | 'updating' | 'done'>('select')
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+  const [status, setStatus] = useState(UPLOAD_STEP_LOCAL)
+  const [pct, setPct] = useState<number | null>(null)
+  // Step 2 (storing on the network) — the modal shows the same visual as the
+  // drive's upload panel.
+  const [storingTagUid, setStoringTagUid] = useState<number | null>(null)
+  const storingTransfer = useTransfersStore(state =>
+    storingTagUid === null ? undefined : state.transfers.find(t => t.id === `tag:${storingTagUid}`),
+  )
+  // Closed with "Keep going in the background": the update finishes anyway
+  // and reports through the bell instead.
+  const closedRef = useRef(false)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const dirInputRef = useRef<HTMLInputElement>(null)
 
   const { update } = useUploadHistory()
+  const isSite = record.type === 'website'
+  const subject = isSite ? 'site' : 'file'
 
   async function handleDrop(e: React.DragEvent) {
     e.preventDefault()
@@ -727,28 +963,131 @@ function UpdateFeedModal({ record, onClose }: { record: UploadRecord; onClose: (
     if (!content) return
     setPhase('updating')
     setError(null)
+    setPct(0)
     const stampId = record.driveId
-    try {
-      let reference: string
+    // Same as a first upload (R7-2): a global transfer from the first byte, so
+    // the sidebar shows it from any page; the tag entry takes over once the
+    // new version is on this node. Its own id kind — it shows on the site's
+    // row, not as a new in-progress row.
+    const upId = updateTransferId(record.id)
+    const transfers = useTransfersStore.getState()
 
-      if (record.type === 'file') {
-        const res = await beeApi.uploadFile(content.entries[0].file, stampId)
-        reference = res.reference
+    transfers.begin({
+      id: upId,
+      kind: 'upload',
+      name: record.name,
+      driveId: stampId,
+      bytes: content.size,
+      phase: UPLOAD_STEP_LOCAL,
+      label: 'Updating',
+    })
+    const onPct = (value: number) => {
+      setPct(value)
+      useTransfersStore.getState().update(upId, { pct: value })
+    }
+    const onBeeWait = (wait: 'node' | 'resuming') => {
+      setStatus(wait === 'node' ? UPLOAD_PAUSED : UPLOAD_RESUMING)
+      useTransfersStore.getState().update(upId, { waiting: wait === 'node' ? 'node' : undefined })
+    }
+    const retry = {
+      pause: async () => waitWhileBeeDown(onBeeWait),
+      onRetry: (n: number) => setStatus(`Trying again… (${n})`),
+    }
+
+    try {
+      // Same safeguards as a first upload: wait out a stopped node, retry a
+      // failed copy (Bee still says "ready" for a few seconds after a stop),
+      // stop at once on a full drive, and follow the new version to the network.
+      const { reference, tagUid } = await withUploadRetries(
+        async () => {
+          setStatus(UPLOAD_STEP_LOCAL)
+          onPct(0)
+          let uid: number | undefined
+
+          try {
+            uid = (await beeApi.createTag()).uid
+          } catch {
+            // No tag — the update still works, just without network progress.
+          }
+          const res =
+            record.type === 'file'
+              ? await beeApi.uploadFileWithProgress(content.entries[0].file, stampId, onPct, true, uid)
+              : await beeApi.uploadCollectionWithProgress(
+                  content.entries,
+                  stampId,
+                  {
+                    ...(isSite ? { indexDocument: content.indexDocument, errorDocument: '404.html' } : {}),
+                    tagUid: uid,
+                  },
+                  onPct,
+                )
+
+          return { reference: res.reference, tagUid: uid }
+        },
+        { attempts: 8, delayMs: 10_000, ...retry },
+      )
+
+      // Store on the network FIRST, then move the address — as a first
+      // publish does: pointing people at a version that is only on this node
+      // gives them a half-loaded site. A stall is soft (same as first
+      // publish): Bee keeps pushing in the background and the address moves.
+      if (tagUid !== undefined) {
+        useTransfersStore.getState().remove(upId)
+        update(record.id, { pendingTagUid: tagUid })
+        setStatus(UPLOAD_STEP_NETWORK)
+        setPct(null)
+        setStoringTagUid(tagUid)
+        const { complete } = await followTagPropagation(tagUid, record.name, stampId)
+
+        setStoringTagUid(null)
+
+        if (!complete) setStatus('Still storing in the background…')
       } else {
-        const opts =
-          record.type === 'website' ? { indexDocument: content.indexDocument, errorDocument: '404.html' } : undefined
-        const res = await beeApi.uploadCollection(content.entries, stampId, opts)
-        reference = res.reference
+        useTransfersStore.getState().finish(upId)
       }
 
+      setStatus('Pointing the permanent address to the new version…')
+      setPct(null)
       const topicHex = await topicFromString(record.feedTopic ?? record.name)
-      await serverApi.createFeedUpdate(topicHex, reference, stampId)
-      update(record.id, { hash: reference })
+
+      await withUploadRetries(async () => serverApi.createFeedUpdate(topicHex, reference, stampId), {
+        attempts: 3,
+        delayMs: 5000,
+        ...retry,
+      })
+      update(record.id, { hash: reference, size: content.size, uploadedAt: Date.now() })
+
+      if (closedRef.current) {
+        serverApi
+          .createNotification({
+            type: 'info',
+            title: isSite ? 'Site updated' : 'New version published',
+            body: `“${record.name}” now shows the new version.`,
+            link: `/drive?open=${stampId}`,
+          })
+          .catch(() => undefined)
+      }
       setPhase('done')
     } catch (err) {
+      useTransfersStore.getState().finish(upId, 'failed')
+      setStoringTagUid(null)
       const raw = err instanceof Error ? err.message : ''
       const match = raw.match(/"message":"([^"]+)"/)
-      setError(match ? match[1] : 'Could not publish the update. Please try again.')
+      const message = isDriveFullError(err)
+        ? 'This drive is full — extend it, or publish the new version to a new drive.'
+        : `Could not publish the update: ${match ? match[1] : friendlyError(err, 'unknown error')}`
+
+      if (closedRef.current) {
+        serverApi
+          .createNotification({
+            type: 'info',
+            title: `“${record.name}” wasn’t updated`,
+            body: message,
+            link: `/drive?open=${stampId}`,
+          })
+          .catch(() => undefined)
+      }
+      setError(message)
       setPhase('select')
     }
   }
@@ -762,17 +1101,18 @@ function UpdateFeedModal({ record, onClose }: { record: UploadRecord; onClose: (
       }}
     >
       <div
-        className="rounded-xl border p-6 w-96 space-y-5"
+        className="rounded-xl border p-6 w-96 space-y-5 max-h-[calc(100vh-2rem)] max-w-[calc(100vw-2rem)] overflow-y-auto"
         style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
         onClick={e => e.stopPropagation()}
       >
         <div>
           <div className="flex items-center gap-2 mb-1">
             <Rss size={14} style={{ color: 'rgb(var(--accent))' }} />
-            <p className="text-sm font-semibold">Update feed</p>
+            <p className="text-sm font-semibold">{isSite ? 'Update site' : 'Publish a new version'}</p>
           </div>
           <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-            {record.name} · {record.feedTopic ?? record.name}
+            {record.name}
+            {record.feedTopic && record.feedTopic !== record.name ? ` · ${record.feedTopic}` : ''}
           </p>
         </div>
 
@@ -858,9 +1198,39 @@ function UpdateFeedModal({ record, onClose }: { record: UploadRecord; onClose: (
         {phase === 'updating' && (
           <div className="flex flex-col items-center gap-3 py-6">
             <RefreshCw size={20} className="animate-spin" style={{ color: 'rgb(var(--accent))' }} />
-            <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
-              Uploading and updating feed…
+            <p className="text-sm text-center" style={{ color: 'rgb(var(--fg-muted))' }}>
+              {storingTransfer?.waiting ? `Step 2 of 2 · ${waitLabel(storingTransfer.waiting)}` : status}
+              {pct !== null && !storingTransfer ? ` ${pct}%` : ''}
             </p>
+            {storingTransfer && (
+              <div className="w-full">
+                <PropagationVisual transfer={storingTransfer} subject={subject} />
+              </div>
+            )}
+            {pct !== null && !storingTransfer && (
+              <div
+                className="w-full h-1.5 rounded-full overflow-hidden"
+                style={{ backgroundColor: 'rgb(var(--border))' }}
+              >
+                <div
+                  className="h-full transition-all"
+                  style={{ width: `${pct}%`, backgroundColor: 'rgb(var(--accent))' }}
+                />
+              </div>
+            )}
+            <p className="text-xs text-center" style={{ color: 'rgb(var(--fg-muted))' }}>
+              {isSite ? 'The site' : 'It'} switches to the new version once it’s stored on the network.
+            </p>
+            <button
+              onClick={() => {
+                closedRef.current = true
+                onClose()
+              }}
+              className="text-xs underline"
+              style={{ color: 'rgb(var(--fg-muted))' }}
+            >
+              Keep going in the background
+            </button>
           </div>
         )}
 
@@ -873,13 +1243,10 @@ function UpdateFeedModal({ record, onClose }: { record: UploadRecord; onClose: (
               >
                 <Check size={14} color="#4ade80" />
               </div>
-              <p className="text-sm font-medium">Feed updated</p>
+              <p className="text-sm font-medium">{isSite ? 'Site updated' : 'New version published'}</p>
             </div>
             {record.feedManifestAddress && (
               <div className="rounded-lg border p-3 space-y-2" style={{ backgroundColor: 'rgb(var(--bg))' }}>
-                <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-                  Feed address (unchanged)
-                </p>
                 <p className="font-mono text-xs break-all">{record.feedManifestAddress}</p>
                 <div className="flex gap-2">
                   <button
@@ -932,14 +1299,16 @@ interface RecordRowProps {
   // the stamp.
   liveExpiresAt?: number
   copiedId: string | null
-  downloadingId: string | null
-  downloadPct: number | null
+  /** Last download failure for a record (R3b-1b) — shown inline with a retry, never an alert */
+  downloadErrors: Record<string, string>
   gatewayUrl: string
   onCopy: (id: string, hash: string) => void
   onUpdate: (id: string) => void
   onDownload: (id: string, hash: string, name: string) => void
   onRemove: (id: string) => void
   onSetENS?: (id: string) => void
+  /** Keep the ENS button's slot on every row when the list holds a website, so the columns line up. */
+  reserveEnsSlot?: boolean
   onDragStart?: (e: React.DragEvent, id: string) => void
   onDragEnd?: () => void
 }
@@ -948,14 +1317,14 @@ function RecordRow({
   record,
   liveExpiresAt,
   copiedId,
-  downloadingId,
-  downloadPct,
+  downloadErrors,
   gatewayUrl,
   onCopy,
   onUpdate,
   onDownload,
   onRemove,
   onSetENS,
+  reserveEnsSlot = false,
   onDragStart,
   onDragEnd,
 }: RecordRowProps) {
@@ -963,6 +1332,38 @@ function RecordRow({
   const { label: expiry, urgent } = timeUntil(expiresAt)
   const linkHash = record.feedManifestAddress ?? record.hash
   const isEnc = record.isEncrypted && record.actPublisher && record.actHistoryRef
+  // Still propagating (#23): the record exists from the moment the local
+  // upload lands; while its tag is unfinished the row shows the live network
+  // push instead of expiry. Falls back to a static hint when no follower is
+  // attached yet (resume runs shortly after app start).
+  const propagating = useTransfersStore(state =>
+    record.pendingTagUid !== undefined ? state.transfers.find(t => t.id === `tag:${record.pendingTagUid}`) : undefined,
+  )
+  // A new version of this site/file being published (Update content): shown
+  // on this row, not as a second in-progress row.
+  const updating = useTransfersStore(state =>
+    state.transfers.find(t => t.id === updateTransferId(record.id) && t.status === 'active'),
+  )
+  const rowTransfer = updating ?? propagating
+  // This row's own download (R4-14): several can run at once, so each row
+  // reads its own tracker entry instead of one page-wide "active download".
+  const downloadPct = useTransfersStore(state => {
+    const t = state.transfers.find(x => x.id === `dl:${record.id}` && x.status === 'active')
+
+    return t ? (t.pct ?? 0) : null
+  })
+  // Time left as a hover hint on the row's status (R4-13) — the column itself
+  // stays fixed-width; strings are stable snapshots for the store selector.
+  const transferEta = useTransfersStore(state => {
+    const t =
+      state.transfers.find(x => x.id === `dl:${record.id}` && x.status === 'active') ??
+      state.transfers.find(x => x.id === updateTransferId(record.id) && x.status === 'active') ??
+      (record.pendingTagUid !== undefined
+        ? state.transfers.find(x => x.id === `tag:${record.pendingTagUid}`)
+        : undefined)
+
+    return t ? etaText(t) : null
+  })
 
   // For encrypted files, build a proxy URL that includes ACT headers
   const actProxyUrl = isEnc
@@ -1044,35 +1445,96 @@ function RecordRow({
 
       {/* Size */}
       <span
-        className="text-xs shrink-0 hidden sm:block w-14 text-right tabular-nums"
+        className="text-xs shrink-0 hidden sm:block w-[4.5rem] text-right whitespace-nowrap tabular-nums"
         style={{ color: 'rgb(var(--fg-muted))' }}
       >
         {formatBytes(record.size)}
       </span>
 
-      {/* Expiry */}
-      <div className="flex items-center gap-2 shrink-0">
-        <ExpiryBar expiresAt={expiresAt} uploadedAt={record.uploadedAt} />
-        <span
-          className="text-[10px] uppercase tracking-widest font-semibold w-16 text-right whitespace-nowrap"
-          style={{ color: urgent ? '#ef4444' : 'rgb(var(--fg-muted))' }}
-        >
-          {expiry}
-        </span>
-      </div>
+      {/* Expiry — while a download runs, this status area is taken over by
+          prominent download progress: a % squeezed between action icons was
+          nearly invisible (finding #7). */}
+      {downloadPct !== null ? (
+        <div className="flex items-center gap-2 shrink-0">
+          <div className="w-24 h-1 rounded-full overflow-hidden" style={{ backgroundColor: 'rgb(var(--border))' }}>
+            <div
+              className="h-full rounded-full transition-all"
+              style={{ width: `${Math.max(downloadPct, 2)}%`, backgroundColor: 'rgb(var(--accent))' }}
+            />
+          </div>
+          <span
+            title={transferEta ?? undefined}
+            className="text-[10px] uppercase tracking-widest font-semibold w-24 text-right whitespace-nowrap tabular-nums"
+            style={{ color: 'rgb(var(--accent))' }}
+          >
+            {savingLabel(downloadPct)}
+          </span>
+        </div>
+      ) : downloadErrors[record.id] ? (
+        // Failed download (R3b-1b): inline, in the same status column, with a
+        // retry — the reason is on hover so the row keeps its layout.
+        <div className="flex items-center justify-end gap-2 shrink-0 w-[12.5rem]" title={downloadErrors[record.id]}>
+          <span
+            className="text-[10px] uppercase tracking-widest font-semibold whitespace-nowrap"
+            style={{ color: '#ef4444' }}
+          >
+            Download failed
+          </span>
+          <button
+            onClick={() => onDownload(record.id, record.hash, record.name)}
+            className="text-[10px] uppercase tracking-widest font-semibold underline whitespace-nowrap"
+            style={{ color: 'rgb(var(--fg))' }}
+          >
+            Retry
+          </button>
+        </div>
+      ) : updating || record.pendingTagUid !== undefined ? (
+        // Still spreading to the network (#23) — same prominent treatment as
+        // downloads, driven by the tracker entry this record's tag feeds.
+        <div className="flex items-center gap-2 shrink-0">
+          <div className="w-24 h-1 rounded-full overflow-hidden" style={{ backgroundColor: 'rgb(var(--border))' }}>
+            <div
+              className="h-full rounded-full transition-all"
+              style={{
+                width: `${Math.max(rowTransfer?.pct ?? 0, 2)}%`,
+                backgroundColor: rowTransfer?.waiting ? 'rgb(var(--fg-muted))' : 'rgb(var(--accent))',
+              }}
+            />
+          </div>
+          <span
+            title={waitLabel(rowTransfer?.waiting) ?? transferEta ?? undefined}
+            className="text-[10px] uppercase tracking-widest font-semibold w-24 text-right whitespace-nowrap tabular-nums"
+            style={{ color: rowTransfer?.waiting ? 'rgb(var(--fg-muted))' : 'rgb(var(--accent))' }}
+          >
+            {rowStatusLabel(rowTransfer?.waiting, rowTransfer?.pct ?? null, updating ? 'Updating' : 'Storing')}
+          </span>
+        </div>
+      ) : (
+        <div className="flex items-center gap-2 shrink-0">
+          <ExpiryBar expiresAt={expiresAt} />
+          <span
+            className="text-[10px] uppercase tracking-widest font-semibold w-24 text-right whitespace-nowrap"
+            style={{ color: urgent ? '#ef4444' : 'rgb(var(--fg-muted))' }}
+          >
+            {expiry}
+          </span>
+        </div>
+      )}
 
       {/* Actions */}
       <div className="flex items-center gap-0.5 shrink-0">
-        {record.type === 'website' && onSetENS && (
+        {record.type === 'website' && onSetENS ? (
           <button
             onClick={() => onSetENS(record.id)}
             title={record.ensDomain ? `Update ENS (${record.ensDomain})` : 'Set ENS domain'}
-            className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors mr-1"
+            className="flex items-center justify-center gap-1 w-16 py-0.5 rounded text-[10px] font-medium transition-colors mr-1"
             style={{ color: 'rgb(var(--fg-muted))' }}
           >
             <Globe size={11} />
             {record.ensDomain ? 'ENS' : 'Set ENS'}
           </button>
+        ) : (
+          reserveEnsSlot && <span className="w-16 mr-1 shrink-0" aria-hidden="true" />
         )}
         {!isEnc && (
           <button
@@ -1096,9 +1558,11 @@ function RecordRow({
             <ExternalLink size={12} />
           </a>
         )}
-        {downloadingId === record.id && downloadPct !== null ? (
-          <span className="text-[10px] tabular-nums px-1 shrink-0" style={{ color: 'rgb(var(--accent))' }}>
-            {downloadPct}%
+        {downloadPct !== null ? (
+          // Progress lives in the row's status area now; keep the icon slot
+          // as a spinner so the layout doesn't jump (#136).
+          <span title="Downloading…" className="w-6 h-6 flex items-center justify-center shrink-0">
+            <RefreshCw size={12} className="animate-spin" style={{ color: 'rgb(var(--accent))' }} />
           </span>
         ) : (
           <button
@@ -1107,7 +1571,7 @@ function RecordRow({
             className="w-6 h-6 flex items-center justify-center rounded transition-colors"
             style={{ color: 'rgb(var(--fg-muted))' }}
           >
-            {downloadingId === record.id ? <RefreshCw size={12} className="animate-spin" /> : <Download size={12} />}
+            <Download size={12} />
           </button>
         )}
         {/* Forget, not delete: classic drives can't remove content from Swarm —
@@ -1134,9 +1598,19 @@ interface DriveCardProps {
   folders: DriveFolder[]
   gatewayUrl: string
   copiedId: string | null
-  downloadingId: string | null
-  downloadPct: number | null
   customName?: string
+  /** Auto-extend enabled for this drive (#129) — shows the card badge. */
+  autoExtendOn?: boolean
+  /** Configured duration in months — for the badge tooltip. */
+  autoExtendMonths?: number
+  /** In the advance-notice window (#138) — badge turns amber. */
+  autoExtendUpcoming?: boolean
+  /** Last automatic extension failed (#138) — badge turns red. */
+  autoExtendFailed?: boolean
+  /** Why it failed — shown in the badge tooltip, self-contained. */
+  autoExtendFailedReason?: string
+  /** Open the auto-extend dialog (#129). */
+  onAutoExtend?: () => void
   encrypted?: boolean
   granteeCount?: number
   /** Latest public metadata-wrapper ref — the health-check target (#93). */
@@ -1159,8 +1633,6 @@ function DriveCard({
   folders,
   gatewayUrl,
   copiedId,
-  downloadingId,
-  downloadPct,
   customName,
   onOpen,
   onExtend,
@@ -1175,6 +1647,12 @@ function DriveCard({
   wrapperRef,
   onShare,
   onMoveToFolder,
+  autoExtendOn,
+  autoExtendMonths,
+  autoExtendUpcoming,
+  autoExtendFailed,
+  autoExtendFailedReason,
+  onAutoExtend,
 }: DriveCardProps) {
   const [inlineDraggingId, setInlineDraggingId] = useState<string | null>(null)
   const [inlineDragOverFolderId, setInlineDragOverFolderId] = useState<string | null>(null)
@@ -1267,7 +1745,10 @@ function DriveCard({
 
     if (rootFiles.length > 0) parts.push(`${rootFiles.length} file${rootFiles.length !== 1 ? 's' : ''}`)
 
-    return parts.join(', ') || '0 files'
+    // What your files add up to (R7-6) — next to how full the drive is.
+    const filesBytes = records.reduce((sum, r) => sum + (r.size ?? 0), 0)
+
+    return (parts.join(', ') || '0 files') + (filesBytes > 0 ? ` · ${formatBytes(filesBytes)}` : '')
   })()
 
   function renderInlineFolder(folder: DriveFolder, depth: number): React.ReactElement {
@@ -1380,8 +1861,8 @@ function DriveCard({
           {/* Encrypted pill */}
           {encrypted && (
             <span
-              className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-semibold shrink-0"
-              style={{ backgroundColor: '#3b82f6', color: 'white' }}
+              className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium shrink-0"
+              style={{ backgroundColor: 'rgba(96,165,250,0.12)', color: '#60a5fa' }}
             >
               <Lock size={12} />
               Encrypted{granteeCount && granteeCount > 1 ? ` · ${granteeCount - 1} shared` : ''}
@@ -1416,32 +1897,52 @@ function DriveCard({
             </span>
           )}
 
-          {/* Website pill */}
+          {/* Website pill — neutral (#22c): it's a content type, not a state;
+              green stays reserved for active policies (auto-renew). */}
           {hasWebsite && (
             <span
               className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium shrink-0"
-              style={{ backgroundColor: 'rgba(74,222,128,0.1)', color: '#4ade80' }}
+              style={{ backgroundColor: 'rgba(150,150,150,0.12)', color: 'rgb(var(--fg-muted))' }}
             >
               <Globe size={11} />
               Website
             </span>
           )}
 
-          {/* Right-side actions */}
-          <div className="ml-auto flex items-center gap-2 shrink-0">
-            {needsExtend && (
-              <button
-                onClick={e => {
-                  e.stopPropagation()
-                  onExtend()
-                }}
-                className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors border hover:bg-white/[0.04]"
-                style={{ borderColor: 'rgb(var(--border))', color: 'rgb(var(--fg))' }}
-              >
-                Extend storage
-              </button>
-            )}
+          {/* Auto-extend badge (#129) — an active spending policy is card-level
+              state; click-through manages or cancels it */}
+          {autoExtendOn && (
+            <button
+              onClick={e => {
+                e.stopPropagation()
+                onAutoExtend?.()
+              }}
+              className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium shrink-0 transition-colors hover:bg-white/10"
+              style={
+                autoExtendFailed
+                  ? { backgroundColor: 'rgba(239,68,68,0.12)', color: '#ef4444' }
+                  : autoExtendUpcoming
+                    ? { backgroundColor: 'rgba(245,158,11,0.12)', color: '#f59e0b' }
+                    : { backgroundColor: 'rgba(74,222,128,0.1)', color: '#4ade80' }
+              }
+              title={
+                autoExtendFailed
+                  ? `Couldn't extend automatically${autoExtendFailedReason ? `: ${autoExtendFailedReason}` : ''} — click to change it, or add xBZZ`
+                  : autoExtendUpcoming
+                    ? 'Automatic extension coming up in the next days — click for details or to turn it off'
+                    : `Extends automatically${autoExtendMonths ? ` by ${autoExtendMonths} month${autoExtendMonths === 1 ? '' : 's'}` : ''} when under 10 days remain — click to change or turn off`
+              }
+            >
+              <RefreshCw size={11} />
+              auto-renew
+            </button>
+          )}
 
+          {/* Right-side actions. The conditional "Extend storage" button is
+              gone (#22b) — a button teleporting in near expiry made rows feel
+              unstable; the urgent TTL pill is clickable instead, and the
+              kebab always carries "Extend drive…". */}
+          <div className="ml-auto flex items-center gap-2 shrink-0">
             <div ref={kebabRef} className="relative">
               <button
                 onClick={e => {
@@ -1470,8 +1971,22 @@ function DriveCard({
                     style={{ color: 'rgb(var(--fg))' }}
                   >
                     <Clock size={13} style={{ color: 'rgb(var(--fg-muted))' }} />
-                    Extend storage
+                    Extend drive…
                   </button>
+                  {onAutoExtend && (
+                    <button
+                      onClick={() => {
+                        setKebabOpen(false)
+                        onAutoExtend()
+                      }}
+                      disabled={!stamp.usable}
+                      className="flex items-center gap-2 w-full px-3 py-2 text-xs transition-colors hover:bg-white/5 disabled:opacity-40 disabled:cursor-not-allowed"
+                      style={{ color: 'rgb(var(--fg))' }}
+                    >
+                      <RefreshCw size={13} style={{ color: 'rgb(var(--fg-muted))' }} />
+                      Auto-renew…
+                    </button>
+                  )}
                   {encrypted && onShare && (
                     <button
                       onClick={() => {
@@ -1520,11 +2035,19 @@ function DriveCard({
             />
           </div>
           <span style={{ color: isFull ? '#ef4444' : 'rgb(var(--fg-muted))' }} title={USAGE_TOOLTIP}>
-            {usedBytes > 0 ? `${formatBytes(usedBytes)} / ${formatBytes(capacityBytes)}` : formatBytes(capacityBytes)}
+            {usedBytes > 0 ? `${driveSizeLabel(stamp.depth)} · ${utilizationPct}% full` : driveSizeLabel(stamp.depth)}
           </span>
           {stamp.usable && (
-            <span
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full"
+            // The TTL pill is the extend affordance (#22b): where urgency
+            // shows is where the action lives. Replaces the conditional
+            // "Extend storage" button that popped in near expiry.
+            <button
+              onClick={e => {
+                e.stopPropagation()
+                onExtend()
+              }}
+              title="Extend drive — add space or time"
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full transition-colors hover:ring-1"
               style={
                 isCriticalTtl
                   ? { backgroundColor: 'rgba(239,68,68,0.1)', color: '#ef4444' }
@@ -1532,8 +2055,10 @@ function DriveCard({
               }
             >
               <Clock size={11} />
-              {ttlToDays(stamp.batchTTL)}
-            </span>
+              <span className={needsExtend ? 'underline underline-offset-2' : undefined}>
+                {ttlToDays(stamp.batchTTL)}
+              </span>
+            </button>
           )}
           <span style={{ color: 'rgb(var(--border))' }}>|</span>
           <span style={{ color: 'rgb(var(--fg-muted))' }}>{itemSummary}</span>
@@ -1547,6 +2072,137 @@ function DriveCard({
 
 type UploadType = 'file' | 'folder'
 
+/**
+ * An upload that has no record yet (R5-2) — encrypted uploads, and classic
+ * uploads still copying to the local node. Mirrors RecordRow's "Storing"
+ * treatment so every upload looks the same whatever the drive type.
+ */
+/**
+ * Pieces an encrypted upload of `bytes` makes: 4 KB data pieces plus the
+ * tree above them (encrypted references are 64 bytes → 64 per level) and a
+ * few for the manifest. An estimate — shown with "~".
+ */
+function estimateEncryptedPieces(bytes: number): number {
+  const data = Math.max(1, Math.ceil(bytes / 4096))
+
+  return data + Math.ceil(data / 63) + 4
+}
+
+function PendingUploadRow({
+  transfer,
+  encrypted,
+  reserveEnsSlot = false,
+}: {
+  transfer: TransferEntry
+  encrypted: boolean
+  reserveEnsSlot?: boolean
+}) {
+  const failed = transfer.status === 'failed'
+  const verb = transfer.label ?? 'Storing'
+
+  return (
+    <div className="px-2 py-2 flex items-center gap-3" title={transfer.phase || undefined}>
+      <div
+        className="w-6 h-6 rounded overflow-hidden flex items-center justify-center shrink-0"
+        style={{ backgroundColor: 'rgb(var(--bg))' }}
+      >
+        {verb === 'Encrypting' ? (
+          <Lock size={12} style={{ color: 'rgb(var(--accent))' }} />
+        ) : (
+          <File size={12} style={{ color: 'rgb(var(--fg-muted))' }} />
+        )}
+      </div>
+      <span className="flex-1 min-w-0 text-xs font-medium truncate">{transfer.name}</span>
+      <span
+        className="text-xs shrink-0 hidden sm:block w-[4.5rem] text-right whitespace-nowrap tabular-nums"
+        style={{ color: 'rgb(var(--fg-muted))' }}
+      >
+        {transfer.bytes !== undefined ? formatBytes(transfer.bytes) : ''}
+      </span>
+      <div className="flex items-center gap-2 shrink-0">
+        <div className="w-24 h-1 rounded-full overflow-hidden" style={{ backgroundColor: 'rgb(var(--border))' }}>
+          <div
+            className="h-full rounded-full transition-all"
+            style={{
+              width: `${Math.max(transfer.pct ?? 0, 2)}%`,
+              backgroundColor: failed ? '#ef4444' : transfer.waiting ? 'rgb(var(--fg-muted))' : 'rgb(var(--accent))',
+            }}
+          />
+        </div>
+        <span
+          className="text-[10px] uppercase tracking-widest font-semibold w-24 text-right whitespace-nowrap tabular-nums"
+          style={{ color: failed ? '#ef4444' : transfer.waiting ? 'rgb(var(--fg-muted))' : 'rgb(var(--accent))' }}
+        >
+          {failed ? 'Failed' : rowStatusLabel(transfer.waiting, transfer.pct, verb)}
+        </span>
+      </div>
+      {/* Same width as RecordRow's action group (R6-2): buttons are 24px, 2px
+          apart — encrypted rows have download + ✕ (50px), classic rows also
+          copy + open (102px); the ENS slot adds 64px + 4px margin + 2px gap
+          when the list holds a site. */}
+      <div
+        className="shrink-0"
+        style={{ width: (encrypted ? 50 : 102) + (reserveEnsSlot ? 70 : 0) }}
+        aria-hidden="true"
+      />
+    </div>
+  )
+}
+
+/**
+ * The upload panel, re-attached (consistency with deletable drives): coming
+ * back to a drive while one of its uploads runs shows the same panel the
+ * upload form showed — same step titles, same visual — driven by the global
+ * tracker entry, so leaving the drive never loses the view of it.
+ */
+function ResumedUploadPanel({ transfer }: { transfer: TransferEntry }) {
+  const networkStep = transfer.id.startsWith('tag:')
+  const encrypting = transfer.label === 'Encrypting'
+  const showVisual = networkStep || encrypting
+  const title = transfer.waiting
+    ? `${networkStep ? 'Step 2 of 2 · ' : ''}${waitLabel(transfer.waiting)}`
+    : networkStep
+      ? UPLOAD_STEP_NETWORK
+      : encrypting
+        ? UPLOAD_ENCRYPTED
+        : UPLOAD_STEP_LOCAL
+
+  return (
+    <div
+      className="max-w-xl rounded-xl border p-6 mb-4 space-y-3"
+      style={{ backgroundColor: 'rgb(var(--bg-surface))', borderColor: 'rgb(var(--border))' }}
+    >
+      <div className="flex items-center gap-2">
+        <RefreshCw
+          size={13}
+          className={`shrink-0 ${transfer.waiting === 'node' ? '' : 'animate-spin'}`}
+          style={{ color: transfer.waiting ? 'rgb(var(--fg-muted))' : 'rgb(var(--accent))' }}
+        />
+        <p className="text-sm tabular-nums truncate" style={{ color: 'rgb(var(--fg-muted))' }}>
+          {title}
+          {!showVisual && !transfer.waiting && transfer.pct !== null && transfer.pct > 0 && ` — ${transfer.pct}%`}
+        </p>
+      </div>
+      <p className="text-xs font-medium truncate" style={{ color: 'rgb(var(--fg))' }}>
+        {transfer.name}
+      </p>
+      {showVisual ? (
+        <PropagationVisual transfer={transfer} approxTotal={!networkStep} />
+      ) : (
+        <div className="h-1 rounded-full" style={{ backgroundColor: 'rgb(var(--border))' }}>
+          <div
+            className="h-1 rounded-full transition-all"
+            style={{
+              width: `${Math.max(transfer.pct ?? 0, 2)}%`,
+              backgroundColor: transfer.waiting ? 'rgb(var(--fg-muted))' : 'rgb(var(--accent))',
+            }}
+          />
+        </div>
+      )}
+    </div>
+  )
+}
+
 interface AddFileProps {
   driveId: string
   encrypted?: boolean
@@ -1556,14 +2212,35 @@ interface AddFileProps {
   onActHistoryUpdate?: (historyRef: string) => void
   /** Latest public wrapper ref after the metadata feed update (#93 health checks). */
   onWrapperRef?: (ref: string) => void
+  /** Folder the upload lands in — so its in-progress row shows there (R5-2). */
+  folderId?: string
+}
+
+/** Text safe inside HTML (file and folder names can contain < > & " '). */
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
 }
 
 function generateFolderIndex(name: string, entries: FileEntry[]): FileEntry {
-  const rows = entries.map(e => `<li><a href="${e.path}">${e.path}</a></li>`).join('\n')
+  // Names are escaped for display; links are percent-encoded per path segment
+  // so spaces, # and ? in file names still resolve.
+  const rows = entries
+    .map(e => {
+      const href = e.path.split('/').map(encodeURIComponent).join('/')
+
+      return `<li><a href="${escapeHtml(href)}">${escapeHtml(e.path)}</a></li>`
+    })
+    .join('\n')
+  const title = escapeHtml(name)
   const html = `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>${name}</title>
+<html><head><meta charset="utf-8"><title>${title}</title>
 <style>body{font-family:system-ui,sans-serif;max-width:800px;margin:40px auto;padding:0 20px}h1{font-weight:500;margin-bottom:20px}ul{list-style:none;padding:0}li{padding:6px 0;border-bottom:1px solid #eee}a{text-decoration:none;color:#0066cc}a:hover{text-decoration:underline}</style>
-</head><body><h1>${name}</h1><ul>
+</head><body><h1>${title}</h1><ul>
 ${rows}
 </ul></body></html>`
   // Use globalThis.File to avoid conflict with the lucide-react File icon import
@@ -1580,6 +2257,7 @@ function AddFilePanel({
   onAdd,
   onActHistoryUpdate,
   onWrapperRef,
+  folderId,
 }: AddFileProps) {
   const { data: addresses } = useAddresses()
   const [phase, setPhase] = useState('')
@@ -1587,6 +2265,19 @@ function AddFilePanel({
   const [error, setError] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
   const [dragging, setDragging] = useState(false)
+  // Stage-2 propagation is tracked in the global transfers store (#4/#5) —
+  // this only remembers WHICH entry belongs to this panel's current upload.
+  const [propagationTagUid, setPropagationTagUid] = useState<number | null>(null)
+  const propagationTransfer = useTransfersStore(state =>
+    propagationTagUid === null ? undefined : state.transfers.find(t => t.id === `tag:${propagationTagUid}`),
+  )
+  // Encrypted uploads are one direct step (no tag): their entry carries
+  // pieces estimated from the bytes Bee has accepted — it only takes more as
+  // it pushes — so they get the same visual as a regular upload (R7-2).
+  const [encryptedUpId, setEncryptedUpId] = useState<string | null>(null)
+  const encryptedTransfer = useTransfersStore(state =>
+    encryptedUpId === null ? undefined : state.transfers.find(t => t.id === encryptedUpId),
+  )
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const dirInputRef = useRef<HTMLInputElement>(null)
@@ -1596,32 +2287,69 @@ function AddFilePanel({
     setError(null)
     setProgress(null)
 
+    // R5-2: every upload is a global transfer from its first byte — the
+    // sidebar indicator and an in-progress row in the drive show it from any
+    // page, exactly like the network step of classic uploads. Encrypted
+    // uploads are one step; classic uploads hand over to the tag entry
+    // (Step 2) once the local copy lands.
+    const transfers = useTransfersStore.getState()
+    const upId = `up:${crypto.randomUUID()}`
+
+    transfers.begin({
+      id: upId,
+      kind: 'upload',
+      name,
+      driveId,
+      folderId,
+      bytes: entries.reduce((sum, e) => sum + e.file.size, 0),
+      phase: encrypted ? UPLOAD_ENCRYPTED : UPLOAD_STEP_LOCAL,
+      label: encrypted ? 'Encrypting' : 'Copying',
+    })
+    const totalBytes = entries.reduce((sum, e) => sum + e.file.size, 0)
+    const estPieces = estimateEncryptedPieces(totalBytes) + (type === 'folder' ? entries.length : 0)
+
+    setEncryptedUpId(encrypted ? upId : null)
+    const onUploadPct = (pct: number) => {
+      setProgress(pct)
+
+      if (encrypted) {
+        useTransfersStore.getState().chunkProgress(upId, Math.round((pct / 100) * estPieces), estPieces)
+      } else {
+        useTransfersStore.getState().update(upId, { pct })
+      }
+    }
+
     // For folder uploads inject a generated directory listing so /bzz/{hash}/ resolves
     const uploadEntries = type === 'folder' ? [...entries, generateFolderIndex(name, entries)] : entries
     const indexDocument = type === 'folder' ? '_index.html' : undefined
 
+    // Bee stopped before the network step (R8-3): the panel and the sidebar
+    // card say "Paused", and the outage doesn't use up waits or attempts.
+    const onBeeWait = (wait: 'node' | 'resuming') => {
+      setPhase(wait === 'node' ? UPLOAD_PAUSED : UPLOAD_RESUMING)
+      useTransfersStore.getState().update(upId, { waiting: wait === 'node' ? 'node' : undefined })
+    }
+
     try {
-      await pollStampUsable(driveId, setPhase)
+      await pollStampUsable(driveId, setPhase, onBeeWait)
 
       let currentHistoryRef = actHistoryRef
 
-      async function doUpload(
-        attempt: number,
-      ): Promise<{ reference: string; historyAddress?: string; tagUid?: number }> {
-        if (attempt > 1) {
-          setPhase(`Finalising storage… (retry ${attempt - 1})`)
-          await new Promise(r => setTimeout(r, 5000))
-        }
-        setPhase(encrypted ? 'Encrypting & uploading…' : 'Uploading…')
+      async function doUpload(): Promise<{ reference: string; historyAddress?: string; tagUid?: number }> {
+        setPhase(encrypted ? UPLOAD_ENCRYPTED : UPLOAD_STEP_LOCAL)
         setProgress(0)
 
         if (encrypted) {
           if (type === 'file') {
-            return beeApi.uploadFileWithACT(entries[0].file, driveId, currentHistoryRef, pct => setProgress(pct))
+            return beeApi.uploadFileWithACT(entries[0].file, driveId, currentHistoryRef, onUploadPct)
           }
 
-          return beeApi.uploadCollectionWithACT(uploadEntries, driveId, currentHistoryRef, { indexDocument }, pct =>
-            setProgress(pct),
+          return beeApi.uploadCollectionWithACT(
+            uploadEntries,
+            driveId,
+            currentHistoryRef,
+            { indexDocument },
+            onUploadPct,
           )
         }
 
@@ -1636,60 +2364,42 @@ function AddFilePanel({
         }
 
         if (type === 'file') {
-          const res = await beeApi.uploadFileWithProgress(
-            entries[0].file,
-            driveId,
-            pct => setProgress(pct),
-            true,
-            tagUid,
-          )
+          const res = await beeApi.uploadFileWithProgress(entries[0].file, driveId, onUploadPct, true, tagUid)
 
           return { reference: res.reference, tagUid }
         }
 
-        const res = await beeApi.uploadCollectionWithProgress(uploadEntries, driveId, { indexDocument, tagUid }, pct =>
-          setProgress(pct),
+        const res = await beeApi.uploadCollectionWithProgress(
+          uploadEntries,
+          driveId,
+          { indexDocument, tagUid },
+          onUploadPct,
         )
 
         return { reference: res.reference, tagUid }
       }
 
-      let reference!: string
-      let uploadHistoryAddress: string | undefined
-      let uploadTagUid: number | undefined
+      // Outages don't use up attempts — at most 3 times, so a Bee that keeps
+      // going down mid-copy can't retry forever (R8-3 follow-up).
+      const result = await withUploadRetries(doUpload, {
+        attempts: 4,
+        delayMs: 5000,
+        pause: async () => waitWhileBeeDown(onBeeWait),
+        onRetry: retry => setPhase(`Finalising storage… (retry ${retry})`),
+      })
+      const reference = result.reference
+      const uploadHistoryAddress = result.historyAddress
+      const uploadTagUid = result.tagUid
 
-      for (let attempt = 1; attempt <= 4; attempt++) {
-        try {
-          const result = await doUpload(attempt)
-          reference = result.reference
-          uploadHistoryAddress = result.historyAddress
-          uploadTagUid = result.tagUid
-
-          if (uploadHistoryAddress) {
-            currentHistoryRef = uploadHistoryAddress
-            onActHistoryUpdate?.(uploadHistoryAddress)
-          }
-          break
-        } catch (err) {
-          if (attempt === 4) throw err
-        }
+      if (uploadHistoryAddress) {
+        currentHistoryRef = uploadHistoryAddress
+        onActHistoryUpdate?.(uploadHistoryAddress)
       }
 
       // NOTE (#93): encrypted content refs are ACT-encrypted POINTERS, not
       // content addresses — stewardship can't verify them. The availability
       // check for encrypted drives happens on the public metadata WRAPPER
       // below (the first thing recipients resolve).
-      if (!encrypted && uploadTagUid !== undefined) {
-        // #92 stage 2: follow the tag until the content is on the network.
-        setPhase('Propagating to network…')
-        setProgress(0)
-        const { complete } = await waitForTagPropagation(uploadTagUid, pct => setProgress(pct))
-
-        if (!complete) setPhase('Still propagating in the background…')
-      }
-
-      setProgress(null)
-
       let expiresAt: number
       try {
         const stamp = await beeApi.getStamp(driveId)
@@ -1698,6 +2408,12 @@ function AddFilePanel({
         expiresAt = Date.now() + 3 * 30 * 24 * 60 * 60 * 1000
       }
 
+      // Record FIRST, propagation after (#23): the local upload succeeded, so
+      // the file's address must be persisted before the long network wait —
+      // navigating away (or quitting) during propagation used to lose the
+      // record entirely. pendingTagUid marks the row as still spreading; the
+      // transfer tracker clears it centrally on completion.
+      const pendingTag = !encrypted && uploadTagUid !== undefined ? uploadTagUid : undefined
       const newRecord: UploadRecord = {
         id: crypto.randomUUID(),
         name,
@@ -1711,9 +2427,33 @@ function AddFilePanel({
         isEncrypted: encrypted || undefined,
         actPublisher: encrypted ? addresses?.publicKey : undefined,
         actHistoryRef: uploadHistoryAddress || undefined,
+        ...(pendingTag !== undefined ? { pendingTagUid: pendingTag } : {}),
       }
 
       onAdd(newRecord)
+
+      // The record's own row takes over from the in-progress one. Classic:
+      // the tag entry (Step 2) replaces this transfer. Encrypted: it stays in
+      // the sidebar until the shared file list below is updated too.
+      if (!encrypted && uploadTagUid !== undefined) useTransfersStore.getState().remove(upId)
+      else useTransfersStore.getState().update(upId, { recordId: newRecord.id })
+
+      if (!encrypted && uploadTagUid !== undefined) {
+        // #92 stage 2: follow the tag until the content is on the network —
+        // through the global tracker (#4/#5), so the progress survives
+        // navigation, feeds the sidebar indicator + propagation visual, and
+        // rings the bell on completion.
+        setPhase(UPLOAD_STEP_NETWORK)
+        setProgress(0)
+        setPropagationTagUid(uploadTagUid)
+        const { complete } = await followTagPropagation(uploadTagUid, name, driveId, pct => setProgress(pct))
+
+        setPropagationTagUid(null)
+
+        if (!complete) setPhase('Still storing in the background…')
+      }
+
+      setProgress(null)
 
       // Update metadata feed for encrypted drives (enables live shared drive access)
       if (encrypted && addresses?.publicKey && uploadHistoryAddress) {
@@ -1759,8 +2499,10 @@ function AddFilePanel({
         }
       }
 
+      useTransfersStore.getState().finish(upId)
       onDone()
     } catch (err) {
+      useTransfersStore.getState().finish(upId, 'failed')
       const msg = err instanceof Error ? err.message : 'Upload failed'
 
       if (msg.includes('402') || msg.toLowerCase().includes('overissued')) {
@@ -1811,6 +2553,9 @@ function AddFilePanel({
     }
   }
 
+  const visualTransfer =
+    propagationTransfer ?? (encryptedTransfer && phase === UPLOAD_ENCRYPTED ? encryptedTransfer : undefined)
+
   if (uploading) {
     return (
       <div
@@ -1818,18 +2563,32 @@ function AddFilePanel({
         style={{ backgroundColor: 'rgb(var(--bg-surface))', borderColor: 'rgb(var(--border))' }}
       >
         <div className="flex items-center gap-2">
-          <RefreshCw size={13} className="animate-spin shrink-0" style={{ color: 'rgb(var(--accent))' }} />
-          <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
-            {phase || 'Preparing…'}
+          <RefreshCw
+            size={13}
+            className={`shrink-0 ${propagationTransfer?.waiting === 'node' ? '' : 'animate-spin'}`}
+            style={{ color: propagationTransfer?.waiting ? 'rgb(var(--fg-muted))' : 'rgb(var(--accent))' }}
+          />
+          <p className="text-sm tabular-nums" style={{ color: 'rgb(var(--fg-muted))' }}>
+            {propagationTransfer?.waiting
+              ? `Step 2 of 2 · ${waitLabel(propagationTransfer.waiting)}`
+              : phase || 'Preparing…'}
+            {/* Step 2 and encrypted uploads show their own numbers in the visual below. */}
+            {!visualTransfer && progress !== null && progress > 0 && ` — ${progress}%`}
           </p>
         </div>
-        {progress !== null && (
-          <div className="h-1 rounded-full" style={{ backgroundColor: 'rgb(var(--border))' }}>
-            <div
-              className="h-1 rounded-full transition-all"
-              style={{ width: `${progress}%`, backgroundColor: 'rgb(var(--accent))' }}
-            />
-          </div>
+        {/* Stage 2 (#4): the propagation gets the full honest visual — real
+            chunk counts, coarse ETA, dots moving at the network's real pace. */}
+        {visualTransfer ? (
+          <PropagationVisual transfer={visualTransfer} approxTotal={!propagationTransfer} />
+        ) : (
+          progress !== null && (
+            <div className="h-1 rounded-full" style={{ backgroundColor: 'rgb(var(--border))' }}>
+              <div
+                className="h-1 rounded-full transition-all"
+                style={{ width: `${progress}%`, backgroundColor: 'rgb(var(--accent))' }}
+              />
+            </div>
+          )
         )}
       </div>
     )
@@ -1911,6 +2670,11 @@ function AddFilePanel({
 
 // ─── SharedDriveCard ──────────────────────────────────────────────────────────
 
+/** A shared-drive download's transfer id: one per row — identical files share an address. */
+function sharedDownloadId(driveId: string, ref: string, row: number): string {
+  return `dl:shared:${driveId}:${ref}:${row}`
+}
+
 function SharedDriveCard({
   drive,
   onRemove,
@@ -1926,10 +2690,18 @@ function SharedDriveCard({
   const [editingFrom, setEditingFrom] = useState(false)
   const [fromInput, setFromInput] = useState('')
   const [refreshing, setRefreshing] = useState(false)
+  const [refreshNote, setRefreshNote] = useState<string | null>(null)
+  // Active downloads from this card, for per-file progress + re-attach (#18).
+  // Select the stable array, filter outside (unstable selector snapshots
+  // trip useSyncExternalStore's caching).
+  const allTransfers = useTransfersStore(state => state.transfers)
+  const sharedDownloads = allTransfers.filter(t => t.id.startsWith('dl:shared:'))
 
-  // Auto-sync every 5 minutes for feed-based shared drives
+  // Auto-sync every 5 minutes for feed-based shared drives. Paused while
+  // revoked (#16) — retrying an access we know is gone just makes noise; the
+  // manual button remains the recovery path after a re-grant (#17).
   useEffect(() => {
-    if (!drive.feedTopic || !drive.feedOwner || !onRefresh) return
+    if (!drive.feedTopic || !drive.feedOwner || !onRefresh || drive.revokedAt) return
 
     const interval = setInterval(
       () => {
@@ -1939,29 +2711,61 @@ function SharedDriveCard({
     )
 
     return () => clearInterval(interval)
-  }, [drive.feedTopic, drive.feedOwner])
+  }, [drive.feedTopic, drive.feedOwner, drive.revokedAt])
+
+  // A drive message (access restored / an update, R4-15) asked for a sync —
+  // run it now instead of waiting for the 5-minute timer or a manual click.
+  useEffect(() => {
+    if (!drive.syncRequestedAt || drive.revokedAt || refreshing) return
+    handleRefresh()
+    // eslint-disable-next-line
+  }, [drive.syncRequestedAt])
+
+  /** Persist changes to this drive's entry and re-render the list. */
+  function persistDrive(changes: Partial<import('../hooks/useSharedDrives').SharedDrive>) {
+    const drives: import('../hooks/useSharedDrives').SharedDrive[] = JSON.parse(
+      localStorage.getItem('nook-shared-drives') ?? '[]',
+    )
+    const updated = drives.map(d => (d.id === drive.id ? { ...d, ...changes } : d))
+
+    localStorage.setItem('nook-shared-drives', JSON.stringify(updated))
+    onRefresh?.()
+  }
 
   async function handleRefresh() {
     if (!drive.feedTopic || !drive.feedOwner || !onRefresh) return
     setRefreshing(true)
+    setRefreshNote(null)
     try {
+      // Full re-read (#17): the wrapper carries its own (possibly rotated)
+      // history — refresh must adopt it, exactly like re-adding the share
+      // link does. A successful read after a re-grant self-heals the entry.
       const wrapperText = await serverApi.readFeed(drive.feedTopic, drive.feedOwner)
       const wrapper = JSON.parse(wrapperText) as { ref: string; history: string }
       const blob = await beeApi.downloadFileWithACT(wrapper.ref, drive.actPublisher, wrapper.history)
       const metadata = JSON.parse(await blob.text())
 
-      // Update localStorage with new files
-      const drives: import('../hooks/useSharedDrives').SharedDrive[] = JSON.parse(
-        localStorage.getItem('nook-shared-drives') ?? '[]',
-      )
-      const updated = drives.map(d =>
-        d.id === drive.id ? { ...d, files: metadata.files, actHistoryRef: wrapper.history } : d,
-      )
-      localStorage.setItem('nook-shared-drives', JSON.stringify(updated))
-      onRefresh()
-    } catch {
-      // eslint-disable-next-line no-alert
-      alert('Could not refresh. Access may have been revoked.')
+      persistDrive({
+        files: metadata.files,
+        reference: wrapper.ref,
+        actHistoryRef: wrapper.history,
+        revokedAt: undefined,
+        syncRequestedAt: undefined,
+      })
+    } catch (e) {
+      // Revoked-vs-transient (#16, round-3 refinement): the status code is
+      // unreliable (Bee reports the decrypt failure as 404/500 depending on
+      // path, not a clean 403). The reliable discriminator is the SHAPE of
+      // the failure: the feed read already succeeded — network fine, wrapper
+      // exists — so an HTTP failure on the encrypted download means we can't
+      // DECRYPT: the owner rotated us out. A pure network/parse throw stays
+      // transient. False positives self-heal: any later successful sync
+      // clears the badge.
+      if (/ACT download failed:/.test((e as Error).message ?? '')) {
+        persistDrive({ revokedAt: Date.now(), syncRequestedAt: undefined })
+      } else {
+        setRefreshNote("Couldn't reach the drive right now — will retry.")
+      }
     } finally {
       setRefreshing(false)
     }
@@ -2001,11 +2805,22 @@ function SharedDriveCard({
     localStorage.setItem('nook-shared-drives', JSON.stringify(updated))
   }
 
-  async function downloadFile(ref: string, _fileHistoryRef: string, fileName: string) {
+  async function downloadFile(ref: string, _fileHistoryRef: string, fileName: string, row: number) {
+    // Tracked globally (#18): shared downloads get the same sidebar presence
+    // and re-attach behavior as the other row types. Keyed by row, not only
+    // by address — identical files share one Swarm address, and only the row
+    // that was clicked is downloading.
+    const transferId = sharedDownloadId(drive.id, ref, row)
+    const transfers = useTransfersStore.getState()
+
+    transfers.begin({ id: transferId, kind: 'download', name: fileName, phase: 'Downloading…' })
+    transfers.update(transferId, { pct: 0 })
     try {
       // Use the drive's latest ACT history ref (from share link), not the file's individual history.
       // The drive history includes all grantees added after file upload.
-      const blob = await beeApi.downloadFileWithACT(ref, drive.actPublisher, drive.actHistoryRef)
+      const blob = await beeApi.downloadFileWithACT(ref, drive.actPublisher, drive.actHistoryRef, pct =>
+        useTransfersStore.getState().update(transferId, { pct }),
+      )
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
@@ -2014,9 +2829,10 @@ function SharedDriveCard({
       a.click()
       document.body.removeChild(a)
       URL.revokeObjectURL(url)
+      useTransfersStore.getState().finish(transferId)
     } catch {
-      // eslint-disable-next-line no-alert
-      alert('Access revoked or content unavailable.')
+      useTransfersStore.getState().finish(transferId, 'failed')
+      setRefreshNote(`Couldn't download “${fileName}” — access may have been removed or the content is unreachable.`)
     }
   }
 
@@ -2060,6 +2876,15 @@ function SharedDriveCard({
         ) : (
           <span className="text-sm font-medium truncate flex-1 group/name flex items-center gap-1 min-w-0">
             <span className="truncate">{drive.name}</span>
+            {drive.revokedAt && (
+              <span
+                className="ml-1 text-[10px] font-sans font-medium px-1.5 py-0.5 rounded whitespace-nowrap"
+                title="The owner removed your access. Files you could already open may still open (they were shared before the change). If you're re-invited, press refresh."
+                style={{ backgroundColor: 'rgba(239,68,68,0.12)', color: '#ef4444' }}
+              >
+                access removed
+              </span>
+            )}
             <button
               onClick={e => {
                 e.stopPropagation()
@@ -2147,25 +2972,51 @@ function SharedDriveCard({
         </button>
       </div>
 
+      {refreshNote && (
+        <p className="px-11 pb-2 text-[11px]" style={{ color: 'rgb(var(--fg-muted))' }}>
+          {refreshNote}
+        </p>
+      )}
+      {drive.revokedAt && (
+        <p className="px-11 pb-2 text-[11px]" style={{ color: 'rgb(var(--fg-muted))' }}>
+          The owner removed your access. Files below were shared before the change and may still open. If you're
+          re-invited, press the sync button.
+        </p>
+      )}
+
       {expanded && drive.files && (
         <div className="border-t py-2 px-6" style={{ borderColor: 'rgb(var(--border))' }}>
-          {drive.files.map(file => (
-            <div key={file.reference} className="flex items-center gap-3 px-2 py-2">
-              <Lock size={12} style={{ color: 'rgb(var(--accent))' }} />
-              <span className="text-xs font-medium flex-1 truncate">{file.name}</span>
-              <span className="text-xs shrink-0" style={{ color: 'rgb(var(--fg-muted))' }}>
-                {formatBytes(file.size)}
-              </span>
-              <button
-                onClick={async () => downloadFile(file.reference, file.historyRef, file.name)}
-                className="shrink-0 w-6 h-6 flex items-center justify-center rounded transition-colors"
-                style={{ color: 'rgb(var(--fg-muted))' }}
-                title="Download"
-              >
-                <Download size={12} />
-              </button>
-            </div>
-          ))}
+          {drive.files.map((file, row) => {
+            const dl = sharedDownloads.find(t => t.id === sharedDownloadId(drive.id, file.reference, row))
+
+            return (
+              <div key={`${file.reference}:${row}`} className="flex items-center gap-3 px-2 py-2">
+                <Lock size={12} style={{ color: 'rgb(var(--accent))' }} />
+                <span className="text-xs font-medium flex-1 truncate">{file.name}</span>
+                <span className="text-xs shrink-0" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  {formatBytes(file.size)}
+                </span>
+                {/* Live progress (#18) — same treatment family as owner rows */}
+                {dl && dl.status === 'active' ? (
+                  <span
+                    className="text-[10px] uppercase tracking-widest font-semibold shrink-0 whitespace-nowrap tabular-nums"
+                    style={{ color: 'rgb(var(--accent))' }}
+                  >
+                    {savingLabel(dl.pct ?? 0)}
+                  </span>
+                ) : (
+                  <button
+                    onClick={async () => downloadFile(file.reference, file.historyRef, file.name, row)}
+                    className="shrink-0 w-6 h-6 flex items-center justify-center rounded transition-colors"
+                    style={{ color: 'rgb(var(--fg-muted))' }}
+                    title="Download"
+                  >
+                    <Download size={12} />
+                  </button>
+                )}
+              </div>
+            )
+          })}
         </div>
       )}
     </div>
@@ -2175,6 +3026,11 @@ function SharedDriveCard({
 export default function Drive() {
   const { toggle: toggleSidebar } = useSidebar()
   const { data: stamps } = useStamps()
+  const { data: wallet } = useWallet()
+  const navigate = useNavigate()
+  // Setup finishes on xDAI alone, but a drive needs xBZZ (R6-4): say so up
+  // front instead of letting "New drive" fail.
+  const noBzz = wallet !== undefined && BigInt(wallet.bzzBalance || '0') === BigInt(0)
   const { data: reclaimableData } = useReclaimableDrives()
   const {
     records,
@@ -2229,18 +3085,27 @@ export default function Drive() {
   const [expiredOpen, setExpiredOpen] = useState(false)
   const [showExtendModal, setShowExtendModal] = useState<string | null>(null) // batchID
   const [showShareModal, setShowShareModal] = useState<string | null>(null) // batchID
+  // #135: when the "Notify recipients" prompt opens the modal, the bulk
+  // update-notification fires automatically — one click, badges as feedback.
+  const [shareAutoNotify, setShareAutoNotify] = useState(false)
   // After adding a file to a drive that's shared with others, prompt to notify them.
   const [updatedSharedDrive, setUpdatedSharedDrive] = useState(false)
   // Re-publish (re-encrypt under current ACT) progress, keyed nowhere — only one runs at a time.
   const [republishing, setRepublishing] = useState(false)
-  const [republishMsg, setRepublishMsg] = useState<string | null>(null)
+  // Per DRIVE (R4-5): a page-wide message leaked into every other drive's
+  // share dialog ("Re-published…" on a drive nobody had access to).
+  const [republishState, setRepublishState] = useState<{ driveId: string; text: string } | null>(null)
+  const republishMsgFor = (driveId: string | null | undefined) =>
+    driveId && republishState?.driveId === driveId ? republishState.text : null
   const [showAddSharedModal, setShowAddSharedModal] = useState(false)
   const [driveTab, setDriveTab] = useState<'mine' | 'shared'>('mine')
   const [addingFile, setAddingFile] = useState(false)
   const [search, setSearch] = useState('')
   const [copiedId, setCopiedId] = useState<string | null>(null)
-  const [downloadingId, setDownloadingId] = useState<string | null>(null)
-  const [downloadPct, setDownloadPct] = useState<number | null>(null)
+  const [downloadErrors, setDownloadErrors] = useState<Record<string, string>>({})
+  // Downloads live in the global transfers store (#5): the fetch keeps
+  // updating the store after navigation, so a revisit re-attaches instead of
+  // showing an idle row while bytes are still flowing.
   const [updatingId, setUpdatingId] = useState<string | null>(null)
   const [ensRecordId, setEnsRecordId] = useState<string | null>(null)
 
@@ -2248,8 +3113,6 @@ export default function Drive() {
   const [openFolderId, setOpenFolderId] = useState<string | null>(null)
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dragOverId, setDragOverId] = useState<string | 'root' | null>(null)
-  const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null)
-  const [renameValue, setRenameValue] = useState('')
   const [creatingFolder, setCreatingFolder] = useState(false)
   const [newFolderName, setNewFolderName] = useState('')
 
@@ -2262,32 +3125,71 @@ export default function Drive() {
     // eslint-disable-next-line
   }, [location.key])
 
+  // Deep link from the bell (#138): /drive?extend=<batchId> opens the drive
+  // itself with the Extend modal on top — "view drive" must land ON the
+  // decision, with the drive visible behind it for context. Keyed on
+  // location.key so re-clicking the same notification reopens the modal.
+  // (Declared after the sidebar-click reset above so this wins the same tick.)
+  useEffect(() => {
+    const extendId = new URLSearchParams(location.search).get('extend')
+
+    if (extendId) {
+      setActiveDriveId(extendId)
+      setShowExtendModal(extendId)
+    }
+    // eslint-disable-next-line
+  }, [location.key])
+
+  // Deep link from the bell (#24): /drive?open=<batchId> lands INSIDE the
+  // drive (e.g. "Stored on the network" completion), no modal on top.
+  useEffect(() => {
+    const params = new URLSearchParams(location.search)
+    const openId = params.get('open')
+
+    if (openId) setActiveDriveId(openId)
+
+    // Drive-access messages + their bell entries land on Shared with me (R4-15).
+    if (params.get('tab') === 'shared') {
+      setActiveDriveId(null)
+      setDriveTab('shared')
+    }
+    // eslint-disable-next-line
+  }, [location.key])
+
   // Clear the per-drive prompts when switching drives.
   useEffect(() => {
     setUpdatedSharedDrive(false)
-    setRepublishMsg(null)
+    setRepublishState(null)
   }, [activeDriveId])
 
   // Re-encrypt + re-upload a drive's files under its current ACT, then refresh
   // the shared metadata feed. Fixes access after a revoke rotated the key, and
   // pushes any deferred-only content onto the network. Clears the keyRotated flag.
-  async function handleRepublish(driveId: string) {
+  async function handleRepublish(driveId: string, historyOverride?: string) {
     const meta = driveMetadata.get(driveId)
     const driveRecords = records.filter(r => r.driveId === driveId)
+
+    // Auto-run after a revoke: an empty drive has nothing to re-encrypt —
+    // skip silently instead of surfacing "nothing to re-publish" as an error.
+    if (historyOverride && !driveRecords.some(r => r.isEncrypted && r.actHistoryRef)) return
     // actPublisher isn't stored on driveMetadata — it lives on the file records
     // (and equals this node's publicKey). Source it the same way the Share modal
     // does, falling back to the record / current node.
     const firstRec = driveRecords.find(r => r.actHistoryRef && r.actPublisher)
     const actPublisher = meta?.actPublisher || firstRec?.actPublisher || nodeAddresses?.publicKey
-    const currentHistoryRef = meta?.actHistoryRef || firstRec?.actHistoryRef
+    // After a revoke the fresh history ref hasn't flushed into metadata state
+    // yet — the caller passes it explicitly so re-publish chains from the
+    // POST-rotation history (chaining from the old one would re-encrypt under
+    // the revoked key).
+    const currentHistoryRef = historyOverride || meta?.actHistoryRef || firstRec?.actHistoryRef
 
     if (!actPublisher || !currentHistoryRef) {
-      setRepublishMsg('This drive isn’t ready to re-publish yet.')
+      setRepublishState({ driveId, text: 'This drive isn’t ready to re-publish yet.' })
 
       return
     }
     setRepublishing(true)
-    setRepublishMsg('Starting…')
+    setRepublishState({ driveId, text: 'Starting…' })
     try {
       await republishDrive({
         onWrapperRef: ref => driveMetadata.update(driveId, { lastWrapperRef: ref }),
@@ -2295,18 +3197,28 @@ export default function Drive() {
         records: driveRecords,
         actPublisher,
         currentHistoryRef,
-        onProgress: setRepublishMsg,
+        onProgress: text => setRepublishState({ driveId, text }),
         onRecordUpdate: (id, changes) => updateRecord(id, changes),
         onHistoryUpdate: historyRef => driveMetadata.update(driveId, { actHistoryRef: historyRef }),
       })
       driveMetadata.update(driveId, { keyRotated: false })
-      setRepublishMsg('Re-published — recipients can refresh to get the latest.')
+      setRepublishState({ driveId, text: 'Re-published — everyone with access can open all files again.' })
     } catch (e) {
-      setRepublishMsg(`Re-publish failed: ${(e as Error).message}`)
+      setRepublishState({ driveId, text: `Re-publish failed: ${(e as Error).message}` })
     } finally {
       setRepublishing(false)
     }
   }
+
+  // Auto-extend settings (#129) — drives with keep-alive show a marker on
+  // their TTL pill; the Extend modal owns editing.
+  const { data: autoExtendData } = useQuery({
+    queryKey: ['server', 'auto-extend'],
+    queryFn: serverApi.getAutoExtend,
+    refetchInterval: 60_000,
+    retry: false,
+  })
+  const autoExtendSettings = autoExtendData?.settings ?? {}
 
   // Reclaimable drives (#99) render as their own card type; their batches also
   // appear on the node's stamp list, so filter them out of the classic cards.
@@ -2314,7 +3226,9 @@ export default function Drive() {
   const reclaimableDrives = (reclaimableData ?? []).filter(d => d.expired !== true)
   const expiredDrives = (reclaimableData ?? []).filter(d => d.expired === true)
   const reclaimableIds = new Set((reclaimableData ?? []).map(d => d.batchId))
-  const allStamps = (stamps ?? []).filter(s => !reclaimableIds.has(s.batchID.toLowerCase()))
+  // Reclaimable batches render as their own cards; the system batch (#130,
+  // "Identity & messages" in Settings) is not a drive at all.
+  const allStamps = (stamps ?? []).filter(s => !reclaimableIds.has(s.batchID.toLowerCase()) && !isSystemStamp(s))
   const driveCount = allStamps.length + reclaimableDrives.length
 
   function copyHash(id: string, hash: string) {
@@ -2324,8 +3238,14 @@ export default function Drive() {
   }
 
   async function handleDownload(id: string, hash: string, name: string) {
-    setDownloadingId(id)
-    setDownloadPct(0)
+    const transferId = `dl:${id}`
+    const transfers = useTransfersStore.getState()
+    // The drive the file is in — the sidebar indicator opens it (R5-1).
+    const downloadDriveId = records.find(r => r.id === id)?.driveId ?? activeDriveId ?? undefined
+
+    transfers.begin({ id: transferId, kind: 'download', name, driveId: downloadDriveId, phase: 'Downloading…' })
+    transfers.update(transferId, { pct: 0 })
+    setDownloadErrors(({ [id]: _cleared, ...rest }) => rest)
     try {
       // Check if file is encrypted — find the record and its drive metadata
       const record = records.find(r => r.id === id)
@@ -2334,20 +3254,21 @@ export default function Drive() {
           ? { actPublisher: record.actPublisher, actHistoryRef: record.actHistoryRef }
           : undefined
 
-      await downloadFromSwarm(hash, name, pct => setDownloadPct(pct), actOptions)
+      await downloadFromSwarm(hash, name, pct => useTransfersStore.getState().update(transferId, { pct }), actOptions)
+      useTransfersStore.getState().finish(transferId)
     } catch (error) {
-      // Surface failures (#105) — a silent catch here left users with no
-      // feedback when a download stalled or errored mid-stream.
-      // eslint-disable-next-line no-alert
-      alert(error instanceof Error ? error.message : 'Download failed — please try again.')
-    } finally {
-      setDownloadingId(null)
-      setDownloadPct(null)
+      useTransfersStore.getState().finish(transferId, 'failed')
+      // Surface failures (#105) inline on the row with a retry (R3b-1b) — a
+      // silent catch left users with no feedback, and an alert blocked the page.
+      setDownloadErrors(prev => ({ ...prev, [id]: friendlyError(error, 'Download failed — please try again.') }))
     }
   }
 
   const activeDrive = activeDriveId ? allStamps.find(s => s.batchID === activeDriveId) : null
   const driveRecords = activeDriveId ? records.filter(r => r.driveId === activeDriveId) : []
+  // Uploads still in their first step (R5-2): shown as rows in their drive
+  // until the upload's record takes over. Select the stable list, filter below.
+  const allTransfers = useTransfersStore(state => state.transfers)
 
   const updatingRecord = records.find(r => r.id === updatingId)
   // Search the unfiltered stamp list: Extend must also work for reclaimable
@@ -2355,6 +3276,10 @@ export default function Drive() {
   const extendingStamp = showExtendModal
     ? (stamps ?? []).find(s => s.batchID.toLowerCase() === showExtendModal.toLowerCase())
     : null
+  const extendingDeletable = Boolean(
+    extendingStamp &&
+    (reclaimableData ?? []).some(d => d.batchId.toLowerCase() === extendingStamp.batchID.toLowerCase()),
+  )
 
   // Search: flat list across active drives only (exclude expired stamps)
   const activeBatchIds = new Set(allStamps.map(s => s.batchID))
@@ -2445,14 +3370,14 @@ export default function Drive() {
                     record={record}
                     liveExpiresAt={liveExpiresAt(record)}
                     copiedId={copiedId}
-                    downloadingId={downloadingId}
-                    downloadPct={downloadPct}
+                    downloadErrors={downloadErrors}
                     gatewayUrl={gatewayUrl}
                     onCopy={copyHash}
                     onUpdate={setUpdatingId}
                     onDownload={handleDownload}
                     onRemove={remove}
                     onSetENS={setEnsRecordId}
+                    reserveEnsSlot={searchResults.some(r => r.type === 'website')}
                   />
                 ))}
               </div>
@@ -2488,16 +3413,28 @@ export default function Drive() {
             <div>
               <p className="text-sm font-medium">No drives yet</p>
               <p className="text-xs mt-1" style={{ color: 'rgb(var(--fg-muted))' }}>
-                Create a drive to start storing files.
+                {noBzz
+                  ? 'Add xBZZ to your node wallet to create your first drive — it pays for the storage.'
+                  : 'Create a drive to start storing files.'}
               </p>
             </div>
-            <button
-              onClick={() => setShowBuyModal(true)}
-              className="mt-2 px-4 py-2 rounded-lg text-sm font-semibold"
-              style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
-            >
-              New drive
-            </button>
+            {noBzz ? (
+              <button
+                onClick={() => navigate('/account?tab=wallet')}
+                className="mt-2 px-4 py-2 rounded-lg text-sm font-semibold"
+                style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
+              >
+                Open wallet
+              </button>
+            ) : (
+              <button
+                onClick={() => setShowBuyModal(true)}
+                className="mt-2 px-4 py-2 rounded-lg text-sm font-semibold"
+                style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
+              >
+                New drive
+              </button>
+            )}
           </div>
         ) : (
           /* Drive list */
@@ -2508,6 +3445,12 @@ export default function Drive() {
                 drive={drive}
                 stamp={stamps?.find(s => s.batchID.toLowerCase() === drive.batchId)}
                 customName={customDriveLabels[drive.batchId]}
+                autoExtendOn={autoExtendSettings[drive.batchId]?.enabled}
+                autoExtendMonths={autoExtendSettings[drive.batchId]?.months}
+                autoExtendUpcoming={Boolean(autoExtendSettings[drive.batchId]?.notifiedUpcomingAt)}
+                autoExtendFailed={Boolean(autoExtendSettings[drive.batchId]?.lastFailure)}
+                autoExtendFailedReason={autoExtendSettings[drive.batchId]?.lastFailure?.reason}
+                onAutoExtend={() => setShowExtendModal(drive.batchId)}
                 onOpen={() => setActiveDriveId(drive.batchId)}
                 onExtend={() => setShowExtendModal(drive.batchId)}
                 onRename={name => renameDrive(drive.batchId, name)}
@@ -2521,8 +3464,12 @@ export default function Drive() {
                 folders={folders.filter(f => f.driveId === stamp.batchID)}
                 gatewayUrl={gatewayUrl}
                 copiedId={copiedId}
-                downloadingId={downloadingId}
-                downloadPct={downloadPct}
+                autoExtendOn={autoExtendSettings[stamp.batchID.toLowerCase()]?.enabled}
+                autoExtendMonths={autoExtendSettings[stamp.batchID.toLowerCase()]?.months}
+                autoExtendUpcoming={Boolean(autoExtendSettings[stamp.batchID.toLowerCase()]?.notifiedUpcomingAt)}
+                autoExtendFailed={Boolean(autoExtendSettings[stamp.batchID.toLowerCase()]?.lastFailure)}
+                autoExtendFailedReason={autoExtendSettings[stamp.batchID.toLowerCase()]?.lastFailure?.reason}
+                onAutoExtend={() => setShowExtendModal(stamp.batchID)}
                 customName={customDriveLabels[stamp.batchID]}
                 encrypted={driveMetadata.isEncrypted(stamp.batchID)}
                 granteeCount={driveMetadata.get(stamp.batchID)?.granteeCount}
@@ -2592,7 +3539,9 @@ export default function Drive() {
             }}
           />
         )}
-        {extendingStamp && <ExtendModal stamp={extendingStamp} onClose={() => setShowExtendModal(null)} />}
+        {extendingStamp && (
+          <ExtendModal stamp={extendingStamp} deletable={extendingDeletable} onClose={() => setShowExtendModal(null)} />
+        )}
         {showShareModal &&
           (() => {
             const meta = driveMetadata.get(showShareModal)
@@ -2602,6 +3551,7 @@ export default function Drive() {
 
             return (
               <ShareModal
+                autoNotify={shareAutoNotify}
                 driveName={stamp?.label || customDriveLabels[showShareModal] || 'Encrypted drive'}
                 stampId={showShareModal}
                 actPublisher={meta?.actPublisher || firstRef?.actPublisher}
@@ -2612,7 +3562,10 @@ export default function Drive() {
                 files={driveRecordsForShare
                   .filter(r => r.actHistoryRef && r.actPublisher)
                   .map(r => ({ name: r.name, reference: r.hash, historyRef: r.actHistoryRef!, size: r.size }))}
-                onClose={() => setShowShareModal(null)}
+                onClose={() => {
+                  setShowShareModal(null)
+                  setShareAutoNotify(false)
+                }}
                 onWrapperRef={ref => driveMetadata.update(showShareModal, { lastWrapperRef: ref })}
                 onGranteeCount={n => driveMetadata.update(showShareModal, { granteeCount: n })}
                 onUpdate={({ granteeRef, historyRef, granteeCount, keyRotated }) => {
@@ -2622,10 +3575,17 @@ export default function Drive() {
                     granteeCount,
                     ...(keyRotated ? { keyRotated: true } : {}),
                   })
+
+                  // A revoke rotated the key: without a re-publish, EVERY
+                  // grantee (remaining or re-added) is locked out of the
+                  // existing content. Run it automatically — the manual
+                  // button stays as the retry path. historyRef is passed
+                  // explicitly because the metadata state hasn't flushed yet.
+                  if (keyRotated && !republishing) void handleRepublish(showShareModal, historyRef)
                 }}
                 keyRotated={driveMetadata.get(showShareModal)?.keyRotated}
                 republishing={republishing}
-                republishMsg={republishMsg}
+                republishMsg={republishMsgFor(showShareModal)}
                 onRepublish={() => void handleRepublish(showShareModal)}
               />
             )
@@ -2663,29 +3623,22 @@ export default function Drive() {
 
   if (activeReclaimable) {
     return (
-      <ReclaimableDriveView
-        drive={activeReclaimable}
-        stamp={stamps?.find(s => s.batchID.toLowerCase() === activeReclaimable.batchId)}
-        customName={customDriveLabels[activeReclaimable.batchId]}
-        onBack={() => setActiveDriveId(null)}
-      />
+      <>
+        <ReclaimableDriveView
+          drive={activeReclaimable}
+          stamp={stamps?.find(s => s.batchID.toLowerCase() === activeReclaimable.batchId)}
+          customName={customDriveLabels[activeReclaimable.batchId]}
+          onBack={() => setActiveDriveId(null)}
+        />
+        {/* Bell deep link opens the drive with the Extend modal on top (#138) */}
+        {extendingStamp && (
+          <ExtendModal stamp={extendingStamp} deletable={extendingDeletable} onClose={() => setShowExtendModal(null)} />
+        )}
+      </>
     )
   }
 
   // ── Folder helpers ───────────────────────────────────────────────────────────
-
-  function startRename(folder: DriveFolder) {
-    setRenamingFolderId(folder.id)
-    setRenameValue(folder.name)
-  }
-
-  function commitRename() {
-    if (renamingFolderId && renameValue.trim()) {
-      renameFolder(renamingFolderId, renameValue.trim())
-    }
-    setRenamingFolderId(null)
-    setRenameValue('')
-  }
 
   function commitNewFolder() {
     if (newFolderName.trim() && activeDriveId) {
@@ -2729,14 +3682,14 @@ export default function Drive() {
 
   const commonRowProps = {
     copiedId,
-    downloadingId,
-    downloadPct,
+    downloadErrors,
     gatewayUrl,
     onCopy: copyHash,
     onUpdate: setUpdatingId,
     onDownload: handleDownload,
     onRemove: remove,
     onSetENS: setEnsRecordId,
+    reserveEnsSlot: driveRecords.some(r => r.type === 'website'),
     onDragStart: handleRecordDragStart,
     onDragEnd: () => {
       setDraggingId(null)
@@ -2745,86 +3698,30 @@ export default function Drive() {
   }
 
   function renderFolder(folder: DriveFolder, depth: number): React.ReactElement {
-    const isOver = dragOverId === folder.id
     const childFolders = folders.filter(f => f.parentFolderId === folder.id)
     const folderRecords = driveRecords.filter(r => r.folderId === folder.id)
-    const count = folderRecords.length + childFolders.length
-    const py = depth === 0 ? 'py-2.5' : 'py-2'
 
     return (
-      <div key={folder.id}>
-        <div
-          onClick={() => {
-            if (renamingFolderId !== folder.id) setOpenFolderId(folder.id)
-          }}
-          onDragOver={e => {
-            e.preventDefault()
-            setDragOverId(folder.id)
-          }}
-          onDragLeave={e => {
-            if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverId(null)
-          }}
-          onDrop={e => handleFolderDrop(e, folder.id)}
-          className={`rounded-lg border px-4 ${py} flex items-center gap-2 cursor-pointer select-none transition-colors`}
-          style={{
-            backgroundColor: isOver ? 'rgba(247,104,8,0.08)' : 'rgb(var(--bg-surface))',
-            borderColor: isOver ? 'rgb(var(--accent))' : 'rgb(var(--border))',
-            outline: isOver ? '2px solid rgb(var(--accent))' : 'none',
-            outlineOffset: '-2px',
-          }}
-        >
-          <FolderOpen size={13} style={{ color: 'rgb(var(--fg-muted))' }} />
-          {renamingFolderId === folder.id ? (
-            <input
-              type="text"
-              autoFocus
-              value={renameValue}
-              onClick={e => e.stopPropagation()}
-              onChange={e => setRenameValue(e.target.value)}
-              onKeyDown={e => {
-                e.stopPropagation()
-
-                if (e.key === 'Enter') commitRename()
-
-                if (e.key === 'Escape') {
-                  setRenamingFolderId(null)
-                  setRenameValue('')
-                }
-              }}
-              onBlur={commitRename}
-              className="flex-1 bg-transparent text-sm focus:outline-none"
-              style={{ color: 'rgb(var(--fg))' }}
-            />
-          ) : (
-            <span className="flex-1 text-sm font-medium">{folder.name}</span>
-          )}
-          <span className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-            {count > 0 ? count : ''}
-          </span>
-          <button
-            onClick={e => {
-              e.stopPropagation()
-              startRename(folder)
-            }}
-            title="Rename"
-            className="w-6 h-6 flex items-center justify-center rounded transition-colors"
-            style={{ color: 'rgb(var(--fg-muted))' }}
-          >
-            <Pencil size={11} />
-          </button>
-          <button
-            onClick={e => {
-              e.stopPropagation()
-              removeFolder(folder.id, folders)
-            }}
-            title="Delete folder — files inside move back to the drive root"
-            className="w-6 h-6 flex items-center justify-center rounded hover:text-red-400 transition-colors"
-            style={{ color: 'rgb(var(--fg-muted))' }}
-          >
-            <Trash2 size={11} />
-          </button>
-        </div>
-      </div>
+      <FolderCard
+        key={folder.id}
+        name={folder.name}
+        files={folderRecords.length}
+        folders={childFolders.length}
+        compact={depth > 0}
+        highlighted={dragOverId === folder.id}
+        deleteTitle="Delete folder — files inside move back to the drive root"
+        onOpen={() => setOpenFolderId(folder.id)}
+        onRename={name => renameFolder(folder.id, name)}
+        onDelete={() => removeFolder(folder.id, folders)}
+        onDragOver={e => {
+          e.preventDefault()
+          setDragOverId(folder.id)
+        }}
+        onDragLeave={e => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverId(null)
+        }}
+        onDrop={e => handleFolderDrop(e, folder.id)}
+      />
     )
   }
 
@@ -2841,6 +3738,25 @@ export default function Drive() {
   const visibleRecords = openFolderId
     ? driveRecords.filter(r => r.folderId === openFolderId)
     : driveRecords.filter(r => !r.folderId)
+  // Newest upload still running for this drive: a new upload, its network
+  // step, or a site update.
+  const resumedUpload = allTransfers
+    .filter(
+      t =>
+        t.status === 'active' &&
+        t.kind === 'upload' &&
+        t.driveId === activeDriveId &&
+        (t.id.startsWith('up:') || t.id.startsWith('tag:') || t.id.startsWith('upd:')),
+    )
+    .sort((a, b) => b.startedAt - a.startedAt)[0]
+  const pendingUploads = allTransfers.filter(
+    t =>
+      t.id.startsWith('up:') &&
+      t.driveId === activeDriveId &&
+      !t.recordId &&
+      t.status !== 'done' &&
+      (t.folderId ?? null) === (openFolderId ?? null),
+  )
 
   return (
     <div className="p-6">
@@ -2940,13 +3856,13 @@ export default function Drive() {
       )}
 
       {/* Re-publish prompt / progress (encrypted drives) */}
-      {activeDriveId && (driveMetadata.get(activeDriveId)?.keyRotated || republishMsg) && (
+      {activeDriveId && (driveMetadata.get(activeDriveId)?.keyRotated || republishMsgFor(activeDriveId)) && (
         <div
           className="rounded-lg border px-4 py-2.5 flex items-center justify-between gap-3 mb-3"
           style={{ backgroundColor: 'rgb(var(--bg-surface))', borderColor: 'rgb(var(--accent))' }}
         >
           <p className="text-xs" style={{ color: 'rgb(var(--fg))' }}>
-            {republishMsg ??
+            {republishMsgFor(activeDriveId) ??
               'A grantee was revoked, so this drive’s key changed. Re-publish so people you grant can open the existing files.'}
           </p>
           {!republishing && driveMetadata.get(activeDriveId)?.keyRotated && (
@@ -2974,6 +3890,7 @@ export default function Drive() {
           <div className="flex items-center gap-3 shrink-0">
             <button
               onClick={() => {
+                setShareAutoNotify(true)
                 setShowShareModal(activeDriveId)
                 setUpdatedSharedDrive(false)
               }}
@@ -2994,7 +3911,9 @@ export default function Drive() {
         </div>
       )}
 
-      {/* Inline upload panel */}
+      {/* Inline upload panel — or, when it's closed, the panel of an upload
+          that is still running for this drive (re-attached from the tracker). */}
+      {!addingFile && resumedUpload && <ResumedUploadPanel transfer={resumedUpload} />}
       {addingFile && (
         <AddFilePanel
           driveId={activeDriveId}
@@ -3013,6 +3932,7 @@ export default function Drive() {
           onWrapperRef={ref => {
             driveMetadata.update(activeDriveId, { lastWrapperRef: ref })
           }}
+          folderId={openFolderId ?? undefined}
         />
       )}
 
@@ -3111,6 +4031,24 @@ export default function Drive() {
         </div>
       )}
 
+      {/* Uploads still in their first step (R5-2) — same row treatment as
+          a record that is storing on the network. */}
+      {pendingUploads.length > 0 && (
+        <div
+          className={`divide-y ${visibleRecords.length > 0 ? 'border-b' : ''}`}
+          style={{ borderColor: 'rgb(var(--border))' }}
+        >
+          {pendingUploads.map(t => (
+            <PendingUploadRow
+              key={t.id}
+              transfer={t}
+              encrypted={driveMetadata.isEncrypted(activeDriveId)}
+              reserveEnsSlot={commonRowProps.reserveEnsSlot}
+            />
+          ))}
+        </div>
+      )}
+
       {/* File list */}
       {visibleRecords.length > 0 ? (
         <div
@@ -3137,7 +4075,7 @@ export default function Drive() {
             <RecordRow key={record.id} record={record} liveExpiresAt={liveExpiresAt(record)} {...commonRowProps} />
           ))}
         </div>
-      ) : visibleFolders.length === 0 && !addingFile && !creatingFolder ? (
+      ) : visibleFolders.length === 0 && pendingUploads.length === 0 && !addingFile && !creatingFolder ? (
         openFolderId ? (
           <div
             className="rounded-lg border-2 border-dashed px-4 py-10 text-center"
@@ -3192,6 +4130,7 @@ export default function Drive() {
 
           return (
             <ShareModal
+              autoNotify={shareAutoNotify}
               driveName={stamp?.label || customDriveLabels[showShareModal] || 'Encrypted drive'}
               stampId={showShareModal}
               actPublisher={meta?.actPublisher || firstRef?.actPublisher}
@@ -3202,7 +4141,10 @@ export default function Drive() {
               files={driveRecordsForShare
                 .filter(r => r.actHistoryRef && r.actPublisher)
                 .map(r => ({ name: r.name, reference: r.hash, historyRef: r.actHistoryRef!, size: r.size }))}
-              onClose={() => setShowShareModal(null)}
+              onClose={() => {
+                setShowShareModal(null)
+                setShareAutoNotify(false)
+              }}
               onWrapperRef={ref => driveMetadata.update(showShareModal, { lastWrapperRef: ref })}
               onGranteeCount={n => driveMetadata.update(showShareModal, { granteeCount: n })}
               onUpdate={({ granteeRef, historyRef, granteeCount, keyRotated }) => {
@@ -3212,14 +4154,22 @@ export default function Drive() {
                   granteeCount,
                   ...(keyRotated ? { keyRotated: true } : {}),
                 })
+
+                // Auto re-publish after a revoke — see the drive-detail modal's
+                // onUpdate for the reasoning.
+                if (keyRotated && !republishing) void handleRepublish(showShareModal, historyRef)
               }}
               keyRotated={driveMetadata.get(showShareModal)?.keyRotated}
               republishing={republishing}
-              republishMsg={republishMsg}
+              republishMsg={republishMsgFor(showShareModal)}
               onRepublish={() => void handleRepublish(showShareModal)}
             />
           )
         })()}
+      {/* Bell deep link opens the drive with the Extend modal on top (#138) */}
+      {extendingStamp && (
+        <ExtendModal stamp={extendingStamp} deletable={extendingDeletable} onClose={() => setShowExtendModal(null)} />
+      )}
     </div>
   )
 }

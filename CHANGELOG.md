@@ -1,5 +1,46 @@
 # Changelog
 
+## [0.7.0](https://github.com/GasperX93/nook/releases/tag/v0.7.0) (2026-09-29)
+
+### Sign in with Swarm ID
+* **Swarm ID is your Nook identity** — one account you own, used for contacts, messages and being findable. Your Nook address is derived from it, so signing in again after a reinstall gives you the same address. A browser wallet is now only for paying — it never creates or changes your identity.
+* **Findable by default** — during setup Nook publishes your identity for you, so others can reach you by your Nook address.
+
+### Drives that take care of themselves
+* **Auto-renew** — opt in per drive, and Nook extends it before it runs out, from the node wallet.
+* **Reserved space for messages** — Nook sets aside a small space (about 3 xBZZ, 3 months, renewed automatically) for your identity and messages, so they never compete with your drives.
+* **Bell and Activity** — a notification center for everything Nook does on its own, and a list of every payment from the node wallet (drives, renewals, bandwidth deposits).
+
+### Uploads you can follow
+* **Progress everywhere** — every upload and download shows in the sidebar from any page; leave a drive and come back, and the progress is still there. Uploads pause (and say so) while your node is stopped, then carry on.
+* **Honest progress** — the network step shows real confirmed pieces, the real pace and a rough time left.
+* **Big files** — large uploads no longer load the whole file into Nook's memory (tested with 2 GB).
+* **Deletable drives** — progress survives leaving the drive or reloading, and folders can be renamed.
+
+### Sharing and messaging
+* **Share with a Nook address or contact link**, and the person gets the drive in Messages with one click to add it.
+* **Removing and restoring access** is reflected on the other side ("access removed" / "access restored").
+* **Reinstalled contacts** are spotted, with a one-click **Share again**.
+* **Invites** reach people you haven't talked to yet through a small on-chain notice on Gnosis Chain. It's signed and paid by your Bee node's own wallet (a tiny xDAI fee) — no MetaMask or other external wallet needed.
+
+### Publishing
+* **Site updates are safe** — the new version is stored on the network before your permanent address switches to it, and progress shows on the site's own row.
+* A warning when a new site would take over an existing site's permanent address.
+* Your ENS name is linked only once Ethereum confirms it.
+
+### Reliability and safety
+* **Blockchain connection with fallback** — if the public Gnosis endpoint is busy, Nook switches to a second one automatically; you can still set your own.
+* **Another Swarm node on Nook's ports** is detected and Nook stops, instead of using that node (or its funds).
+* Transactions set proper fees (fixes gift-code redeem failing with "FeeTooLow").
+
+### Look and feel
+* New app icon and Nook wordmark, onboarding that walks you through funding, a Send feedback link, logs in Settings, and sizes that match Finder.
+
+### Upgrading from 0.6
+
+* **Messages move to Swarm ID.** Sign in with Swarm ID (top right) — you get a new Nook address. Contacts and conversations from your old wallet-based address stay with it and aren't shown; send your contact link to the people you talk to (Contacts → Copy my contact link).
+* **Drives, files, shares and your node wallet are unchanged** — they belong to your node, not your identity.
+
 ## [0.6.1](https://github.com/GasperX93/nook/releases/tag/v0.6.1) (2026-09-11)
 
 ### Messages you can trust

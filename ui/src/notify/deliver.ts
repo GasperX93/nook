@@ -2,7 +2,7 @@ import type { Bee } from '@ethersphere/bee-js'
 
 import type { NookSigner } from '../crypto/signer'
 import { waitForBeeReady } from './bee-ready'
-import { appendOutboxMessage, loadThreads, setMessageStatusByOutboxId } from './messages'
+import { appendOutboxMessage, isDriveKind, loadThreads, setMessageStatusByOutboxId } from './messages'
 import {
   enqueueOutboxEntry,
   loadOutbox,
@@ -98,9 +98,11 @@ async function attemptDelivery(
       return sendMailboxMessage(bee, signer.getSigningKey(), stampId, signer.getAddress(), toLibraryContact(contact), {
         subject: entry.subject ?? '',
         body: entry.body,
-        ...(entry.kind === 'drive-share' && entry.driveShare
+        ...(isDriveKind(entry.kind) && entry.driveShare
           ? {
-              type: 'drive-share' as const,
+              // The SDK's declared union only lists 'drive-share'; the
+              // removed/restored kinds pass through untouched (see isDriveKind).
+              type: entry.kind as 'drive-share',
               driveShareLink: entry.driveShare.driveShareLink,
               driveName: entry.driveShare.driveName,
               fileCount: entry.driveShare.fileCount,

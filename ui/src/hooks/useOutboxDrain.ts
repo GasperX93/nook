@@ -1,3 +1,4 @@
+import { pickMessagingStamp } from '../lib/system-stamp'
 /**
  * Background outbox drain (#117) — runs at the Layout level so queued sends
  * deliver whichever page is open. This is what turns "quit right after send"
@@ -9,7 +10,7 @@
 import { Bee } from '@ethersphere/bee-js'
 import { useEffect, useMemo } from 'react'
 
-import { useStamps } from '../api/queries'
+import { useReclaimableDrives, useStamps } from '../api/queries'
 import { drainOutbox } from '../notify/deliver'
 import { useDerivedKey } from './useDerivedKey'
 
@@ -20,7 +21,8 @@ export function useOutboxDrain(): void {
   const { signer } = useDerivedKey()
   const { data: stamps } = useStamps()
   const bee = useMemo(() => new Bee(BEE_URL), [])
-  const stampId = (stamps ?? []).find(s => s.usable)?.batchID ?? ''
+  const { data: reclaimable } = useReclaimableDrives()
+  const stampId = pickMessagingStamp(stamps, new Set((reclaimable ?? []).map(d => d.batchId)))?.batchID ?? ''
 
   useEffect(() => {
     // No signer (wallet not derived) or no usable stamp — entries wait in the

@@ -5,24 +5,25 @@
  */
 import { Bee } from '@ethersphere/bee-js'
 import { identity, registry } from '@swarm-notify/sdk'
-import { Bell, Copy, Check, Lock, RefreshCw, Trash2, Users, X } from 'lucide-react'
-import { useMemo, useState } from 'react'
-import { getWalletClient, switchChain } from '@wagmi/core'
-import { useWalletClient } from 'wagmi'
+import { Copy, Check, Lock, RefreshCw, Users, X } from 'lucide-react'
+import { useEffect, useRef, useMemo, useState } from 'react'
 
 import { topicFromString, waitForRetrievable } from '../api/bee'
+import { useWallet } from '../api/queries'
 import { serverApi } from '../api/server'
 import { bytesToHex, hexToBytes } from '../lib/hex'
-import { contactsForNodeKey, stripKeyPrefix } from '../lib/node-key'
+import { contactsForNodeKey, grantTarget, stripKeyPrefix } from '../lib/node-key'
 import { useDerivedKey } from '../hooks/useDerivedKey'
-import { GNOSIS_CHAIN_ID, REGISTRY_ADDRESS } from '../notify/constants'
+import { REGISTRY_ADDRESS } from '../notify/constants'
+import { deriveConnectionState, getMyDisplayName, hasInboundSince } from '../notify/contact-state'
 import { queueAndDeliver } from '../notify/deliver'
-import { createNotifyProvider } from '../notify/provider'
+import { clearRemovedFromDrive, markRemovedFromDrive, wasRemovedFromDrive } from '../notify/drive-removed'
+import { loadThreads } from '../notify/messages'
+import { createNodeNotifyProvider } from '../notify/provider'
 import { decodeShareLink } from '../notify/share-link'
-import { addContact, isIdentityPublished, loadContacts } from '../notify/storage'
+import { addContact, isIdentityPublished, loadContacts, updateContactKeys } from '../notify/storage'
 import { type NookContact } from '../notify/types'
 import { buildShareLink } from '../hooks/useSharedDrives'
-import { wagmiConfig } from '../wagmi'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 
@@ -65,6 +66,12 @@ interface ShareModalProps {
    * grant/revoke math can drift when operations race the async list load.
    */
   onGranteeCount?: (n: number) => void
+  /**
+   * Fire the bulk update-notification automatically once the grantee list is
+   * loaded (#135 — the drive's "Notify recipients" prompt lands here so the
+   * whole flow is one click, with the per-recipient badges as feedback).
+   */
+  autoNotify?: boolean
 }
 
 function isValidPublicKey(key: string): boolean {
@@ -72,6 +79,13 @@ function isValidPublicKey(key: string): boolean {
 
   // Compressed (66 hex = 33 bytes) or uncompressed (130 hex = 65 bytes)
   return /^[0-9a-fA-F]+$/.test(clean) && (clean.length === 66 || clean.length === 130)
+}
+
+/** First line only, capped — wallet errors embed full RPC request dumps. */
+function shortErrorMessage(e: unknown): string {
+  const first = ((e as Error).message ?? 'send failed').split('\n')[0]
+
+  return first.length > 120 ? `${first.slice(0, 120)}…` : first
 }
 
 function isEthAddress(s: string): boolean {
@@ -95,9 +109,12 @@ export default function ShareModal({
   onRepublish,
   onWrapperRef,
   onGranteeCount,
+  autoNotify,
 }: ShareModalProps) {
-  const { signer } = useDerivedKey()
-  const { data: walletClient } = useWalletClient()
+  const { signer, swarmIdAccount } = useDerivedKey()
+  const { data: nodeWallet } = useWallet()
+  // Shown to recipients: the saved display name, else the Swarm ID account name (R4-9).
+  const myName = getMyDisplayName() || swarmIdAccount?.name?.trim() || ''
   // State (not useMemo) so it refreshes after a grant adds a new contact —
   // otherwise the just-granted person isn't matched as notifiable.
   const [contacts, setContacts] = useState(() => loadContacts())
@@ -107,16 +124,18 @@ export default function ShareModal({
   const [newLabel, setNewLabel] = useState('')
   const [showSuggestions, setShowSuggestions] = useState(false)
   const [grantees, setGrantees] = useState<string[]>([])
-  const [senderName, setSenderName] = useState('')
+  // The one "Share with" field (R4-5): a contact name, Nook address or link.
+  const [query, setQuery] = useState('')
+  const [showOtherWays, setShowOtherWays] = useState(false)
+  // Name of the person just removed — for the amber card (mock A3).
+  const [lastRemoved, setLastRemoved] = useState<{ name: string; told: boolean } | null>(null)
   // Per-grantee notification status keyed by lowercased contact id (Nook addr)
   type NotifyStatus = 'idle' | 'sending' | 'sent' | 'queued' | 'failed'
   const [notifyStatus, setNotifyStatus] = useState<Record<string, NotifyStatus>>({})
-  // Optional on-chain wake-up — fires a Gnosis registry event so recipients
-  // who haven't added you yet still get a "someone wants to reach you" signal.
-  const [sendOnChain, setSendOnChain] = useState(false)
-  // Notify the recipient in Messages as part of granting (one-step share).
-  const [notifyOnGrant, setNotifyOnGrant] = useState(true)
-  const [onChainStatus, setOnChainStatus] = useState<Record<string, NotifyStatus>>({})
+  const [pingSkippedNote, setPingSkippedNote] = useState<string | null>(null)
+  // A grant silently switched to the contact's CURRENT sharing key (their
+  // cached one was stale — reinstall). Info, never an error.
+  const [keyRefreshNote, setKeyRefreshNote] = useState<string | null>(null)
   // Legacy: older grantees were saved with manual labels before contacts existed.
   // Read-only fallback for displaying their names; new grants pull from contacts.
   const [labels, setLabels] = useState<Record<string, string>>(() => {
@@ -169,12 +188,53 @@ export default function ShareModal({
 
       if (grantees.some(g => stripKeyPrefix(g) === stripKeyPrefix(c.beePublicKey))) return false
 
-      if (newLabel.trim()) return c.nickname.toLowerCase().includes(newLabel.toLowerCase())
+      const q = query.trim().toLowerCase()
+
+      if (q) return c.nickname.toLowerCase().includes(q) || c.id.toLowerCase().includes(q)
 
       return true
     })
     .map<[string, string]>(c => [c.beePublicKey, c.nickname])
     .slice(0, 6)
+
+  // F-3: a grant is tied to the person's NODE key, and a reinstall makes a new
+  // one — their old grant silently stops working while the list still shows
+  // their name. Once per dialog open, look up every contact on the list and
+  // record a changed key: the row then reads as their old key, with Share again.
+  const keysChecked = useRef(false)
+
+  useEffect(() => {
+    if (keysChecked.current || grantees.length === 0) return
+    keysChecked.current = true
+    const people = grantees
+      .filter(g => !isMyKey(g))
+      .map(g => contactForGrantee(g))
+      .filter((c): c is NookContact => Boolean(c && isEthAddress(c.id)))
+
+    void Promise.all(
+      people.map(async c => {
+        try {
+          const fresh = await identity.resolve(bee, c.id)
+
+          if (fresh && stripKeyPrefix(fresh.beePublicKey) !== stripKeyPrefix(c.beePublicKey)) {
+            updateContactKeys(loadContacts(), c.id, {
+              walletPublicKey: fresh.walletPublicKey,
+              beePublicKey: fresh.beePublicKey,
+            })
+
+            return true
+          }
+        } catch {
+          // Lookup failed — keep showing the cached state.
+        }
+
+        return false
+      }),
+    ).then(changed => {
+      if (changed.some(Boolean)) setContacts(loadContacts())
+    })
+    // eslint-disable-next-line
+  }, [grantees])
 
   // Load existing grantees on first render
   if (!loadedGrantees && granteeRef) {
@@ -182,18 +242,59 @@ export default function ShareModal({
     serverApi
       .getGrantees(granteeRef)
       .then(result => {
-        setGrantees(result.grantees)
+        // MERGE with local state instead of overwriting: a grant made while
+        // this request was in flight would otherwise vanish from the list and
+        // re-granting it would look like a fresh key (finding #8 race —
+        // "first Martin was not visible, then 2").
+        setGrantees(prev => {
+          const merged = [...result.grantees]
+
+          for (const k of prev) {
+            if (!merged.some(m => stripKeyPrefix(m) === stripKeyPrefix(k))) merged.push(k)
+          }
+
+          return merged
+        })
         // Server list is the truth — heal the drive card's cached count.
         // Count OTHER people explicitly: depending on how a drive was created
         // its list may or may not contain the owner's own key, so raw list
         // length is off-by-one for some drives. Stored convention: others + 1.
         onGranteeCount?.(result.grantees.filter(g => !isMyKey(g)).length + 1)
       })
-      .catch(() => setGrantees([]))
+      .catch(() => undefined)
   }
 
-  async function handleGrant() {
-    const input = newKey.trim()
+  /**
+   * Re-resolve a cached contact's identity and, if their sharing key changed
+   * (reinstall regenerates the bee node key), persist the fresh keys and
+   * return the updated contact. Returns null when the key is current or the
+   * lookup fails — the caller keeps the cached key.
+   */
+  async function refreshStaleContactKey(cached: NookContact, cachedKey: string): Promise<NookContact | null> {
+    try {
+      const fresh = await identity.resolve(bee, cached.id)
+
+      if (!fresh || stripKeyPrefix(fresh.beePublicKey) === stripKeyPrefix(cachedKey)) return null
+      updateContactKeys(contacts, cached.id, {
+        walletPublicKey: fresh.walletPublicKey,
+        beePublicKey: fresh.beePublicKey,
+      })
+      setContacts(loadContacts())
+      setKeyRefreshNote(
+        `${cached.nickname}'s sharing key changed (they probably reinstalled) — shared to their current key. ` +
+          'Nothing else needed — they’ve been notified.',
+      )
+
+      return { ...cached, walletPublicKey: fresh.walletPublicKey, beePublicKey: fresh.beePublicKey }
+    } catch {
+      return null
+    }
+  }
+
+  async function handleGrant(inputOverride?: unknown) {
+    // Called from the button/Enter (no input → the text box) or by Share
+    // again with the person's Nook address (F-3).
+    const input = (typeof inputOverride === 'string' ? inputOverride : newKey).trim()
     let key = input
     // The recipient we can notify (needs a wallet public key for ECDH). Captured
     // across all three input paths so we can notify inline when the box is checked.
@@ -262,6 +363,14 @@ export default function ShareModal({
         const isSelf = signer?.getAddress().toLowerCase() === input.toLowerCase()
         const existing = contacts.find(c => c.id.toLowerCase() === input.toLowerCase())
 
+        // Known contact with a new node key (reinstall) — remember it (F-3).
+        if (existing && stripKeyPrefix(existing.beePublicKey) !== stripKeyPrefix(resolved.beePublicKey)) {
+          updateContactKeys(contacts, existing.id, {
+            walletPublicKey: resolved.walletPublicKey,
+            beePublicKey: resolved.beePublicKey,
+          })
+        }
+
         if (!isSelf) {
           grantedContact = {
             id: input.toLowerCase(),
@@ -294,6 +403,20 @@ export default function ShareModal({
         setError('Paste a Nook address, a contact link (nook://contact…), or a hex sharing key.')
 
         return
+      } else {
+        // Raw sharing key — usually a click on a contact suggestion. Cached
+        // keys go stale when the contact reinstalls (wallet-derived id
+        // survives, bee node key is regenerated), and a grant to a dead key
+        // fails silently for the recipient. Re-resolve their identity and
+        // prefer the network's current key; best-effort — the cached key
+        // still grants if the lookup fails.
+        const cached = contactsForNodeKey(contacts, key)[0]
+        const refreshed = cached && isEthAddress(cached.id) ? await refreshStaleContactKey(cached, key) : null
+
+        if (refreshed) {
+          key = refreshed.beePublicKey
+          grantedContact = refreshed
+        }
       }
 
       // Already has access — don't re-grant (avoids a redundant ACT op and a
@@ -301,11 +424,12 @@ export default function ShareModal({
       if (grantees.some(g => stripKeyPrefix(g) === stripKeyPrefix(key))) {
         setNewKey('')
         setNewLabel('')
+        setQuery('')
         const existingTarget = grantedContact ?? contactForGrantee(key) ?? null
 
-        if (notifyOnGrant && existingTarget?.walletPublicKey) {
+        if (existingTarget?.walletPublicKey) {
           try {
-            const fail = await notifyContacts([existingTarget], sendOnChain)
+            const fail = await notifyContacts([existingTarget])
 
             if (fail) setError(`Already has access — but the notification failed: ${fail}`)
           } catch (e) {
@@ -336,6 +460,8 @@ export default function ShareModal({
 
       setNewKey('')
       setNewLabel('')
+      setQuery('')
+      setLastRemoved(null)
       onUpdate({
         granteeRef: result.ref,
         historyRef: result.historyRef,
@@ -350,7 +476,7 @@ export default function ShareModal({
       // A notify failure must NOT read as a grant failure — the grant succeeded.
       const notifyTarget = grantedContact ?? contactForGrantee(key) ?? null
 
-      if (notifyOnGrant && notifyTarget?.walletPublicKey) {
+      if (notifyTarget?.walletPublicKey) {
         if (!files?.length) {
           // Grant succeeded, but an empty drive has nothing to put in the link yet.
           setError('Access granted. Add a file to this drive, then notify them with the bell next to their name.')
@@ -358,7 +484,7 @@ export default function ShareModal({
           try {
             // Pass the grant's fresh historyRef so the shared metadata is encrypted
             // against the chain that includes this grantee (the prop is still stale).
-            const fail = await notifyContacts([notifyTarget], sendOnChain, result.historyRef)
+            const fail = await notifyContacts([notifyTarget], result.historyRef)
 
             if (fail) setError(`Access granted, but notification failed: ${fail}`)
           } catch (e) {
@@ -390,6 +516,20 @@ export default function ShareModal({
         granteeCount: grantees.filter(g => g !== key && !isMyKey(g)).length + 1,
         keyRotated: true,
       })
+
+      // Tell them (R4-15, visible note — user decision). Best effort: the
+      // removal itself already happened; their Nook also detects it on sync.
+      const removed = contactForGrantee(key)
+
+      setLastRemoved({
+        name: removed?.nickname ?? findLabel(key) ?? 'They',
+        told: Boolean(removed?.walletPublicKey && signer),
+      })
+
+      if (removed) {
+        markRemovedFromDrive(stampId, removed.id)
+        void sendAccessRemovedNote(removed)
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to revoke access')
     } finally {
@@ -417,7 +557,7 @@ export default function ShareModal({
     }
 
     if (!signer || !myPublicKey) {
-      throw new Error('Derive your Nook key first (Contacts page) so the link can carry your contact info.')
+      throw new Error('Sign in with Swarm ID first so the link can carry your contact info.')
     }
     const topic = await topicFromString(stampId + 'nook-drive-meta')
     const metadata = JSON.stringify({
@@ -444,9 +584,51 @@ export default function ShareModal({
       sender: {
         addr: signer.getAddress(),
         walletPublicKey: bytesToHex(signer.getPublicKey()),
-        name: senderName.trim() || undefined,
+        name: myName || undefined,
       },
     })
+  }
+
+  /**
+   * The drive's share link WITHOUT re-publishing the metadata — enough for the
+   * recipient to recognise which of their shared drives a note is about
+   * (feed topic + owner). Used for the access-removed note (nothing to read).
+   */
+  async function driveLinkOnly(): Promise<string | null> {
+    if (!actPublisher || !beeAddress || !signer) return null
+
+    return buildShareLink({
+      feedTopic: await topicFromString(stampId + 'nook-drive-meta'),
+      feedOwner: beeAddress,
+      actPublisher,
+      sender: {
+        addr: signer.getAddress(),
+        walletPublicKey: bytesToHex(signer.getPublicKey()),
+        name: myName || undefined,
+      },
+    })
+  }
+
+  async function sendAccessRemovedNote(contact: NookContact) {
+    if (!signer || !contact.walletPublicKey) return
+    const link = await driveLinkOnly().catch(() => null)
+
+    if (!link) return
+    const who = myName || 'The owner'
+
+    queueAndDeliver(bee, signer, stampId, contact, {
+      kind: 'drive-access-removed',
+      subject: `${who} removed your access to "${driveName}"`,
+      body: `${who} removed your access to "${driveName}". Files you already downloaded stay with you.`,
+      driveShare: { driveShareLink: link, driveName, fileCount: files?.length ?? 0 },
+    })
+  }
+
+  /** Nook's first-contact ping only makes sense before you're connected. */
+  function isConnected(contact: NookContact): boolean {
+    const thread = loadThreads()[contact.id.toLowerCase()] ?? []
+
+    return deriveConnectionState(contact.id, hasInboundSince(thread, contact.addedAt)) === 'connected'
   }
 
   async function copyShareLink() {
@@ -481,6 +663,48 @@ export default function ShareModal({
     return contactsForNodeKey(contacts, granteeKey).length > 1
   }
 
+  /** Every notifiable grantee (in contacts, has ECDH key, not me), deduped. */
+  function collectNotifyTargets(): NookContact[] {
+    const seen = new Set<string>()
+    const targets: NookContact[] = []
+
+    for (const key of grantees) {
+      if (isMyKey(key)) continue
+      const contact = contactForGrantee(key)
+
+      if (!contact?.walletPublicKey || seen.has(contact.id)) continue
+      seen.add(contact.id)
+      targets.push(contact)
+    }
+
+    return targets
+  }
+
+  const anySending = Object.values(notifyStatus).includes('sending')
+
+  async function notifyEveryone() {
+    const targets = collectNotifyTargets()
+
+    if (targets.length === 0 || anySending) return
+    setError(null)
+    const fail = await notifyContacts(targets)
+
+    if (fail) setError(fail)
+  }
+
+  // One-click flow from the drive's "Notify recipients" prompt (#135):
+  // fire the bulk send as soon as the grantee list has loaded.
+  const autoNotifyFired = useRef(false)
+
+  useEffect(() => {
+    if (!autoNotify || autoNotifyFired.current) return
+
+    if (grantees.length === 0 || !signer) return
+    autoNotifyFired.current = true
+    void notifyEveryone()
+    // eslint-disable-next-line
+  }, [autoNotify, grantees, signer])
+
   /**
    * Send the drive-share to an explicit set of contacts (each must carry a
    * walletPublicKey for ECDH). Refreshes the feed once, then per-recipient
@@ -488,11 +712,7 @@ export default function ShareModal({
    * Takes contacts explicitly so callers (grant-time + the bulk button) don't
    * depend on stale derived state. Returns the last error message, or null.
    */
-  async function notifyContacts(
-    targets: NookContact[],
-    doOnChain: boolean,
-    historyOverride?: string,
-  ): Promise<string | null> {
+  async function notifyContacts(targets: NookContact[], historyOverride?: string): Promise<string | null> {
     if (!signer || targets.length === 0) return null
 
     // The recipient resolves us via our published identity feed to add us back.
@@ -505,22 +725,29 @@ export default function ShareModal({
     const fileCount = files?.length ?? 0
     // Subject leads with sender name so a recipient peeking at the feed (eg
     // from an on-chain invitation, before adding us as contact) sees who.
-    const subject = senderName.trim()
-      ? `${senderName.trim()} shared "${driveName}" with you`
-      : `"${driveName}" shared with you`
-    const body = `Drive shared. Open in Nook to add it.`
 
-    // For the on-chain wake-up, switch to Gnosis just-in-time and re-fetch the
-    // wallet client (stale across a chain switch — same pattern as ENSModal).
+    // On-chain wake-up, signed + paid by the node wallet (no external wallet),
+    // sent automatically — but only to people we're not connected with yet
+    // (R4-5; a connected contact already reads our mailbox). OPTIONAL (#132):
+    // the mailbox share needs no gas and completes regardless; an empty node
+    // xDAI balance skips the ping with a note, never blocks the share.
     let provider = null
+    let pingSkipReason: string | null = null
 
-    if (doOnChain && walletClient) {
-      if (walletClient.chain?.id !== GNOSIS_CHAIN_ID) {
-        await switchChain(wagmiConfig, { chainId: GNOSIS_CHAIN_ID })
+    if (targets.some(c => !isConnected(c))) {
+      // Rough gas need for the registry call — skip cleanly instead of sending
+      // a transaction the node wallet cannot pay.
+      if (nodeWallet && BigInt(nodeWallet.nativeTokenBalance) < BigInt('200000000000000')) {
+        pingSkipReason = 'Your node wallet has no xDAI for the on-chain heads-up.'
+      } else {
+        provider = createNodeNotifyProvider()
       }
-      const gnosisClient = await getWalletClient(wagmiConfig, { chainId: GNOSIS_CHAIN_ID })
+    }
 
-      provider = createNotifyProvider(gnosisClient)
+    if (pingSkipReason) {
+      setPingSkippedNote(
+        `Shared without the on-chain heads-up: ${pingSkipReason} Recipients still receive everything in Nook.`,
+      )
     }
 
     let lastFailMsg: string | null = null
@@ -531,12 +758,19 @@ export default function ShareModal({
       // any network work, so the notification survives closing the app — the
       // Layout drain keeps retrying queued entries. A failed first attempt is
       // therefore 'queued', not lost.
+      // Re-sharing with someone we removed earlier = "Access restored" (R4-16).
+      const restoring = wasRemovedFromDrive(stampId, contact.id)
+      const who = myName || 'Someone'
       const { firstAttempt } = queueAndDeliver(bee, signer, stampId, contact, {
-        kind: 'drive-share',
-        body,
-        subject,
+        kind: restoring ? 'drive-access-restored' : 'drive-share',
+        subject: restoring ? `${who} restored your access to "${driveName}"` : `${who} shared "${driveName}" with you`,
+        body: restoring
+          ? `${who} restored your access to "${driveName}". Open it in Nook.`
+          : `Drive shared. Open in Nook to add it.`,
         driveShare: { driveShareLink: link, driveName, fileCount },
       })
+
+      if (restoring) clearRemovedFromDrive(stampId, contact.id)
       // A queued (not yet delivered) notification is NOT a failure — no error
       // surfaced; the row badge shows "queued" and the outbox delivers it.
       const delivered = await firstAttempt
@@ -544,30 +778,60 @@ export default function ShareModal({
 
       // On-chain wake-up — fired AFTER mailbox so the message is already in
       // the feed by the time recipient discovers the event and resolves us.
-      if (provider) {
-        setOnChainStatus(prev => ({ ...prev, [contact.id]: 'sending' }))
+      if (provider && !isConnected(contact)) {
         try {
           const recipientPubKey = hexToBytes(contact.walletPublicKey)
           // Include our display name so the recipient's invitation shows who's
           // reaching out (payload is ECIES-encrypted to them — not public).
           const txHash = await registry.sendNotification(provider, REGISTRY_ADDRESS, recipientPubKey, contact.id, {
             sender: myAddr,
-            name: senderName.trim() || undefined,
+            name: myName || undefined,
           } as Parameters<typeof registry.sendNotification>[4])
 
           // eslint-disable-next-line no-console
           console.log(`On-chain wake-up to ${contact.nickname}: tx ${txHash}`)
-          setOnChainStatus(prev => ({ ...prev, [contact.id]: 'sent' }))
         } catch (e) {
           // eslint-disable-next-line no-console
           console.error(`On-chain notify ${contact.nickname} failed:`, e)
-          lastFailMsg = (e as Error).message ?? 'on-chain send failed'
-          setOnChainStatus(prev => ({ ...prev, [contact.id]: 'failed' }))
+
+          lastFailMsg = `Drive shared, but the on-chain heads-up failed (${shortErrorMessage(e)}) — recipients still receive it in Nook.`
         }
       }
     }
 
     return lastFailMsg
+  }
+
+  const others = grantees.filter(k => !isMyKey(k))
+  const notifiable = collectNotifyTargets()
+
+  function shortAddr(a: string): string {
+    return `${a.slice(0, 6)}…${a.slice(-4)}`
+  }
+
+  function statusPill(status: NotifyStatus | undefined) {
+    const map: Record<string, { text: string; bg: string; fg: string; title?: string }> = {
+      sending: { text: 'Sending…', bg: 'rgba(148,163,184,0.15)', fg: 'rgb(var(--fg-muted))' },
+      sent: { text: 'Notified', bg: 'rgba(74,222,128,0.12)', fg: '#16a34a' },
+      queued: {
+        text: 'Queued',
+        bg: 'rgba(245,158,11,0.12)',
+        fg: '#d97706',
+        title: "The node couldn't send yet — the message is stored and will be delivered automatically",
+      },
+      failed: { text: 'Not sent', bg: 'rgba(239,68,68,0.12)', fg: '#ef4444' },
+    }
+    const p = (status && map[status]) || { text: 'Has access', bg: 'rgba(74,222,128,0.12)', fg: '#16a34a' }
+
+    return (
+      <span
+        className="text-[10.5px] px-2 py-0.5 rounded-full whitespace-nowrap"
+        title={p.title}
+        style={{ backgroundColor: p.bg, color: p.fg }}
+      >
+        {p.text}
+      </span>
+    )
   }
 
   return (
@@ -577,7 +841,7 @@ export default function ShareModal({
       onClick={onClose}
     >
       <div
-        className="rounded-xl border p-6 w-[420px] space-y-5"
+        className="rounded-xl border p-6 w-[460px] space-y-5 max-h-[calc(100vh-2rem)] max-w-[calc(100vw-2rem)] overflow-y-auto"
         style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
         onClick={e => e.stopPropagation()}
       >
@@ -592,191 +856,84 @@ export default function ShareModal({
           </Button>
         </div>
 
-        {/* Grantee list */}
-        <div>
-          <p className="text-xs uppercase tracking-widest mb-2" style={{ color: 'rgb(var(--fg-muted))' }}>
-            <Users size={10} className="inline mr-1" />
-            People with access
-          </p>
+        {/* After a removal (mock A3): the key rotated — say what that means for
+            THIS drive, and offer the fix. Shown only when it applies. */}
+        {keyRotated && onRepublish && (
           <div
-            className="rounded-lg border divide-y max-h-40 overflow-auto"
-            style={{ borderColor: 'rgb(var(--border))' }}
+            className="rounded-lg border px-3 py-3 space-y-2 text-xs"
+            style={{ backgroundColor: 'rgba(245,158,11,0.08)', borderColor: 'rgba(245,158,11,0.35)' }}
           >
-            {grantees.length === 0 ? (
-              <p className="text-xs p-3" style={{ color: 'rgb(var(--fg-muted))' }}>
-                Only you can open this drive. Add someone below to share it.
+            {lastRemoved && (
+              <p style={{ color: 'rgb(var(--fg))' }}>
+                <b>{lastRemoved.name} no longer has access.</b>
+                {lastRemoved.told && <> They&apos;ve been told in Nook.</>}
               </p>
-            ) : (
-              grantees.map(key => {
-                const isMe = isMyKey(key)
-                const label = findLabel(key)
-                const contact = contactForGrantee(key)
-                const status = contact ? notifyStatus[contact.id] : undefined
-
-                return (
-                  <div key={key} className="flex items-center justify-between px-3 py-2">
-                    <span className="text-sm truncate flex-1" style={{ color: 'rgb(var(--fg-muted))' }}>
-                      <span className="font-medium mr-2" style={{ color: 'rgb(var(--fg))' }}>
-                        {isMe ? 'You' : label || `${key.slice(0, 6)}…${key.slice(-4)}`}
-                      </span>
-                      {!isMe && status === 'sent' && (
-                        <span
-                          className="ml-2 text-[10px] font-sans font-medium px-1.5 py-0.5 rounded"
-                          style={{ backgroundColor: 'rgba(74,222,128,0.12)', color: '#4ade80' }}
-                        >
-                          notified
-                        </span>
-                      )}
-                      {!isMe && status === 'queued' && (
-                        <span
-                          className="ml-2 text-[10px] font-sans font-medium px-1.5 py-0.5 rounded"
-                          title="The node couldn't send yet — the message is stored and will be delivered automatically"
-                          style={{ backgroundColor: 'rgba(245,158,11,0.12)', color: '#f59e0b' }}
-                        >
-                          queued
-                        </span>
-                      )}
-                      {!isMe && contact && granteeIsAmbiguous(key) && (
-                        <span
-                          className="ml-2 text-[10px] font-sans font-medium px-1.5 py-0.5 rounded"
-                          title={`Several contacts share this node key (a re-derived identity?). Notifications go to the newest: ${contact.nickname}. Delete stale duplicates in Contacts if that's wrong.`}
-                          style={{ backgroundColor: 'rgba(245,158,11,0.12)', color: '#f59e0b' }}
-                        >
-                          2+ identities → {contact.nickname}
-                        </span>
-                      )}
-                      {!isMe && contact && onChainStatus[contact.id] === 'sent' && (
-                        <span
-                          className="ml-1 text-[10px] font-sans font-medium px-1.5 py-0.5 rounded"
-                          style={{ backgroundColor: 'rgba(96,165,250,0.12)', color: '#60a5fa' }}
-                        >
-                          + on-chain
-                        </span>
-                      )}
-                      {!isMe && contact && onChainStatus[contact.id] === 'failed' && (
-                        <span
-                          className="ml-1 text-[10px] font-sans font-medium px-1.5 py-0.5 rounded"
-                          style={{ backgroundColor: 'rgba(239,68,68,0.12)', color: '#ef4444' }}
-                        >
-                          on-chain failed
-                        </span>
-                      )}
-                      {!isMe && status === 'sending' && (
-                        <span
-                          className="ml-2 text-[10px] font-sans font-medium px-1.5 py-0.5 rounded"
-                          style={{ color: 'rgb(var(--fg-muted))' }}
-                        >
-                          sending…
-                        </span>
-                      )}
-                      {!isMe && status === 'failed' && (
-                        <span
-                          className="ml-2 text-[10px] font-sans font-medium px-1.5 py-0.5 rounded"
-                          style={{ backgroundColor: 'rgba(239,68,68,0.12)', color: '#ef4444' }}
-                        >
-                          failed
-                        </span>
-                      )}
-                      {!isMe && !contact && (
-                        <span
-                          className="ml-2 text-[10px] font-sans px-1.5 py-0.5 rounded"
-                          style={{ color: 'rgb(var(--fg-muted))' }}
-                          title="Add this person to Contacts to enable in-app notifications"
-                        >
-                          not in contacts
-                        </span>
-                      )}
-                    </span>
-                    {!isMe && (
-                      <div className="flex items-center shrink-0 gap-1 ml-2">
-                        {contact?.walletPublicKey && (
-                          <Button
-                            onClick={async () => {
-                              const fail = await notifyContacts([contact], sendOnChain)
-
-                              if (fail) setError(`Couldn't resend to ${contact.nickname}: ${fail}`)
-                            }}
-                            disabled={status === 'sending'}
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7"
-                            title="Notify of an update — re-send the drive in Messages"
-                          >
-                            {status === 'sending' ? (
-                              <RefreshCw className="animate-spin" size={12} />
-                            ) : (
-                              <Bell size={12} />
-                            )}
-                          </Button>
-                        )}
-                        <Button
-                          onClick={async () => handleRevoke(key)}
-                          disabled={loading}
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 hover:text-red-400"
-                          title="Revoke access"
-                        >
-                          <Trash2 size={12} />
-                        </Button>
-                      </div>
-                    )}
-                  </div>
-                )
-              })
             )}
-          </div>
-        </div>
-
-        {/* Re-publish prompt — a revoke rotated the key, so existing files must be
-            re-encrypted before (re-)granted people can open them. */}
-        {(keyRotated || republishMsg) && onRepublish && (
-          <div
-            className="rounded-lg border px-3 py-2.5 space-y-2"
-            style={{ backgroundColor: 'rgba(96,165,250,0.08)', borderColor: 'rgb(var(--accent))' }}
-          >
-            <p className="text-xs" style={{ color: 'rgb(var(--fg))' }}>
-              {republishMsg ??
-                'A grantee was revoked, so this drive’s key changed. Re-publish so people you (re-)grant can open the existing files.'}
+            <p style={{ color: 'rgb(var(--fg))' }}>
+              Files already on this drive are locked for anyone you add back later, until you re-publish the drive.
             </p>
-            {keyRotated && (
-              <Button onClick={onRepublish} disabled={republishing} size="sm" className="w-full">
-                <RefreshCw className={republishing ? 'animate-spin' : ''} />
-                {republishing ? 'Re-publishing…' : 'Re-publish drive'}
-              </Button>
-            )}
+            {republishMsg && <p style={{ color: 'rgb(var(--fg-muted))' }}>{republishMsg}</p>}
+            <Button onClick={onRepublish} disabled={republishing} size="sm">
+              <RefreshCw className={republishing ? 'animate-spin' : ''} />
+              {republishing ? 'Re-publishing…' : 'Re-publish drive'}
+            </Button>
           </div>
         )}
+        {!keyRotated && republishMsg && (
+          <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+            {republishMsg}
+          </p>
+        )}
 
-        {/* Add grantee */}
+        {/* Share with — one field (R4-5) */}
         <div>
           <p className="text-xs uppercase tracking-widest mb-2" style={{ color: 'rgb(var(--fg-muted))' }}>
-            Share with someone
+            Share with
           </p>
-          <div className="space-y-2">
-            <div className="relative">
+          <div className="relative">
+            <div className="flex gap-2">
               <Input
-                value={newLabel}
+                id="share-with"
+                value={query}
                 onChange={e => {
-                  setNewLabel(e.target.value)
+                  const v = e.target.value
+                  // Typing a contact's exact name counts as picking them; anything
+                  // else is taken as a Nook address / link / key.
+                  const byName = contacts.find(c => c.nickname.toLowerCase() === v.trim().toLowerCase())
+
+                  setQuery(v)
+                  setNewKey(byName && !isMyKey(byName.beePublicKey) ? byName.beePublicKey : v.trim())
+                  setNewLabel(byName ? byName.nickname : '')
                   setShowSuggestions(true)
                 }}
                 onFocus={() => setShowSuggestions(true)}
                 onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
-                placeholder="Type a name, or pick a contact"
-                className="text-xs"
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && newKey.trim() && !loading) void handleGrant()
+                }}
+                placeholder="Name, Nook address or contact link"
+                className="flex-1 text-xs"
               />
-              {showSuggestions && contactSuggestions.length > 0 && (
-                <div
-                  className="absolute z-10 w-full mt-1 rounded-lg border max-h-36 overflow-auto"
-                  style={{ backgroundColor: 'rgb(var(--bg-surface))', borderColor: 'rgb(var(--border))' }}
-                >
-                  {contactSuggestions.map(([key, label]) => (
+              <Button onClick={handleGrant} disabled={loading || !newKey.trim()} size="sm">
+                {loading ? <RefreshCw className="animate-spin" /> : null}
+                Share
+              </Button>
+            </div>
+            {showSuggestions && contactSuggestions.length > 0 && (
+              <div
+                className="absolute z-10 w-full mt-1 rounded-lg border max-h-44 overflow-auto shadow-lg"
+                style={{ backgroundColor: 'rgb(var(--bg-surface))', borderColor: 'rgb(var(--border))' }}
+              >
+                {contactSuggestions.map(([key, label]) => {
+                  const c = contactsForNodeKey(contacts, key)[0]
+
+                  return (
                     <button
                       key={key}
                       className="w-full text-left px-3 py-2 text-xs hover:bg-white/[0.04] flex items-center gap-2"
                       onMouseDown={e => {
                         e.preventDefault()
+                        setQuery(label)
                         setNewLabel(label)
                         setNewKey(key)
                         setShowSuggestions(false)
@@ -785,58 +942,18 @@ export default function ShareModal({
                       <span className="font-medium" style={{ color: 'rgb(var(--fg))' }}>
                         {label}
                       </span>
-                      <span className="font-mono truncate" style={{ color: 'rgb(var(--fg-muted))' }}>
-                        {key.slice(0, 12)}…
+                      <span className="ml-auto font-mono" style={{ color: 'rgb(var(--fg-muted))' }}>
+                        {c ? shortAddr(c.id) : `${key.slice(0, 10)}…`}
                       </span>
                     </button>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div className="flex gap-2">
-              <Input
-                value={newKey}
-                onChange={e => setNewKey(e.target.value)}
-                placeholder="…or paste a Nook address / invite link"
-                className="flex-1 font-mono text-xs"
-              />
-              <Button onClick={handleGrant} disabled={loading || !newKey.trim()} size="sm">
-                {loading ? <RefreshCw className="animate-spin" /> : null}
-                Share
-              </Button>
-            </div>
-
-            {/* One-step share: notify the recipient in Messages as part of granting. */}
-            <label
-              className="flex items-start gap-2 text-[11px] cursor-pointer pt-1"
-              style={{ color: 'rgb(var(--fg-muted))' }}
-            >
-              <input
-                type="checkbox"
-                checked={notifyOnGrant}
-                onChange={e => setNotifyOnGrant(e.target.checked)}
-                className="mt-0.5"
-              />
-              <span>Send them the drive in Messages</span>
-            </label>
-            {notifyOnGrant && (
-              <label
-                className="flex items-start gap-2 text-[11px] cursor-pointer"
-                style={{ color: 'rgb(var(--fg-muted))' }}
-              >
-                <input
-                  type="checkbox"
-                  checked={sendOnChain}
-                  onChange={e => setSendOnChain(e.target.checked)}
-                  className="mt-0.5"
-                />
-                <span>
-                  Also send a quick on-chain heads-up (~$0.001) — so they&apos;re notified even if they haven&apos;t
-                  added you yet.
-                </span>
-              </label>
+                  )
+                })}
+              </div>
             )}
           </div>
+          <p className="text-[11px] mt-2" style={{ color: 'rgb(var(--fg-muted))' }}>
+            A contact, a Nook address or a contact link. They get the drive in Messages right away.
+          </p>
         </div>
 
         {error && (
@@ -844,37 +961,251 @@ export default function ShareModal({
             {error}
           </p>
         )}
-
-        {/* Share by link (secondary) + revoke note */}
-        <div className="border-t pt-4 space-y-3" style={{ borderColor: 'rgb(var(--border))' }}>
-          {actPublisher && beeAddress && grantees.some(key => !isMyKey(key)) && (
-            <div className="space-y-2">
-              <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-                Already shared above? You can also copy a link to send it another way — it includes your contact info so
-                they can add you back. They still need access granted above to open it.
-              </p>
-              <Input
-                value={senderName}
-                onChange={e => setSenderName(e.target.value)}
-                placeholder="Your name (optional, shown to recipient)"
-                className="text-xs"
-              />
-              <Button
-                onClick={copyShareLink}
-                disabled={loading}
-                variant={copiedLink ? 'secondary' : 'outline'}
-                className="w-full"
-              >
-                {loading ? <RefreshCw className="animate-spin" /> : copiedLink ? <Check /> : <Copy />}
-                {loading ? 'Generating…' : copiedLink ? 'Link copied!' : 'Copy drive link'}
-              </Button>
-            </div>
-          )}
-
-          <p className="text-[10px]" style={{ color: 'rgb(var(--fg-muted))' }}>
-            Revoking stops future access, but anything already downloaded can&apos;t be unsent.
+        {/* The share succeeded; only the optional on-chain heads-up was
+            skipped (#132) — amber info, never an error. */}
+        {pingSkippedNote && !error && (
+          <p className="text-xs" style={{ color: '#f59e0b' }}>
+            {pingSkippedNote}
           </p>
+        )}
+        {keyRefreshNote && !error && (
+          <p className="text-xs" style={{ color: '#f59e0b' }}>
+            {keyRefreshNote}
+          </p>
+        )}
+
+        {/* People with access */}
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
+              <Users size={10} className="inline mr-1" />
+              People with access{others.length > 0 ? ` · ${others.length}` : ''}
+            </p>
+            {notifiable.length > 1 && (
+              <button
+                onClick={async () => notifyEveryone()}
+                disabled={anySending}
+                className="text-[11px] underline disabled:opacity-50"
+                style={{ color: 'rgb(var(--fg-muted))' }}
+                title="Send the updated drive to everyone with access"
+              >
+                Send update to everyone
+              </button>
+            )}
+          </div>
+          <div
+            className="rounded-lg border divide-y max-h-60 overflow-auto"
+            style={{ borderColor: 'rgb(var(--border))' }}
+          >
+            {others.length === 0 ? (
+              <p className="text-xs p-3 text-center" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Only you can open this drive.
+              </p>
+            ) : (
+              others.map(key => {
+                const label = findLabel(key)
+                const contact = contactForGrantee(key)
+                const target = grantTarget(key, contacts, grantees)
+                const oldKeyOwner = target.kind === 'old-node' ? target.contact : undefined
+                const reshared = target.kind === 'old-node' && target.alreadyReshared
+                const status = contact ? notifyStatus[contact.id] : undefined
+                const name = label || `${key.slice(0, 6)}…${key.slice(-4)}`
+                const shortKey = `${stripKeyPrefix(key).slice(0, 6)}…${stripKeyPrefix(key).slice(-4)}`
+
+                // F-5 (redesign): a grant to someone's OLD node (they
+                // reinstalled). Name them, explain in one line, and keep the
+                // destructive action away from the one they want.
+                if (oldKeyOwner) {
+                  const nick = oldKeyOwner.nickname
+                  const removeOld = (
+                    <button
+                      onClick={async () => handleRevoke(key)}
+                      disabled={loading}
+                      className="text-[11px] hover:underline disabled:opacity-50 whitespace-nowrap"
+                      style={{ color: 'rgb(var(--fg-muted))' }}
+                      title="Revoke the grant to their old node"
+                    >
+                      Remove old access
+                    </button>
+                  )
+
+                  return (
+                    <div key={key} className="px-3 py-2.5 space-y-2">
+                      <div className="flex items-center gap-2.5">
+                        <span
+                          className="w-7 h-7 rounded-full grid place-items-center text-[11px] font-semibold shrink-0"
+                          style={
+                            reshared
+                              ? { backgroundColor: 'rgb(var(--border))', color: 'rgb(var(--fg-muted))' }
+                              : { backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }
+                          }
+                        >
+                          {nick.charAt(0).toUpperCase()}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span
+                            className="block text-sm font-medium truncate"
+                            style={{ color: reshared ? 'rgb(var(--fg-muted))' : 'rgb(var(--fg))' }}
+                          >
+                            {reshared ? `${nick} — old node` : nick}
+                          </span>
+                          <span
+                            className="block text-[10.5px] truncate"
+                            title={key}
+                            style={{ color: 'rgb(var(--fg-muted))' }}
+                          >
+                            {reshared ? (
+                              `Not needed any more — ${nick} has access on their new one.`
+                            ) : (
+                              <>
+                                old node · <span className="font-mono">{shortKey}</span>
+                              </>
+                            )}
+                          </span>
+                        </span>
+                        {reshared ? (
+                          removeOld
+                        ) : (
+                          <span
+                            className="text-[10.5px] px-2 py-0.5 rounded-full whitespace-nowrap"
+                            style={{ backgroundColor: 'rgba(245,158,11,0.12)', color: '#d97706' }}
+                          >
+                            No access
+                          </span>
+                        )}
+                      </div>
+                      {!reshared && (
+                        <div
+                          className="rounded-md px-3 py-2 space-y-2"
+                          style={{ backgroundColor: 'rgba(245,158,11,0.08)' }}
+                        >
+                          <p className="text-[11px] leading-snug" style={{ color: '#b45309' }}>
+                            {nick} reinstalled Nook, so this access is for their old node and they can't open the drive.
+                          </p>
+                          <div className="flex items-center gap-4">
+                            <button
+                              onClick={async () => handleGrant(oldKeyOwner.id)}
+                              disabled={loading}
+                              className="px-2.5 py-1 rounded-md text-[11px] font-semibold disabled:opacity-50"
+                              style={{
+                                backgroundColor: 'rgb(var(--accent))',
+                                color: 'rgb(var(--primary-foreground))',
+                              }}
+                              title={`Give ${nick}'s new node access — they'll get the drive in Messages`}
+                            >
+                              Share again
+                            </button>
+                            {removeOld}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )
+                }
+
+                return (
+                  <div key={key} className="flex items-center gap-2.5 px-3 py-2.5">
+                    <span
+                      className="w-7 h-7 rounded-full grid place-items-center text-[11px] font-semibold shrink-0"
+                      style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
+                    >
+                      {name.charAt(0).toUpperCase()}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-medium truncate" style={{ color: 'rgb(var(--fg))' }}>
+                        {name}
+                      </span>
+                      <span
+                        className="block text-[10.5px] font-mono truncate"
+                        title={contact?.id ?? key}
+                        style={{ color: 'rgb(var(--fg-muted))' }}
+                      >
+                        {contact ? shortAddr(contact.id) : `key …${stripKeyPrefix(key).slice(-6)}`}
+                      </span>
+                      {/* Kept diagnostics (#8/#122): several identities on one
+                          node, not a contact. (Old node after a reinstall: above.) */}
+                      {contact && granteeIsAmbiguous(key) && (
+                        <span
+                          className="block text-[10.5px]"
+                          style={{ color: '#d97706' }}
+                          title={`Several contacts share this node key (a re-derived identity?). Messages go to the newest: ${contact.nickname}. Delete stale duplicates in Contacts if that's wrong.`}
+                        >
+                          2+ identities → {contact.nickname}
+                        </span>
+                      )}
+                      {!contact && (
+                        <span className="block text-[10.5px]" style={{ color: 'rgb(var(--fg-muted))' }}>
+                          Not in your contacts — add them to send updates
+                        </span>
+                      )}
+                    </span>
+                    {statusPill(status)}
+                    <span className="flex items-center gap-2 shrink-0 text-[11px]">
+                      {contact?.walletPublicKey && (
+                        <button
+                          onClick={async () => {
+                            const fail = await notifyContacts([contact])
+
+                            if (fail) setError(`Couldn't send the update to ${contact.nickname}: ${fail}`)
+                          }}
+                          disabled={status === 'sending'}
+                          className="hover:underline disabled:opacity-50"
+                          style={{ color: 'rgb(var(--fg-muted))' }}
+                          title="Re-send the drive after you've added files"
+                        >
+                          Send update
+                        </button>
+                      )}
+                      <button
+                        onClick={async () => handleRevoke(key)}
+                        disabled={loading}
+                        className="hover:underline disabled:opacity-50"
+                        style={{ color: '#ef4444' }}
+                      >
+                        Remove
+                      </button>
+                    </span>
+                  </div>
+                )
+              })
+            )}
+          </div>
         </div>
+
+        {/* Other ways to share — the drive link, collapsed (mock A2). */}
+        {actPublisher && beeAddress && others.length > 0 && (
+          <div className="border-t pt-3" style={{ borderColor: 'rgb(var(--border))' }}>
+            <button
+              onClick={() => setShowOtherWays(v => !v)}
+              className="w-full flex items-center justify-between text-xs"
+              style={{ color: 'rgb(var(--fg-muted))' }}
+            >
+              Other ways to share
+              <span>{showOtherWays ? '▾' : '▸'}</span>
+            </button>
+            {showOtherWays && (
+              <div className="space-y-2 pt-3">
+                <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  Copy a drive link to send another way. It includes your contact info so they can add you back; they
+                  still need access given above to open it.
+                </p>
+                <Button
+                  onClick={copyShareLink}
+                  disabled={loading}
+                  variant={copiedLink ? 'secondary' : 'outline'}
+                  className="w-full"
+                >
+                  {loading ? <RefreshCw className="animate-spin" /> : copiedLink ? <Check /> : <Copy />}
+                  {loading ? 'Generating…' : copiedLink ? 'Link copied!' : 'Copy drive link'}
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
+
+        <p className="text-[10px]" style={{ color: 'rgb(var(--fg-muted))' }}>
+          Removing someone stops future access; files they already downloaded stay with them.
+        </p>
       </div>
     </div>
   )

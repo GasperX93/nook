@@ -1,6 +1,24 @@
-import { existsSync, renameSync, unlinkSync } from 'fs'
+import { existsSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'fs'
+import { dirname } from 'path'
 import { configYamlExists, deleteKeyFromConfigYaml, readConfigYaml, writeConfigYaml } from './config'
+import { logger } from './logger'
 import { getLogPath, getPath } from './path'
+import { LEGACY_DEFAULT_RPCS, RPC_RELAY_URL } from './rpc-endpoints'
+
+/** Written once the legacy-RPC → relay move has run (R6-1). */
+const RPC_RELAY_MARKER = '.rpc-relay-migrated'
+
+function markRpcMoveDone() {
+  const marker = getPath(RPC_RELAY_MARKER)
+
+  try {
+    mkdirSync(dirname(marker), { recursive: true })
+    writeFileSync(marker, '')
+  } catch (error) {
+    // Worst case the move runs again next start — same result as today.
+    logger.error('migration: could not write the RPC relay marker', error)
+  }
+}
 
 function migrateFile(oldPath: string, newPath: string) {
   const oldExists = existsSync(oldPath)
@@ -19,6 +37,10 @@ export function runMigrations() {
   migrateFile(getLogPath('bee-desktop.log'), getLogPath('nook.log'))
 
   if (!configYamlExists()) {
+    // Fresh install: nothing legacy to move, so the one-time RPC move is done
+    // — a URL the user picks in the first session must survive the restart.
+    markRpcMoveDone()
+
     return
   }
 
@@ -36,9 +58,24 @@ export function runMigrations() {
     writeConfigYaml({ 'blockchain-rpc-endpoint': config['swap-endpoint'] })
   }
 
-  // Only upgrade old RPC for existing users who already have one set — don't add it for new ultra-light installs
-  if (config['blockchain-rpc-endpoint'] === 'https://xdai.fairdatasociety.org') {
-    writeConfigYaml({ 'blockchain-rpc-endpoint': 'https://rpc.gnosischain.com' })
+  // Route installs still on a default Nook once wrote (rpc.gnosischain.com,
+  // or the older fairdatasociety one) through the RPC relay, which falls back
+  // to a second public RPC when the first throttles (R5-3/R5-14). Runs ONCE:
+  // afterwards the same URL in the config is a custom RPC the user picked in
+  // Settings and must be kept (R6-1). Installs without an RPC yet (ultra-light)
+  // get the relay when funding switches them.
+  const rpcMarker = getPath(RPC_RELAY_MARKER)
+
+  if (!existsSync(rpcMarker)) {
+    // The swap-endpoint move above may just have written the RPC (the
+    // config snapshot predates it).
+    const rpc = config['blockchain-rpc-endpoint'] || config['swap-endpoint']
+
+    if (typeof rpc === 'string' && LEGACY_DEFAULT_RPCS.includes(rpc)) {
+      writeConfigYaml({ 'blockchain-rpc-endpoint': RPC_RELAY_URL })
+    }
+
+    markRpcMoveDone()
   }
 
   // Cloudflare deprecated its Ethereum gateway: it still answers the handshake

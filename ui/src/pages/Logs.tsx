@@ -1,54 +1,20 @@
-import { useEffect, useRef, useState } from 'react'
-import { useBeeLogs, useNookLogs } from '../api/queries'
-
-type LogTab = 'bee' | 'desktop'
+/**
+ * Logs page (R4-18) — reachable by everyone (the Bee-down and crash-loop
+ * banners link here); Developer mode shows the same viewer beside the config.
+ */
+import LogViewer from '../components/LogViewer'
 
 export default function Logs() {
-  const [tab, setTab] = useState<LogTab>('bee')
-  const { data: beeLogs } = useBeeLogs()
-  const { data: nookLogs } = useNookLogs()
-  const bottomRef = useRef<HTMLDivElement>(null)
-
-  const logs = tab === 'bee' ? beeLogs : nookLogs
-
-  // Auto-scroll to bottom when new logs arrive
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [logs])
-
   return (
-    <div className="flex flex-col h-full p-6">
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="text-base font-semibold uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
-          Logs
-        </h1>
-        <div className="flex gap-1">
-          {(['bee', 'desktop'] as LogTab[]).map(t => (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              className="px-3 py-1.5 rounded text-xs font-semibold uppercase tracking-widest transition-colors"
-              style={
-                tab === t
-                  ? { backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }
-                  : { color: 'rgb(var(--fg-muted))' }
-              }
-            >
-              {t === 'bee' ? 'Bee' : 'Desktop'}
-            </button>
-          ))}
-        </div>
+    <div className="flex flex-col p-6 gap-4 h-full min-h-0">
+      <div>
+        <h2 className="text-lg font-semibold">Logs</h2>
+        <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+          What your Bee node and Nook are doing. If something goes wrong, download the log and include it in your
+          report.
+        </p>
       </div>
-
-      <div
-        className="flex-1 rounded-lg border p-4 overflow-auto min-h-0"
-        style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
-      >
-        <pre className="text-xs whitespace-pre-wrap break-all" style={{ color: 'rgb(var(--fg-muted))' }}>
-          {logs ?? 'No logs available.'}
-        </pre>
-        <div ref={bottomRef} />
-      </div>
+      <LogViewer className="flex-1" />
     </div>
   )
 }

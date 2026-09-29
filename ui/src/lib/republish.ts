@@ -1,22 +1,27 @@
 /**
- * Re-publish an encrypted drive: re-encrypt and re-upload its files under the
- * drive's CURRENT ACT, then refresh the shared metadata feed.
+ * Re-publish an encrypted drive: re-encrypt and re-upload its content under
+ * the drive's CURRENT ACT, then refresh the shared metadata feed.
  *
  * Why this exists:
  *  - Revoking a grantee ROTATES the ACT key in Bee, so the drive's existing
- *    files stay locked under the OLD key. Re-granting someone gives them the new
- *    key, but they still can't open the old files — those bytes must be
+ *    content stays locked under the OLD key. Re-granting someone gives them the
+ *    new key, but they still can't open the old content — those bytes must be
  *    re-encrypted (re-uploaded) under the current key.
  *  - It also pushes content that was originally uploaded deferred (and never
  *    reached the network) out to the network's storers via direct upload.
  *
- * The owner can decrypt their own files locally (they're the ACT publisher), so
- * we download each file, re-upload it direct under the current history (chaining
- * forward), update the local record, and rewrite the metadata feed to the new
- * references so recipients reading the feed get content they can decrypt.
+ * The owner can decrypt their own content locally (they're the ACT publisher):
+ * files are round-tripped directly; folders/websites are enumerated via their
+ * mantaray manifest (ACT-aware since bee-js 12), every entry downloaded and
+ * the collection re-uploaded as a whole. Each re-upload chains the history
+ * forward; the metadata feed is rewritten last so recipients reading the feed
+ * get references they can decrypt.
  */
-import { beeApi, topicFromString } from '../api/bee'
+import { Bee, MantarayNode } from '@ethersphere/bee-js'
+
+import { beeApi, getBeeUrl, topicFromString } from '../api/bee'
 import { serverApi } from '../api/server'
+import type { FileEntry } from '../utils/directory'
 import type { UploadRecord } from '../hooks/useUploadHistory'
 
 export interface RepublishDeps {
@@ -36,30 +41,80 @@ export interface RepublishDeps {
   onWrapperRef?: (ref: string) => void
 }
 
+/**
+ * Enumerate an ACT-encrypted collection's entries and download their bytes
+ * (owner-side decrypt) so the collection can be re-uploaded under the current
+ * key. Also recovers the index/error documents from the manifest root.
+ */
+async function downloadCollectionEntries(
+  rec: UploadRecord,
+  actPublisher: string,
+): Promise<{ entries: FileEntry[]; indexDocument?: string; errorDocument?: string }> {
+  const bee = new Bee(getBeeUrl())
+  const act = { actPublisher, actHistoryAddress: rec.actHistoryRef! }
+  const root = await MantarayNode.unmarshal(bee, rec.hash, act)
+
+  await root.loadRecursively(bee, act)
+  const docs = root.getDocsMetadata()
+  const entries: FileEntry[] = []
+
+  for (const path of Object.keys(root.collectAndMap())) {
+    // The docs-metadata fork ("/") carries no content — skip non-file nodes.
+    const clean = path.replace(/^\//, '')
+
+    if (!clean) continue
+    // bee-js native ACT download (the Koa /act/download route only handles
+    // single references, not manifest subpaths).
+    const file = await bee.downloadFile(rec.hash, clean, act)
+    const name = clean.split('/').pop() ?? clean
+
+    entries.push({
+      path: clean,
+      file: new File([file.data.toUint8Array() as BlobPart], name, {
+        type: file.contentType || 'application/octet-stream',
+      }),
+    })
+  }
+
+  return { entries, indexDocument: docs.indexDocument ?? undefined, errorDocument: docs.errorDocument ?? undefined }
+}
+
 export async function republishDrive(deps: RepublishDeps): Promise<void> {
   const { driveId, records, actPublisher, onProgress, onRecordUpdate, onHistoryUpdate, onWrapperRef } = deps
 
-  // Only single files are round-trippable via ACT download/upload here.
-  // (Folders/websites are collections — re-publishing those is a follow-up.)
-  const files = records.filter(r => r.isEncrypted && r.actHistoryRef && r.type === 'file')
+  const items = records.filter(r => r.isEncrypted && r.actHistoryRef)
 
-  if (files.length === 0) {
-    throw new Error('No encrypted files to re-publish in this drive.')
+  if (items.length === 0) {
+    throw new Error('No encrypted content to re-publish in this drive.')
   }
 
   let currentHistory = deps.currentHistoryRef
   const rebuilt: { name: string; reference: string; historyRef: string; size: number }[] = []
 
-  for (let i = 0; i < files.length; i++) {
-    const rec = files[i]
+  for (let i = 0; i < items.length; i++) {
+    const rec = items[i]
 
-    onProgress?.(`Re-publishing ${i + 1} of ${files.length}: ${rec.name}`)
+    onProgress?.(`Re-publishing ${i + 1} of ${items.length}: ${rec.name}`)
 
-    // Download decrypted content (owner holds the key + has it locally), then
-    // re-upload it direct under the current ACT so current grantees can read it.
-    const blob = await beeApi.downloadFileWithACT(rec.hash, actPublisher, rec.actHistoryRef!)
-    const file = new File([blob], rec.name, { type: blob.type || 'application/octet-stream' })
-    const result = await beeApi.uploadFileWithACT(file, driveId, currentHistory)
+    let result: { reference: string; historyAddress: string }
+
+    if (rec.type === 'file') {
+      // Download decrypted content (owner holds the key + has it locally), then
+      // re-upload it direct under the current ACT so current grantees can read it.
+      const blob = await beeApi.downloadFileWithACT(rec.hash, actPublisher, rec.actHistoryRef!)
+      const file = new File([blob], rec.name, { type: blob.type || 'application/octet-stream' })
+
+      result = await beeApi.uploadFileWithACT(file, driveId, currentHistory)
+    } else {
+      // Folder/website: enumerate the manifest, download every entry, re-upload
+      // the collection as a whole under the current key.
+      const { entries, indexDocument, errorDocument } = await downloadCollectionEntries(rec, actPublisher)
+
+      if (entries.length === 0) throw new Error(`"${rec.name}" has no readable entries to re-publish.`)
+      const opts = rec.type === 'website' ? { indexDocument: indexDocument ?? 'index.html', errorDocument } : undefined
+
+      result = await beeApi.uploadCollectionWithACT(entries, driveId, currentHistory, opts)
+    }
 
     if (result.historyAddress) currentHistory = result.historyAddress
 

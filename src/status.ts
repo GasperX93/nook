@@ -1,9 +1,12 @@
 import { readFileSync } from 'fs'
 import { join } from 'path'
 import { isBeeAssetReady } from './downloader'
-import { BeeMode, getMode } from './funding-monitor'
+import { type AutoExtendFailure, getAutoExtendFailures } from './extend-monitor'
+import { BeeMode, type FundingState, getFundingState, getMode } from './funding-monitor'
 import { BeeManager } from './lifecycle'
 import { getSupervisorStatus } from './supervisor'
+import { type ForeignBee, getForeignBee } from './foreign-bee'
+import { reserveJustBoughtAt } from './system-stamp'
 import { checkPath, getPath } from './path'
 import { readConfigYaml } from './config'
 
@@ -16,6 +19,14 @@ interface Status {
   userStopped: boolean
   /** True when Bee crashed repeatedly and the supervisor gave up restarting (#94). */
   crashLoop: boolean
+  /** Outstanding auto-extend failures (#129) — the UI banner keys on these. */
+  autoExtendFailures: AutoExtendFailure[]
+  /** What the funding monitor last saw (R5-15) — onboarding's funding step. */
+  funding: FundingState
+  /** Another Bee node holds Nook's ports (R5-11) — the dashboard blocks on this. */
+  foreignBee: ForeignBee | null
+  /** The messaging reserve was just bought and may not be listed by Bee yet (F-6). */
+  reserveBoughtAt: number | null
 }
 
 export function getStatus() {
@@ -24,6 +35,10 @@ export function getStatus() {
     mode: getMode(),
     userStopped: BeeManager.wasEverStarted() && !BeeManager.shouldRestart(),
     crashLoop: getSupervisorStatus().crashLoop,
+    autoExtendFailures: getAutoExtendFailures(),
+    funding: getFundingState(),
+    foreignBee: getForeignBee(),
+    reserveBoughtAt: reserveJustBoughtAt(),
   }
 
   if (!checkPath('config.yaml') || !checkPath('data-dir')) {

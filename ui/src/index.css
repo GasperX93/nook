@@ -118,6 +118,15 @@
 }
 
 /* Hide the multichain-widget intent description banner (info icon + text row) */
+/* Token dropdown: the widget ships the menu without a height limit, so a
+   long token list overflows the page and wheel-scrolling moves the page
+   instead of the list. Give it its own scroll, contained. */
+.multichain__select-menu {
+  max-height: 320px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 .multichain__wrapper > .multichain__row:first-child {
   display: none !important;
 }
@@ -156,4 +165,61 @@
 }
 .multichain__button-icon svg [fill='white'] {
   fill: currentColor !important;
+}
+
+/* Propagation visual (#4 batch): dots streaming file → network. Speed is
+   driven inline by the real confirmed-chunk rate; paused = nothing landing.
+   Reduced-motion users get the numbers without the motion. */
+.nook-propagation-track {
+  border-bottom: 1px dashed rgb(var(--border));
+}
+.nook-propagation-dot {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 5px;
+  height: 5px;
+  margin-top: -2.5px;
+  border-radius: 9999px;
+  background-color: rgb(var(--accent));
+  opacity: 0;
+  animation-name: nook-propagate;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+@keyframes nook-propagate {
+  0% {
+    transform: translate(0, 0);
+    opacity: 0;
+  }
+  10% {
+    opacity: 0.9;
+  }
+  90% {
+    opacity: 0.9;
+  }
+  100% {
+    transform: translate(calc(100cqw - 5px), var(--fan-y, 0px));
+    opacity: 0;
+  }
+}
+.nook-propagation-track {
+  container-type: inline-size;
+}
+@media (prefers-reduced-motion: reduce) {
+  .nook-propagation-dot {
+    display: none;
+  }
+}
+
+/* #25: dots fan out to different nodes in the end cluster — three end
+   heights so the stream visibly splits instead of aiming at one point. */
+.nook-propagation-dot-0 {
+  --fan-y: -7px;
+}
+.nook-propagation-dot-1 {
+  --fan-y: 0px;
+}
+.nook-propagation-dot-2 {
+  --fan-y: 7px;
 }

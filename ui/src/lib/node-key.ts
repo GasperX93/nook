@@ -42,3 +42,35 @@ export function contactsForNodeKey(contacts: NookContact[], nodeKey: string): No
 
   return contacts.filter(c => stripKeyPrefix(c.beePublicKey) === keyX).sort((a, b) => b.addedAt - a.addedAt)
 }
+
+/**
+ * The contact whose SUPERSEDED node key matches (see NookContact.previousBeeKeys)
+ * — identifies a stale grant as "this person's old key" after their reinstall.
+ */
+export function contactForOldNodeKey(contacts: NookContact[], nodeKey: string): NookContact | undefined {
+  const keyX = stripKeyPrefix(nodeKey)
+
+  return contacts.find(c => (c.previousBeeKeys ?? []).some(k => stripKeyPrefix(k) === keyX))
+}
+
+/**
+ * What a grant in a drive's access list points at (F-3): a contact's current
+ * node, their OLD node (they reinstalled — grant again to their current one,
+ * unless that's already on the list), or nobody known.
+ */
+export type GrantTarget =
+  | { kind: 'current'; contact: NookContact }
+  | { kind: 'old-node'; contact: NookContact; alreadyReshared: boolean }
+  | { kind: 'unknown' }
+
+export function grantTarget(grantKey: string, contacts: NookContact[], grantees: string[]): GrantTarget {
+  const current = contactsForNodeKey(contacts, grantKey)[0]
+
+  if (current) return { kind: 'current', contact: current }
+  const old = contactForOldNodeKey(contacts, grantKey)
+
+  if (!old) return { kind: 'unknown' }
+  const alreadyReshared = grantees.some(g => stripKeyPrefix(g) === stripKeyPrefix(old.beePublicKey))
+
+  return { kind: 'old-node', contact: old, alreadyReshared }
+}

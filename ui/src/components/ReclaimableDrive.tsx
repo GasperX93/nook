@@ -18,9 +18,16 @@ import {
 import React, { useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 
-import { beeApi, getBeeUrl, type Stamp, depthToBytes } from '../api/bee'
+import { beeApi, getBeeUrl, type Stamp, depthToBytes, driveSizeLabel } from '../api/bee'
 import { serverApi, type ReclaimableDrive, type ReclaimableFile } from '../api/server'
 import { fileListToEntries, readDroppedDirectory, type FileEntry } from '../utils/directory'
+import { useTransfersStore } from '../store/transfers'
+import { followReclaimableJob, reclaimableJobTransferId } from '../store/reclaimable-jobs'
+import { friendlyError } from '../lib/friendly-error'
+import { formatBytes } from '../lib/format-bytes'
+import { savingLabel } from '../lib/transfer-labels'
+import FolderCard from './FolderCard'
+import PropagationVisual from './PropagationVisual'
 
 // Reclaimable drives (#99): the server stamps chunks client-side and keeps a
 // slot ledger, so deleting a file really frees its capacity. Files come from
@@ -35,16 +42,6 @@ const downloadListeners = new Set<() => void>()
 
 function notifyDownloadListeners() {
   downloadListeners.forEach(listener => listener())
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-
-  if (bytes < 1_048_576) return `${(bytes / 1024).toFixed(1)} KB`
-
-  if (bytes < 1_073_741_824) return `${(bytes / 1_048_576).toFixed(1)} MB`
-
-  return `${(bytes / 1_073_741_824).toFixed(2)} GB`
 }
 
 function ttlToDays(seconds: number): string {
@@ -75,6 +72,12 @@ export function ReclaimableDriveCard({
   drive,
   stamp,
   customName,
+  autoExtendOn,
+  autoExtendMonths,
+  autoExtendUpcoming,
+  autoExtendFailed,
+  autoExtendFailedReason,
+  onAutoExtend,
   onOpen,
   onExtend,
   onRename,
@@ -82,6 +85,18 @@ export function ReclaimableDriveCard({
   drive: ReclaimableDrive
   stamp?: Stamp
   customName?: string
+  /** Auto-extend enabled (#129) — shows the card badge. */
+  autoExtendOn?: boolean
+  /** Configured duration in months — for the badge tooltip. */
+  autoExtendMonths?: number
+  /** In the advance-notice window (#138) — badge turns amber. */
+  autoExtendUpcoming?: boolean
+  /** Last automatic extension failed (#138) — badge turns red. */
+  autoExtendFailed?: boolean
+  /** Why it failed — shown in the badge tooltip, self-contained. */
+  autoExtendFailedReason?: string
+  /** Open the auto-extend dialog (#129). */
+  onAutoExtend?: () => void
   onOpen: () => void
   onExtend: () => void
   onRename: (name: string) => void
@@ -167,8 +182,8 @@ export function ReclaimableDriveCard({
           {/* Encrypted pill (private, no sharing on reclaimable drives yet) */}
           {drive.encrypted && (
             <span
-              className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-semibold shrink-0"
-              style={{ backgroundColor: '#3b82f6', color: 'white' }}
+              className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium shrink-0"
+              style={{ backgroundColor: 'rgba(96,165,250,0.12)', color: '#60a5fa' }}
             >
               <Lock size={12} />
               Encrypted
@@ -197,6 +212,35 @@ export function ReclaimableDriveCard({
             </span>
           )}
 
+          {/* Auto-extend badge (#129) — an active spending policy is card-level
+              state; click-through manages or cancels it */}
+          {autoExtendOn && (
+            <button
+              onClick={e => {
+                e.stopPropagation()
+                onAutoExtend?.()
+              }}
+              className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium shrink-0 transition-colors hover:bg-white/10"
+              style={
+                autoExtendFailed
+                  ? { backgroundColor: 'rgba(239,68,68,0.12)', color: '#ef4444' }
+                  : autoExtendUpcoming
+                    ? { backgroundColor: 'rgba(245,158,11,0.12)', color: '#f59e0b' }
+                    : { backgroundColor: 'rgba(74,222,128,0.1)', color: '#4ade80' }
+              }
+              title={
+                autoExtendFailed
+                  ? `Couldn't extend automatically${autoExtendFailedReason ? `: ${autoExtendFailedReason}` : ''} — click to change it, or add xBZZ`
+                  : autoExtendUpcoming
+                    ? 'Automatic extension coming up in the next days — click for details or to turn it off'
+                    : `Extends automatically${autoExtendMonths ? ` by ${autoExtendMonths} month${autoExtendMonths === 1 ? '' : 's'}` : ''} when under 10 days remain — click to change or turn off`
+              }
+            >
+              <RefreshCw size={11} />
+              auto-extend
+            </button>
+          )}
+
           {/* Confirming pill */}
           {stamp && !stamp.usable && (
             <span
@@ -207,20 +251,10 @@ export function ReclaimableDriveCard({
             </span>
           )}
 
-          {/* Right-side actions */}
+          {/* Right-side actions — same treatment as classic cards (#22b):
+              no teleporting extend button; the TTL pill is the affordance
+              and the kebab always carries "Extend drive…". */}
           <div className="ml-auto flex items-center gap-2 shrink-0">
-            {needsExtend && (
-              <button
-                onClick={e => {
-                  e.stopPropagation()
-                  onExtend()
-                }}
-                className="px-3 py-1.5 rounded-lg border text-xs font-semibold transition-colors hover:bg-white/5"
-                style={{ borderColor: 'rgb(var(--border))', color: 'rgb(var(--fg))' }}
-              >
-                Extend storage
-              </button>
-            )}
             <div className="relative" ref={kebabRef} onClick={e => e.stopPropagation()}>
               <button
                 onClick={() => setKebabOpen(v => !v)}
@@ -244,8 +278,21 @@ export function ReclaimableDriveCard({
                     style={{ color: 'rgb(var(--fg))' }}
                   >
                     <Clock size={13} style={{ color: 'rgb(var(--fg-muted))' }} />
-                    Extend storage
+                    Extend drive…
                   </button>
+                  {onAutoExtend && (
+                    <button
+                      onClick={() => {
+                        setKebabOpen(false)
+                        onAutoExtend()
+                      }}
+                      className="flex items-center gap-2 w-full px-3 py-2 text-xs transition-colors hover:bg-white/5"
+                      style={{ color: 'rgb(var(--fg))' }}
+                    >
+                      <RefreshCw size={13} style={{ color: 'rgb(var(--fg-muted))' }} />
+                      Auto-renew…
+                    </button>
+                  )}
                   <button
                     onClick={() => {
                       setKebabOpen(false)
@@ -297,12 +344,20 @@ export function ReclaimableDriveCard({
                   : undefined
               }
             >
-              {usedBytes > 0 ? `${formatBytes(usedBytes)} / ${formatBytes(capacityBytes)}` : formatBytes(capacityBytes)}
+              {usedBytes > 0
+                ? `${formatBytes(usedBytes)} / ${driveSizeLabel(drive.depth)}`
+                : driveSizeLabel(drive.depth)}
             </span>
           )}
           {!expired && ttlSeconds !== null && (
-            <span
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full"
+            // Clickable extend affordance (#22b) — same as classic cards.
+            <button
+              onClick={e => {
+                e.stopPropagation()
+                onExtend()
+              }}
+              title="Extend drive — add space or time"
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full transition-colors hover:ring-1"
               style={
                 isCriticalTtl
                   ? { backgroundColor: 'rgba(239,68,68,0.1)', color: '#ef4444' }
@@ -310,8 +365,8 @@ export function ReclaimableDriveCard({
               }
             >
               <Clock size={11} />
-              {ttlToDays(ttlSeconds)}
-            </span>
+              <span className={needsExtend ? 'underline underline-offset-2' : undefined}>{ttlToDays(ttlSeconds)}</span>
+            </button>
           )}
           <span style={{ color: 'rgb(var(--border))' }}>|</span>
           <span style={{ color: 'rgb(var(--fg-muted))' }}>
@@ -351,7 +406,7 @@ export function ExpiredDriveRow({
       await serverApi.removeReclaimableDrive(drive.batchId)
       await queryClient.invalidateQueries({ queryKey: ['server', 'reclaimable'] })
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not remove the drive')
+      setError(friendlyError(err, 'Could not remove the drive'))
       setRemoving(false)
     }
   }
@@ -478,7 +533,7 @@ function FileRow({
       // the browser hasn't started reading yet.
       setTimeout(() => URL.revokeObjectURL(url), 10_000)
     } catch (error) {
-      setDownloadError(error instanceof Error ? error.message : 'Download failed')
+      setDownloadError(friendlyError(error, 'Download failed'))
     } finally {
       inFlightDownloads.delete(file.reference)
       notifyDownloadListeners()
@@ -534,31 +589,50 @@ function FileRow({
 
       {/* Size (approximate — from the ledger's chunk count) */}
       <span
-        className="text-xs shrink-0 hidden sm:block w-14 text-right tabular-nums"
+        className="text-xs shrink-0 hidden sm:block w-[4.5rem] text-right whitespace-nowrap tabular-nums"
         style={{ color: 'rgb(var(--fg-muted))' }}
       >
         ~{formatBytes(file.chunkCount * 4096)}
       </span>
 
-      {/* Expiry (the drive's TTL — all files on a drive expire together) */}
-      {ttlSeconds !== undefined && (
+      {/* Expiry (the drive's TTL — all files on a drive expire together).
+          While a download runs the same area shows prominent progress instead
+          (finding #7 — a % between action icons was nearly invisible). */}
+      {downloadPct !== null ? (
         <div className="flex items-center gap-2 shrink-0">
           <div className="h-1 rounded-full overflow-hidden w-24" style={{ backgroundColor: 'rgb(var(--border))' }}>
             <div
               className="h-full rounded-full transition-all"
-              style={{
-                width: `${Math.max(2, Math.min(100, ((ttlDays ?? 0) / 365) * 100))}%`,
-                backgroundColor: urgent ? '#ef4444' : '#4ade80',
-              }}
+              style={{ width: `${Math.max(downloadPct, 2)}%`, backgroundColor: 'rgb(var(--accent))' }}
             />
           </div>
           <span
-            className="text-[10px] uppercase tracking-widest font-semibold w-16 text-right whitespace-nowrap"
-            style={{ color: urgent ? '#ef4444' : 'rgb(var(--fg-muted))' }}
+            className="text-[10px] uppercase tracking-widest font-semibold w-24 text-right whitespace-nowrap tabular-nums"
+            style={{ color: 'rgb(var(--accent))' }}
           >
-            {ttlToDays(ttlSeconds)} left
+            {savingLabel(downloadPct)}
           </span>
         </div>
+      ) : (
+        ttlSeconds !== undefined && (
+          <div className="flex items-center gap-2 shrink-0">
+            <div className="h-1 rounded-full overflow-hidden w-24" style={{ backgroundColor: 'rgb(var(--border))' }}>
+              <div
+                className="h-full rounded-full transition-all"
+                style={{
+                  width: `${Math.max(2, Math.min(100, ((ttlDays ?? 0) / 365) * 100))}%`,
+                  backgroundColor: urgent ? '#ef4444' : '#4ade80',
+                }}
+              />
+            </div>
+            <span
+              className="text-[10px] uppercase tracking-widest font-semibold w-24 text-right whitespace-nowrap"
+              style={{ color: urgent ? '#ef4444' : 'rgb(var(--fg-muted))' }}
+            >
+              {ttlToDays(ttlSeconds)} left
+            </span>
+          </div>
+        )
       )}
 
       {/* Actions */}
@@ -588,8 +662,10 @@ function FileRow({
           </a>
         )}
         {downloadPct !== null ? (
-          <span className="text-[10px] tabular-nums px-1" style={{ color: 'rgb(var(--fg-muted))' }}>
-            {downloadPct}%
+          // Progress lives in the row's status area now; keep the icon slot
+          // as a spinner so the layout doesn't jump.
+          <span title="Downloading…" className="w-6 h-6 flex items-center justify-center shrink-0">
+            <RefreshCw size={12} className="animate-spin" style={{ color: 'rgb(var(--accent))' }} />
           </span>
         ) : (
           <button
@@ -633,7 +709,7 @@ function DeleteFileModal({
       onClick={onClose}
     >
       <div
-        className="rounded-xl border p-6 w-96 space-y-4"
+        className="rounded-xl border p-6 w-96 space-y-4 max-h-[calc(100vh-2rem)] max-w-[calc(100vw-2rem)] overflow-y-auto"
         style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
         onClick={e => e.stopPropagation()}
       >
@@ -691,54 +767,68 @@ export function ReclaimableDriveView({
   const [dragOverTarget, setDragOverTarget] = useState<string | 'root' | null>(null)
   const [uploading, setUploading] = useState<{ name: string; estimate: number } | null>(null)
   const [staging, setStaging] = useState<{ name: string; done: number; total: number } | null>(null)
-  const [chunks, setChunks] = useState(0)
+  const [jobTransferId, setJobTransferId] = useState<string | null>(null)
+  const jobTransfer = useTransfersStore(state => state.transfers.find(t => t.id === jobTransferId))
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [deletingRef, setDeletingRef] = useState<string | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<ReclaimableFile | null>(null)
   const [copiedRef, setCopiedRef] = useState<string | null>(null)
-  const pollRef = useRef<number | null>(null)
+  // A job for this drive already running (started here earlier, before a
+  // page change or reload) — the panel re-attaches to it.
+  const runningJob = useTransfersStore(state =>
+    state.transfers.find(t => t.id.startsWith('rjob:') && t.driveId === drive.batchId && t.status === 'active'),
+  )
   const name = customName || drive.label || `${drive.batchId.slice(0, 8)}…`
   const expired = drive.expired === true
 
-  useEffect(
-    () => () => {
-      if (pollRef.current) window.clearInterval(pollRef.current)
-    },
-    [],
-  )
+  useEffect(() => {
+    if (runningJob && !jobTransferId) {
+      setJobTransferId(runningJob.id)
+      setUploading({ name: runningJob.name, estimate: runningJob.chunksTotal ?? 0 })
+    }
+  }, [runningJob?.id])
+
+  // The job ended (followed globally, store/reclaimable-jobs).
+  useEffect(() => {
+    if (!jobTransferId) return
+
+    if (!jobTransfer) {
+      // Dropped without an outcome (the backend forgot the job) — the list
+      // shows whatever landed.
+      setJobTransferId(null)
+      setUploading(null)
+      refreshDrives()
+
+      return
+    }
+
+    if (jobTransfer.status === 'failed') {
+      setUploading(null)
+      setUploadError(jobTransfer.phase || 'Upload failed')
+    } else if (jobTransfer.status === 'done') {
+      // Keep the uploading panel up until the refetched list actually
+      // contains the file — dropping it first flashes "No files yet".
+      void queryClient.invalidateQueries({ queryKey: ['server', 'reclaimable'] }).then(() => setUploading(null))
+    }
+  }, [jobTransferId, jobTransfer?.status, Boolean(jobTransfer)])
 
   function refreshDrives() {
     queryClient.invalidateQueries({ queryKey: ['server', 'reclaimable'] })
   }
 
-  function pollJob(uploadId: string, assignFolderId: string | null) {
-    pollRef.current = window.setInterval(async () => {
-      try {
-        const job = await serverApi.getReclaimableUpload(uploadId)
-        setChunks(job.chunksUploaded)
-
-        if (job.status !== 'uploading') {
-          if (pollRef.current) window.clearInterval(pollRef.current)
-
-          if (job.status === 'error') {
-            setUploading(null)
-            setUploadError(job.error ?? 'Upload failed')
-          } else {
-            // Uploaded while a folder was open → it lives there
-            if (assignFolderId && job.reference) {
-              await serverApi.moveReclaimableFile(drive.batchId, job.reference, assignFolderId).catch(() => undefined)
-            }
-            // Keep the uploading panel up until the refetched list actually
-            // contains the file — dropping it first flashes "No files yet".
-            await queryClient.invalidateQueries({ queryKey: ['server', 'reclaimable'] })
-            setUploading(null)
-          }
-        }
-      } catch {
-        // transient poll failure — keep polling
-      }
-    }, 1000)
+  function followJob(uploadId: string, assignFolderId: string | null, jobName: string, jobEstimate: number) {
+    // The job runs in Nook's backend; its progress is followed globally so
+    // leaving the drive never freezes it (the sidebar reaches 100% from any
+    // page, and a revisit re-attaches this panel).
+    setJobTransferId(reclaimableJobTransferId(uploadId))
+    followReclaimableJob({
+      uploadId,
+      name: jobName,
+      driveId: drive.batchId,
+      estimate: jobEstimate,
+      folderId: assignFolderId,
+    })
   }
 
   async function createFolder() {
@@ -751,7 +841,7 @@ export function ReclaimableDriveView({
       await serverApi.createReclaimableFolder(drive.batchId, trimmed)
       refreshDrives()
     } catch (err) {
-      setUploadError(err instanceof Error ? err.message : 'Could not create the folder')
+      setUploadError(friendlyError(err, 'Could not create the folder'))
     }
   }
 
@@ -767,14 +857,14 @@ export function ReclaimableDriveView({
   async function handleFile(uploadFile: globalThis.File) {
     setAddingFile(false)
     setUploadError(null)
-    setChunks(0)
+    setJobTransferId(null)
     setUploading({ name: uploadFile.name, estimate: estimateChunks(uploadFile.size) })
     try {
       const { uploadId } = await serverApi.uploadReclaimableFile(drive.batchId, uploadFile)
-      pollJob(uploadId, openFolderId)
+      followJob(uploadId, openFolderId, uploadFile.name, estimateChunks(uploadFile.size))
     } catch (err) {
       setUploading(null)
-      setUploadError(err instanceof Error ? err.message : 'Upload failed')
+      setUploadError(friendlyError(err, 'Upload failed'))
     }
   }
 
@@ -782,7 +872,7 @@ export function ReclaimableDriveView({
     if (entries.length === 0) return
     setAddingFile(false)
     setUploadError(null)
-    setChunks(0)
+    setJobTransferId(null)
     setStaging({ name: folderName, done: 0, total: entries.length })
     try {
       const { stageId } = await serverApi.createReclaimableStage(drive.batchId)
@@ -795,11 +885,11 @@ export function ReclaimableDriveView({
       setStaging(null)
       setUploading({ name: folderName, estimate: estimateChunks(totalBytes) + entries.length })
       const { uploadId } = await serverApi.commitReclaimableStage(stageId, folderName)
-      pollJob(uploadId, openFolderId)
+      followJob(uploadId, openFolderId, folderName, estimateChunks(totalBytes) + entries.length)
     } catch (err) {
       setStaging(null)
       setUploading(null)
-      setUploadError(err instanceof Error ? err.message : 'Folder upload failed')
+      setUploadError(friendlyError(err, 'Folder upload failed'))
     }
   }
 
@@ -834,7 +924,7 @@ export function ReclaimableDriveView({
       await serverApi.deleteReclaimableFile(drive.batchId, reference)
       await queryClient.invalidateQueries({ queryKey: ['server', 'reclaimable'] })
     } catch (err) {
-      setDeleteError(err instanceof Error ? err.message : 'Could not delete the file')
+      setDeleteError(friendlyError(err, 'Could not delete the file'))
     } finally {
       setDeletingRef(null)
     }
@@ -846,7 +936,6 @@ export function ReclaimableDriveView({
     setTimeout(() => setCopiedRef(null), 1500)
   }
 
-  const uploadPct = uploading ? Math.min(99, Math.round((chunks / uploading.estimate) * 100)) : 0
   const openFolder = openFolderId ? (drive.folders.find(folder => folder.id === openFolderId) ?? null) : null
   const visibleFiles = drive.files.filter(file => (openFolderId ? file.folderId === openFolderId : !file.folderId))
   const folderCounts = new Map<string, number>()
@@ -1063,18 +1152,25 @@ export function ReclaimableDriveView({
             <p className="text-sm truncate" style={{ color: 'rgb(var(--fg-muted))' }}>
               {staging
                 ? `Preparing ${staging.name}… ${staging.done}/${staging.total} files`
-                : `Uploading & propagating ${uploading!.name}… · ${chunks} chunks confirmed by the network`}
+                : 'Storing on the Swarm network'}
             </p>
           </div>
-          <div className="h-1 rounded-full" style={{ backgroundColor: 'rgb(var(--border))' }}>
-            <div
-              className="h-1 rounded-full transition-all"
-              style={{
-                width: `${staging ? Math.round((staging.done / staging.total) * 100) : uploadPct}%`,
-                backgroundColor: 'rgb(var(--accent))',
-              }}
-            />
-          </div>
+          {/* Same honest visual as a regular drive's upload: real confirmed
+              pieces, dots at the real pace, coarse ETA. Deletable uploads are
+              one step — every piece waits for the network's receipt. */}
+          {!staging && jobTransfer ? (
+            <PropagationVisual transfer={jobTransfer} approxTotal />
+          ) : (
+            <div className="h-1 rounded-full" style={{ backgroundColor: 'rgb(var(--border))' }}>
+              <div
+                className="h-1 rounded-full transition-all"
+                style={{
+                  width: `${staging ? Math.round((staging.done / staging.total) * 100) : 2}%`,
+                  backgroundColor: 'rgb(var(--accent))',
+                }}
+              />
+            </div>
+          )}
         </div>
       )}
 
@@ -1088,9 +1184,19 @@ export function ReclaimableDriveView({
       {!openFolder && drive.folders.length > 0 && (
         <div className="space-y-1 mb-3">
           {drive.folders.map(folder => (
-            <div
+            <FolderCard
               key={folder.id}
-              onClick={() => setOpenFolderId(folder.id)}
+              name={folder.name}
+              files={folderCounts.get(folder.id) ?? 0}
+              highlighted={dragOverTarget === folder.id}
+              deleteTitle="Delete folder — files inside move back to the drive"
+              onOpen={() => setOpenFolderId(folder.id)}
+              onRename={newName =>
+                void serverApi
+                  .renameReclaimableFolder(drive.batchId, folder.id, newName)
+                  .then(refreshDrives, err => setUploadError(friendlyError(err, 'Could not rename the folder')))
+              }
+              onDelete={() => void serverApi.deleteReclaimableFolder(drive.batchId, folder.id).then(refreshDrives)}
               onDragOver={
                 draggingRef
                   ? e => {
@@ -1110,27 +1216,22 @@ export function ReclaimableDriveView({
                     }
                   : undefined
               }
-              className="flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer transition-colors hover:bg-white/[0.03] group/folder"
-              style={dragOverTarget === folder.id ? { backgroundColor: 'rgba(247,104,8,0.08)' } : undefined}
-            >
-              <FolderOpen size={13} style={{ color: 'rgb(var(--fg-muted))' }} />
-              <span className="text-xs font-medium flex-1 truncate">{folder.name}</span>
-              <span className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-                {folderCounts.get(folder.id) ?? 0} file{(folderCounts.get(folder.id) ?? 0) === 1 ? '' : 's'}
-              </span>
-              <button
-                onClick={e => {
-                  e.stopPropagation()
-                  void serverApi.deleteReclaimableFolder(drive.batchId, folder.id).then(refreshDrives)
-                }}
-                title="Remove folder (files move back to the drive)"
-                className="w-6 h-6 flex items-center justify-center rounded opacity-0 group-hover/folder:opacity-100 transition-opacity hover:text-red-400"
-                style={{ color: 'rgb(var(--fg-muted))' }}
-              >
-                <Trash2 size={12} />
-              </button>
-            </div>
+            />
           ))}
+        </div>
+      )}
+
+      {/* Files / folder separator — same as regular drives */}
+      {!openFolder && drive.folders.length > 0 && visibleFiles.length > 0 && (
+        <div className="flex items-center gap-2 px-1 py-2">
+          <div className="h-px flex-1" style={{ backgroundColor: 'rgb(var(--border))' }} />
+          <span
+            className="text-[10px] uppercase tracking-widest font-semibold px-1"
+            style={{ color: 'rgb(var(--fg-muted))' }}
+          >
+            Files
+          </span>
+          <div className="h-px flex-1" style={{ backgroundColor: 'rgb(var(--border))' }} />
         </div>
       )}
 

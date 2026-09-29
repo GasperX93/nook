@@ -4,6 +4,7 @@
 import { createTar } from '../utils/tar'
 import type { FileEntry } from '../utils/directory'
 import { useAppStore } from '../store/app'
+import { api } from './client'
 
 function useAppStoreApiKey(): string {
   return useAppStore.getState().apiKey ?? ''
@@ -61,6 +62,53 @@ export interface UploadTag {
   synced: number
 }
 
+/** Whether Bee is ready to push (via Nook's backend; false when unknown). */
+async function beeIsReady(): Promise<boolean> {
+  try {
+    return (await api.getBeeReadiness()).ready
+  } catch {
+    return false
+  }
+}
+
+/**
+ * The steps before the network push — stamp check, countdown, local copy —
+ * must pause while Bee is stopped or restarting, not count the outage as
+ * waiting time or failed attempts (R8-3). Returns at once when Bee is ready;
+ * otherwise polls readiness until it is, bounded by `maxMs` like the push
+ * itself. `onWait` gets 'node' when the pause starts and 'resuming' when Bee
+ * is back — the same states the push reports. Returns whether it waited.
+ */
+export async function waitWhileBeeDown(
+  onWait?: (wait: 'node' | 'resuming') => void,
+  opts: { pollMs?: number; maxMs?: number } = {},
+): Promise<boolean> {
+  const pollMs = opts.pollMs ?? 2000
+  const maxMs = opts.maxMs ?? 15 * 60_000
+  const since = Date.now()
+  let waited = false
+
+  while (!(await beeIsReady())) {
+    if (!waited) {
+      waited = true
+      onWait?.('node')
+    }
+
+    if (Date.now() - since >= maxMs) {
+      const mins = Math.round(maxMs / 60_000)
+      throw new Error(`Your Bee node has been unavailable for ${mins} minutes. Start it and try again.`)
+    }
+    await new Promise(r => setTimeout(r, pollMs))
+  }
+
+  if (waited) onWait?.('resuming')
+
+  return waited
+}
+
+/** What an upload's network push is waiting on (see waitForTagPropagation). */
+export type TagWait = 'node' | 'resuming' | null
+
 /**
  * Poll a tag until the upload is fully propagated (#92). swarm-cli's pattern:
  * poll every second, and RESET the patience counter whenever progress advances,
@@ -68,21 +116,56 @@ export interface UploadTag {
  * Resolves `{ complete: false }` on stall instead of throwing: the content is
  * safe on the local node and the background pusher keeps working; the caller
  * should proceed with a soft warning, not fail the upload.
+ *
+ * A Bee restart is NOT a stall (R5-13): while Bee is unreachable, or up but
+ * not ready yet (re-syncing, pushing nothing), keep waiting — up to
+ * `maxNotReadyMs` — instead of giving up after a minute and leaving the row
+ * frozen until the 5-minute resume loop. Bee finishes the push by itself
+ * after a restart (verified: tag 653 reached 100%), so the row should too.
+ * `onWaiting` says what the wait is about, so the UI never claims "storing"
+ * while nothing can move (R6-3, R7-1): 'node' = Bee is stopped or not ready
+ * yet, 'resuming' = Bee is ready again but hasn't started pushing (it first
+ * reconnects to peers and catches up — often a minute or two), null = pieces
+ * are landing. While recovering, readiness is checked on every poll (a local
+ * call) so the label doesn't flip back and forth.
  */
 export async function waitForTagPropagation(
   uid: number,
   onProgress?: (pct: number) => void,
-  opts: { pollMs?: number; maxStalledPolls?: number } = {},
+  opts: {
+    pollMs?: number
+    maxStalledPolls?: number
+    maxNotReadyMs?: number
+    onTag?: (tag: UploadTag) => void
+    onWaiting?: (wait: TagWait) => void
+  } = {},
 ): Promise<{ complete: boolean; tag: UploadTag | null }> {
   const pollMs = opts.pollMs ?? 1000
   const maxStalledPolls = opts.maxStalledPolls ?? 60
+  const maxNotReadyMs = opts.maxNotReadyMs ?? 15 * 60_000
   let best = -1
   let stalled = 0
   let tag: UploadTag | null = null
+  let notReadySince: number | null = null
+  let wait: TagWait = null
+
+  const setWait = (next: TagWait) => {
+    if (next === wait) return
+    wait = next
+    opts.onWaiting?.(next)
+  }
+  const sleep = async (): Promise<void> => new Promise(r => setTimeout(r, pollMs))
+  /** Waiting on Bee (down, warming up, reconnecting) isn't a stall — but it is bounded. */
+  const withinBound = () => {
+    notReadySince ??= Date.now()
+
+    return Date.now() - notReadySince < maxNotReadyMs
+  }
 
   while (stalled < maxStalledPolls) {
     try {
       tag = await beeRequest<UploadTag>(`/tags/${uid}`)
+      opts.onTag?.(tag)
       const done = tag.seen + tag.synced
 
       if (tag.split > 0) {
@@ -94,13 +177,37 @@ export async function waitForTagPropagation(
       if (done > best) {
         best = done
         stalled = 0
+        notReadySince = null
+        setWait(null)
+      } else if (wait !== null) {
+        // Recovering from an outage: Bee answers but nothing moves until it
+        // is ready AND has reconnected. Not a stall; say which of the two.
+        if (!withinBound()) break
+        setWait((await beeIsReady()) ? 'resuming' : 'node')
+        stalled = 0
       } else {
         stalled++
       }
-    } catch {
-      stalled++
+    } catch (error) {
+      // Network error = Bee unreachable (stopped / restarting): not a stall —
+      // and the no-progress streak from before the outage starts over, or a
+      // slow push could give up seconds after Bee comes back.
+      if (!(error instanceof TypeError)) stalled++
+      else {
+        if (!withinBound()) break
+        setWait('node')
+        stalled = 0
+      }
     }
-    await new Promise(r => setTimeout(r, pollMs))
+
+    // Before a no-progress streak runs out, check whether Bee is simply not
+    // ready (just restarted, re-syncing) — that's not a stall either.
+    if (stalled > 0 && stalled % 10 === 0 && !(await beeIsReady())) {
+      if (!withinBound()) break
+      setWait('node')
+      stalled = 0
+    }
+    await sleep()
   }
 
   return { complete: false, tag }
@@ -273,13 +380,23 @@ export function depthToBytes(depth: number): number {
   return NOOK_DISPLAY_CAPACITY[depth] ?? EFFECTIVE_CAPACITY[depth] ?? (1 << depth) * 4096
 }
 
-/** Human-readable user-facing capacity for a given stamp depth */
-export function depthToCapacity(depth: number): string {
+/**
+ * The size a drive is sold as (R7-6): the purchase label for Nook's own
+ * sizes, so the list says "2.6 GB" for a drive bought as "2.6 GB"; decimal
+ * bytes for other depths.
+ */
+export function driveSizeLabel(depth: number): string {
+  const preset = SIZE_PRESETS.find(p => p.depth === depth)
+
+  if (preset) return preset.label
   const bytes = depthToBytes(depth)
 
-  if (bytes >= 1_073_741_824) return `${(bytes / 1_073_741_824).toFixed(1)} GB`
+  return bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.round(bytes / 1e6)} MB`
+}
 
-  return `${(bytes / 1_048_576).toFixed(0)} MB`
+/** Human-readable user-facing capacity for a given stamp depth (same as driveSizeLabel, R7-6). */
+export function depthToCapacity(depth: number): string {
+  return driveSizeLabel(depth)
 }
 
 /**
@@ -481,58 +598,53 @@ export const beeApi = {
     return xhrUpload(`${getBeeUrl()}/bzz`, tar as XMLHttpRequestBodyInit, headers, onProgress)
   },
 
+  /**
+   * Classic (public) file download. Fetch-reader, not XHR (round-3b finding:
+   * the legacy XHR path failed with a bare network error while fetch of the
+   * SAME url from the SAME page succeeded — proven live in-console). Progress
+   * comes from content-length; the per-read stall timeout keeps #105's
+   * protection: Bee can hang mid-stream while chunks are still propagating.
+   */
   downloadFile: async (hash: string, onProgress?: (pct: number) => void): Promise<Blob> => {
     // Trailing slash matters: /bzz/<ref> answers 308 → /bzz/<ref>/, and in dev
     // that Location escapes the /bee-api proxy prefix, so the browser lands on
     // the SPA fallback and "downloads" index.html instead of the file.
     const url = `${getBeeUrl()}/bzz/${hash.endsWith('/') ? hash : `${hash}/`}`
+    const r = await fetch(url)
 
-    if (!onProgress) {
-      const r = await fetch(url)
+    if (!r.ok) throw new Error(`Download failed: ${r.status}`)
 
-      if (!r.ok) throw new Error(`Download failed: ${r.status}`)
+    if (!r.body) return r.blob()
+    const total = Number(r.headers.get('content-length') ?? 0)
+    const reader = r.body.getReader()
+    const chunks: BlobPart[] = []
+    let received = 0
 
-      return r.blob()
+    for (;;) {
+      // Stall guard (#105): 30s without a single byte = give up loudly
+      // instead of a frozen percentage with no way to retry.
+      const result = await Promise.race([
+        reader.read(),
+        new Promise<'stall'>(res => setTimeout(() => res('stall'), 30_000)),
+      ])
+
+      if (result === 'stall') {
+        reader.cancel().catch(() => undefined)
+        throw new Error('Download stalled — content may still be propagating. Try again in a moment.')
+      }
+
+      const { done, value } = result
+
+      if (done) break
+      chunks.push(value)
+      received += value.byteLength
+
+      if (total > 0) onProgress?.(Math.min(99, Math.round((received / total) * 100)))
     }
 
-    return new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest()
-      xhr.open('GET', url)
-      xhr.responseType = 'blob'
-      // Stall guard (#105): Bee can hang mid-stream while chunks are still
-      // propagating — without this the XHR waits forever and the UI shows a
-      // frozen percentage with no way to retry.
-      let stallTimer: ReturnType<typeof setTimeout>
-      let stalled = false
-      const armStallGuard = () => {
-        clearTimeout(stallTimer)
-        stallTimer = setTimeout(() => {
-          stalled = true
-          xhr.abort()
-        }, 30_000)
-      }
-      armStallGuard()
-      xhr.onprogress = e => {
-        armStallGuard()
+    onProgress?.(100)
 
-        if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100))
-      }
-      xhr.onload = () => {
-        clearTimeout(stallTimer)
-
-        if (xhr.status >= 200 && xhr.status < 300) resolve(xhr.response as Blob)
-        else reject(new Error(`Download failed: ${xhr.status}`))
-      }
-      xhr.onerror = () => {
-        clearTimeout(stallTimer)
-        reject(new Error('Download failed'))
-      }
-      xhr.onabort = () => {
-        clearTimeout(stallTimer)
-        reject(new Error(stalled ? 'Download stalled — content may still be propagating' : 'Download cancelled'))
-      }
-      xhr.send()
-    })
+    return new Blob(chunks, { type: r.headers.get('content-type') ?? undefined })
   },
 
   downloadBytes: async (hash: string): Promise<Blob> => {
@@ -647,12 +759,16 @@ export const beeApi = {
     return result as ACTUploadResult
   },
 
-  /** Download a file from an ACT-encrypted drive (proxied through Koa to avoid CORS) */
+  /**
+   * Download a file from an ACT-encrypted drive (proxied through Koa to
+   * avoid CORS). The route streams with Content-Length (#18), so progress
+   * here is real — read the body incrementally instead of one silent blob.
+   */
   downloadFileWithACT: async (
     hash: string,
     actPublisher: string,
     historyRef: string,
-    _onProgress?: (pct: number) => void,
+    onProgress?: (pct: number) => void,
   ): Promise<Blob> => {
     const params = new URLSearchParams({ publisher: actPublisher, history: historyRef })
     const r = await fetch(`/act/download/${hash}?${params}`, {
@@ -661,6 +777,24 @@ export const beeApi = {
 
     if (!r.ok) throw new Error(`ACT download failed: ${r.status}`)
 
-    return r.blob()
+    if (!r.body) return r.blob()
+    const total = Number(r.headers.get('content-length') ?? 0)
+    const reader = r.body.getReader()
+    const chunks: BlobPart[] = []
+    let received = 0
+
+    for (;;) {
+      const { done, value } = await reader.read()
+
+      if (done) break
+      chunks.push(value)
+      received += value.byteLength
+
+      if (total > 0) onProgress?.(Math.min(99, Math.round((received / total) * 100)))
+    }
+
+    onProgress?.(100)
+
+    return new Blob(chunks, { type: r.headers.get('content-type') ?? undefined })
   },
 }

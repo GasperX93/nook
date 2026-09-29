@@ -1,9 +1,9 @@
 import { connectorsForWallets } from '@rainbow-me/rainbowkit'
 import { injectedWallet, walletConnectWallet, ledgerWallet, coinbaseWallet } from '@rainbow-me/rainbowkit/wallets'
-import { http, createConfig } from 'wagmi'
+import { fallback, http, createConfig } from 'wagmi'
 import { gnosis, mainnet } from 'wagmi/chains'
 
-import { GNOSIS_RPC_URL } from './notify/constants'
+import { GNOSIS_RPC_FALLBACK_URL, GNOSIS_RPC_URL } from './notify/constants'
 
 const projectId = import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || '6a772084d73e9d71ff25f10aa5e8e28f'
 
@@ -26,10 +26,10 @@ export const wagmiConfig = createConfig({
       retryCount: 3,
       retryDelay: 1_000,
     }),
-    [gnosis.id]: http(GNOSIS_RPC_URL, {
-      timeout: 30_000,
-      retryCount: 3,
-      retryDelay: 1_000,
-    }),
+    // Falls over to an independent public RPC when the first throttles.
+    [gnosis.id]: fallback([
+      http(GNOSIS_RPC_URL, { timeout: 30_000, retryCount: 1, retryDelay: 1_000 }),
+      http(GNOSIS_RPC_FALLBACK_URL, { timeout: 30_000, retryCount: 2, retryDelay: 1_000 }),
+    ]),
   },
 })

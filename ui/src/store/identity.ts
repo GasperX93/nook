@@ -1,10 +1,12 @@
 /**
- * Identity store — holds the wallet-derived signer.
+ * Identity store — holds the Nook signer (seeded by Swarm ID; a pre-Swarm ID
+ * cache may still hold a wallet-derived secret, which useDerivedKey never
+ * activates).
  *
  * Primary persistence: Electron safeStorage (OS keychain), accessed via the
  * Koa /identity-cache endpoint. The encrypted blob lives at paths.data/
- * identity-cache.bin on disk. This means the user signs the derivation
- * message once and the signer survives app restarts.
+ * identity-cache.bin on disk. This means the user signs in once and the
+ * signer survives app restarts.
  *
  * Fallback: when safeStorage isn't available (Linux without keyring),
  * sessionStorage takes over — signer survives refresh but not app quit.
@@ -14,7 +16,7 @@
 import { create } from 'zustand'
 
 import { serverApi } from '../api/server'
-import { createWalletSigner, type NookSigner } from '../crypto/signer'
+import { createSignerFromSecret, type NookSigner } from '../crypto/signer'
 
 const SESSION_STORAGE_KEY = 'nook.derivedKey.v1'
 
@@ -43,25 +45,13 @@ export function releaseDeriveLock(): void {
   deriveInFlight = false
 }
 
-/**
- * Shared (cross-instance) "user declined auto-derive this session" flag. Like
- * the derive lock, this must be shared across all useDerivedKey instances —
- * otherwise instance A records the decline but instance B (its ref still false)
- * re-prompts immediately. Reset on disconnect / wallet switch.
- */
-let autoDeriveDeclined = false
-
-export function setAutoDeriveDeclined(value: boolean): void {
-  autoDeriveDeclined = value
-}
-
-export function getAutoDeriveDeclined(): boolean {
-  return autoDeriveDeclined
-}
-
 interface PersistedShape {
   signatureHex: string
   walletAddress: string
+  /** Swarm ID account address — THE user-visible identity. */
+  sid?: string
+  /** Swarm ID account display name at sign-in time. */
+  sidName?: string
 }
 
 function parsePersisted(raw: string | null): PersistedShape | null {
@@ -106,9 +96,16 @@ function clearSession(): void {
 
 type Backend = 'safe-storage' | 'session-storage'
 
+export interface SwarmIdAccount {
+  address: string
+  name: string
+}
+
 interface IdentityState {
   signer: NookSigner | null
   walletAddress: string | null
+  /** The Swarm ID account behind the signer (null for legacy wallet identities). */
+  swarmIdAccount: SwarmIdAccount | null
   /** True once the initial hydrate attempt has completed (success OR no cache found). */
   hydrated: boolean
   /** Which storage layer is active; null until hydrate runs. */
@@ -123,8 +120,8 @@ interface IdentityState {
    * yet up), so the caller can retry without the `hydrated` guard latching.
    */
   hydrate: () => Promise<boolean>
-  /** Persist the signature and rebuild the in-memory signer. */
-  setSigner: (signatureHex: string, walletAddress: string) => Promise<void>
+  /** Persist the secret and rebuild the in-memory signer. */
+  setSigner: (signatureHex: string, walletAddress: string, account?: SwarmIdAccount) => Promise<void>
   setDeriving: (deriving: boolean) => void
   setError: (error: string | null) => void
   /** Wipe both safeStorage and sessionStorage caches and reset state. */
@@ -134,6 +131,7 @@ interface IdentityState {
 export const useIdentityStore = create<IdentityState>()((set, get) => ({
   signer: null,
   walletAddress: null,
+  swarmIdAccount: null,
   hydrated: false,
   backend: null,
   deriving: false,
@@ -159,10 +157,11 @@ export const useIdentityStore = create<IdentityState>()((set, get) => ({
 
         if (parsed) {
           try {
-            const signer = createWalletSigner(parsed.signatureHex)
+            const signer = createSignerFromSecret(parsed.signatureHex)
             set({
               signer,
               walletAddress: parsed.walletAddress,
+              swarmIdAccount: parsed.sid ? { address: parsed.sid, name: parsed.sidName ?? '' } : null,
               hydrated: true,
               backend: 'safe-storage',
             })
@@ -187,10 +186,11 @@ export const useIdentityStore = create<IdentityState>()((set, get) => ({
 
     if (persisted) {
       try {
-        const signer = createWalletSigner(persisted.signatureHex)
+        const signer = createSignerFromSecret(persisted.signatureHex)
         set({
           signer,
           walletAddress: persisted.walletAddress,
+          swarmIdAccount: persisted.sid ? { address: persisted.sid, name: persisted.sidName ?? '' } : null,
           hydrated: true,
           backend: 'session-storage',
         })
@@ -205,13 +205,17 @@ export const useIdentityStore = create<IdentityState>()((set, get) => ({
     return backendReachable
   },
 
-  setSigner: async (signatureHex, walletAddress) => {
-    const signer = createWalletSigner(signatureHex)
-    set({ signer, walletAddress, deriving: false, error: null })
+  setSigner: async (signatureHex, walletAddress, account) => {
+    const signer = createSignerFromSecret(signatureHex)
+    set({ signer, walletAddress, swarmIdAccount: account ?? null, deriving: false, error: null })
+
+    const persisted: PersistedShape = account
+      ? { signatureHex, walletAddress, sid: account.address, sidName: account.name }
+      : { signatureHex, walletAddress }
 
     // Try safeStorage; fall back to sessionStorage if unavailable or call fails
     try {
-      const result = await serverApi.writeIdentityCache(JSON.stringify({ signatureHex, walletAddress }))
+      const result = await serverApi.writeIdentityCache(JSON.stringify(persisted))
 
       if (result.stored) {
         set({ backend: 'safe-storage' })
@@ -221,7 +225,7 @@ export const useIdentityStore = create<IdentityState>()((set, get) => ({
     } catch {
       // fall through
     }
-    writeSession({ signatureHex, walletAddress })
+    writeSession(persisted)
     set({ backend: 'session-storage' })
   },
 
@@ -235,6 +239,6 @@ export const useIdentityStore = create<IdentityState>()((set, get) => ({
     } catch {
       // ignore — best effort
     }
-    set({ signer: null, walletAddress: null, deriving: false, error: null })
+    set({ signer: null, walletAddress: null, swarmIdAccount: null, deriving: false, error: null })
   },
 }))

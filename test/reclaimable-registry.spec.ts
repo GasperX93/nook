@@ -1,14 +1,16 @@
 jest.mock('env-paths', () =>
   jest.fn().mockImplementation(() => ({
-    data: 'test/data',
-    config: 'test/data',
-    cache: 'test/data',
-    log: 'test/data',
-    temp: 'test/data',
+    // Its own folder: reclaimable.spec writes the same registry file, and
+    // Jest runs the two suites in parallel.
+    data: 'test/data-registry',
+    config: 'test/data-registry',
+    cache: 'test/data-registry',
+    log: 'test/data-registry',
+    temp: 'test/data-registry',
   })),
 )
 
-import { existsSync, unlinkSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'fs'
 
 import {
   MIN_RECLAIMABLE_DEPTH,
@@ -20,7 +22,9 @@ import {
   resetReclaimableRegistryCache,
 } from '../src/reclaimable-registry'
 
-const REGISTRY = 'test/data/reclaimable-batches.json'
+const REGISTRY = 'test/data-registry/reclaimable-batches.json'
+mkdirSync('test/data-registry', { recursive: true })
+
 const BATCH_A = 'a'.repeat(64)
 const BATCH_B = 'b'.repeat(64)
 

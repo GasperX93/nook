@@ -46,6 +46,43 @@ export interface ReclaimableDrive {
   batchTTL: number | null
 }
 
+export interface AutoExtendEntry {
+  enabled: boolean
+  /** Months added per automatic extension — same options as manual Extend. */
+  months: number
+  lastExtendedAt?: number
+  lastFailure?: { at: number; reason: string }
+  /** Set while the drive is in the advance-notice window (#138). */
+  notifiedUpcomingAt?: number
+  notifiedBlockedAt?: number
+}
+
+export interface ActivityRow {
+  hash?: string
+  at: number
+  direction: 'in' | 'out'
+  asset: 'xBZZ' | 'xDAI'
+  amount: string
+  counterparty?: string
+  label?: string
+}
+
+export interface WalletActivity {
+  rows: ActivityRow[]
+  degraded: boolean
+}
+
+export interface NookNotification {
+  id: string
+  type: string
+  title: string
+  body: string
+  createdAt: number
+  readAt?: number
+  link?: string
+  data?: Record<string, string | number>
+}
+
 export interface ReclaimableUploadJob {
   id: string
   batchId: string
@@ -136,6 +173,9 @@ export const serverApi = {
   withdraw: async (token: 'bzz' | 'dai', amount: string, to: string) =>
     serverPost<{ success: boolean; txHash: string }>('/withdraw', { token, amount, to }),
 
+  /** First-contact ping on the swarm-notify registry, signed + paid by the node wallet. Resolves once confirmed. */
+  notifyPing: async (data: string) => serverPost<{ success: boolean; txHash: string }>('/notify-ping', { data }),
+
   chequebookWithdraw: async (amount: string) =>
     serverPost<{ success: boolean; transactionHash: string }>('/chequebook-withdraw', { amount }),
 
@@ -223,6 +263,9 @@ export const serverApi = {
   createReclaimableFolder: async (batchId: string, name: string) =>
     serverPost<ReclaimableFolder>(`/reclaimable/${batchId}/folders`, { name }),
 
+  renameReclaimableFolder: async (batchId: string, folderId: string, name: string) =>
+    serverPatch<{ id: string; name: string }>(`/reclaimable/${batchId}/folders/${folderId}`, { name }),
+
   deleteReclaimableFolder: async (batchId: string, folderId: string) => {
     const response = await fetch(`/reclaimable/${batchId}/folders/${folderId}`, {
       method: 'DELETE',
@@ -265,6 +308,83 @@ export const serverApi = {
     }
 
     return response.json() as Promise<{ removed: boolean }>
+  },
+
+  // ─── Wallet activity (#139) ─────────────────────────────────────────────
+
+  /** `fresh` skips the server's 1-minute cache — right after moving funds (R7-4). */
+  getWalletActivity: async (fresh = false) => serverGet<WalletActivity>(`/wallet-activity${fresh ? '?fresh=1' : ''}`),
+
+  // ─── Notifications (#138) — the bell's event feed ───────────────────────
+
+  getNotifications: async () => serverGet<{ notifications: NookNotification[] }>('/notifications'),
+
+  /** Manual reserve creation (#13) — same guarded purchase pass as the monitor, right now. */
+  createSystemStamp: async () => {
+    const response = await fetch('/system-stamp/create', { method: 'POST', headers: authHeaders() })
+
+    if (!response.ok) throw new Error(`${response.status} error`)
+
+    return response.json() as Promise<{ result: 'exists' | 'bought' | 'skipped' | 'failed'; created: boolean }>
+  },
+
+  getUpdateInfo: async () =>
+    serverGet<{ current: string; latest: string | null; url: string | null; updateAvailable: boolean }>('/update'),
+
+  markNotificationsRead: async (ids?: string[]) => {
+    const response = await fetch('/notifications/read', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify(ids ? { ids } : {}),
+    })
+
+    if (!response.ok) throw new Error(`${response.status} error`)
+
+    return response.json() as Promise<{ marked: number }>
+  },
+
+  /** Client-created bell event (e.g. "upload reached the network", #4/#5). */
+  createNotification: async (input: { type: string; title: string; body: string; link?: string }) => {
+    const response = await fetch('/notifications', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify(input),
+    })
+
+    if (!response.ok) throw new Error(`${response.status} error`)
+
+    return response.json() as Promise<{ notification: NookNotification }>
+  },
+
+  dismissNotification: async (id: string) => {
+    const response = await fetch('/notifications/dismiss', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ id }),
+    })
+
+    if (!response.ok) throw new Error(`${response.status} error`)
+
+    return response.json() as Promise<{ dismissed: boolean }>
+  },
+
+  // ─── Auto-extend (#129) — per-drive keep-alive settings ─────────────────
+
+  getAutoExtend: async () => serverGet<{ settings: Record<string, AutoExtendEntry> }>('/auto-extend'),
+
+  setAutoExtend: async (batchId: string, enabled: boolean, months: number) => {
+    const response = await fetch(`/auto-extend/${batchId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ enabled, months }),
+    })
+
+    if (!response.ok) {
+      const body = await response.json().catch(() => null)
+      throw new Error(body?.message ?? `${response.status} error`)
+    }
+
+    return response.json() as Promise<{ entry: AutoExtendEntry }>
   },
 
   // ─── Identity cache (Electron safeStorage, OS keychain) ─────────────────

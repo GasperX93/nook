@@ -54,6 +54,54 @@ export function hasKnownIdentity(): boolean {
   }
 }
 
+/**
+ * Swarm ID transition (#21). Before 0.7 the identity was wallet-derived; the
+ * old address's contacts and threads stay under its namespace and are never
+ * read again. Two durable markers let the UI explain the move:
+ *
+ * - SWARM_ID_SEEN_KEY: some Swarm ID identity has been active on this origin.
+ *   Until it exists, a `nook-last-identity` can only be a pre-Swarm ID one.
+ * - MOVED_FROM_KEY: the old address, recorded when the first Swarm ID sign-in
+ *   replaced it — so Contacts can say why the list starts empty.
+ */
+const SWARM_ID_SEEN_KEY = 'nook-swarm-id-seen'
+const MOVED_FROM_KEY = 'nook-moved-from-identity'
+
+/** A pre-Swarm ID identity existed here and nobody has signed in with Swarm ID yet. */
+export function hasLegacyIdentityPendingMove(): boolean {
+  try {
+    return localStorage.getItem(LAST_IDENTITY_KEY) !== null && localStorage.getItem(SWARM_ID_SEEN_KEY) === null
+  } catch {
+    return false
+  }
+}
+
+/** True when the first Swarm ID sign-in on this origin replaced an older identity. */
+export function movedFromLegacyIdentity(): boolean {
+  try {
+    return localStorage.getItem(MOVED_FROM_KEY) !== null
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Record that a Swarm ID identity is active. Must run BEFORE setActiveIdentity
+ * overwrites `nook-last-identity`, which is what still names the old address.
+ */
+export function markSwarmIdIdentity(address: string): void {
+  try {
+    if (localStorage.getItem(SWARM_ID_SEEN_KEY) !== null) return
+
+    const previous = localStorage.getItem(LAST_IDENTITY_KEY)
+
+    if (previous && previous !== address.toLowerCase()) localStorage.setItem(MOVED_FROM_KEY, previous)
+    localStorage.setItem(SWARM_ID_SEEN_KEY, '1')
+  } catch {
+    // Storage unavailable — the transition hints are best-effort.
+  }
+}
+
 /** The currently-active derived address (lowercased), or null. */
 export function getActiveIdentity(): string | null {
   return activeAddress

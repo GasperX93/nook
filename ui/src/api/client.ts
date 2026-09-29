@@ -56,6 +56,32 @@ export interface Status {
   userStopped?: boolean
   /** True when Bee crashed repeatedly and automatic restarts are paused (#94). */
   crashLoop?: boolean
+  /** Outstanding auto-extend failures (#129) — drives that couldn't be extended. */
+  autoExtendFailures?: { batchId: string; ttlDays: number | null; reason: string; at: number }[]
+  /** What the funding monitor last saw (R5-15). */
+  funding?: FundingState
+  /** Another Bee node holds Nook's ports (R5-11) — the dashboard blocks on this. */
+  foreignBee?: ForeignBee | null
+  /** The messaging reserve was just bought and may not be listed by Bee yet (F-6). */
+  reserveBoughtAt?: number | null
+}
+
+export interface ForeignBee {
+  port: number
+  address: string | null
+  since: number
+}
+
+/** Backend funding monitor state (src/funding-monitor.ts). */
+export interface FundingState {
+  /** Epoch ms of the last balance check, null before the first one. */
+  checkedAt: number | null
+  /** Last xDAI balance read, as a decimal string. */
+  xdai: string | null
+  /** Why the last check failed, else null. */
+  error: string | null
+  /** Funds found — the node is restarting in light mode. */
+  switching: boolean
 }
 
 export interface Peers {
@@ -65,6 +91,10 @@ export interface Peers {
 export const api = {
   getInfo: async () => request<Info>('/info'),
   getStatus: async () => request<Status>('/status'),
+  /** Run the funding monitor's balance check now (onboarding "check now", R5-15). */
+  checkFunding: async () => request<FundingState>('/funding/check', { method: 'POST' }),
+  /** Bee readiness via Nook's backend — always 200, so polling it stays quiet in the console. */
+  getBeeReadiness: async () => request<{ ready: boolean }>('/bee-readiness'),
   getPeers: async () => request<Peers>('/peers'),
   getConfig: async () => request<Record<string, unknown>>('/config'),
   updateConfig: async (config: Record<string, unknown>) =>

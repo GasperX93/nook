@@ -1,11 +1,10 @@
 /**
- * NookSigner — wallet-derived cryptographic identity for Nook.
+ * NookSigner — the Nook identity key.
  *
- * Derives purpose-specific keys from a single wallet signature using HMAC-SHA256.
- * One signature → multiple independent keys (signing, encryption, ECDH).
- *
- * The signer interface is designed to be swappable — replace WalletDerivedSigner
- * with a SwarmIdSigner in the future without changing consuming code.
+ * Derives purpose-specific keys (signing, encryption, ECDH) from one master
+ * seed using HMAC-SHA256. The seed comes from Swarm ID (`deriveAppSecret`);
+ * identities made before Swarm ID came from a wallet signature and still
+ * load through the same derivation (`createSignerFromSecret`).
  */
 import { secp256k1 } from 'ethereum-cryptography/secp256k1'
 import { keccak256 } from 'ethereum-cryptography/keccak'
@@ -13,9 +12,6 @@ import { hmac } from '@noble/hashes/hmac'
 import { sha256 } from '@noble/hashes/sha256'
 
 import { bytesToHex, hexToBytes } from '../lib/hex'
-
-/** Message the user signs in MetaMask. NEVER change this — different message = lost data. */
-export const SIGN_MESSAGE = 'Nook Key Derivation v1'
 
 export interface NookSigner {
   /** Compressed secp256k1 public key (33 bytes) derived from signingKey */
@@ -35,6 +31,16 @@ export interface NookSigner {
 }
 
 /**
+ * Prefix marking a Swarm ID-seeded secret in the persisted identity cache.
+ * The rest of the string is the 32-byte app material from `deriveAppSecret`,
+ * hex-encoded.
+ */
+export const SWARM_ID_SECRET_PREFIX = 'swarmid:'
+
+/** Placeholder "wallet address" stored for Swarm ID identities — they have no wagmi wallet to match. */
+export const SWARM_ID_WALLET_MARKER = 'swarm-id'
+
+/**
  * Create a NookSigner from a raw wallet signature.
  *
  * Derivation:
@@ -43,9 +49,26 @@ export interface NookSigner {
  *   encryptionKey = HMAC-SHA256(masterSeed, "nook:encryption")
  */
 export function createWalletSigner(signatureHex: string): NookSigner {
-  const sigBytes = hexToBytes(signatureHex)
-  const masterSeed = keccak256(sigBytes)
+  return signerFromMasterSeed(keccak256(hexToBytes(signatureHex)))
+}
 
+/**
+ * Create a NookSigner from a 32-byte Swarm ID app secret.
+ * Same derivation chain as the wallet path — only the master-seed source
+ * differs — so every consumer (feeds, messaging, encryption) is unchanged.
+ */
+export function createSeedSigner(seedHex: string): NookSigner {
+  return signerFromMasterSeed(keccak256(hexToBytes(seedHex)))
+}
+
+/** Rebuild a signer from a persisted secret, whichever identity source made it. */
+export function createSignerFromSecret(secret: string): NookSigner {
+  return secret.startsWith(SWARM_ID_SECRET_PREFIX)
+    ? createSeedSigner(secret.slice(SWARM_ID_SECRET_PREFIX.length))
+    : createWalletSigner(secret)
+}
+
+function signerFromMasterSeed(masterSeed: Uint8Array): NookSigner {
   const signingKey = hmac(sha256, masterSeed, new TextEncoder().encode('nook:signing'))
   const encryptionKey = hmac(sha256, masterSeed, new TextEncoder().encode('nook:encryption'))
 
@@ -66,12 +89,4 @@ export function createWalletSigner(signatureHex: string): NookSigner {
       return keccak256(shared.slice(1))
     },
   }
-}
-
-/** Verify a wallet produces deterministic signatures by signing twice and comparing. */
-export async function checkDeterministic(signFn: (message: string) => Promise<string>): Promise<boolean> {
-  const sig1 = await signFn(SIGN_MESSAGE)
-  const sig2 = await signFn(SIGN_MESSAGE)
-
-  return sig1 === sig2
 }

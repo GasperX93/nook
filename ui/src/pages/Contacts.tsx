@@ -4,9 +4,12 @@ import { Check, Copy, Mail, MessageSquare, Pencil, Plus, Search, Send, Share2, T
 import { useEffect, useMemo, useState } from 'react'
 
 import Messages, { ConnectionStatusBadge } from '../apps/Messages'
-import { useStamps } from '../api/queries'
+import { useAddresses, useReclaimableDrives, useStamps } from '../api/queries'
 import { useDerivedKey } from '../hooks/useDerivedKey'
-import { deriveConnectionState, getMyDisplayName } from '../notify/contact-state'
+import { bytesToHex } from '../lib/hex'
+import { pickMessagingStamp } from '../lib/system-stamp'
+import { movedFromLegacyIdentity } from '../notify/active-identity'
+import { deriveConnectionState, getMyDisplayName, hasInboundSince, markInviteAccepted } from '../notify/contact-state'
 import { sendInviteAck } from '../notify/invite-ack'
 import { loadReadCursors, loadThreads, unreadCount } from '../notify/messages'
 import { Button } from '../components/ui/button'
@@ -38,13 +41,16 @@ type SortMode = 'name' | 'date' | 'address'
 
 export default function Contacts() {
   const bee = useMemo(() => new Bee(BEE_URL), [])
-  const { signer } = useDerivedKey()
+  const { signer, signIn, deriving, swarmIdAccount } = useDerivedKey()
+  const { data: addresses } = useAddresses()
+  const [myLinkCopied, setMyLinkCopied] = useState(false)
   const { data: stamps } = useStamps()
+  const { data: reclaimable } = useReclaimableDrives()
   const [contacts, setContacts] = useState<NookContact[]>(() => loadContacts())
 
   // Phase 4: contacts are namespaced per derived identity. When the identity
-  // changes (wallet switch/disconnect) the storage namespace flips, so re-read
-  // the list — otherwise the page would show the previous wallet's contacts
+  // changes (sign-in/sign-out) the storage namespace flips, so re-read
+  // the list — otherwise the page would show the previous identity's contacts
   // until navigated away. Keyed on the derived address.
   const myAddress = signer ? signer.getAddress() : null
 
@@ -210,11 +216,19 @@ export default function Contacts() {
       setInvitations(nextInvs)
       selectContact(selectedInvite.senderAddr) // drop into the new conversation
 
+      // Accepting establishes the connection on OUR side too (#14) — the
+      // composer must not offer the invite path into this thread.
+      markInviteAccepted(senderContact.id)
+
       // Tell the sender we accepted — flips their side from "waiting" to
       // "connected" (best-effort; no on-chain cost, we're mutual contacts now).
-      const stampId = (stamps ?? []).find(s => s.usable)?.batchID ?? ''
+      // Same space as every other message — never a deletable drive (its
+      // slots are ledger-managed; a Bee-stamped write is refused, #99).
+      const stampId = pickMessagingStamp(stamps, new Set((reclaimable ?? []).map(d => d.batchId)))?.batchID ?? ''
 
-      if (signer) void sendInviteAck(bee, signer, stampId, senderContact, getMyDisplayName())
+      if (signer && stampId) {
+        void sendInviteAck(bee, signer, stampId, senderContact, getMyDisplayName() || swarmIdAccount?.name || '')
+      }
     } catch (e) {
       setInviteError((e as Error).message ?? 'Failed to add contact')
     } finally {
@@ -234,8 +248,10 @@ export default function Contacts() {
     if (!selectedId) return { hasThread: false, hasInbound: false }
     const t = threads[selectedId.toLowerCase()] ?? []
 
-    return { hasThread: t.length > 0, hasInbound: t.some(m => m.direction === 'received') }
-  }, [selectedId, threads, composeFor])
+    const addedAt = contacts.find(c => c.id === selectedId)?.addedAt
+
+    return { hasThread: t.length > 0, hasInbound: hasInboundSince(t, addedAt) }
+  }, [selectedId, threads, composeFor, contacts])
   const showThread = hasThread || composeFor === selectedId
   const connectionState = selectedId ? deriveConnectionState(selectedId, hasInbound) : 'not-connected'
 
@@ -308,6 +324,7 @@ export default function Contacts() {
         nickname,
         walletPublicKey: decoded.payload.walletPublicKey,
         beePublicKey: decoded.payload.beePublicKey,
+        swarmId: decoded.payload.swarmId,
         source: 'share-link',
         addedAt: Date.now(),
       }
@@ -358,9 +375,24 @@ export default function Contacts() {
       walletPublicKey: c.walletPublicKey,
       beePublicKey: c.beePublicKey,
       nickname: c.nickname,
+      swarmId: c.swarmId,
     })
 
     void handleCopy(link, 'detail-share')
+  }
+
+  if (!signer) {
+    return (
+      <div className="flex flex-col p-6 gap-4 max-w-3xl">
+        <h2 className="text-2xl font-semibold">Contacts</h2>
+        <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
+          Sign in with Swarm ID to see and add contacts.
+        </p>
+        <Button onClick={async () => signIn()} disabled={deriving} className="self-start uppercase tracking-widest">
+          {deriving ? 'Signing in…' : 'Sign in with Swarm ID'}
+        </Button>
+      </div>
+    )
   }
 
   return (
@@ -452,7 +484,38 @@ export default function Contacts() {
         )}
 
         {/* Table */}
-        {sortedFilteredContacts.length === 0 ? (
+        {contacts.length === 0 && signer && movedFromLegacyIdentity() ? (
+          // Swarm ID transition (#21, mock E): old contacts belong to the old
+          // address's namespace — say why the list is empty and offer the
+          // fastest way back.
+          <div className="px-2 py-6 space-y-3 text-center">
+            <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+              Moved over from your old Nook address? Your contacts need your new one — send them your contact link, or
+              ask them for theirs.
+            </p>
+            <Button
+              size="sm"
+              disabled={!addresses}
+              onClick={async () => {
+                if (!addresses) return
+                await navigator.clipboard.writeText(
+                  encodeShareLink({
+                    ethAddress: signer.getAddress(),
+                    walletPublicKey: bytesToHex(signer.getPublicKey()),
+                    beePublicKey: addresses.publicKey,
+                    nickname: swarmIdAccount?.name || undefined,
+                  }),
+                )
+                setMyLinkCopied(true)
+                setTimeout(() => setMyLinkCopied(false), 1500)
+              }}
+              className="inline-flex items-center gap-1.5"
+            >
+              {myLinkCopied ? <Check size={12} /> : <Copy size={12} />}
+              {myLinkCopied ? 'Copied' : 'Copy my contact link'}
+            </Button>
+          </div>
+        ) : sortedFilteredContacts.length === 0 ? (
           <p className="text-xs px-2 py-6 text-center" style={{ color: 'rgb(var(--fg-muted))' }}>
             {contacts.length === 0
               ? 'No contacts yet. Click "Add contact" to begin.'
@@ -764,7 +827,7 @@ export default function Contacts() {
           onClick={() => setAddOpen(false)}
         >
           <div
-            className="rounded-xl border p-6 w-[460px] space-y-5"
+            className="rounded-xl border p-6 w-[460px] space-y-5 max-h-[calc(100vh-2rem)] max-w-[calc(100vw-2rem)] overflow-y-auto"
             style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
             onClick={e => e.stopPropagation()}
           >
@@ -838,7 +901,7 @@ export default function Contacts() {
                       <span style={{ color: 'rgb(var(--fg))' }}>Suggested nickname:</span>{' '}
                       {decoded.payload.nickname ?? '(none — provide one below)'}
                     </p>
-                    <p style={{ color: 'rgb(74,222,128)' }}>✓ All keys present (wallet + bee)</p>
+                    <p style={{ color: 'rgb(74,222,128)' }}>✓ All keys present (messaging + node)</p>
                   </div>
                 )}
                 {decoded && !decoded.ok && (

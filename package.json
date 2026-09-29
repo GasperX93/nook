@@ -10,7 +10,7 @@
       "url": "https://github.com/ethersphere/swarm-desktop"
     }
   ],
-  "version": "0.6.1",
+  "version": "0.7.0",
   "description": "Permanent decentralized storage for files, folders and websites",
   "repository": "https://github.com/GasperX93/nook",
   "main": "dist/desktop/src/index.js",
@@ -29,7 +29,6 @@
     "open:ui": "node devkit.mjs open:ui",
     "purge:data": "node devkit.mjs purge:data",
     "purge:logs": "node devkit.mjs purge:logs",
-    "docs:build": "node docs/build.mjs",
     "clean": "rimraf dist out",
     "depcheck": "depcheck . && depcheck ui/",
     "lint": "eslint --fix \"src/**/*.ts\" && cd ui && npm run lint",
@@ -101,7 +100,7 @@
     "cross-zip": "^4.0.0",
     "electron-squirrel-startup": "^1.0.0",
     "env-paths": "2",
-    "etherchunk": "1.2.0",
+    "etherchunk": "1.2.1",
     "ethereumjs-wallet": "^1.0.2",
     "ethers": "^5.6.6",
     "fs-extra": "^11.3.4",

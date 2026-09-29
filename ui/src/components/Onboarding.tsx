@@ -1,18 +1,26 @@
-import { AlertTriangle, Check, Copy, Gift, Loader2 } from 'lucide-react'
+import { AlertTriangle, Check, Copy, Loader2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import '@rainbow-me/rainbowkit/styles.css'
 import '@upcoming/multichain-widget/styles.css'
 import { MultichainWidget } from '@upcoming/multichain-widget'
 import { weiToDai } from '../api/bee'
-import { api } from '../api/client'
+import { api, type FundingState } from '../api/client'
 import { useAddresses, useBeeHealth, useRestart, useStamps, useStatus, useWallet } from '../api/queries'
 import { useAppStore } from '../store/app'
+import { useDerivedKey } from '../hooks/useDerivedKey'
 import { WIDGET_THEME } from '../theme'
+import SwarmIdBadge from './SwarmIdBadge'
 
-type Step = 'starting' | 'info' | 'funding' | 'syncing' | 'ready'
+type Step = 'starting' | 'identity' | 'funding' | 'syncing' | 'ready'
 
-const STEPS: Step[] = ['starting', 'info', 'funding', 'syncing', 'ready']
+// Identity comes BEFORE funding (post-test feedback 2026-09-21): it's free
+// and takes seconds, so it happens while the user is engaged — and the
+// funding screen stays a single-purpose screen instead of stacking two jobs.
+// The old 'info' step is gone (its funding copy duplicated the funding
+// screen word-for-word once identity moved between them); its one unique
+// piece — the beta disclaimer — lives on the funding screen now.
+const STEPS: Step[] = ['starting', 'identity', 'funding', 'syncing', 'ready']
 
 export default function Onboarding({ skipReady = false }: { skipReady?: boolean }) {
   const navigate = useNavigate()
@@ -21,19 +29,29 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
   const { isSuccess: beeOnline } = useBeeHealth()
   const { data: status } = useStatus()
   const { isSuccess: stampsReady } = useStamps()
-  const { data: wallet } = useWallet()
+  const { data: wallet, refetch: refetchWallet } = useWallet()
   const { data: addresses } = useAddresses()
   const restart = useRestart()
 
   const [step, setStep] = useState<Step>('starting')
   const [copiedAddr, setCopiedAddr] = useState(false)
+  // R3-4: a cross-chain top-up takes minutes; without this the funding step
+  // sat silent between starting the transfer and the widget completing.
+  const [topUpInFlight, setTopUpInFlight] = useState(false)
   const [giftCode, setGiftCode] = useState('')
   const [redeeming, setRedeeming] = useState(false)
   const [redeemError, setRedeemError] = useState<string | null>(null)
   const [redeemDone, setRedeemDone] = useState(false)
+  // R5-15: "check now" runs the backend funding monitor's check (the one that
+  // actually decides this step) and reports what it found.
+  const [fundCheck, setFundCheck] = useState<FundingState | null>(null)
+  const [checkingFunds, setCheckingFunds] = useState(false)
 
   const address = addresses?.ethereum ?? (status?.address ? `0x${status.address}` : '')
   const hasFunds = wallet ? Number(weiToDai(wallet.nativeTokenBalance)) > 0 : false
+  // xDAI alone finishes setup (the node connects), but drives and messages
+  // need xBZZ — the Ready step must not claim "funded" then (R6-4).
+  const noBzz = wallet !== undefined && BigInt(wallet.bzzBalance || '0') === BigInt(0)
 
   // Debug: lock to a specific step via localStorage (e.g. 'starting', 'syncing', 'funding')
   const lockedStep = localStorage.getItem('nook:onboarding-step') as Step | null
@@ -47,8 +65,8 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
   }, [])
 
   // Unified auto-advance logic (disabled when step is locked for testing)
-  // starting → info (manual continue) → funding → syncing → ready
-  // Returning users (skipReady): skip info+funding, go straight to syncing
+  // starting → identity (manual continue) → funding → syncing → ready
+  // Returning users (skipReady): skip identity+funding, go straight to syncing
   useEffect(() => {
     if (lockedStep) return
 
@@ -60,13 +78,40 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
       return
     }
 
-    // Once Bee is online or mode is known, advance to info step
-    if (status?.mode === 'ultra-light' || beeOnline) setStep('info')
+    // Once Bee is online or mode is known, advance to the identity step
+    if (status?.mode === 'ultra-light' || beeOnline) setStep('identity')
   }, [step, beeOnline, status?.mode, lockedStep, startingMinElapsed, skipReady])
 
+  // Advance when the funds are visible to Bee — or, earlier, when the backend
+  // funding monitor has found them and is restarting Bee in light mode (in
+  // ultra-light mode Bee has no chain connection to read the balance with).
+  const fundsFound = hasFunds || status?.funding?.switching === true || status?.mode === 'light'
+
   useEffect(() => {
-    if (!lockedStep && step === 'funding' && hasFunds) setStep('syncing')
-  }, [step, hasFunds, lockedStep])
+    if (!lockedStep && step === 'funding' && fundsFound) setStep('syncing')
+  }, [step, fundsFound, lockedStep])
+
+  async function checkFundsNow() {
+    setCheckingFunds(true)
+
+    try {
+      const result = await api.checkFunding()
+
+      setFundCheck(result)
+
+      if (result.switching) setStep('syncing')
+      void refetchWallet()
+    } catch {
+      setFundCheck({
+        checkedAt: Date.now(),
+        xdai: null,
+        error: "Couldn't reach Nook's background service",
+        switching: false,
+      })
+    } finally {
+      setCheckingFunds(false)
+    }
+  }
 
   useEffect(() => {
     if (!lockedStep && step === 'syncing' && stampsReady) {
@@ -108,6 +153,11 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
   function finish() {
     setOnboardingCompleted()
     navigate('/drive')
+  }
+
+  function finishToWallet() {
+    setOnboardingCompleted()
+    navigate('/account?tab=wallet')
   }
 
   function skip() {
@@ -176,94 +226,64 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
           </div>
         )}
 
-        {/* Step 2 — Info / disclaimer */}
-        {step === 'info' && (
-          <div className="text-center space-y-5">
-            <h2 className="text-lg font-semibold">Next, fund your node wallet.</h2>
-            <p className="text-sm leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
-              Your node needs xDAI for transaction fees and xBZZ for storage space on the Swarm network.
-            </p>
-            <div
-              className="flex items-start gap-3 rounded-xl border px-5 py-4 text-left"
-              style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
-            >
-              <AlertTriangle size={16} className="shrink-0 mt-0.5" style={{ color: '#f97316' }} />
-              <p className="text-xs leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
-                Nook is beta software. Use small amounts only — features may change, bugs may exist, and stored data may
-                need to be re-uploaded after updates.
-              </p>
-            </div>
-            <button
-              onClick={() => setStep('funding')}
-              className="px-6 py-3 rounded-lg text-sm font-semibold transition-opacity"
-              style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
-            >
-              Continue →
-            </button>
-          </div>
-        )}
+        {/* Step 2 — Identity (own screen; free, fast, before any waiting).
+            No consent checkbox (post-test feedback): being findable is the
+            point of an identity — the sentence says so, and the opt-out
+            toggle lives in Account → Identity. */}
+        {step === 'identity' && <OnboardingIdentityStep onContinue={() => setStep('funding')} />}
 
-        {/* Step 3 — Syncing */}
+        {/* Step 4 — Syncing */}
         {step === 'syncing' && (
           <div className="text-center space-y-4">
             <Loader2 size={32} className="animate-spin mx-auto" style={{ color: '#f97316' }} />
             <h2 className="text-lg font-semibold">Connecting to the network</h2>
+            {status?.funding?.switching && (
+              <p className="text-sm font-medium" style={{ color: '#4ade80' }}>
+                Funds received — your node is restarting to use them.
+              </p>
+            )}
             <p className="text-sm leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
               Your node is syncing with the Swarm network. It discovers peers and catches up with the latest state.
             </p>
             <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-              This can take 1–5 minutes.
+              This can take 1–5 minutes. Nook is also reserving space for your identity &amp; messages.
             </p>
           </div>
         )}
 
-        {/* Step 4 — Fund wallet */}
+        {/* Step 3 — Fund wallet (rev C, user-approved 2026-09-22: one short
+            "why" up top, the any-chain line inside the widget card, the
+            address as a Gnosis-Chain instruction, check-now merged with the
+            auto-advance note at the bottom). */}
         {step === 'funding' && (
           <div className="space-y-5">
             <div className="text-center space-y-3">
-              <h2 className="text-lg font-semibold">Fund your node wallet.</h2>
+              <h2 className="text-lg font-semibold">Add funds to your node wallet</h2>
               <p className="text-sm leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
-                Your node needs xDAI for transaction fees and xBZZ for storage space on the Swarm network.
-              </p>
-              <p className="text-sm leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
-                You can fund it from any EVM-compatible chain using any token — it will be swapped to the required
-                assets.
+                Nook doesn't use servers — your files and messages live on Swarm, a decentralized network. You pay
+                upfront for the space you use. To finish setup, add 5 xBZZ to your node wallet.
               </p>
             </div>
 
-            {/* Wallet address */}
-            {address && (
-              <div
-                className="flex items-center gap-2 rounded-lg px-4 py-3"
-                style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
-              >
-                <span className="text-xs uppercase tracking-widest shrink-0" style={{ color: 'rgb(var(--fg-muted))' }}>
-                  Your node address
-                </span>
-                <p className="font-mono text-xs min-w-0 truncate flex-1" style={{ color: 'rgb(var(--fg-muted))' }}>
-                  {address}
-                </p>
-                <button
-                  onClick={copyAddress}
-                  className="w-6 h-6 flex items-center justify-center rounded shrink-0 transition-colors"
-                  style={{ color: copiedAddr ? '#4ade80' : 'rgb(var(--fg-muted))' }}
-                >
-                  {copiedAddr ? <Check size={12} /> : <Copy size={12} />}
-                </button>
-              </div>
-            )}
-
             {/* Multichain widget */}
             <div className="rounded-xl border p-5" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
-              <p className="text-xs uppercase tracking-widest mb-3" style={{ color: 'rgb(var(--fg-muted))' }}>
-                Top up
+              <p className="text-xs uppercase tracking-widest mb-1" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Add funds
+              </p>
+              <p className="text-xs mb-3" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Fund from any EVM-compatible chain using any token — it's swapped automatically.
               </p>
               {address ? (
                 <MultichainWidget
                   destination={address}
                   intent="arbitrary"
                   theme={WIDGET_THEME}
-                  hooks={{ onCompletion: async () => setStep('syncing') }}
+                  hooks={{
+                    beforeTransactionStart: async () => setTopUpInFlight(true),
+                    onUserAbort: async () => setTopUpInFlight(false),
+                    onFatalError: async () => setTopUpInFlight(false),
+                    onCompletion: async () => setStep('syncing'),
+                  }}
                 />
               ) : (
                 <div className="flex items-center gap-2">
@@ -275,16 +295,57 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
               )}
             </div>
 
-            {/* Gift code */}
-            <div className="rounded-xl border p-5" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
-              <div className="flex items-center gap-2 mb-1">
-                <Gift size={13} style={{ color: 'rgb(var(--accent))' }} />
-                <p className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
-                  Redeem gift code
+            {topUpInFlight && (
+              <div
+                className="rounded-xl border p-4 flex items-start gap-3"
+                style={{ backgroundColor: 'rgba(96,165,250,0.08)', borderColor: 'rgba(96,165,250,0.25)' }}
+              >
+                <Loader2 size={14} className="animate-spin shrink-0 mt-0.5" style={{ color: '#60a5fa' }} />
+                <p className="text-xs leading-relaxed" style={{ color: 'rgb(var(--fg))' }}>
+                  Funds are on the way — cross-chain transfers can take a few minutes. Nook checks every 15 s and moves
+                  on automatically.
                 </p>
               </div>
+            )}
+
+            {/* Or send directly — the address as a concrete instruction, with
+                the wrong-chain warning (irreversible-loss class). */}
+            {address && (
+              <div className="rounded-xl border p-5 space-y-2" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
+                <p className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  Send directly to node address
+                </p>
+                <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  Send xDAI and xBZZ to your node address on <b style={{ color: 'rgb(var(--fg))' }}>Gnosis Chain</b>:
+                </p>
+                <div className="flex items-center gap-2">
+                  <p className="font-mono text-xs min-w-0 truncate flex-1" style={{ color: 'rgb(var(--fg))' }}>
+                    {address}
+                  </p>
+                  <button
+                    onClick={copyAddress}
+                    className="w-6 h-6 flex items-center justify-center rounded shrink-0 transition-colors"
+                    style={{ color: copiedAddr ? '#4ade80' : 'rgb(var(--fg-muted))' }}
+                  >
+                    {copiedAddr ? <Check size={12} /> : <Copy size={12} />}
+                  </button>
+                </div>
+                {/* Always visible, never a tooltip: irreversible-loss class,
+                    and the user who needs it won't hover. Compact under the
+                    address (user-picked placement). */}
+                <p className="text-[11px]" style={{ color: '#f59e0b' }}>
+                  ⚠ Gnosis Chain only — funds sent from other networks won't appear in Nook and are hard to recover.
+                </p>
+              </div>
+            )}
+
+            {/* Gift code */}
+            <div className="rounded-xl border p-5" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
+              <p className="text-xs uppercase tracking-widest mb-1" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Redeem gift code
+              </p>
               <p className="text-xs mb-3" style={{ color: 'rgb(var(--fg-muted))' }}>
-                Have a gift code? Paste it to receive BZZ and xDAI instantly.
+                Have a gift code? Paste it to receive xBZZ and xDAI instantly.
               </p>
               <div className="flex gap-3">
                 <input
@@ -320,13 +381,38 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
               )}
             </div>
 
+            {/* Beta disclaimer — short form (rev C). */}
+            <div
+              className="flex items-start gap-3 rounded-xl border px-5 py-3 text-left"
+              style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
+            >
+              <AlertTriangle size={14} className="shrink-0 mt-0.5" style={{ color: '#f97316' }} />
+              <p className="text-xs leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Nook is beta software. Use small amounts only.
+              </p>
+            </div>
+
+            {/* Auto-advance + manual re-check, one line (fresh-install
+                feedback 2026-09-17 + rev C: silent polling reads as stuck). */}
             <p className="text-xs text-center" style={{ color: 'rgb(var(--fg-muted))' }}>
-              This step will advance automatically once xDAI is detected in your wallet.
+              Nook checks your wallet every 15 seconds and moves on automatically — or{' '}
+              <button
+                onClick={() => void checkFundsNow()}
+                disabled={checkingFunds}
+                className="underline transition-colors"
+                style={{ color: 'rgb(var(--fg-muted))' }}
+              >
+                {checkingFunds ? 'checking…' : "I've sent funds — check now"}
+              </button>
+            </p>
+            {fundCheck && !checkingFunds && <FundCheckResult result={fundCheck} />}
+            <p className="text-[11px] text-center" style={{ color: 'rgb(var(--fg-muted))' }}>
+              Using MetaMask? Unlock it first — if it doesn't show up in the box above, refresh this page.
             </p>
           </div>
         )}
 
-        {/* Step 4 — Ready */}
+        {/* Step 5 — Ready */}
         {step === 'ready' && (
           <div className="text-center space-y-6">
             <div
@@ -336,22 +422,49 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
               <Check size={28} style={{ color: '#4ade80' }} />
             </div>
             <h2 className="text-lg font-semibold">Your node is ready</h2>
-            <p className="text-sm leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
-              Your Bee node is connected and funded. You can now create a drive and start uploading files to the Swarm
-              network.
-            </p>
-            <button
-              onClick={finish}
-              className="px-6 py-3 rounded-lg text-sm font-semibold transition-opacity"
-              style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
-            >
-              Create your first drive →
-            </button>
+            {noBzz ? (
+              <>
+                <p className="text-sm leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  Your node is connected. Add xBZZ to create drives and turn on messages — Nook sets up the rest
+                  automatically.
+                </p>
+                <div className="flex flex-col items-center gap-3">
+                  <button
+                    onClick={finishToWallet}
+                    className="px-6 py-3 rounded-lg text-sm font-semibold transition-opacity"
+                    style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
+                  >
+                    Open wallet →
+                  </button>
+                  <button
+                    onClick={finish}
+                    className="text-xs underline transition-colors"
+                    style={{ color: 'rgb(var(--fg-muted))' }}
+                  >
+                    Go to Drive
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="text-sm leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  Your Bee node is connected and funded. You can now create a drive and start uploading files to the
+                  Swarm network.
+                </p>
+                <button
+                  onClick={finish}
+                  className="px-6 py-3 rounded-lg text-sm font-semibold transition-opacity"
+                  style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
+                >
+                  Create your first drive →
+                </button>
+              </>
+            )}
           </div>
         )}
 
-        {/* Skip link — new users only */}
-        {!skipReady && step !== 'ready' && (
+        {/* Skip link — new users only (the identity step has its own skip) */}
+        {!skipReady && step !== 'ready' && step !== 'identity' && (
           <div className="text-center mt-8">
             <button
               onClick={skip}
@@ -367,5 +480,132 @@ export default function Onboarding({ skipReady = false }: { skipReady?: boolean 
         )}
       </div>
     </div>
+  )
+}
+
+/**
+ * Identity step — sign in with Swarm ID, done. Free and instant, so it runs
+ * BEFORE funding (nothing to wait for here). The actual network publish still
+ * happens automatically once the reserved space exists (useAutoPublish) — the
+ * setup≠publish split is unchanged. Skipping is quiet and always possible; the
+ * Identity tab is the recovery path.
+ */
+function OnboardingIdentityStep({ onContinue }: { onContinue: () => void }) {
+  const { signer, signIn, deriving, error } = useDerivedKey()
+  const [copied, setCopied] = useState(false)
+
+  if (signer) {
+    const address = signer.getAddress()
+
+    return (
+      <div className="text-center space-y-5">
+        <div
+          className="w-14 h-14 rounded-full mx-auto flex items-center justify-center"
+          style={{ backgroundColor: 'rgba(74,222,128,0.15)' }}
+        >
+          <Check size={28} style={{ color: '#4ade80' }} />
+        </div>
+        <h2 className="text-lg font-semibold">You're signed in</h2>
+        <SwarmIdBadge />
+        <div
+          className="rounded-lg border px-4 py-3 text-left"
+          style={{ backgroundColor: 'rgb(var(--bg-surface))', borderColor: 'rgb(var(--border))' }}
+        >
+          <p className="text-xs font-semibold mb-1">Your Nook address</p>
+          <button
+            onClick={async () => {
+              await navigator.clipboard.writeText(address)
+              setCopied(true)
+              setTimeout(() => setCopied(false), 1500)
+            }}
+            className="flex items-center gap-2 text-[11px] font-mono break-all text-left"
+            style={{ color: 'rgb(var(--fg-muted))' }}
+            title="Copy Nook address"
+          >
+            {address}
+            {copied ? (
+              <Check size={12} className="shrink-0" style={{ color: '#4ade80' }} />
+            ) : (
+              <Copy size={12} className="shrink-0" />
+            )}
+          </button>
+        </div>
+        <p className="text-sm leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
+          Once your node is set up, anyone can find you in Nook by this address — to message you and share drives with
+          you. Change this anytime in Account → Identity.
+        </p>
+        <button
+          onClick={onContinue}
+          className="px-6 py-3 rounded-lg text-sm font-semibold transition-opacity"
+          style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
+        >
+          Continue →
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="text-center space-y-5">
+      <h2 className="text-lg font-semibold">Sign in with Swarm ID</h2>
+      <p className="text-sm leading-relaxed" style={{ color: 'rgb(var(--fg-muted))' }}>
+        Your identity lets contacts message you and share drives with you.
+      </p>
+      <button
+        onClick={async () => signIn()}
+        disabled={deriving}
+        className="px-6 py-3 rounded-lg text-sm font-semibold transition-opacity disabled:opacity-60"
+        style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
+      >
+        {deriving ? 'Signing in…' : 'Sign in with Swarm ID'}
+      </button>
+      <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+        New to Swarm ID? Create an account in the window that opens — and{' '}
+        <span className="font-semibold">save your recovery phrase</span>.
+      </p>
+      {error && (
+        <p className="text-xs" style={{ color: '#ef4444' }}>
+          {error}
+        </p>
+      )}
+      <div>
+        <button
+          onClick={onContinue}
+          className="text-xs underline transition-colors"
+          style={{ color: 'rgb(var(--fg-muted))' }}
+        >
+          Skip for now
+        </button>
+        <p className="text-[10px] mt-1" style={{ color: 'rgb(var(--fg-muted))' }}>
+          Messaging and sharing stay off until you sign in — Account → Identity picks this up later.
+        </p>
+      </div>
+    </div>
+  )
+}
+
+/** What "check now" found (R5-15) — one plain line under the button. */
+function FundCheckResult({ result }: { result: FundingState }) {
+  let text: string
+
+  if (result.switching) {
+    text = 'Funds received — your node is restarting to use them.'
+  } else if (result.error) {
+    text = `${result.error}. Nook keeps checking every 15 seconds.`
+  } else if (result.xdai !== null) {
+    const xdai = Number(result.xdai)
+
+    text =
+      xdai > 0
+        ? `Not enough yet — your node wallet has ${xdai.toFixed(4)} xDAI and Nook needs at least 0.001 xDAI to start.`
+        : 'Nothing has arrived yet — transfers can take a minute or two. Nook keeps checking every 15 seconds.'
+  } else {
+    text = 'Nook keeps checking every 15 seconds.'
+  }
+
+  return (
+    <p className="text-xs text-center" role="status" style={{ color: 'rgb(var(--fg))' }}>
+      {text}
+    </p>
   )
 }

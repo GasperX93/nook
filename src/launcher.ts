@@ -4,6 +4,7 @@ import { platform } from 'os'
 import { v4 } from 'uuid'
 import { rebuildElectronTray } from './electron'
 import { fetchWithTimeout } from './fetch-timeout'
+import { mayLaunchBee } from './foreign-bee'
 import { BeeManager } from './lifecycle'
 import { RotatingLogWriter } from './log-rotator'
 import { logger } from './logger'
@@ -35,12 +36,37 @@ const livenessProbes = {
   },
 }
 
+/** A watch-only port check is running (it can take seconds — never overlap). */
+let watchInFlight = false
+
+/**
+ * The user stopped Nook's node (F-1): don't start anything, but keep an eye
+ * on its ports. Another app's node (e.g. Swarm Desktop) can take them while
+ * ours is off, and without this check nothing noticed — the dashboard showed
+ * that node's drives as if they were Nook's. mayLaunchBee() only records what
+ * it finds (foreign → blocking screen, gone → cleared); it never launches.
+ */
+async function watchPortsWhileStopped(): Promise<void> {
+  if (watchInFlight) return
+  watchInFlight = true
+
+  try {
+    await mayLaunchBee()
+  } finally {
+    watchInFlight = false
+  }
+}
+
 export function runKeepAliveLoop() {
   setInterval(async () => {
     const now = Date.now()
 
-    if (!BeeManager.isRunning() && BeeManager.shouldRestart()) {
-      if (canAttemptStart(now)) runLauncher()
+    if (!BeeManager.isRunning()) {
+      if (BeeManager.shouldRestart()) {
+        if (canAttemptStart(now)) runLauncher()
+      } else {
+        await watchPortsWhileStopped()
+      }
 
       return
     }
@@ -89,6 +115,9 @@ export async function initializeBee() {
   return runProcess(getPath(getBeeExecutable()), ['init', `--config=${configPath}`], new AbortController())
 }
 
+/** A launch is between its port check and signalRunning (see runLauncher). */
+let launchInFlight = false
+
 export async function runLauncher() {
   const abortController = new AbortController()
 
@@ -97,6 +126,24 @@ export async function runLauncher() {
   }
 
   BeeManager.setUserIntention(true)
+
+  // R5-11: never start a second Bee on taken ports (it crash-loops) and never
+  // treat a foreign node as ours. The keep-alive loop re-checks every 10 s.
+  // Only one launch at a time: the port check can take seconds, and a
+  // keep-alive tick, /restart or the funding switch landing meanwhile would
+  // otherwise also see the ports free and start a second Bee.
+  if (launchInFlight) return
+  launchInFlight = true
+  let mayLaunch: boolean
+
+  try {
+    mayLaunch = await mayLaunchBee()
+  } finally {
+    launchInFlight = false
+  }
+
+  if (!mayLaunch) return
+
   const subprocess = launchBee(abortController).catch(reason => {
     logger.error(reason)
   })

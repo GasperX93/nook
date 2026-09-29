@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { beeApi } from './bee'
+import { beeApi, type ChainState } from './bee'
 import { api } from './client'
 import { serverApi } from './server'
 
@@ -130,11 +130,46 @@ export function useChequebookBalance() {
   })
 }
 
+// Last good /chainstate, kept across restarts (R5-14). Right after a Bee
+// restart — while it re-syncs and the public RPC throttles — /chainstate can
+// fail for minutes ("get minimum validity blocks failed"), leaving a freshly
+// opened page with no price at all and Publish / New drive disabled. The
+// storage price moves slowly, so a recent value is a fine estimate; the
+// purchase itself still goes through Bee at the live price.
+const CHAINSTATE_CACHE_KEY = 'nook.chainstate.v1'
+const CHAINSTATE_CACHE_MAX_AGE_MS = 6 * 60 * 60_000
+
+function readCachedChainState(): { chainState: ChainState; at: number } | undefined {
+  try {
+    const cached = JSON.parse(localStorage.getItem(CHAINSTATE_CACHE_KEY) ?? 'null')
+
+    if (cached?.chainState?.currentPrice && Date.now() - cached.at < CHAINSTATE_CACHE_MAX_AGE_MS) return cached
+  } catch {
+    // unreadable cache — ignore
+  }
+
+  return undefined
+}
+
 export function useChainState() {
   return useQuery({
     queryKey: ['bee', 'chainstate'],
-    queryFn: beeApi.getChainState,
-    refetchInterval: 60_000,
+    queryFn: async () => {
+      const chainState = await beeApi.getChainState()
+
+      try {
+        localStorage.setItem(CHAINSTATE_CACHE_KEY, JSON.stringify({ chainState, at: Date.now() }))
+      } catch {
+        // storage unavailable — the live value still works
+      }
+
+      return chainState
+    },
+    initialData: () => readCachedChainState()?.chainState,
+    initialDataUpdatedAt: () => readCachedChainState()?.at,
+    // Recover quickly while Bee can't answer; relax once it does.
+    refetchInterval: query => (query.state.status === 'error' ? 10_000 : 60_000),
+    retry: false,
   })
 }
 

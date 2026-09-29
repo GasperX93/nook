@@ -1,97 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useBeeLogs, useConfig, useNookLogs, useUpdateConfig } from '../api/queries'
-import { SwarmNotifyTest } from '../components/SwarmNotifyTest'
+import { useConfig, useUpdateConfig } from '../api/queries'
+import LogViewer from '../components/LogViewer'
 import { useAppStore } from '../store/app'
-import { useDerivedKey } from '../hooks/useDerivedKey'
-import { bytesToHex } from '../lib/hex'
-
-function KeyDerivationTest() {
-  const { signer, deriving, error, walletConnected, derive, clear } = useDerivedKey()
-  const [log, setLog] = useState<string[]>([])
-
-  function addLog(msg: string) {
-    setLog(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`])
-  }
-
-  async function handleDerive() {
-    addLog('Requesting signature...')
-    const result = await derive()
-
-    if (result) {
-      addLog(`Derived! Address: ${result.getAddress()}`)
-      addLog(`Public key: ${bytesToHex(result.getPublicKey()).slice(0, 32)}...`)
-      addLog(`Signing key (first 8): ${bytesToHex(result.getSigningKey()).slice(0, 16)}...`)
-      addLog(`Encryption key (first 8): ${bytesToHex(result.getEncryptionKey()).slice(0, 16)}...`)
-    } else {
-      addLog('Derivation failed or rejected')
-    }
-  }
-
-  async function handleDeriveAgain() {
-    addLog('Deriving again (should match)...')
-    const result = await derive()
-
-    if (result) {
-      addLog(`Address: ${result.getAddress()}`)
-      addLog('Compare with previous — should be identical')
-    }
-  }
-
-  function handleClear() {
-    clear()
-    addLog('Signer cleared')
-  }
-
-  const btnClass =
-    'px-3 py-1.5 rounded text-xs font-semibold uppercase tracking-widest transition-opacity disabled:opacity-40'
-  const btnStyle = { backgroundColor: 'rgb(var(--bg))', border: '1px solid rgb(var(--border))' }
-  const accentStyle = { backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }
-
-  return (
-    <div className="rounded-xl border p-5 space-y-4 shrink-0" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
-      <div>
-        <p className="text-xs uppercase tracking-widest mb-1" style={{ color: 'rgb(var(--fg-muted))' }}>
-          Wallet Key Derivation
-        </p>
-        <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-          Wallet: {walletConnected ? 'Connected' : 'Not connected'} | Signer:{' '}
-          {signer ? signer.getAddress().slice(0, 10) + '...' : 'None'}
-          {deriving ? ' | Deriving...' : ''}
-          {error ? ` | Error: ${error}` : ''}
-        </p>
-      </div>
-
-      <div className="flex flex-wrap gap-2">
-        <button onClick={handleDerive} disabled={!walletConnected || deriving} className={btnClass} style={accentStyle}>
-          1. Derive Key
-        </button>
-        <button onClick={handleDeriveAgain} disabled={!signer} className={btnClass} style={btnStyle}>
-          2. Derive Again (compare)
-        </button>
-        <button onClick={handleClear} disabled={!signer} className={btnClass} style={{ color: 'rgb(var(--fg-muted))' }}>
-          Clear
-        </button>
-      </div>
-
-      {log.length > 0 && (
-        <div className="rounded-lg border p-3 max-h-48 overflow-auto" style={{ backgroundColor: 'rgb(var(--bg))' }}>
-          <pre className="text-xs whitespace-pre-wrap break-all" style={{ color: 'rgb(var(--fg-muted))' }}>
-            {log.join('\n')}
-          </pre>
-        </div>
-      )}
-    </div>
-  )
-}
-
-type LogTab = 'bee' | 'desktop'
 
 export default function Dev() {
-  const [logTab, setLogTab] = useState<LogTab>('bee')
-  const { data: beeLogs } = useBeeLogs()
-  const { data: nookLogs } = useNookLogs()
-  const bottomRef = useRef<HTMLDivElement>(null)
   const navigate = useNavigate()
   const { setDevMode } = useAppStore()
 
@@ -99,12 +12,16 @@ export default function Dev() {
   const updateConfig = useUpdateConfig()
   const [draft, setDraft] = useState<string>('')
   const [editMode, setEditMode] = useState(false)
+  const [showSecrets, setShowSecrets] = useState(false)
+  const [draftError, setDraftError] = useState<string | null>(null)
 
-  const logs = logTab === 'bee' ? beeLogs : nookLogs
-
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [logs])
+  // R5-8: the view shows the whole config (no inner scroll) and masks secrets
+  // — Bee's API password was on screen in plain text (screenshot leak risk).
+  const isSecret = (key: string) => /password/i.test(key)
+  const hasSecrets = Object.keys(config ?? {}).some(isSecret)
+  const viewText = config
+    ? JSON.stringify(config, (key, value) => (!showSecrets && key && isSecret(key) && value ? '••••••••' : value), 2)
+    : 'No config found.'
 
   function startEdit() {
     setDraft(JSON.stringify(config, null, 2))
@@ -112,12 +29,17 @@ export default function Dev() {
   }
 
   function save() {
+    let parsed: unknown
+
     try {
-      const parsed = JSON.parse(draft)
-      updateConfig.mutate(parsed, { onSuccess: () => setEditMode(false) })
+      parsed = JSON.parse(draft)
     } catch {
-      // invalid JSON
+      setDraftError('That isn’t valid JSON — check commas and quotes.')
+
+      return
     }
+    setDraftError(null)
+    updateConfig.mutate(parsed as Record<string, unknown>, { onSuccess: () => setEditMode(false) })
   }
 
   return (
@@ -135,39 +57,8 @@ export default function Dev() {
         </button>
       </div>
 
-      {/* Logs */}
-      <div className="flex flex-col shrink-0">
-        <div className="flex items-center justify-between mb-3 shrink-0">
-          <p className="text-xs uppercase tracking-widest font-semibold" style={{ color: 'rgb(var(--fg-muted))' }}>
-            Logs
-          </p>
-          <div className="flex gap-1">
-            {(['bee', 'desktop'] as LogTab[]).map(t => (
-              <button
-                key={t}
-                onClick={() => setLogTab(t)}
-                className="px-3 py-1.5 rounded text-xs font-semibold uppercase tracking-widest transition-colors"
-                style={
-                  logTab === t
-                    ? { backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }
-                    : { color: 'rgb(var(--fg-muted))' }
-                }
-              >
-                {t === 'bee' ? 'Bee' : 'Desktop'}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div
-          className="rounded-lg border p-4 overflow-auto max-h-64"
-          style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
-        >
-          <pre className="text-xs whitespace-pre-wrap break-all" style={{ color: 'rgb(var(--fg-muted))' }}>
-            {logs ?? 'No logs available.'}
-          </pre>
-          <div ref={bottomRef} />
-        </div>
-      </div>
+      {/* Logs (R4-18) — shared viewer, also at /logs for everyone */}
+      <LogViewer className="h-[70vh] shrink-0" />
 
       {/* Node config */}
       <div className="rounded-xl border p-5 space-y-4 shrink-0" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
@@ -181,14 +72,25 @@ export default function Dev() {
             </p>
           </div>
           {!editMode ? (
-            <button
-              onClick={startEdit}
-              disabled={isLoading || !config}
-              className="px-3 py-1.5 rounded text-xs font-semibold uppercase tracking-widest transition-opacity disabled:opacity-40"
-              style={{ backgroundColor: 'rgb(var(--bg))', border: '1px solid rgb(var(--border))' }}
-            >
-              Edit
-            </button>
+            <div className="flex gap-2">
+              {hasSecrets && (
+                <button
+                  onClick={() => setShowSecrets(v => !v)}
+                  className="px-3 py-1.5 rounded text-xs font-semibold uppercase tracking-widest"
+                  style={{ color: 'rgb(var(--fg-muted))' }}
+                >
+                  {showSecrets ? 'Hide password' : 'Show password'}
+                </button>
+              )}
+              <button
+                onClick={startEdit}
+                disabled={isLoading || !config}
+                className="px-3 py-1.5 rounded text-xs font-semibold uppercase tracking-widest transition-opacity disabled:opacity-40"
+                style={{ backgroundColor: 'rgb(var(--bg))', border: '1px solid rgb(var(--border))' }}
+              >
+                Edit
+              </button>
+            </div>
           ) : (
             <div className="flex gap-2">
               <button
@@ -219,28 +121,30 @@ export default function Dev() {
             Nook backend not available. Start the app to configure node settings.
           </p>
         ) : editMode ? (
-          <textarea
-            className="w-full h-48 rounded-lg border p-4 text-xs font-mono focus:outline-none resize-none"
-            style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
-            value={draft}
-            onChange={e => setDraft(e.target.value)}
-            spellCheck={false}
-          />
+          <div className="space-y-2">
+            <textarea
+              className="w-full rounded-lg border p-4 text-xs font-mono focus:outline-none resize-y"
+              style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
+              rows={Math.max(10, draft.split('\n').length + 1)}
+              value={draft}
+              onChange={e => setDraft(e.target.value)}
+              spellCheck={false}
+            />
+            {draftError && (
+              <p className="text-xs" style={{ color: '#ef4444' }}>
+                {draftError}
+              </p>
+            )}
+          </div>
         ) : (
           <pre
-            className="text-xs overflow-auto rounded-lg border p-4 max-h-48"
+            className="text-xs overflow-x-auto rounded-lg border p-4"
             style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg-muted))' }}
           >
-            {JSON.stringify(config, null, 2) ?? 'No config found.'}
+            {viewText}
           </pre>
         )}
       </div>
-
-      {/* Key Derivation Test */}
-      <KeyDerivationTest />
-
-      {/* Swarm Notify smoke test */}
-      <SwarmNotifyTest />
     </div>
   )
 }

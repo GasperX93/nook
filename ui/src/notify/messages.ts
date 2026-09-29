@@ -24,9 +24,9 @@ export interface StoredMessage {
   /** Plain text */
   body: string
   direction: 'sent' | 'received'
-  /** Optional message kind. Default 'message'. 'drive-share' renders as a card. */
-  kind?: 'message' | 'drive-share'
-  /** Drive-share fields — only present when kind === 'drive-share' */
+  /** Optional message kind. Default 'message'. Drive kinds render as cards. */
+  kind?: 'message' | DriveMessageKind
+  /** Drive fields — present for the drive kinds (the link identifies the drive) */
   driveShareLink?: string
   driveName?: string
   fileCount?: number
@@ -38,6 +38,22 @@ export interface StoredMessage {
   status?: 'sending' | 'sent' | 'failed'
   /** Link to the outbox entry that delivers/delivered this message. */
   outboxId?: string
+}
+
+/**
+ * Drive messages (R4-15/16). 'drive-share' = new share or update;
+ * 'drive-access-removed' / 'drive-access-restored' tell the recipient their
+ * access changed so their "Shared with me" entry updates without a sync.
+ * On the wire these are the Message `type`; the SDK's declared union only
+ * lists 'drive-share' but it passes the field through untouched, and older
+ * Nook versions fall back to showing the (human-readable) body.
+ */
+export type DriveMessageKind = 'drive-share' | 'drive-access-removed' | 'drive-access-restored'
+
+const DRIVE_KINDS: readonly string[] = ['drive-share', 'drive-access-removed', 'drive-access-restored']
+
+export function isDriveKind(kind: unknown): kind is DriveMessageKind {
+  return typeof kind === 'string' && DRIVE_KINDS.includes(kind)
 }
 
 export interface DriveShareExtras {
@@ -165,7 +181,7 @@ export function appendOutboxMessage(
     id: string
     recipientId: string
     ts: number
-    kind: 'message' | 'drive-share' | 'invite-ack'
+    kind: 'message' | DriveMessageKind | 'invite-ack'
     body: string
     driveShare?: DriveShareExtras
   },
@@ -177,7 +193,7 @@ export function appendOutboxMessage(
     ts: entry.ts,
     body: entry.body,
     direction: 'sent',
-    kind: entry.kind === 'drive-share' ? 'drive-share' : 'message',
+    kind: isDriveKind(entry.kind) ? entry.kind : 'message',
     ...(entry.driveShare ?? {}),
     status: 'sending',
     outboxId: entry.id,
@@ -252,13 +268,52 @@ export function mergeReceived(threads: ThreadMap, counterparty: string, received
     ts: m.ts,
     body: m.body,
     direction: 'received',
-    kind: m.type === 'drive-share' ? 'drive-share' : 'message',
+    kind: isDriveKind(m.type) ? m.type : 'message',
     driveShareLink: m.driveShareLink,
     driveName: m.driveName,
     fileCount: m.fileCount,
   }))
   const merged = [...existingSent, ...incoming].sort((a, b) => a.ts - b.ts)
   const updated: ThreadMap = { ...threads, [key]: merged }
+
+  saveThreads(updated)
+
+  return updated
+}
+
+/**
+ * Add newly read messages from a counterparty, keeping everything already in
+ * the thread (R3b-2). The incremental poller only returns what's new since
+ * its cursor, so — unlike mergeReceived — nothing may be replaced. Duplicates
+ * (a hole re-read, an overlapping read) are dropped by id.
+ */
+export function appendReceived(threads: ThreadMap, counterparty: string, received: SdkMessage[]): ThreadMap {
+  const key = counterparty.toLowerCase()
+  const existing = threads[key] ?? []
+  const known = new Set(existing.map(m => m.id))
+  const incoming: StoredMessage[] = []
+
+  for (const m of received) {
+    const id = makeId(m.ts, 'received', m.body)
+
+    if (known.has(id)) continue
+    known.add(id)
+    incoming.push({
+      id,
+      counterparty: key,
+      ts: m.ts,
+      body: m.body,
+      direction: 'received',
+      kind: isDriveKind(m.type) ? m.type : 'message',
+      driveShareLink: m.driveShareLink,
+      driveName: m.driveName,
+      fileCount: m.fileCount,
+    })
+  }
+
+  if (incoming.length === 0) return threads
+
+  const updated: ThreadMap = { ...threads, [key]: [...existing, ...incoming].sort((a, b) => a.ts - b.ts) }
 
   saveThreads(updated)
 

@@ -1,16 +1,19 @@
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   AlertTriangle,
+  ArrowDownLeft,
   ArrowUpRight,
   Check,
   ChevronDown,
   ChevronUp,
   Copy,
+  ExternalLink,
   Gift,
+  History,
   Info,
   Wallet as WalletIcon,
 } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import '@rainbow-me/rainbowkit/styles.css'
 import '@upcoming/multichain-widget/styles.css'
 import { MultichainWidget } from '@upcoming/multichain-widget'
@@ -21,7 +24,6 @@ const WEI_PER_DAI = 10n ** 18n
 import { api } from '../api/client'
 import { serverApi } from '../api/server'
 import { useAddresses, useBeeHealth, useChequebookBalance, useWallet } from '../api/queries'
-import { useAppStore } from '../store/app'
 import { WIDGET_THEME } from '../theme'
 
 export default function Wallet() {
@@ -31,15 +33,59 @@ export default function Wallet() {
   const { isSuccess: beeOnline } = useBeeHealth()
   const { data: chequebook } = useChequebookBalance()
   const [copiedAddr, setCopiedAddr] = useState(false)
-  const [swapAmount, setSwapAmount] = useState('')
-  const [swapping, setSwapping] = useState(false)
-  const [swapError, setSwapError] = useState<string | null>(null)
-  const [swapDone, setSwapDone] = useState(false)
   const [giftCode, setGiftCode] = useState('')
   const [redeeming, setRedeeming] = useState(false)
   const [redeemError, setRedeemError] = useState<string | null>(null)
   const [redeemDone, setRedeemDone] = useState(false)
   const [topUpOpen, setTopUpOpen] = useState(false)
+  const [activityOpen, setActivityOpen] = useState(false)
+  // Activity (#139): server-proxied explorer history + Nook's own ledger labels
+  const { data: activity } = useQuery({
+    queryKey: ['server', 'wallet-activity'],
+    queryFn: async () => serverApi.getWalletActivity(),
+    refetchInterval: 120_000,
+    retry: false,
+  })
+  // Right after funds move (R7-4): the explorer needs a moment to index the
+  // tx, so re-read Activity (bypassing the server cache) every 10 s for two
+  // minutes, and say so while it's pending.
+  const [activityUpdating, setActivityUpdating] = useState(false)
+  const followRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  useEffect(
+    () => () => {
+      if (followRef.current) clearInterval(followRef.current)
+    },
+    [],
+  )
+
+  function followActivity() {
+    if (followRef.current) clearInterval(followRef.current)
+    setActivityUpdating(true)
+    const known = new Set((activity?.rows ?? []).map(r => r.hash ?? `${r.at}`))
+    let ticks = 0
+
+    const tick = async () => {
+      ticks++
+      try {
+        const fresh = await serverApi.getWalletActivity(true)
+
+        queryClient.setQueryData(['server', 'wallet-activity'], fresh)
+
+        if (fresh.rows.some(r => !known.has(r.hash ?? `${r.at}`))) ticks = 12
+      } catch {
+        // keep trying until the window closes
+      }
+
+      if (ticks >= 12 && followRef.current) {
+        clearInterval(followRef.current)
+        followRef.current = null
+        setActivityUpdating(false)
+      }
+    }
+
+    followRef.current = setInterval(() => void tick(), 10_000)
+  }
   const [withdrawToken, setWithdrawToken] = useState<'bzz' | 'dai'>('bzz')
   const [withdrawAmount, setWithdrawAmount] = useState('')
   const [withdrawTo, setWithdrawTo] = useState('')
@@ -62,31 +108,6 @@ export default function Wallet() {
     setTimeout(() => setCopiedAddr(false), 2000)
   }
 
-  async function swap() {
-    if (!swapAmount) return
-    setSwapping(true)
-    setSwapError(null)
-    setSwapDone(false)
-    try {
-      const apiKey = useAppStore.getState().apiKey
-      const res = await fetch('/swap', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(apiKey ? { authorization: apiKey } : {}) },
-        body: JSON.stringify({ dai: swapAmount }),
-      })
-
-      if (!res.ok) throw new Error(`Swap failed: ${res.status}`)
-      setSwapDone(true)
-      setSwapAmount('')
-      queryClient.invalidateQueries({ queryKey: ['bee', 'wallet'] })
-      setTimeout(() => setSwapDone(false), 3000)
-    } catch (err) {
-      setSwapError(err instanceof Error ? err.message : 'Swap failed')
-    } finally {
-      setSwapping(false)
-    }
-  }
-
   async function redeem() {
     if (!giftCode.trim()) return
     setRedeeming(true)
@@ -96,6 +117,7 @@ export default function Wallet() {
       await api.redeem(giftCode.trim())
       setRedeemDone(true)
       setGiftCode('')
+      followActivity()
       // Refetch immediately, then poll every 3s for up to 30s to catch delayed settlement
       queryClient.refetchQueries({ queryKey: ['bee', 'wallet'] })
       let ticks = 0
@@ -144,6 +166,7 @@ export default function Wallet() {
 
       const { txHash } = await serverApi.withdraw(withdrawToken, amountSmallest.toString(), withdrawTo)
       setWithdrawDone(true)
+      followActivity()
       setWithdrawTxHash(txHash)
       setWithdrawAmount('')
       setWithdrawTo('')
@@ -305,7 +328,7 @@ export default function Wallet() {
               <div className="flex items-center gap-2">
                 <WalletIcon size={13} style={{ color: 'rgb(var(--accent))' }} />
                 <p className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--accent))' }}>
-                  Top up
+                  Add funds
                 </p>
               </div>
               <p className="text-xs mt-1" style={{ color: 'rgb(var(--fg-muted))' }}>
@@ -389,6 +412,98 @@ export default function Wallet() {
             </p>
           )}
         </div>
+
+        {/* Activity (#139, collapsible) — audit surface for automatic spending */}
+        <div className="rounded-xl border" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
+          <button
+            onClick={() => setActivityOpen(!activityOpen)}
+            className="flex items-center justify-between w-full p-5 text-left"
+          >
+            <div>
+              <div className="flex items-center gap-2">
+                <History size={13} style={{ color: 'rgb(var(--accent))' }} />
+                <p className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--accent))' }}>
+                  Activity
+                </p>
+                {activityUpdating && (
+                  <span className="text-[11px]" style={{ color: 'rgb(var(--fg-muted))' }}>
+                    · updating…
+                  </span>
+                )}
+              </div>
+              <p className="text-xs mt-1" style={{ color: 'rgb(var(--fg-muted))' }}>
+                Every movement on your node wallet — including what Nook spends automatically.
+              </p>
+            </div>
+            {activityOpen ? (
+              <ChevronUp size={16} style={{ color: 'rgb(var(--fg-muted))' }} />
+            ) : (
+              <ChevronDown size={16} style={{ color: 'rgb(var(--fg-muted))' }} />
+            )}
+          </button>
+          {activityOpen && (
+            <div className="px-5 pb-5">
+              {activity?.degraded && (
+                <p className="text-[11px] mb-2" style={{ color: '#f59e0b' }}>
+                  Block explorer unreachable — showing Nook's own records only.
+                </p>
+              )}
+              {activity && activity.rows.length === 0 && (
+                <p className="text-xs py-3" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  No transactions yet.
+                </p>
+              )}
+              {activity && activity.rows.length > 0 && (
+                <div className="divide-y max-h-80 overflow-y-auto" style={{ borderColor: 'rgb(var(--border))' }}>
+                  {activity.rows.map((row, i) => (
+                    <div key={row.hash ?? i} className="flex items-center gap-3 py-2 text-xs">
+                      {row.direction === 'out' ? (
+                        <ArrowUpRight size={13} className="shrink-0" style={{ color: 'rgb(var(--fg-muted))' }} />
+                      ) : (
+                        <ArrowDownLeft size={13} className="shrink-0" style={{ color: '#4ade80' }} />
+                      )}
+                      <span className="font-medium shrink-0" style={{ color: 'rgb(var(--fg))' }}>
+                        {/* "< 0.0001" (gas-only pings, R4-4) reads wrong with a sign. */}
+                        {row.amount.startsWith('<') ? '' : row.direction === 'out' ? '−' : '+'}
+                        {row.amount} {row.asset}
+                      </span>
+                      <span className="truncate flex-1" style={{ color: 'rgb(var(--fg-muted))' }}>
+                        {row.label ??
+                          (row.counterparty ? `${row.counterparty.slice(0, 8)}…${row.counterparty.slice(-4)}` : '')}
+                      </span>
+                      <span className="shrink-0" style={{ color: 'rgb(var(--fg-muted))' }}>
+                        {new Date(row.at).toLocaleDateString()}
+                      </span>
+                      {row.hash && (
+                        <a
+                          href={`https://gnosisscan.io/tx/${row.hash}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="shrink-0"
+                          style={{ color: 'rgb(var(--fg-muted))' }}
+                          title="View on Gnosisscan"
+                        >
+                          <ExternalLink size={12} />
+                        </a>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {address && (
+                <a
+                  href={`https://gnosisscan.io/address/${address}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-block mt-3 text-[11px] underline"
+                  style={{ color: 'rgb(var(--fg-muted))' }}
+                >
+                  View full history on Gnosisscan →
+                </a>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Withdraw modal */}
@@ -398,7 +513,7 @@ export default function Wallet() {
           onClick={() => !withdrawing && setShowWithdraw(false)}
         >
           <div
-            className="rounded-xl border p-6 w-96 space-y-4"
+            className="rounded-xl border p-6 w-96 space-y-4 max-h-[calc(100vh-2rem)] max-w-[calc(100vw-2rem)] overflow-y-auto"
             style={{ backgroundColor: 'rgb(var(--bg-surface))' }}
             onClick={e => e.stopPropagation()}
           >

@@ -1,38 +1,58 @@
-import { ConnectButton } from '@rainbow-me/rainbowkit'
 import {
   AlertTriangle,
   Contact,
-  Copy,
   Download,
   Globe,
   HardDrive,
-  LogOut,
   Mail,
+  MessageSquare,
   RefreshCw,
   Settings,
   Terminal,
   Wallet,
+  X,
 } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
-import { useDisconnect } from 'wagmi'
 import { weiToDai } from '../api/bee'
-import { useBeeHealth, usePeers, useRestart, useStamps, useStatus, useWallet } from '../api/queries'
+import { resumePendingPropagation } from '../store/transfers'
+import { resumeReclaimableJobs } from '../store/reclaimable-jobs'
+import TransferIndicator from './TransferIndicator'
+import {
+  useReclaimableDrives,
+  useBeeHealth,
+  usePeers,
+  useRestart,
+  useStamps,
+  useStatus,
+  useWallet,
+} from '../api/queries'
+import { serverApi } from '../api/server'
 import { useDerivedKey } from '../hooks/useDerivedKey'
+import { useAutoPublish } from '../hooks/useAutoPublish'
 import { useInboxPolling } from '../hooks/useInboxPolling'
+import { FEEDBACK_URL } from '../lib/links'
+import { isSystemStamp, pickMessagingStamp } from '../lib/system-stamp'
 import { useOutboxDrain } from '../hooks/useOutboxDrain'
-import { hasKnownIdentity } from '../notify/active-identity'
+import { hasKnownIdentity, hasLegacyIdentityPendingMove } from '../notify/active-identity'
 import { primeCricketAudio } from '../lib/cricket'
 import { loadReadCursors, loadThreads, totalUnread } from '../notify/messages'
 import { loadInvitations, pendingInvitations } from '../notify/invitations'
 import { loadContacts } from '../notify/storage'
 import { useRegistryPolling } from '../hooks/useRegistryPolling'
 import { useAppStore } from '../store/app'
+import NotificationBell from './NotificationBell'
+import SwarmIdChip from './SwarmIdChip'
+import SwarmIdDialog from './SwarmIdDialog'
+import ForeignBeeScreen from './ForeignBeeScreen'
+import NookWordmark from './NookWordmark'
 import Onboarding from './Onboarding'
 import {
   Sidebar,
   SidebarFooter,
   SidebarHeader,
+  SidebarLinkItem,
   SidebarMenuItem,
   SidebarProvider,
   SidebarSection,
@@ -40,6 +60,7 @@ import {
   SidebarSeparator,
   SidebarSpacer,
   SidebarTrigger,
+  useSidebar,
 } from './ui/sidebar'
 
 const storageNavItems = [
@@ -54,80 +75,70 @@ const youNavItems = [
 
 const settingsNavItem = { to: '/settings', icon: Settings, label: 'Settings' }
 
+const MOVE_NOTICE_DISMISSED_KEY = 'nook-swarm-id-move-notice-dismissed'
+
 const appNavItems = [{ to: '/apps/website-publisher', icon: Globe, label: 'Publish website' }]
 
-function WalletDropdown({ displayName, address, avatar }: { displayName: string; address: string; avatar?: string }) {
-  const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
-  const { disconnect } = useDisconnect()
+/** Same wordmark as the product site and promo video — smaller when the sidebar is collapsed (80px). */
+function SidebarWordmark() {
+  const { expanded } = useSidebar()
 
-  const handleCopy = useCallback(() => {
-    navigator.clipboard.writeText(address)
-    setOpen(false)
-  }, [address])
-
-  const handleDisconnect = useCallback(() => {
-    disconnect()
-    setOpen(false)
-  }, [disconnect])
-
-  // Close on outside click
-  useEffect(() => {
-    if (!open) return
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', handler)
-
-    return () => document.removeEventListener('mousedown', handler)
-  }, [open])
-
-  return (
-    <div ref={ref} className="relative">
-      <button
-        onClick={() => setOpen(!open)}
-        className="nook-wallet-btn connected flex items-center gap-2 px-3 py-1.5 rounded-full text-xs transition-colors border"
-      >
-        {avatar ? (
-          <img src={avatar} alt="" className="w-4 h-4 rounded-full" />
-        ) : (
-          <div className="w-4 h-4 rounded-full" style={{ backgroundColor: 'rgb(var(--fg-muted))' }} />
-        )}
-        {displayName}
-      </button>
-      {open && (
-        <div
-          className="absolute right-0 top-full mt-1 rounded-lg border py-1 z-50 min-w-[180px]"
-          style={{ backgroundColor: 'rgb(var(--bg-surface))', borderColor: 'rgb(var(--border))' }}
-        >
-          <button
-            onClick={handleCopy}
-            className="flex items-center gap-2.5 w-full px-3 py-2 text-xs transition-colors hover:bg-white/5"
-            style={{ color: 'rgb(var(--fg))' }}
-          >
-            <Copy size={13} style={{ color: 'rgb(var(--fg-muted))' }} />
-            {address.slice(0, 6)}...{address.slice(-4)}
-          </button>
-          <button
-            onClick={handleDisconnect}
-            className="flex items-center gap-2.5 w-full px-3 py-2 text-xs transition-colors hover:bg-white/5"
-            style={{ color: '#ef4444' }}
-          >
-            <LogOut size={13} />
-            Disconnect
-          </button>
-        </div>
-      )}
-    </div>
-  )
+  return <NookWordmark height={expanded ? 14 : 10} className="mb-2.5 text-sidebar-foreground" />
 }
 
 export default function Layout() {
   const { isError: beeOffline, isPending: beeChecking, isSuccess: beeOnline } = useBeeHealth()
   const { data: peers } = usePeers()
   const { data: status } = useStatus()
+  const queryClient = useQueryClient()
+  // Known to be Nook's own node on the ports — not a foreign one (R5-11), and
+  // not unknown yet: nothing below may act on another node's data.
+  const ownNode = status !== undefined && !status.foreignBee
   const restartBee = useRestart()
   const { data: stamps, isSuccess: stampsLoaded } = useStamps()
+  const { data: reclaimableForPick } = useReclaimableDrives()
+  // No network space AT ALL in light mode → identity & messages are dead and
+  // nothing on screen says why (fresh-install finding). Ongoing state → banner.
+  const noUsableMessagingSpace =
+    status?.mode === 'light' &&
+    stampsLoaded &&
+    pickMessagingStamp(stamps, new Set((reclaimableForPick ?? []).map(d => d.batchId))) === null
+  // The reserve was just bought but Bee hasn't confirmed it usable yet
+  // (~2 min of blocks). Asking for money that's already spent contradicts
+  // the "reserved space set aside" bell — show a neutral settling state
+  // instead of the amber funding ask (test-run finding #1).
+  // …also right after the purchase, before Bee lists the new batch at all
+  // (F-6): the wallet already shows less than 2 xBZZ, so without this the
+  // amber "add about 3 xBZZ" banner came back next to the "set aside" bell.
+  const reserveSettingUp =
+    noUsableMessagingSpace &&
+    ((stamps ?? []).some(s => isSystemStamp(s) && !s.usable) || Boolean(status?.reserveBoughtAt))
+  const noMessagingSpace = noUsableMessagingSpace && !reserveSettingUp
+  const { data: walletForReserve } = useWallet()
+  // Funds present for the reserve (#13, reworked per round-3 feedback): the
+  // purchase is AUTOMATIC — no button, no machinery states. The UI just
+  // nudges the server check immediately (instead of its next 60s tick) and
+  // shows one calm informational banner until the reserve is usable. Rough
+  // client-side gate (~2 xBZZ); the endpoint re-checks every guard.
+  const fundsReadyForReserve =
+    ownNode &&
+    noMessagingSpace &&
+    walletForReserve !== undefined &&
+    BigInt(walletForReserve.bzzBalance) >= 20000000000000000n
+  const reserveNudged = useRef(false)
+
+  useEffect(() => {
+    if (!fundsReadyForReserve || reserveNudged.current) return
+    reserveNudged.current = true
+    // Fire-and-forget: the server monitor is the backstop either way.
+    serverApi
+      .createSystemStamp()
+      // Show the new batch as soon as Bee lists it, not on the next 30 s poll.
+      .then(async () => queryClient.invalidateQueries({ queryKey: ['bee', 'stamps'] }))
+      .catch(() => undefined)
+  }, [fundsReadyForReserve])
+  // One blue state from "funds arrived" through "bought, confirming":
+  const reserveInProgress = reserveSettingUp || fundsReadyForReserve
   const { data: wallet, isSuccess: walletLoaded } = useWallet()
   const { devMode, onboardingCompleted, setOnboardingCompleted } = useAppStore()
   const navigate = useNavigate()
@@ -154,12 +165,22 @@ export default function Layout() {
   // Background inbox polling — keeps unread badge fresh whether or not the
   // Messages page is mounted. Side-effect hook; writes to localStorage threads.
   useInboxPolling()
+  // Completes 'make me findable' once signer + reserved space coexist (#130/#131)
+  useAutoPublish()
   // Background on-chain notification polling — surfaces wake-up pings from
   // senders who aren't yet in our contact list (see #62/#63).
   useRegistryPolling()
   // Persistent-outbox drain (#117) — delivers sends left behind by a quit,
   // and keeps retrying failed ones, whichever page is open.
   useOutboxDrain()
+
+  // Re-attach to propagations interrupted by a quit — tags live on the Bee
+  // node, so an unfinished network push resumes visibly (#5).
+  // Deletable-drive jobs run in the backend; re-attach their progress after a reload.
+  useEffect(() => {
+    resumePendingPropagation()
+    resumeReclaimableJobs()
+  }, [])
 
   // Unlock notification audio on the first user gesture so a background chirp
   // (e.g. an incoming invitation) isn't silently blocked by autoplay policy.
@@ -204,14 +225,39 @@ export default function Layout() {
   // arriving messages look lost. The un-namespaced last-identity marker is
   // the one signal that there is an inbox worth unlocking; only users who
   // have actually used messaging ever see this.
-  const { signer: derivedSigner } = useDerivedKey()
+  const { signer: derivedSigner, signIn, deriving } = useDerivedKey()
   const showMessagesPaused = !derivedSigner && hasKnownIdentity()
+
+  // Swarm ID transition (#21): a pre-0.7 wallet-derived identity existed and
+  // nobody has signed in with Swarm ID yet. Replaces the paused banner until
+  // the user signs in or closes it (closing falls back to the paused banner).
+  const [moveNoticeDismissed, setMoveNoticeDismissed] = useState(() => {
+    try {
+      return localStorage.getItem(MOVE_NOTICE_DISMISSED_KEY) !== null
+    } catch {
+      return false
+    }
+  })
+  const showMoveNotice = !derivedSigner && !moveNoticeDismissed && hasLegacyIdentityPendingMove()
 
   // Auto-complete onboarding for existing users upgrading from v0.2.0 (they never had the flag).
   // Once stamps or wallet data loads and shows existing activity, mark onboarding done.
-  if (!onboardingCompleted && stampsLoaded && stamps && stamps.length > 0) setOnboardingCompleted()
+  // Existing users (they own stamps) never get re-onboarded — unless the
+  // debug step-lock is set, which must keep the preview on screen.
+  // Never judged from ANOTHER node's drives or funds (R5-11): with a foreign
+  // node on the ports, this would skip a fresh install's setup for good.
+  if (
+    ownNode &&
+    !onboardingCompleted &&
+    stampsLoaded &&
+    stamps &&
+    stamps.length > 0 &&
+    !localStorage.getItem('nook:onboarding-step')
+  ) {
+    setOnboardingCompleted()
+  }
 
-  if (!onboardingCompleted && walletLoaded && wallet && Number(weiToDai(wallet.nativeTokenBalance)) > 0) {
+  if (ownNode && !onboardingCompleted && walletLoaded && wallet && Number(weiToDai(wallet.nativeTokenBalance)) > 0) {
     setOnboardingCompleted()
   }
 
@@ -221,6 +267,11 @@ export default function Layout() {
   // Returning users: show startup overlay on app load, dismiss once node is fully ready.
   // Wait for peers + stamps so the status dot is green when the overlay lifts.
   const [startupDone, setStartupDone] = useState(false)
+  // Session-dismiss for the auto-extend failure banner: it can be put away,
+  // but a blocked extension is a countdown — a NEW failure (different drives
+  // or reason) or an app restart brings it back. Keyed on the failure set.
+  const [dismissedFailureKey, setDismissedFailureKey] = useState<string | null>(null)
+  const failureKey = (status?.autoExtendFailures ?? []).map(f => `${f.batchId}:${f.reason}`).join('|')
 
   useEffect(() => {
     if (startupDone || !onboardingCompleted) return
@@ -233,8 +284,23 @@ export default function Layout() {
 
   const showOnboarding = !onboardingCompleted || (onboardingCompleted && !startupDone)
 
-  const dotColor = beeChecking ? 'rgb(var(--border))' : isSyncing ? '#f97316' : beeOnline ? '#4ade80' : '#ef4444'
-  const dotLabel = beeChecking ? '···' : isSyncing ? 'sync' : beeOnline ? 'live' : 'off'
+  // Another node on Nook's ports (R7-3): whatever answers health/peers is
+  // THAT node, so its "live" says nothing about ours — which isn't running.
+  const blocked = Boolean(status?.foreignBee)
+  const dotColor = blocked
+    ? '#ef4444'
+    : beeChecking
+      ? 'rgb(var(--border))'
+      : isSyncing
+        ? '#f97316'
+        : beeOnline
+          ? '#4ade80'
+          : '#ef4444'
+  const dotLabel = blocked ? 'blocked' : beeChecking ? '···' : isSyncing ? 'sync' : beeOnline ? 'live' : 'off'
+  const dotTitle = blocked
+    ? 'Another node is using Nook’s ports — your node isn’t running'
+    : `Bee node: ${dotLabel}${beeOnline ? ` · ${peerCount} peers` : ''}`
+  const dotGlow = beeOnline && !blocked
 
   return (
     <SidebarProvider>
@@ -242,15 +308,12 @@ export default function Layout() {
         {/* Sidebar */}
         <Sidebar>
           <SidebarHeader>
-            <span className="text-[10px] font-bold uppercase tracking-widest mb-2 text-sidebar-foreground">Nook</span>
+            <SidebarWordmark />
             {/* Node status dot */}
-            <div
-              className="flex flex-col items-center gap-1 mb-3"
-              title={`Bee node: ${dotLabel}${beeOnline ? ` · ${peerCount} peers` : ''}`}
-            >
+            <div className="flex flex-col items-center gap-1 mb-3" title={dotTitle}>
               <div
                 className="w-2 h-2 rounded-full transition-colors"
-                style={{ backgroundColor: dotColor, boxShadow: beeOnline ? `0 0 6px ${dotColor}` : 'none' }}
+                style={{ backgroundColor: dotColor, boxShadow: dotGlow ? `0 0 6px ${dotColor}` : 'none' }}
               />
               <span className="text-[8px] uppercase tracking-widest font-semibold" style={{ color: dotColor }}>
                 {dotLabel}
@@ -301,10 +364,13 @@ export default function Layout() {
           </SidebarSection>
 
           <SidebarSpacer />
+          {/* Active uploads/downloads — visible from every page (#5) */}
+          <TransferIndicator />
           <SidebarSeparator />
           <SidebarFooter>
             <SidebarSection>
               <SidebarMenuItem to={settingsNavItem.to} icon={settingsNavItem.icon} label={settingsNavItem.label} />
+              <SidebarLinkItem href={FEEDBACK_URL} icon={MessageSquare} label="Send feedback" />
             </SidebarSection>
             <div className="pt-2">
               <SidebarTrigger />
@@ -319,30 +385,13 @@ export default function Layout() {
             <h1 className="text-sm font-semibold uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
               {pageTitle}
             </h1>
-            <ConnectButton.Custom>
-              {({ account, chain, openConnectModal, mounted }) => {
-                if (!mounted) return null
-
-                if (!account || !chain) {
-                  return (
-                    <button
-                      onClick={openConnectModal}
-                      className="nook-wallet-btn flex items-center gap-2 px-3 py-1.5 rounded-full text-xs transition-colors border"
-                    >
-                      Connect Wallet
-                    </button>
-                  )
-                }
-
-                return (
-                  <WalletDropdown
-                    displayName={account.displayName}
-                    address={account.address}
-                    avatar={account.ensAvatar}
-                  />
-                )
-              }}
-            </ConnectButton.Custom>
+            <div className="flex items-center gap-2">
+              <NotificationBell />
+              {/* permanently mounted SDK host (see SwarmIdDialog) */}
+              <SwarmIdDialog />
+              {/* identity lives in Swarm ID; wallets appear only in payment flows */}
+              <SwarmIdChip />
+            </div>
           </div>
 
           {/* Starting up — friendly indicator */}
@@ -357,14 +406,22 @@ export default function Layout() {
           )}
 
           {/* Crash loop — the supervisor gave up restarting Bee (#94) */}
-          {status?.crashLoop && !showOnboarding && (
+          {status?.crashLoop && !status?.foreignBee && !showOnboarding && (
             <div
               className="flex items-center gap-2 px-4 py-2.5 text-xs shrink-0"
               style={{ backgroundColor: 'rgba(239,68,68,0.1)', borderBottom: '1px solid rgba(239,68,68,0.2)' }}
             >
               <AlertTriangle size={13} className="shrink-0" style={{ color: '#ef4444' }} />
               <span style={{ color: '#ef4444' }}>
-                Bee keeps crashing — automatic restarts paused. Check the Logs tab.{' '}
+                Bee keeps crashing — automatic restarts paused.{' '}
+                <button
+                  onClick={() => navigate('/logs')}
+                  className="underline font-semibold"
+                  style={{ color: '#ef4444' }}
+                >
+                  View logs
+                </button>{' '}
+                ·{' '}
                 <button
                   onClick={() => restartBee.mutate()}
                   className="underline font-semibold"
@@ -377,13 +434,22 @@ export default function Layout() {
           )}
 
           {/* Bee down — only shown after it was previously online */}
-          {showDown && !status?.crashLoop && !showOnboarding && (
+          {showDown && !status?.crashLoop && !status?.foreignBee && !showOnboarding && (
             <div
               className="flex items-center gap-2 px-4 py-2.5 text-xs shrink-0"
               style={{ backgroundColor: 'rgba(239,68,68,0.1)', borderBottom: '1px solid rgba(239,68,68,0.2)' }}
             >
               <AlertTriangle size={13} className="shrink-0" style={{ color: '#ef4444' }} />
-              <span style={{ color: '#ef4444' }}>Bee node is not running. Check the Logs tab for details.</span>
+              <span style={{ color: '#ef4444' }}>
+                Bee node is not running.{' '}
+                <button
+                  onClick={() => navigate('/logs')}
+                  className="underline font-semibold"
+                  style={{ color: '#ef4444' }}
+                >
+                  View logs
+                </button>
+              </span>
             </div>
           )}
 
@@ -397,7 +463,7 @@ export default function Layout() {
               <span style={{ color: 'rgb(var(--accent))' }}>
                 Fund your node wallet to start.{' '}
                 <button
-                  onClick={() => navigate('/account')}
+                  onClick={() => navigate('/account?tab=wallet')}
                   className="underline font-semibold"
                   style={{ color: 'rgb(var(--accent))' }}
                 >
@@ -407,19 +473,144 @@ export default function Layout() {
             </div>
           )}
 
+          {/* Auto-extend failure (#129) — a drive is on a countdown and the
+              automatic extension couldn't run. Loud on purpose. */}
+          {(status?.autoExtendFailures?.length ?? 0) > 0 && !showOnboarding && dismissedFailureKey !== failureKey && (
+            <div
+              className="flex items-center gap-2.5 px-4 py-2.5 text-xs shrink-0"
+              style={{ backgroundColor: 'rgba(239,68,68,0.08)', borderBottom: '1px solid rgba(239,68,68,0.2)' }}
+            >
+              <AlertTriangle size={12} className="shrink-0" style={{ color: '#ef4444' }} />
+              <span style={{ color: 'rgb(var(--fg))' }}>
+                {(() => {
+                  const failure = status!.autoExtendFailures![0]
+                  const label =
+                    stamps?.find(s => s.batchID.toLowerCase() === failure.batchId.toLowerCase())?.label ||
+                    `${failure.batchId.slice(0, 8)}…`
+                  const extra =
+                    status!.autoExtendFailures!.length > 1 ? ` (+${status!.autoExtendFailures!.length - 1} more)` : ''
+
+                  return `Couldn't extend "${label}"${extra}: ${failure.reason} `
+                })()}
+                <button
+                  onClick={() => navigate('/account?tab=wallet')}
+                  className="underline font-semibold"
+                  style={{ color: '#ef4444' }}
+                >
+                  Open wallet →
+                </button>
+              </span>
+              <button
+                onClick={() => setDismissedFailureKey(failureKey)}
+                aria-label="Dismiss for now"
+                title="Hide until restart or a new failure"
+                className="ml-auto shrink-0 p-1 -m-1 rounded transition-colors hover:bg-white/10"
+                style={{ color: 'rgb(var(--fg-muted))' }}
+              >
+                <X size={12} />
+              </button>
+            </div>
+          )}
+
           {/* Messages paused — identity not derived this session (#65) */}
-          {showMessagesPaused && !showOnboarding && (
+          {/* No reserved space, light mode (#130) — the money-shaped unlock,
+              said in user terms with the action attached. */}
+          {noMessagingSpace && !fundsReadyForReserve && !showOnboarding && (
+            <div
+              className="flex items-center gap-2.5 px-4 py-2.5 text-xs shrink-0"
+              style={{ backgroundColor: 'rgba(245,158,11,0.08)', borderBottom: '1px solid rgba(245,158,11,0.25)' }}
+            >
+              <AlertTriangle size={12} className="shrink-0" style={{ color: '#f59e0b' }} />
+              <span style={{ color: 'rgb(var(--fg))' }}>
+                Messages and your identity need a small reserved space — add about 3 xBZZ and Nook sets it up
+                automatically within a few minutes.{' '}
+                <button
+                  onClick={() => navigate('/account?tab=wallet')}
+                  className="underline font-semibold"
+                  style={{ color: '#f59e0b' }}
+                >
+                  Open wallet →
+                </button>
+              </span>
+            </div>
+          )}
+
+          {/* Funds present → bought → confirming: one calm automatic state,
+              closed by the "Reserved space…" bell (round-3 wording, user-
+              approved — no button, no machinery). */}
+          {reserveInProgress && !showOnboarding && (
+            <div
+              className="flex items-center gap-2.5 px-4 py-2.5 text-xs shrink-0"
+              style={{ backgroundColor: 'rgba(96,165,250,0.08)', borderBottom: '1px solid rgba(96,165,250,0.2)' }}
+            >
+              <RefreshCw size={12} className="animate-spin shrink-0" style={{ color: '#60a5fa' }} />
+              <span style={{ color: 'rgb(var(--fg))' }}>
+                Setting up your reserved space for messages &amp; identity — this happens automatically. You'll get a
+                notification when it's ready.
+              </span>
+            </div>
+          )}
+
+          {showMoveNotice && !showOnboarding && (
+            <div
+              className="flex items-start gap-2.5 px-4 py-2.5 text-xs shrink-0"
+              style={{ backgroundColor: 'rgba(96,165,250,0.08)', borderBottom: '1px solid rgba(96,165,250,0.2)' }}
+            >
+              <Mail size={12} className="shrink-0 mt-0.5" style={{ color: '#60a5fa' }} />
+              <div className="flex-1 space-y-2" style={{ color: 'rgb(var(--fg))' }}>
+                <p>
+                  <span className="font-semibold">Messaging now uses Swarm ID.</span> Your drives, files and funds are
+                  untouched. Sign in to get your new Nook address, then share it with your contacts again — your old
+                  address stops receiving messages.
+                </p>
+                <button
+                  onClick={async () => signIn()}
+                  disabled={deriving}
+                  className="px-3 py-1.5 rounded-md text-xs font-semibold disabled:opacity-60"
+                  style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
+                >
+                  {deriving ? 'Signing in…' : 'Sign in with Swarm ID'}
+                </button>
+              </div>
+              <button
+                onClick={() => {
+                  try {
+                    localStorage.setItem(MOVE_NOTICE_DISMISSED_KEY, '1')
+                  } catch {
+                    // best-effort
+                  }
+                  setMoveNoticeDismissed(true)
+                }}
+                className="shrink-0 p-0.5 hover:opacity-60"
+                aria-label="Dismiss"
+              >
+                <X size={12} style={{ color: 'rgb(var(--fg-muted))' }} />
+              </button>
+            </div>
+          )}
+
+          {showMessagesPaused && !showMoveNotice && !showOnboarding && (
             <div
               className="flex items-center gap-2.5 px-4 py-2.5 text-xs shrink-0"
               style={{ backgroundColor: 'rgba(96,165,250,0.08)', borderBottom: '1px solid rgba(96,165,250,0.2)' }}
             >
               <Mail size={12} className="shrink-0" style={{ color: '#60a5fa' }} />
-              <span style={{ color: 'rgb(var(--fg))' }}>To use Messages, connect your wallet (top right).</span>
+              <span style={{ color: 'rgb(var(--fg))' }}>To use Messages, sign in with Swarm ID (top right).</span>
             </div>
           )}
 
           <div className="flex-1 overflow-auto flex flex-col">
-            {showOnboarding ? <Onboarding skipReady={onboardingCompleted} /> : <Outlet />}
+            {status?.foreignBee ? (
+              <ForeignBeeScreen
+                foreignBee={status.foreignBee}
+                onRetry={() => restartBee.mutate()}
+                retrying={restartBee.isPending}
+              />
+            ) : showOnboarding ? (
+              <Onboarding skipReady={onboardingCompleted} />
+            ) : (
+              <Outlet />
+            )}
           </div>
         </main>
       </div>

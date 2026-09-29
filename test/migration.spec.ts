@@ -1,3 +1,6 @@
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
 import { deleteKeyFromConfigYaml, readConfigYaml, writeConfigYaml, configYamlExists } from '../src/config'
 import { runMigrations } from '../src/migration'
 
@@ -8,6 +11,19 @@ jest.mock('../src/config', () => ({
   deleteKeyFromConfigYaml: jest.fn(),
 }))
 
+// Marker files and renamed legacy files land in a throwaway folder, never the
+// real Nook data dir.
+let mockDataDir = ''
+jest.mock('../src/path', () => {
+  const { join: joinPath } = jest.requireActual<typeof import('path')>('path')
+
+  return {
+    getPath: (p: string) => joinPath(mockDataDir, p),
+    getLogPath: (p: string) => joinPath(mockDataDir, p),
+  }
+})
+jest.mock('../src/logger', () => ({ logger: { error: jest.fn(), info: jest.fn() } }))
+
 const mockExists = configYamlExists as jest.Mock
 const mockRead = readConfigYaml as jest.Mock
 const mockWrite = writeConfigYaml as jest.Mock
@@ -15,6 +31,11 @@ const mockDelete = deleteKeyFromConfigYaml as jest.Mock
 
 beforeEach(() => {
   jest.clearAllMocks()
+  mockDataDir = mkdtempSync(join(tmpdir(), 'nook-migration-'))
+})
+
+afterEach(() => {
+  rmSync(mockDataDir, { recursive: true, force: true })
 })
 
 describe('runMigrations', () => {
@@ -25,6 +46,12 @@ describe('runMigrations', () => {
       expect(mockRead).not.toHaveBeenCalled()
       expect(mockWrite).not.toHaveBeenCalled()
       expect(mockDelete).not.toHaveBeenCalled()
+    })
+
+    it('marks the one-time RPC move as done on a fresh install', () => {
+      mockExists.mockReturnValue(false)
+      runMigrations()
+      expect(existsSync(join(mockDataDir, '.rpc-relay-migrated'))).toBe(true)
     })
   })
 
@@ -124,10 +151,76 @@ describe('runMigrations', () => {
     })
   })
 
+  describe('RPC relay (R5-3/R5-14)', () => {
+    const RELAY = 'http://127.0.0.1:3054/rpc'
+
+    it.each(['https://rpc.gnosischain.com', 'https://xdai.fairdatasociety.org'])(
+      'moves the old default %s to the relay',
+      old => {
+        mockExists.mockReturnValue(true)
+        mockRead.mockReturnValue({ 'blockchain-rpc-endpoint': old, 'use-postage-snapshot': false })
+        runMigrations()
+        expect(mockWrite).toHaveBeenCalledWith({ 'blockchain-rpc-endpoint': RELAY })
+      },
+    )
+
+    it('keeps a custom RPC the user chose', () => {
+      mockExists.mockReturnValue(true)
+      mockRead.mockReturnValue({ 'blockchain-rpc-endpoint': 'https://my.rpc', 'use-postage-snapshot': false })
+      runMigrations()
+      expect(mockWrite).not.toHaveBeenCalledWith({ 'blockchain-rpc-endpoint': RELAY })
+    })
+
+    it('does not rewrite an install already on the relay', () => {
+      mockExists.mockReturnValue(true)
+      mockRead.mockReturnValue({ 'blockchain-rpc-endpoint': RELAY, 'use-postage-snapshot': false })
+      runMigrations()
+      expect(mockWrite).not.toHaveBeenCalledWith({ 'blockchain-rpc-endpoint': RELAY })
+    })
+
+    it('does not add an RPC to ultra-light installs', () => {
+      mockExists.mockReturnValue(true)
+      mockRead.mockReturnValue({ 'use-postage-snapshot': false })
+      runMigrations()
+      expect(mockWrite).not.toHaveBeenCalledWith({ 'blockchain-rpc-endpoint': RELAY })
+    })
+
+    it('moves an old default that only came in via swap-endpoint', () => {
+      mockExists.mockReturnValue(true)
+      mockRead.mockReturnValue({ 'swap-endpoint': 'https://rpc.gnosischain.com', 'use-postage-snapshot': false })
+      runMigrations()
+      expect(mockWrite).toHaveBeenLastCalledWith({ 'blockchain-rpc-endpoint': RELAY })
+    })
+
+    it('runs once and leaves a marker', () => {
+      mockExists.mockReturnValue(true)
+      mockRead.mockReturnValue({ 'use-postage-snapshot': false })
+      runMigrations()
+      expect(existsSync(join(mockDataDir, '.rpc-relay-migrated'))).toBe(true)
+    })
+
+    // R6-1: a user who picks an old default as "Your own RPC" in Settings keeps it.
+    it.each(['https://rpc.gnosischain.com', 'https://xdai.fairdatasociety.org'])(
+      'keeps %s when the user chose it after the move ran',
+      old => {
+        writeFileSync(join(mockDataDir, '.rpc-relay-migrated'), '')
+        mockExists.mockReturnValue(true)
+        mockRead.mockReturnValue({ 'blockchain-rpc-endpoint': old, 'use-postage-snapshot': false })
+        runMigrations()
+        expect(mockWrite).not.toHaveBeenCalledWith({ 'blockchain-rpc-endpoint': RELAY })
+      },
+    )
+  })
+
   describe('swap-enable (no longer migrated)', () => {
     it('does not modify swap-enable regardless of value', () => {
       mockExists.mockReturnValue(true)
-      mockRead.mockReturnValue({ 'swap-enable': false, 'blockchain-rpc-endpoint': 'http://x', 'use-postage-snapshot': false, 'storage-incentives-enable': false })
+      mockRead.mockReturnValue({
+        'swap-enable': false,
+        'blockchain-rpc-endpoint': 'http://x',
+        'use-postage-snapshot': false,
+        'storage-incentives-enable': false,
+      })
       runMigrations()
       expect(mockWrite).not.toHaveBeenCalledWith(expect.objectContaining({ 'swap-enable': expect.anything() }))
     })
@@ -159,7 +252,11 @@ describe('runMigrations', () => {
 
     it('does not overwrite existing storage-incentives-enable', () => {
       mockExists.mockReturnValue(true)
-      mockRead.mockReturnValue({ 'blockchain-rpc-endpoint': 'http://x', 'use-postage-snapshot': false, 'storage-incentives-enable': false })
+      mockRead.mockReturnValue({
+        'blockchain-rpc-endpoint': 'http://x',
+        'use-postage-snapshot': false,
+        'storage-incentives-enable': false,
+      })
       runMigrations()
       expect(mockWrite).not.toHaveBeenCalledWith({ 'storage-incentives-enable': false })
     })

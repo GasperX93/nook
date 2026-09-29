@@ -17,7 +17,10 @@ import { playCricketChirp } from '../lib/cricket'
 import { useAppStore } from '../store/app'
 import { useDerivedKey } from './useDerivedKey'
 
-const POLL_INTERVAL_MS = 2 * 60_000 // 2 minutes
+// 45 s (R4-10, was 2 min): an invitation is someone waiting on you, and the
+// registry query is cheap — an eth_getLogs over the whole contract history
+// answered in ~180 ms on the public Gnosis RPC; incremental polls are smaller.
+const POLL_INTERVAL_MS = 45_000
 
 export function useRegistryPolling(): void {
   const { signer } = useDerivedKey()
