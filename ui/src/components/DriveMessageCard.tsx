@@ -58,14 +58,26 @@ export default function DriveMessageCard({ m, counterpartName, time, onAdd, onOp
     label = 'Access restored'
     text = (
       <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-        {isSent ? <>{counterpartName} can open this drive again.</> : <>You can open this drive again.</>}
+        {isSent ? (
+          <>{counterpartName} can open this drive again.</>
+        ) : haveIt ? (
+          <>You can open this drive again.</>
+        ) : (
+          <>You can open this drive again — add it to your drives.</>
+        )}
       </p>
     )
 
+    // F-4: "restored" doesn't mean it's in this install's Shared with me —
+    // after a reinstall the list is empty, and Open landed on nothing.
     if (!isSent) {
-      action = (
+      action = haveIt ? (
         <Button onClick={onOpen} size="sm" variant="outline" className="w-full">
           Open
+        </Button>
+      ) : (
+        <Button onClick={() => m.driveShareLink && onAdd(m.driveShareLink, m.driveName)} size="sm" className="w-full">
+          Add drive
         </Button>
       )
     }
