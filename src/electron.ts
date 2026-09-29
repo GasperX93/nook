@@ -48,7 +48,10 @@ export function rebuildElectronTray() {
 }
 
 function getTrayIcon() {
-  return getAssetPath('nookTray-N.png')
+  // macOS: just the N as a template image (…Template.png) — the system tints
+  // it for light and dark menu bars. Windows/Linux don't tint, so they get
+  // the pebble with the N. Electron picks the @2x file on Retina by itself.
+  return getAssetPath(process.platform === 'darwin' ? 'nookTrayTemplate.png' : 'nookTrayColor.png')
 }
 
 export function runElectronTray() {
