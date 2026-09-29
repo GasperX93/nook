@@ -206,6 +206,17 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
         args: [namehash(name), encoded],
       })
       setTxHash(tx)
+      // Sent is not linked: wait for the transaction to be mined, and only a
+      // successful receipt counts (a reverted setContenthash links nothing).
+      setState('pending')
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: tx })
+
+      if (receipt.status !== 'success') {
+        setError('The transaction failed on Ethereum — the domain was not linked. You can try again.')
+        setState('error')
+
+        return
+      }
       setState('success')
       onLinked(name)
     } catch (err) {

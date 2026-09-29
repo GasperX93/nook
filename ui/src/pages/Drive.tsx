@@ -945,26 +945,66 @@ function UpdateFeedModal({ record, onClose }: { record: UploadRecord; onClose: (
     setError(null)
     const stampId = record.driveId
     try {
-      let reference: string
+      // Same safeguards as a first upload: wait out a stopped node, retry a
+      // failed copy, stop at once on a full drive, and follow the new version
+      // to the network (sidebar + bell) instead of trusting the local copy.
+      let tagUid: number | undefined
 
-      if (record.type === 'file') {
-        const res = await beeApi.uploadFile(content.entries[0].file, stampId)
-        reference = res.reference
-      } else {
-        const opts =
-          record.type === 'website' ? { indexDocument: content.indexDocument, errorDocument: '404.html' } : undefined
-        const res = await beeApi.uploadCollection(content.entries, stampId, opts)
-        reference = res.reference
+      try {
+        await waitWhileBeeDown()
+        tagUid = (await beeApi.createTag()).uid
+      } catch {
+        // No tag — the update still works, just without network progress.
+      }
+      let reference = ''
+
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          await waitWhileBeeDown()
+          const res =
+            record.type === 'file'
+              ? await beeApi.uploadFileWithProgress(content.entries[0].file, stampId, undefined, true, tagUid)
+              : await beeApi.uploadCollectionWithProgress(content.entries, stampId, {
+                  ...(record.type === 'website'
+                    ? { indexDocument: content.indexDocument, errorDocument: '404.html' }
+                    : {}),
+                  tagUid,
+                })
+          reference = res.reference
+          break
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : ''
+
+          if (msg.toLowerCase().includes('overissued') || msg.includes('402')) {
+            throw new Error('This drive is full — extend it, or publish the new version to a new drive.')
+          }
+
+          if (attempt === 3) throw err
+          await new Promise(r => setTimeout(r, 3000))
+        }
       }
 
       const topicHex = await topicFromString(record.feedTopic ?? record.name)
       await serverApi.createFeedUpdate(topicHex, reference, stampId)
-      update(record.id, { hash: reference })
+      update(record.id, {
+        hash: reference,
+        size: content.entries.reduce((sum, e) => sum + e.file.size, 0),
+        uploadedAt: Date.now(),
+        ...(tagUid !== undefined ? { pendingTagUid: tagUid } : {}),
+      })
+
+      if (tagUid !== undefined) void followTagPropagation(tagUid, record.name, stampId)
       setPhase('done')
     } catch (err) {
       const raw = err instanceof Error ? err.message : ''
       const match = raw.match(/"message":"([^"]+)"/)
-      setError(match ? match[1] : 'Could not publish the update. Please try again.')
+      setError(
+        match
+          ? match[1]
+          : raw.startsWith('This drive is full')
+            ? raw
+            : 'Could not publish the update. Please try again.',
+      )
       setPhase('select')
     }
   }
@@ -1992,12 +2032,31 @@ interface AddFileProps {
   folderId?: string
 }
 
+/** Text safe inside HTML (file and folder names can contain < > & " '). */
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
 function generateFolderIndex(name: string, entries: FileEntry[]): FileEntry {
-  const rows = entries.map(e => `<li><a href="${e.path}">${e.path}</a></li>`).join('\n')
+  // Names are escaped for display; links are percent-encoded per path segment
+  // so spaces, # and ? in file names still resolve.
+  const rows = entries
+    .map(e => {
+      const href = e.path.split('/').map(encodeURIComponent).join('/')
+
+      return `<li><a href="${escapeHtml(href)}">${escapeHtml(e.path)}</a></li>`
+    })
+    .join('\n')
+  const title = escapeHtml(name)
   const html = `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>${name}</title>
+<html><head><meta charset="utf-8"><title>${title}</title>
 <style>body{font-family:system-ui,sans-serif;max-width:800px;margin:40px auto;padding:0 20px}h1{font-weight:500;margin-bottom:20px}ul{list-style:none;padding:0}li{padding:6px 0;border-bottom:1px solid #eee}a{text-decoration:none;color:#0066cc}a:hover{text-decoration:underline}</style>
-</head><body><h1>${name}</h1><ul>
+</head><body><h1>${title}</h1><ul>
 ${rows}
 </ul></body></html>`
   // Use globalThis.File to avoid conflict with the lucide-react File icon import
@@ -2164,6 +2223,11 @@ function AddFilePanel({
           }
           break
         } catch (err) {
+          const msg = err instanceof Error ? err.message : ''
+
+          // A full drive stays full — retrying only delays "Drive is full".
+          if (msg.toLowerCase().includes('overissued') || msg.includes('402')) throw err
+
           // Bee went down mid-copy: wait and retry without using up an attempt.
           if (freeRetries > 0 && (await waitWhileBeeDown(onBeeWait))) {
             freeRetries--

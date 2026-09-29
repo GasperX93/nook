@@ -5,6 +5,7 @@ import { calcStampCost, depthToBytes, DURATION_PRESETS, getBeeUrl, plurToBzz, SI
 import { useBeeHealth, useBuyStamp, useChainState, useWallet } from '../api/queries'
 import { useAppStore } from '../store/app'
 import { useUpload } from '../hooks/useUpload'
+import { useUploadHistory } from '../hooks/useUploadHistory'
 import ENSModal from '../components/ENSModal'
 import { bzzLink } from '../lib/ens-gateway'
 import { formatBytes } from '../lib/format-bytes'
@@ -153,6 +154,7 @@ export default function WebsitePublisher() {
   const { gatewayUrl } = useAppStore()
   const buyStamp = useBuyStamp()
   const { upload, setEnsDomain } = useUpload()
+  const { records } = useUploadHistory()
 
   const selectedSize = SIZE_PRESETS[sizeIdx]
   const selectedDuration = DURATION_PRESETS[durationIdx]
@@ -192,6 +194,11 @@ export default function WebsitePublisher() {
   })()
   const publishBlocker: 'price' | 'funds' | null = reusableStamp ? null : !cost ? 'price' : !canAfford ? 'funds' : null
   const xbzz = (v: string | number) => Number(v).toFixed(2)
+  // Permanent address = this node + the name (a feed topic). Another site
+  // already published under the same name would be repointed here.
+  const addressName = content ? feedTopic.trim() || driveName.trim() || content.name : ''
+  const addressClash =
+    feedEnabled && addressName ? records.find(r => r.hasFeed && r.feedTopic === addressName) : undefined
 
   // ── Content selection ─────────────────────────────────────────────────────
 
@@ -589,7 +596,7 @@ export default function WebsitePublisher() {
                     className="text-xs uppercase tracking-widest block mb-2"
                     style={{ color: 'rgb(var(--fg-muted))' }}
                   >
-                    Feed name
+                    Permanent address name
                   </label>
                   <input
                     type="text"
@@ -599,6 +606,14 @@ export default function WebsitePublisher() {
                     className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-none"
                     style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
                   />
+                  {/* The address is your node + this name: the same name means the
+                      same address, so publishing would repoint an existing site. */}
+                  {addressClash && (
+                    <p className="text-xs mt-2" style={{ color: '#d97706' }}>
+                      Your site “{addressClash.name}” already uses this name. Publishing will point its permanent
+                      address to this site instead — choose another name to keep both.
+                    </p>
+                  )}
                 </div>
               </>
             )}

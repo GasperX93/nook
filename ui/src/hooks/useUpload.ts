@@ -71,11 +71,13 @@ async function pollStampUsable(id: string, onPhase?: (phase: string) => void): P
     }
   }
 
-  throw new Error('Stamp did not become usable after 2 minutes. It may be expired or invalid.')
+  throw new Error(
+    'The storage for this site didn’t become ready within 2 minutes. Try again — your storage is already paid for.',
+  )
 }
 
 export function useUpload() {
-  const { add: addRecord, update: updateRecord, setEnsDomain } = useUploadHistory()
+  const { records, add: addRecord, update: updateRecord, setEnsDomain } = useUploadHistory()
 
   async function upload(options: UploadOptions): Promise<UploadResult> {
     const {
@@ -212,8 +214,12 @@ export function useUpload() {
     // before the long propagation wait so leaving the wizard can't lose it.
     // Feed details are patched in below once created.
     const pendingTag = uploadTagUid !== undefined && !encrypted ? uploadTagUid : undefined
-    const recordId = crypto.randomUUID()
-    addRecord({
+    // A retry after a failed later step (e.g. the permanent address) uploads
+    // the same content to the same drive — Swarm gives it the same address —
+    // so it updates that record instead of adding a duplicate.
+    const existing = records.find(r => r.driveId === driveId && r.hash === reference && r.type === type)
+    const recordId = existing?.id ?? crypto.randomUUID()
+    const record = {
       id: recordId,
       name,
       hash: reference,
@@ -226,7 +232,10 @@ export function useUpload() {
       isEncrypted: encrypted || undefined,
       actHistoryRef: uploadHistoryAddress || undefined,
       ...(pendingTag !== undefined ? { pendingTagUid: pendingTag } : {}),
-    })
+    }
+
+    if (existing) updateRecord(recordId, record)
+    else addRecord(record)
 
     // Stage 2 (#92): the XHR bar only measured bytes reaching the LOCAL node.
     // For deferred uploads, follow the tag until the content is actually on the
