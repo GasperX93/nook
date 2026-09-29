@@ -252,10 +252,25 @@ describe('wallet activity', () => {
     expect(byHash('0x3333')).toBe('Drive extension')
   })
 
+  it('labels every deposit into the node’s chequebook, even without a ledger record', async () => {
+    const CHEQUEBOOK = '0x' + 'ce'.repeat(20)
+    const bee: ActivityFetch = async url =>
+      url.endsWith('/chequebook/address')
+        ? new Response(JSON.stringify({ chequebookAddress: CHEQUEBOOK }), { status: 200 })
+        : new Response(JSON.stringify({ stamps: [] }), { status: 200 })
+
+    const activity = await getWalletActivity(
+      explorer({ transfers: [bzzTransfer('10000000000000000', '0x' + ME, CHEQUEBOOK)] }),
+      bee,
+    )
+
+    expect(activity.rows[0]).toMatchObject({ direction: 'out', asset: 'xBZZ', label: 'Bandwidth deposit' })
+  })
+
   it('degrades to ledger-only rows when the explorer is down', async () => {
     pushNotification({
       type: 'chequebook-funded',
-      title: 'Chequebook topped up',
+      title: 'Bandwidth deposit',
       body: '',
       data: { amountPlur: '5000000000000000' },
     })
@@ -264,7 +279,7 @@ describe('wallet activity', () => {
 
     expect(activity.degraded).toBe(true)
     expect(activity.rows).toHaveLength(1)
-    expect(activity.rows[0]).toMatchObject({ label: 'Chequebook top-up (bandwidth)', amount: '0.5000' })
+    expect(activity.rows[0]).toMatchObject({ label: 'Bandwidth deposit', amount: '0.5000' })
     expect(activity.rows[0].hash).toBeUndefined()
   })
 })
