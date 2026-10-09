@@ -193,23 +193,23 @@ export default function Settings() {
                   {systemStamp.usable && systemStamp.batchTTL > 0
                     ? ` · ${Math.floor(systemStamp.batchTTL / 86400)} days left`
                     : ' · preparing…'}
-                  {autoRenewOn ? ' · renews automatically' : ''}
+                  {autoRenewOn ? ' · extends automatically' : ''}
                 </p>
                 <div className="flex items-center gap-3">
                   <Switch
                     checked={Boolean(autoRenewOn)}
                     onCheckedChange={toggleAutoRenew}
                     disabled={renewSaving || autoRenewOn === null}
-                    aria-label="Renew automatically"
+                    aria-label="Extend automatically"
                   />
                   <span className="text-xs" style={{ color: 'rgb(var(--fg))' }}>
-                    Renew automatically
+                    Extend automatically
                   </span>
                 </div>
                 {confirmingRenewOff && (
                   <div className="space-y-2">
                     <p className="text-xs" style={{ color: '#f59e0b' }}>
-                      Turn off automatic renewal? Without it, new people won't be able to find you and unsent messages
+                      Turn off automatic extension? Without it, new people won't be able to find you and unsent messages
                       may be lost when the space expires.
                     </p>
                     <div className="flex items-center gap-2">
@@ -222,15 +222,15 @@ export default function Settings() {
                         Turn off anyway
                       </Button>
                       <Button variant="ghost" size="sm" onClick={() => setConfirmingRenewOff(false)}>
-                        Keep renewing
+                        Keep it on
                       </Button>
                     </div>
                   </div>
                 )}
                 {autoRenewOn === false && (
                   <p className="text-xs" style={{ color: '#f59e0b' }}>
-                    Without renewal, new people won't be able to find you and unsent messages may be lost when the space
-                    expires.
+                    Without automatic extension, new people won't be able to find you and unsent messages may be lost
+                    when the space expires.
                   </p>
                 )}
               </>
