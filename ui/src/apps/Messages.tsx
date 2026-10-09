@@ -1,7 +1,7 @@
 import { Bee } from '@ethersphere/bee-js'
 import { identity, mailbox, registry } from '@swarm-notify/sdk'
 import { Mail, Send } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 
 import { useReclaimableDrives, useAddresses, useStamps } from '../api/queries'
 import AddSharedDriveModal from '../components/AddSharedDriveModal'
@@ -53,12 +53,28 @@ function friendlyError(e: unknown): string {
   return raw.split('\n')[0].slice(0, 200) || 'Something went wrong. Please try again.'
 }
 
-function formatTime(ts: number): string {
-  const d = new Date(ts)
-  const today = new Date()
-  const sameDay = d.toDateString() === today.toDateString()
+/** Messages from one person less than this apart sit together as one group. */
+const GROUP_WINDOW_MS = 5 * 60 * 1000
 
-  return sameDay ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : d.toLocaleString()
+function clockTime(ts: number): string {
+  return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
+function isSameDay(a: number, b: number): boolean {
+  return new Date(a).toDateString() === new Date(b).toDateString()
+}
+
+/** Label for the pill between days: Today, Yesterday, or the date. */
+function dayLabel(ts: number): string {
+  const now = Date.now()
+
+  if (isSameDay(ts, now)) return 'Today'
+
+  if (isSameDay(ts, now - 24 * 60 * 60 * 1000)) return 'Yesterday'
+  const d = new Date(ts)
+  const sameYear = d.getFullYear() === new Date(now).getFullYear()
+
+  return d.toLocaleDateString([], { day: 'numeric', month: 'long', ...(sameYear ? {} : { year: 'numeric' }) })
 }
 
 interface MessagesProps {
@@ -654,40 +670,78 @@ export default function Messages({ initialContactId, hideContactList, hideThread
                 <ConnectionStatusBadge state={connectionState} contactId={selected.id} />
               </div>
             )}
-            <div ref={scrollRef} className="flex-1 overflow-auto px-6 py-4 flex flex-col gap-3">
+            <div ref={scrollRef} className="flex-1 overflow-auto px-6 py-4 flex flex-col">
               {selectedThread.length === 0 ? (
                 <p className="text-sm m-auto" style={{ color: 'rgb(var(--fg-muted))' }}>
                   No messages yet. Say hello.
                 </p>
               ) : (
-                selectedThread.map(m => {
-                  if (m.kind && m.kind !== 'message' && m.driveShareLink) {
+                selectedThread.map((m, i) => {
+                  const prev = selectedThread[i - 1]
+                  const newDay = !prev || !isSameDay(prev.ts, m.ts)
+                  const isCard = Boolean(m.kind && m.kind !== 'message' && m.driveShareLink)
+                  const prevIsCard = Boolean(prev?.kind && prev.kind !== 'message' && prev.driveShareLink)
+                  // Same person, same day, within a few minutes: stack tightly.
+                  const grouped =
+                    prev !== undefined &&
+                    !newDay &&
+                    !isCard &&
+                    !prevIsCard &&
+                    prev.direction === m.direction &&
+                    m.ts - prev.ts < GROUP_WINDOW_MS
+                  // The day pill carries its own spacing; otherwise tight inside a group.
+                  let gap = grouped ? 'mt-0.5' : 'mt-3'
+
+                  if (i === 0 || newDay) gap = ''
+                  const sent = m.direction === 'sent'
+                  const dayPill = newDay ? (
+                    <p
+                      className={`self-center rounded-full px-3 py-0.5 text-[10px] bg-muted text-muted-foreground mb-3 ${
+                        i === 0 ? '' : 'mt-4'
+                      }`}
+                    >
+                      {dayLabel(m.ts)}
+                    </p>
+                  ) : null
+
+                  if (isCard) {
                     return (
-                      <DriveMessageCard
-                        key={m.id}
-                        m={m}
-                        counterpartName={selected.nickname}
-                        time={formatTime(m.ts)}
-                        onAdd={(link, driveName) => setImportingLink({ link, driveName })}
-                        onOpen={() => navigate('/drive?tab=shared')}
-                        status={renderDeliveryStatus(m)}
-                      />
+                      <Fragment key={m.id}>
+                        {dayPill}
+                        <div className={`flex flex-col ${gap}`}>
+                          <DriveMessageCard
+                            m={m}
+                            counterpartName={selected.nickname}
+                            time={clockTime(m.ts)}
+                            onAdd={(link, driveName) => setImportingLink({ link, driveName })}
+                            onOpen={() => navigate('/drive?tab=shared')}
+                            status={renderDeliveryStatus(m)}
+                          />
+                        </div>
+                      </Fragment>
                     )
                   }
 
                   return (
-                    <div
-                      key={m.id}
-                      className={`max-w-[70%] rounded-2xl px-4 py-2 ${
-                        m.direction === 'sent' ? 'self-end bg-muted' : 'self-start bg-background border'
-                      }`}
-                    >
-                      <p className="text-sm whitespace-pre-wrap break-words text-foreground">{m.body}</p>
-                      <p className="text-[10px] mt-1 text-right text-muted-foreground">
-                        {m.direction === 'sent' ? 'You' : selected.nickname} | {formatTime(m.ts)}
-                      </p>
-                      {renderDeliveryStatus(m)}
-                    </div>
+                    <Fragment key={m.id}>
+                      {dayPill}
+                      <div className={`max-w-[70%] flex flex-col ${sent ? 'self-end items-end' : 'self-start'} ${gap}`}>
+                        <div
+                          className={`max-w-full rounded-2xl px-3 py-1.5 flex items-end gap-x-2 ${
+                            sent ? 'bg-primary text-primary-foreground' : 'bg-muted text-foreground'
+                          }`}
+                        >
+                          <p className="text-sm whitespace-pre-wrap break-words min-w-0 flex-1">{m.body}</p>
+                          <span
+                            className="text-[10px] leading-5 opacity-60 shrink-0"
+                            title={new Date(m.ts).toLocaleString()}
+                          >
+                            {clockTime(m.ts)}
+                          </span>
+                        </div>
+                        {renderDeliveryStatus(m)}
+                      </div>
+                    </Fragment>
                   )
                 })
               )}
