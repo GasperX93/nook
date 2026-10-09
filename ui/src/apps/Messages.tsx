@@ -1,14 +1,14 @@
 import { Bee } from '@ethersphere/bee-js'
 import { identity, mailbox, registry } from '@swarm-notify/sdk'
 import { Mail, Send } from 'lucide-react'
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { useReclaimableDrives, useAddresses, useStamps } from '../api/queries'
 import AddSharedDriveModal from '../components/AddSharedDriveModal'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Textarea } from '../components/ui/textarea'
-import DriveMessageCard from '../components/DriveMessageCard'
+import MessageThread from '../components/MessageThread'
 import { useSharedDrives } from '../hooks/useSharedDrives'
 import { useNavigate } from 'react-router-dom'
 
@@ -51,30 +51,6 @@ function friendlyError(e: unknown): string {
   const raw = (e as Error)?.message ?? ''
 
   return raw.split('\n')[0].slice(0, 200) || 'Something went wrong. Please try again.'
-}
-
-/** Messages from one person less than this apart sit together as one group. */
-const GROUP_WINDOW_MS = 5 * 60 * 1000
-
-function clockTime(ts: number): string {
-  return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-}
-
-function isSameDay(a: number, b: number): boolean {
-  return new Date(a).toDateString() === new Date(b).toDateString()
-}
-
-/** Label for the pill between days: Today, Yesterday, or the date. */
-function dayLabel(ts: number): string {
-  const now = Date.now()
-
-  if (isSameDay(ts, now)) return 'Today'
-
-  if (isSameDay(ts, now - 24 * 60 * 60 * 1000)) return 'Yesterday'
-  const d = new Date(ts)
-  const sameYear = d.getFullYear() === new Date(now).getFullYear()
-
-  return d.toLocaleDateString([], { day: 'numeric', month: 'long', ...(sameYear ? {} : { year: 'numeric' }) })
 }
 
 interface MessagesProps {
@@ -676,74 +652,13 @@ export default function Messages({ initialContactId, hideContactList, hideThread
                   No messages yet. Say hello.
                 </p>
               ) : (
-                selectedThread.map((m, i) => {
-                  const prev = selectedThread[i - 1]
-                  const newDay = !prev || !isSameDay(prev.ts, m.ts)
-                  const isCard = Boolean(m.kind && m.kind !== 'message' && m.driveShareLink)
-                  const prevIsCard = Boolean(prev?.kind && prev.kind !== 'message' && prev.driveShareLink)
-                  // Same person, same day, within a few minutes: stack tightly.
-                  const grouped =
-                    prev !== undefined &&
-                    !newDay &&
-                    !isCard &&
-                    !prevIsCard &&
-                    prev.direction === m.direction &&
-                    m.ts - prev.ts < GROUP_WINDOW_MS
-                  // The day pill carries its own spacing; otherwise tight inside a group.
-                  let gap = grouped ? 'mt-0.5' : 'mt-3'
-
-                  if (i === 0 || newDay) gap = ''
-                  const sent = m.direction === 'sent'
-                  const dayPill = newDay ? (
-                    <p
-                      className={`self-center rounded-full px-3 py-0.5 text-[10px] bg-muted text-muted-foreground mb-3 ${
-                        i === 0 ? '' : 'mt-4'
-                      }`}
-                    >
-                      {dayLabel(m.ts)}
-                    </p>
-                  ) : null
-
-                  if (isCard) {
-                    return (
-                      <Fragment key={m.id}>
-                        {dayPill}
-                        <div className={`flex flex-col ${gap}`}>
-                          <DriveMessageCard
-                            m={m}
-                            counterpartName={selected.nickname}
-                            time={clockTime(m.ts)}
-                            onAdd={(link, driveName) => setImportingLink({ link, driveName })}
-                            onOpen={() => navigate('/drive?tab=shared')}
-                            status={renderDeliveryStatus(m)}
-                          />
-                        </div>
-                      </Fragment>
-                    )
-                  }
-
-                  return (
-                    <Fragment key={m.id}>
-                      {dayPill}
-                      <div className={`max-w-[70%] flex flex-col ${sent ? 'self-end items-end' : 'self-start'} ${gap}`}>
-                        <div
-                          className={`max-w-full rounded-2xl px-3 py-1.5 flex items-end gap-x-2 ${
-                            sent ? 'bg-primary text-primary-foreground' : 'bg-muted text-foreground'
-                          }`}
-                        >
-                          <p className="text-sm whitespace-pre-wrap break-words min-w-0 flex-1">{m.body}</p>
-                          <span
-                            className="text-[10px] leading-5 opacity-60 shrink-0"
-                            title={new Date(m.ts).toLocaleString()}
-                          >
-                            {clockTime(m.ts)}
-                          </span>
-                        </div>
-                        {renderDeliveryStatus(m)}
-                      </div>
-                    </Fragment>
-                  )
-                })
+                <MessageThread
+                  thread={selectedThread}
+                  counterpartName={selected.nickname}
+                  onAddDrive={(link, driveName) => setImportingLink({ link, driveName })}
+                  onOpenDrive={() => navigate('/drive?tab=shared')}
+                  renderStatus={renderDeliveryStatus}
+                />
               )}
             </div>
             <div className="border-t p-4 space-y-2" style={{ borderColor: 'rgb(var(--border))' }}>
