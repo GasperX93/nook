@@ -45,9 +45,20 @@ interface Props {
   onOpenDrive: () => void
   /** Delivery footer for a sent message (sending… / retry); null when there is nothing to say. */
   renderStatus: (m: StoredMessage) => ReactNode
+  /** Fill + text classes for own / the other person's bubbles. The dev preview overrides them to compare looks. */
+  ownClassName?: string
+  theirClassName?: string
 }
 
-export default function MessageThread({ thread, counterpartName, onAddDrive, onOpenDrive, renderStatus }: Props) {
+export default function MessageThread({
+  thread,
+  counterpartName,
+  onAddDrive,
+  onOpenDrive,
+  renderStatus,
+  ownClassName = 'bg-primary text-primary-foreground',
+  theirClassName = 'bg-muted text-foreground',
+}: Props) {
   return (
     <>
       {thread.map((m, i) => {
@@ -101,7 +112,7 @@ export default function MessageThread({ thread, counterpartName, onAddDrive, onO
             <div className={`max-w-[70%] flex flex-col ${sent ? 'self-end items-end' : 'self-start'} ${gap}`}>
               <div
                 className={`max-w-full rounded-2xl px-3 py-1.5 flex items-end gap-x-2 ${
-                  sent ? 'bg-primary text-primary-foreground' : 'bg-muted text-foreground'
+                  sent ? ownClassName : theirClassName
                 }`}
               >
                 <p className="text-sm whitespace-pre-wrap break-words min-w-0 flex-1">{m.body}</p>
