@@ -449,7 +449,7 @@ function BuyDriveModal({
               className="mt-0.5 accent-orange-500"
             />
             <div className="flex-1">
-              <p className="text-xs font-medium">Auto-renew</p>
+              <p className="text-xs font-medium">Auto-extend</p>
               <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
                 {keepAlive
                   ? `Extends by ${keepAliveDuration.label.toLowerCase()} whenever less than 10 days remain, paid from your wallet. Change anytime under Extend drive.`
@@ -801,7 +801,7 @@ function ExtendModal({
         <div>
           <label className="flex items-center justify-between mb-2 cursor-pointer">
             <span className="text-xs uppercase tracking-widest" style={{ color: 'rgb(var(--fg-muted))' }}>
-              Auto-renew
+              Auto-extend
             </span>
             <Switch checked={autoEnabled} onCheckedChange={setAutoEnabled} disabled={!autoLoaded} />
           </label>
@@ -1934,7 +1934,7 @@ function DriveCard({
               }
             >
               <RefreshCw size={11} />
-              auto-renew
+              auto-extend
             </button>
           )}
 
@@ -1984,7 +1984,7 @@ function DriveCard({
                       style={{ color: 'rgb(var(--fg))' }}
                     >
                       <RefreshCw size={13} style={{ color: 'rgb(var(--fg-muted))' }} />
-                      Auto-renew…
+                      Auto-extend…
                     </button>
                   )}
                   {encrypted && onShare && (
