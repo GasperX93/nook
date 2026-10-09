@@ -1,6 +1,7 @@
 /**
  * The bubbles of one conversation, laid out the way chat apps do it:
- * own messages on the right in a solid fill, the other person's on the left,
+ * own messages on the right in a grey fill, the other person's on the left
+ * in an outlined bubble (two greys — the app stays black and white),
  * the time inside each bubble, messages from one person within a few minutes
  * stacked tightly, and a pill between days.
  */
@@ -45,20 +46,9 @@ interface Props {
   onOpenDrive: () => void
   /** Delivery footer for a sent message (sending… / retry); null when there is nothing to say. */
   renderStatus: (m: StoredMessage) => ReactNode
-  /** Fill + text classes for own / the other person's bubbles. The dev preview overrides them to compare looks. */
-  ownClassName?: string
-  theirClassName?: string
 }
 
-export default function MessageThread({
-  thread,
-  counterpartName,
-  onAddDrive,
-  onOpenDrive,
-  renderStatus,
-  ownClassName = 'bg-primary text-primary-foreground',
-  theirClassName = 'bg-muted text-foreground',
-}: Props) {
+export default function MessageThread({ thread, counterpartName, onAddDrive, onOpenDrive, renderStatus }: Props) {
   return (
     <>
       {thread.map((m, i) => {
@@ -111,8 +101,8 @@ export default function MessageThread({
             {dayPill}
             <div className={`max-w-[70%] flex flex-col ${sent ? 'self-end items-end' : 'self-start'} ${gap}`}>
               <div
-                className={`max-w-full rounded-2xl px-3 py-1.5 flex items-end gap-x-2 ${
-                  sent ? ownClassName : theirClassName
+                className={`max-w-full rounded-2xl px-3 py-1.5 flex items-end gap-x-2 text-foreground ${
+                  sent ? 'bg-[#e5e5e5] dark:bg-[#2c3140]' : 'bg-background border'
                 }`}
               >
                 <p className="text-sm whitespace-pre-wrap break-words min-w-0 flex-1">{m.body}</p>

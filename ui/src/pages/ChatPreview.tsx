@@ -78,20 +78,7 @@ function previewStatus(m: StoredMessage) {
   )
 }
 
-// Looks to compare for own / their bubbles. `undefined` = the component's default.
-const LOOKS: { name: string; own?: string; their?: string }[] = [
-  { name: 'Dark (current)' },
-  { name: 'A · Soft tint', own: 'bg-[#d9e9f6] text-[#0a0a0a] dark:bg-[#20385a] dark:text-[#f0f4f8]' },
-  {
-    name: 'B · Two greys',
-    own: 'bg-[#e5e5e5] text-[#0a0a0a] dark:bg-[#2c3140] dark:text-[#f0f4f8]',
-    their: 'bg-background border text-foreground',
-  },
-  { name: 'C · Softer dark', own: 'bg-[#3f3f46] text-white dark:bg-[#d4d4d8] dark:text-[#0a0a0a]' },
-]
-
 export default function ChatPreview() {
-  const [look, setLook] = useState(0)
   const [thread] = useState(sample)
 
   return (
@@ -103,18 +90,6 @@ export default function ChatPreview() {
         <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
           Made-up messages. Nothing here is saved or sent.
         </p>
-        <div className="flex flex-wrap gap-2 mt-2">
-          {LOOKS.map((l, i) => (
-            <button
-              key={l.name}
-              onClick={() => setLook(i)}
-              className={`text-xs rounded-full border px-3 py-1 ${i === look ? 'bg-primary text-primary-foreground' : ''}`}
-              style={{ borderColor: 'rgb(var(--border))' }}
-            >
-              {l.name}
-            </button>
-          ))}
-        </div>
       </div>
       <div className="flex-1 overflow-auto px-6 py-4 flex flex-col">
         <MessageThread
@@ -123,8 +98,6 @@ export default function ChatPreview() {
           onAddDrive={() => undefined}
           onOpenDrive={() => undefined}
           renderStatus={previewStatus}
-          ownClassName={LOOKS[look].own}
-          theirClassName={LOOKS[look].their}
         />
       </div>
     </div>
