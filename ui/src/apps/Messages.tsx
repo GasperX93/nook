@@ -8,11 +8,13 @@ import AddSharedDriveModal from '../components/AddSharedDriveModal'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Textarea } from '../components/ui/textarea'
+import DraftToolbar from '../components/DraftToolbar'
 import MessageThread from '../components/MessageThread'
 import { useSharedDrives } from '../hooks/useSharedDrives'
 import { useNavigate } from 'react-router-dom'
 
 import { useDerivedKey } from '../hooks/useDerivedKey'
+import { DRAFT_MAX_HEIGHT, useAutoGrow, useDraftFormatting } from '../hooks/useDraftFormatting'
 import { pickMessagingStamp } from '../lib/system-stamp'
 import { hexToBytes } from '../lib/hex'
 import { REGISTRY_ADDRESS } from '../notify/constants'
@@ -52,9 +54,6 @@ function friendlyError(e: unknown): string {
 
   return raw.split('\n')[0].slice(0, 200) || 'Something went wrong. Please try again.'
 }
-
-/** Tallest the message box grows before it scrolls: about eight lines. */
-const DRAFT_MAX_HEIGHT = 190
 
 interface MessagesProps {
   /** Optional contact ID to preselect (used when opening Messages scoped to a single contact). */
@@ -498,17 +497,12 @@ export default function Messages({ initialContactId, hideContactList, hideThread
     }
   }
 
-  // The message box grows with what's typed, up to DRAFT_MAX_HEIGHT, then
-  // scrolls — and shrinks back once the draft is sent or cleared.
-  useEffect(() => {
-    const el = draftRef.current
-
-    if (!el) return
-    el.style.height = 'auto'
-    el.style.height = `${Math.min(el.scrollHeight + 2, DRAFT_MAX_HEIGHT)}px`
-  }, [draft, selectedId])
+  useAutoGrow(draftRef, draft, selectedId)
+  const format = useDraftFormatting(draftRef, draft, setDraft)
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (format.onKeyDown(e)) return
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       void handleSend()
@@ -741,6 +735,7 @@ export default function Messages({ initialContactId, hideContactList, hideThread
                 </div>
               )}
 
+              {connectionState === 'connected' && <DraftToolbar format={format} />}
               <div className="flex gap-2 items-end">
                 <Textarea
                   value={draft}
@@ -785,9 +780,7 @@ export default function Messages({ initialContactId, hideContactList, hideThread
                 </Button>
               </div>
               {connectionState === 'connected' && (
-                <p className="text-[10px] text-muted-foreground">
-                  Shift+Enter for a new line · **bold** · *italic* · `code` · “- ” for a list
-                </p>
+                <p className="text-[10px] text-muted-foreground">Enter to send · Shift+Enter for a new line</p>
               )}
             </div>
           </>

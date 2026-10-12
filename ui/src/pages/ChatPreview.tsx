@@ -4,9 +4,12 @@
  * Nothing here reads or writes contacts, threads or the network — it exists so
  * the bubbles can be looked at without messaging a real person.
  */
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
+import DraftToolbar from '../components/DraftToolbar'
 import MessageThread from '../components/MessageThread'
+import { Textarea } from '../components/ui/textarea'
+import { DRAFT_MAX_HEIGHT, useAutoGrow, useDraftFormatting } from '../hooks/useDraftFormatting'
 import type { StoredMessage } from '../notify/messages'
 
 const MIN = 60 * 1000
@@ -89,7 +92,36 @@ function previewStatus(m: StoredMessage) {
 }
 
 export default function ChatPreview() {
-  const [thread] = useState(sample)
+  const [thread, setThread] = useState(sample)
+  const [draft, setDraft] = useState('')
+  const draftRef = useRef<HTMLTextAreaElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
+
+  // Show the newest bubble, like the real chat does.
+  useEffect(() => {
+    const el = scrollRef.current
+
+    if (el) el.scrollTop = el.scrollHeight
+  }, [thread.length])
+
+  useAutoGrow(draftRef, draft)
+  const format = useDraftFormatting(draftRef, draft, setDraft)
+
+  // "Sending" here only adds a bubble to this page.
+  function addLocally() {
+    if (!draft.trim()) return
+    setThread(t => [
+      ...t,
+      {
+        id: `preview-typed-${t.length}`,
+        counterparty: t[0].counterparty,
+        ts: Date.now(),
+        body: draft,
+        direction: 'sent',
+      },
+    ])
+    setDraft('')
+  }
 
   return (
     <div className="flex flex-col h-full max-w-3xl">
@@ -101,7 +133,7 @@ export default function ChatPreview() {
           Made-up messages. Nothing here is saved or sent.
         </p>
       </div>
-      <div className="flex-1 overflow-auto px-6 py-4 flex flex-col">
+      <div ref={scrollRef} className="flex-1 overflow-auto px-6 py-4 flex flex-col">
         <MessageThread
           thread={thread}
           counterpartName="Novak"
@@ -109,6 +141,27 @@ export default function ChatPreview() {
           onOpenDrive={() => undefined}
           renderStatus={previewStatus}
         />
+      </div>
+      <div className="border-t p-4 space-y-2" style={{ borderColor: 'rgb(var(--border))' }}>
+        <DraftToolbar format={format} />
+        <Textarea
+          ref={draftRef}
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          onKeyDown={e => {
+            if (format.onKeyDown(e)) return
+
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault()
+              addLocally()
+            }
+          }}
+          placeholder="Try it — Enter adds a bubble on this page only"
+          rows={1}
+          className="resize-none"
+          style={{ minHeight: 40, maxHeight: DRAFT_MAX_HEIGHT }}
+        />
+        <p className="text-[10px] text-muted-foreground">Enter to send · Shift+Enter for a new line</p>
       </div>
     </div>
   )
