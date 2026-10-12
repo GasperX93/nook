@@ -3,7 +3,7 @@
  * the Markdown symbols around the selection (or at the cursor) — see
  * hooks/useDraftFormatting.
  */
-import { Bold, Code, Italic, List, Maximize2, Minimize2 } from 'lucide-react'
+import { Bold, ChevronDown, ChevronUp, Code, Italic, List } from 'lucide-react'
 import type { ReactNode } from 'react'
 
 import type { DraftFormatting } from '../hooks/useDraftFormatting'
@@ -35,7 +35,7 @@ interface Props {
 
 export default function DraftToolbar({ format, expanded, onToggleExpand }: Props) {
   return (
-    <div className="flex items-center gap-0.5" role="toolbar" aria-label="Formatting">
+    <div className="relative flex items-center gap-0.5" role="toolbar" aria-label="Formatting">
       <ToolButton label={`Bold (${MOD}B)`} onClick={format.bold}>
         <Bold size={14} />
       </ToolButton>
@@ -48,13 +48,18 @@ export default function DraftToolbar({ format, expanded, onToggleExpand }: Props
       <ToolButton label={`List (${MOD}${MOD === '⌘' ? '⇧' : 'Shift+'}8)`} onClick={format.list}>
         <List size={14} />
       </ToolButton>
-      <div className="flex-1" />
-      <ToolButton
-        label={expanded ? 'Make the message box smaller' : 'Make the message box bigger'}
+      {/* The handle: a chevron centred above the box. Up opens it to half the window, down closes it. */}
+      <button
+        type="button"
+        title={expanded ? 'Make the message box smaller' : 'Make the message box bigger'}
+        aria-label={expanded ? 'Make the message box smaller' : 'Make the message box bigger'}
+        aria-expanded={expanded}
+        onMouseDown={e => e.preventDefault()}
         onClick={onToggleExpand}
+        className="absolute left-1/2 -translate-x-1/2 h-7 w-12 inline-flex items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
       >
-        {expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-      </ToolButton>
+        {expanded ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
+      </button>
     </div>
   )
 }
