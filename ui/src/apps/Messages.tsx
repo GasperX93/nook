@@ -14,7 +14,7 @@ import { useSharedDrives } from '../hooks/useSharedDrives'
 import { useNavigate } from 'react-router-dom'
 
 import { useDerivedKey } from '../hooks/useDerivedKey'
-import { DRAFT_MAX_HEIGHT, useAutoGrow, useDraftFormatting } from '../hooks/useDraftFormatting'
+import { useAutoGrow, useDraftExpand, useDraftFormatting } from '../hooks/useDraftFormatting'
 import { pickMessagingStamp } from '../lib/system-stamp'
 import { hexToBytes } from '../lib/hex'
 import { REGISTRY_ADDRESS } from '../notify/constants'
@@ -497,7 +497,9 @@ export default function Messages({ initialContactId, hideContactList, hideThread
     }
   }
 
-  useAutoGrow(draftRef, draft, selectedId)
+  const { expanded, toggle: toggleExpand } = useDraftExpand(draft)
+
+  useAutoGrow(draftRef, draft, selectedId, expanded)
   const format = useDraftFormatting(draftRef, draft, setDraft)
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -735,7 +737,9 @@ export default function Messages({ initialContactId, hideContactList, hideThread
                 </div>
               )}
 
-              {connectionState === 'connected' && <DraftToolbar format={format} />}
+              {connectionState === 'connected' && (
+                <DraftToolbar format={format} expanded={expanded} onToggleExpand={toggleExpand} />
+              )}
               <div className="flex gap-2 items-end">
                 <Textarea
                   value={draft}
@@ -751,7 +755,7 @@ export default function Messages({ initialContactId, hideContactList, hideThread
                   ref={draftRef}
                   rows={1}
                   className="flex-1 resize-none"
-                  style={{ minHeight: 40, maxHeight: DRAFT_MAX_HEIGHT }}
+                  style={{ minHeight: 40 }}
                 />
                 <Button
                   onClick={handleSend}

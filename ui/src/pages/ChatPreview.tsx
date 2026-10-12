@@ -9,7 +9,7 @@ import { useEffect, useRef, useState } from 'react'
 import DraftToolbar from '../components/DraftToolbar'
 import MessageThread from '../components/MessageThread'
 import { Textarea } from '../components/ui/textarea'
-import { DRAFT_MAX_HEIGHT, useAutoGrow, useDraftFormatting } from '../hooks/useDraftFormatting'
+import { useAutoGrow, useDraftExpand, useDraftFormatting } from '../hooks/useDraftFormatting'
 import type { StoredMessage } from '../notify/messages'
 
 const MIN = 60 * 1000
@@ -104,7 +104,9 @@ export default function ChatPreview() {
     if (el) el.scrollTop = el.scrollHeight
   }, [thread.length])
 
-  useAutoGrow(draftRef, draft)
+  const { expanded, toggle: toggleExpand } = useDraftExpand(draft)
+
+  useAutoGrow(draftRef, draft, undefined, expanded)
   const format = useDraftFormatting(draftRef, draft, setDraft)
 
   // "Sending" here only adds a bubble to this page.
@@ -143,7 +145,7 @@ export default function ChatPreview() {
         />
       </div>
       <div className="border-t p-4 space-y-2" style={{ borderColor: 'rgb(var(--border))' }}>
-        <DraftToolbar format={format} />
+        <DraftToolbar format={format} expanded={expanded} onToggleExpand={toggleExpand} />
         <Textarea
           ref={draftRef}
           value={draft}
@@ -159,7 +161,7 @@ export default function ChatPreview() {
           placeholder="Try it — Enter adds a bubble on this page only"
           rows={1}
           className="resize-none"
-          style={{ minHeight: 40, maxHeight: DRAFT_MAX_HEIGHT }}
+          style={{ minHeight: 40 }}
         />
         <p className="text-[10px] text-muted-foreground">Enter to send · Shift+Enter for a new line</p>
       </div>

@@ -3,7 +3,7 @@
  * the Markdown symbols around the selection (or at the cursor) — see
  * hooks/useDraftFormatting.
  */
-import { Bold, Code, Italic, List } from 'lucide-react'
+import { Bold, Code, Italic, List, Maximize2, Minimize2 } from 'lucide-react'
 import type { ReactNode } from 'react'
 
 import type { DraftFormatting } from '../hooks/useDraftFormatting'
@@ -26,7 +26,14 @@ function ToolButton({ label, onClick, children }: { label: string; onClick: () =
   )
 }
 
-export default function DraftToolbar({ format }: { format: DraftFormatting }) {
+interface Props {
+  format: DraftFormatting
+  /** The message box is expanded to half the window. */
+  expanded: boolean
+  onToggleExpand: () => void
+}
+
+export default function DraftToolbar({ format, expanded, onToggleExpand }: Props) {
   return (
     <div className="flex items-center gap-0.5" role="toolbar" aria-label="Formatting">
       <ToolButton label={`Bold (${MOD}B)`} onClick={format.bold}>
@@ -40,6 +47,13 @@ export default function DraftToolbar({ format }: { format: DraftFormatting }) {
       </ToolButton>
       <ToolButton label={`List (${MOD}${MOD === '⌘' ? '⇧' : 'Shift+'}8)`} onClick={format.list}>
         <List size={14} />
+      </ToolButton>
+      <div className="flex-1" />
+      <ToolButton
+        label={expanded ? 'Make the message box smaller' : 'Make the message box bigger'}
+        onClick={onToggleExpand}
+      >
+        {expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
       </ToolButton>
     </div>
   )

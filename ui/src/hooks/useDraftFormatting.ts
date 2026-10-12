@@ -3,22 +3,54 @@
  * it grows with the text, and the formatting buttons / shortcuts put the
  * Markdown symbols in for the writer.
  */
-import { useEffect, type KeyboardEvent, type RefObject } from 'react'
+import { useEffect, useState, type KeyboardEvent, type RefObject } from 'react'
 
 import { toggleList, toggleWrap, type DraftEdit } from '../lib/draft-format'
 
 /** Tallest the message box grows before it scrolls: about eight lines. */
 export const DRAFT_MAX_HEIGHT = 190
 
-/** Grow the box with what's typed, up to DRAFT_MAX_HEIGHT; shrink back when it's cleared. */
-export function useAutoGrow(ref: RefObject<HTMLTextAreaElement | null>, value: string, resetKey?: unknown): void {
+/** Height of the box once the writer has expanded it: half the window. */
+function expandedHeight(): number {
+  return Math.max(240, Math.round(window.innerHeight * 0.5))
+}
+
+/**
+ * Grow the box with what's typed, up to DRAFT_MAX_HEIGHT; shrink back when
+ * it's cleared. When `expanded`, hold it at half the window instead.
+ */
+export function useAutoGrow(
+  ref: RefObject<HTMLTextAreaElement | null>,
+  value: string,
+  resetKey?: unknown,
+  expanded = false,
+): void {
   useEffect(() => {
     const el = ref.current
 
     if (!el) return
+
+    if (expanded) {
+      el.style.maxHeight = 'none'
+      el.style.height = `${expandedHeight()}px`
+
+      return
+    }
+    el.style.maxHeight = `${DRAFT_MAX_HEIGHT}px`
     el.style.height = 'auto'
     el.style.height = `${Math.min(el.scrollHeight + 2, DRAFT_MAX_HEIGHT)}px`
-  }, [ref, value, resetKey])
+  }, [ref, value, resetKey, expanded])
+}
+
+/** The expand button's state. The box goes back to normal once the draft is sent or cleared. */
+export function useDraftExpand(value: string): { expanded: boolean; toggle: () => void } {
+  const [expanded, setExpanded] = useState(false)
+
+  useEffect(() => {
+    if (value === '') setExpanded(false)
+  }, [value])
+
+  return { expanded, toggle: () => setExpanded(x => !x) }
 }
 
 export interface DraftFormatting {
