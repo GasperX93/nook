@@ -53,6 +53,9 @@ function friendlyError(e: unknown): string {
   return raw.split('\n')[0].slice(0, 200) || 'Something went wrong. Please try again.'
 }
 
+/** Tallest the message box grows before it scrolls: about eight lines. */
+const DRAFT_MAX_HEIGHT = 190
+
 interface MessagesProps {
   /** Optional contact ID to preselect (used when opening Messages scoped to a single contact). */
   initialContactId?: string
@@ -107,6 +110,7 @@ export default function Messages({ initialContactId, hideContactList, hideThread
   const [invitePreview, setInvitePreview] = useState<InvitePreview>({ loading: false })
   const sharedDrives = useSharedDrives()
   const scrollRef = useRef<HTMLDivElement>(null)
+  const draftRef = useRef<HTMLTextAreaElement>(null)
 
   // Sender's display name — used in the default invite template "X would
   // like to connect" and shown to the recipient when they receive the
@@ -494,6 +498,16 @@ export default function Messages({ initialContactId, hideContactList, hideThread
     }
   }
 
+  // The message box grows with what's typed, up to DRAFT_MAX_HEIGHT, then
+  // scrolls — and shrinks back once the draft is sent or cleared.
+  useEffect(() => {
+    const el = draftRef.current
+
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight + 2, DRAFT_MAX_HEIGHT)}px`
+  }, [draft, selectedId])
+
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
@@ -739,9 +753,10 @@ export default function Messages({ initialContactId, hideContactList, hideThread
                         ? `Optional — defaults to "${myDisplayName || suggestedName} would like to connect"`
                         : `Optional message — your name will be added`
                   }
+                  ref={draftRef}
                   rows={1}
                   className="flex-1 resize-none"
-                  style={{ minHeight: 40, maxHeight: 160 }}
+                  style={{ minHeight: 40, maxHeight: DRAFT_MAX_HEIGHT }}
                 />
                 <Button
                   onClick={handleSend}
@@ -769,6 +784,11 @@ export default function Messages({ initialContactId, hideContactList, hideThread
                   )}
                 </Button>
               </div>
+              {connectionState === 'connected' && (
+                <p className="text-[10px] text-muted-foreground">
+                  Shift+Enter for a new line · **bold** · *italic* · `code` · “- ” for a list
+                </p>
+              )}
             </div>
           </>
         ) : selectedInvite ? (

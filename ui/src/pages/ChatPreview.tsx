@@ -58,6 +58,16 @@ function sample(): StoredMessage[] {
     msg(30 * MIN, 'sent', 'yes'),
     msg(29 * MIN, 'sent', 'give me 5 min'),
     msg(12 * MIN, 'received', 'line one\nline two\nline three'),
+    msg(
+      10 * MIN,
+      'received',
+      'Formatting: **bold**, *italic* and `code`.\n\nTo do:\n- read https://nook-drive.eth.limo/how-it-works.html\n- try a **deletable** drive\n\n```\nnook://contact/v1?addr=0x…\n```',
+    ),
+    msg(
+      9 * MIN,
+      'sent',
+      'got it, the *messaging* section is the one I meant: https://nook-drive.eth.limo/how-it-works.html.',
+    ),
     msg(3 * MIN, 'sent', 'this one is still on its way', { status: 'sending' }),
     msg(2 * MIN, 'sent', 'and this one failed', { status: 'failed' }),
   ]

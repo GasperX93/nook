@@ -9,6 +9,7 @@ import { Fragment, type ReactNode } from 'react'
 
 import type { StoredMessage } from '../notify/messages'
 import DriveMessageCard from './DriveMessageCard'
+import MessageBody from './MessageBody'
 
 /** Messages from one person less than this apart sit together as one group. */
 const GROUP_WINDOW_MS = 5 * 60 * 1000
@@ -105,7 +106,9 @@ export default function MessageThread({ thread, counterpartName, onAddDrive, onO
                   sent ? 'bg-[#e5e5e5] dark:bg-[#2c3140]' : 'bg-background border'
                 }`}
               >
-                <p className="text-sm whitespace-pre-wrap break-words min-w-0 flex-1">{m.body}</p>
+                <div className="text-sm break-words min-w-0 flex-1">
+                  <MessageBody text={m.body} />
+                </div>
                 <span className="text-[10px] leading-5 opacity-60 shrink-0" title={new Date(m.ts).toLocaleString()}>
                   {clockTime(m.ts)}
                 </span>
