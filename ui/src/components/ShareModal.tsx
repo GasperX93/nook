@@ -14,6 +14,7 @@ import { serverApi } from '../api/server'
 import { bytesToHex, hexToBytes } from '../lib/hex'
 import { contactsForNodeKey, grantTarget, stripKeyPrefix } from '../lib/node-key'
 import { useDerivedKey } from '../hooks/useDerivedKey'
+import { normalizeNookAddress } from '../lib/nook-address'
 import { REGISTRY_ADDRESS } from '../notify/constants'
 import { deriveConnectionState, getMyDisplayName, hasInboundSince } from '../notify/contact-state'
 import { queueAndDeliver } from '../notify/deliver'
@@ -294,7 +295,9 @@ export default function ShareModal({
   async function handleGrant(inputOverride?: unknown) {
     // Called from the button/Enter (no input → the text box) or by Share
     // again with the person's Nook address (F-3).
-    const input = (typeof inputOverride === 'string' ? inputOverride : newKey).trim()
+    const typed = (typeof inputOverride === 'string' ? inputOverride : newKey).trim()
+    // A Nook address pasted without its 0x is still that address.
+    const input = normalizeNookAddress(typed) ?? typed
     let key = input
     // The recipient we can notify (needs a wallet public key for ECDH). Captured
     // across all three input paths so we can notify inline when the box is checked.
