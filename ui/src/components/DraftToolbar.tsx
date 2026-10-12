@@ -28,7 +28,7 @@ function ToolButton({ label, onClick, children }: { label: string; onClick: () =
 
 interface Props {
   format: DraftFormatting
-  /** The message box is expanded to half the window. */
+  /** The message box is opened to its larger size. */
   expanded: boolean
   onToggleExpand: () => void
 }
@@ -48,7 +48,7 @@ export default function DraftToolbar({ format, expanded, onToggleExpand }: Props
       <ToolButton label={`List (${MOD}${MOD === '⌘' ? '⇧' : 'Shift+'}8)`} onClick={format.list}>
         <List size={14} />
       </ToolButton>
-      {/* The handle: a chevron centred above the box. Up opens it to half the window, down closes it. */}
+      {/* The handle: a chevron centred above the box. Up opens the box to about ten lines, down closes it. */}
       <button
         type="button"
         title={expanded ? 'Make the message box smaller' : 'Make the message box bigger'}

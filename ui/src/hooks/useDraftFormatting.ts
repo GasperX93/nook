@@ -7,17 +7,15 @@ import { useEffect, useState, type KeyboardEvent, type RefObject } from 'react'
 
 import { toggleList, toggleWrap, type DraftEdit } from '../lib/draft-format'
 
-/** Tallest the message box grows before it scrolls: about eight lines. */
-export const DRAFT_MAX_HEIGHT = 190
+/** Tallest the message box grows by itself before it scrolls: about five lines. */
+export const DRAFT_MAX_HEIGHT = 130
 
-/** Height of the box once the writer has expanded it: half the window. */
-function expandedHeight(): number {
-  return Math.max(240, Math.round(window.innerHeight * 0.5))
-}
+/** Height of the box once the writer has opened it with the chevron: about ten lines. */
+export const DRAFT_EXPANDED_HEIGHT = 220
 
 /**
  * Grow the box with what's typed, up to DRAFT_MAX_HEIGHT; shrink back when
- * it's cleared. When `expanded`, hold it at half the window instead.
+ * it's cleared. When `expanded`, hold it at DRAFT_EXPANDED_HEIGHT instead.
  */
 export function useAutoGrow(
   ref: RefObject<HTMLTextAreaElement | null>,
@@ -32,7 +30,7 @@ export function useAutoGrow(
 
     if (expanded) {
       el.style.maxHeight = 'none'
-      el.style.height = `${expandedHeight()}px`
+      el.style.height = `${DRAFT_EXPANDED_HEIGHT}px`
 
       return
     }
