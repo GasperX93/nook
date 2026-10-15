@@ -22,6 +22,7 @@ import {
   pendingInvitations,
   removeInvitationsFor,
 } from '../notify/invitations'
+import { normalizeNookAddress } from '../lib/nook-address'
 import { decodeShareLink, encodeShareLink } from '../notify/share-link'
 import { addContact, loadContacts, removeContact, renameContact, saveContacts } from '../notify/storage'
 import type { NookContact } from '../notify/types'
@@ -271,9 +272,17 @@ export default function Contacts() {
 
       return
     }
+    // Pasted without its 0x, it is still the same address (and must be looked up as such).
+    const address = normalizeNookAddress(registryAddr)
+
+    if (!address) {
+      setAddError('That is not a Nook address. It is 0x followed by 40 characters (0–9, a–f).')
+
+      return
+    }
     setAdding(true)
     try {
-      const result = await identity.resolve(bee, registryAddr.trim())
+      const result = await identity.resolve(bee, address)
 
       if (!result) {
         setAddError('No identity found — they must publish, or use a contact link instead')
@@ -281,7 +290,7 @@ export default function Contacts() {
         return
       }
       const next: NookContact = {
-        id: registryAddr.trim().toLowerCase(),
+        id: address,
         nickname: registryNickname.trim(),
         walletPublicKey: result.walletPublicKey,
         beePublicKey: result.beePublicKey,

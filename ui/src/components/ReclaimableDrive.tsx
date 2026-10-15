@@ -290,7 +290,7 @@ export function ReclaimableDriveCard({
                       style={{ color: 'rgb(var(--fg))' }}
                     >
                       <RefreshCw size={13} style={{ color: 'rgb(var(--fg-muted))' }} />
-                      Auto-renew…
+                      Auto-extend…
                     </button>
                   )}
                   <button

@@ -1,6 +1,6 @@
 # Nook
 
-> A desktop drive on top of Swarm decentralised storage.
+> Your own corner of the web.
 
 Nook bundles a [Bee](https://github.com/ethersphere/bee) node and a clean UI into a single desktop app. Store files, encrypt and share them, publish websites — all on decentralized storage. No accounts, no servers.
 

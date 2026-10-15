@@ -87,7 +87,7 @@ The app has two main layers:
 
 **Startup sequence** (`index.ts`): migrations → splash → download Bee if needed → API key → claim port 3054 → start Koa server → init Bee config → launch Bee → start funding monitor → start chequebook monitor → setup tray → keep-alive loop.
 
-**Bundled Bee version**: `EXPECTED_BEE_VERSION` in `src/downloader.ts` (currently **2.8.2**). On launch the downloader compares the installed binary's version and force-redownloads on mismatch — existing installs auto-upgrade.
+**Bundled Bee version**: `EXPECTED_BEE_VERSION` in `src/downloader.ts` (currently **2.8.3**). On launch the downloader compares the installed binary's version and force-redownloads on mismatch — existing installs auto-upgrade.
 
 **Ultra-light / light mode**: New installs start in ultra-light mode (`swap-enable: false`, no `blockchain-rpc-endpoint`). Bee API is available immediately without funds. The funding monitor polls wallet balance every 15s. When xDAI is detected: stop Bee → write `blockchain-rpc-endpoint` and `swap-enable: true` → restart in light mode. Postage sync takes ~2–3 minutes thanks to clean snapshot loading.
 

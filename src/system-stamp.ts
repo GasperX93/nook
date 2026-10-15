@@ -205,7 +205,7 @@ export async function runSystemStampCheck(beeFetch: BeeFetch = realBeeFetch): Pr
     pushNotification({
       type: 'info',
       title: 'Reserved space for your identity & messages',
-      body: 'Nook set aside a small network space so you can be found and message reliably. It renews automatically — manage it in Settings.',
+      body: 'Nook set aside a small network space so you can be found and message reliably. It extends automatically — manage it in Settings.',
       link: '/settings',
     })
     logger.info(`system-stamp: bought ${batchID.slice(0, 8)} (depth ${SYSTEM_STAMP_DEPTH}, ${SYSTEM_STAMP_MONTHS}mo)`)
