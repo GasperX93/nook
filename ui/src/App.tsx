@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import Layout from './components/Layout'
 import AccessOnSwarm from './pages/AccessOnSwarm'
@@ -9,6 +10,9 @@ import Logs from './pages/Logs'
 import Settings from './pages/Settings'
 import Messages from './apps/Messages'
 import WebsitePublisher from './apps/WebsitePublisher'
+
+// Dev-only: the chat layout with made-up messages. Left out of production builds.
+const ChatPreview = import.meta.env.DEV ? lazy(async () => import('./pages/ChatPreview')) : null
 
 export default function App() {
   return (
@@ -23,6 +27,16 @@ export default function App() {
         <Route path="settings" element={<Settings />} />
         <Route path="logs" element={<Logs />} />
         <Route path="dev" element={<Dev />} />
+        {ChatPreview && (
+          <Route
+            path="dev/chat-preview"
+            element={
+              <Suspense fallback={null}>
+                <ChatPreview />
+              </Suspense>
+            }
+          />
+        )}
         <Route path="apps/messages" element={<Messages />} />
         <Route path="apps/website-publisher" element={<WebsitePublisher />} />
       </Route>

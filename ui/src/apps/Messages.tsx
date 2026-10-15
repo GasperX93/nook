@@ -8,11 +8,13 @@ import AddSharedDriveModal from '../components/AddSharedDriveModal'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Textarea } from '../components/ui/textarea'
-import DriveMessageCard from '../components/DriveMessageCard'
+import DraftToolbar from '../components/DraftToolbar'
+import MessageThread from '../components/MessageThread'
 import { useSharedDrives } from '../hooks/useSharedDrives'
 import { useNavigate } from 'react-router-dom'
 
 import { useDerivedKey } from '../hooks/useDerivedKey'
+import { useAutoGrow, useDraftExpand, useDraftFormatting } from '../hooks/useDraftFormatting'
 import { pickMessagingStamp } from '../lib/system-stamp'
 import { hexToBytes } from '../lib/hex'
 import { REGISTRY_ADDRESS } from '../notify/constants'
@@ -51,14 +53,6 @@ function friendlyError(e: unknown): string {
   const raw = (e as Error)?.message ?? ''
 
   return raw.split('\n')[0].slice(0, 200) || 'Something went wrong. Please try again.'
-}
-
-function formatTime(ts: number): string {
-  const d = new Date(ts)
-  const today = new Date()
-  const sameDay = d.toDateString() === today.toDateString()
-
-  return sameDay ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : d.toLocaleString()
 }
 
 interface MessagesProps {
@@ -115,6 +109,7 @@ export default function Messages({ initialContactId, hideContactList, hideThread
   const [invitePreview, setInvitePreview] = useState<InvitePreview>({ loading: false })
   const sharedDrives = useSharedDrives()
   const scrollRef = useRef<HTMLDivElement>(null)
+  const draftRef = useRef<HTMLTextAreaElement>(null)
 
   // Sender's display name — used in the default invite template "X would
   // like to connect" and shown to the recipient when they receive the
@@ -502,7 +497,14 @@ export default function Messages({ initialContactId, hideContactList, hideThread
     }
   }
 
+  const { expanded, toggle: toggleExpand } = useDraftExpand(draft)
+
+  useAutoGrow(draftRef, draft, selectedId, expanded)
+  const format = useDraftFormatting(draftRef, draft, setDraft)
+
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (format.onKeyDown(e)) return
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       void handleSend()
@@ -654,42 +656,19 @@ export default function Messages({ initialContactId, hideContactList, hideThread
                 <ConnectionStatusBadge state={connectionState} contactId={selected.id} />
               </div>
             )}
-            <div ref={scrollRef} className="flex-1 overflow-auto px-6 py-4 flex flex-col gap-3">
+            <div ref={scrollRef} className="flex-1 overflow-auto px-6 py-4 flex flex-col">
               {selectedThread.length === 0 ? (
                 <p className="text-sm m-auto" style={{ color: 'rgb(var(--fg-muted))' }}>
                   No messages yet. Say hello.
                 </p>
               ) : (
-                selectedThread.map(m => {
-                  if (m.kind && m.kind !== 'message' && m.driveShareLink) {
-                    return (
-                      <DriveMessageCard
-                        key={m.id}
-                        m={m}
-                        counterpartName={selected.nickname}
-                        time={formatTime(m.ts)}
-                        onAdd={(link, driveName) => setImportingLink({ link, driveName })}
-                        onOpen={() => navigate('/drive?tab=shared')}
-                        status={renderDeliveryStatus(m)}
-                      />
-                    )
-                  }
-
-                  return (
-                    <div
-                      key={m.id}
-                      className={`max-w-[70%] rounded-2xl px-4 py-2 ${
-                        m.direction === 'sent' ? 'self-end bg-muted' : 'self-start bg-background border'
-                      }`}
-                    >
-                      <p className="text-sm whitespace-pre-wrap break-words text-foreground">{m.body}</p>
-                      <p className="text-[10px] mt-1 text-right text-muted-foreground">
-                        {m.direction === 'sent' ? 'You' : selected.nickname} | {formatTime(m.ts)}
-                      </p>
-                      {renderDeliveryStatus(m)}
-                    </div>
-                  )
-                })
+                <MessageThread
+                  thread={selectedThread}
+                  counterpartName={selected.nickname}
+                  onAddDrive={(link, driveName) => setImportingLink({ link, driveName })}
+                  onOpenDrive={() => navigate('/drive?tab=shared')}
+                  renderStatus={renderDeliveryStatus}
+                />
               )}
             </div>
             <div className="border-t p-4 space-y-2" style={{ borderColor: 'rgb(var(--border))' }}>
@@ -758,6 +737,9 @@ export default function Messages({ initialContactId, hideContactList, hideThread
                 </div>
               )}
 
+              {connectionState === 'connected' && (
+                <DraftToolbar format={format} expanded={expanded} onToggleExpand={toggleExpand} />
+              )}
               <div className="flex gap-2 items-end">
                 <Textarea
                   value={draft}
@@ -770,9 +752,10 @@ export default function Messages({ initialContactId, hideContactList, hideThread
                         ? `Optional — defaults to "${myDisplayName || suggestedName} would like to connect"`
                         : `Optional message — your name will be added`
                   }
+                  ref={draftRef}
                   rows={1}
                   className="flex-1 resize-none"
-                  style={{ minHeight: 40, maxHeight: 160 }}
+                  style={{ minHeight: 40 }}
                 />
                 <Button
                   onClick={handleSend}
@@ -800,6 +783,9 @@ export default function Messages({ initialContactId, hideContactList, hideThread
                   )}
                 </Button>
               </div>
+              {connectionState === 'connected' && (
+                <p className="text-[10px] text-muted-foreground">Enter to send · Shift+Enter for a new line</p>
+              )}
             </div>
           </>
         ) : selectedInvite ? (
