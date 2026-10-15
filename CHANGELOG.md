@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.7.1](https://github.com/GasperX93/nook/releases/tag/v0.7.1) (2026-10-15)
+
+New to Nook? Read the [user guide](https://nook-drive.eth.limo/docs.html) and [how Nook works](https://nook-drive.eth.limo/how-it-works.html) on the Nook website — [nook-drive.eth.limo](https://nook-drive.eth.limo).
+
+### Messages
+* **A more compact chat** — messages from one person stack together, the time sits inside the bubble, a "Today / Yesterday / date" line separates days, and your messages (grey, on the right) are easy to tell from theirs (outlined, on the left).
+* **Formatting** — **bold**, *italic*, `code`, code blocks, lists and clickable links. Use the buttons above the message box or ⌘B, ⌘I, ⌘E and ⌘⇧8 (Ctrl on Windows and Linux).
+* **A message box that grows** with what you write, and a small arrow above it to open it wider for long messages.
+
+### Fixes and wording
+* **Adding a contact by Nook address works without the `0x` in front** — before, Nook said the person hadn't published their identity.
+* **"Auto-renew" is now "Auto-extend"** everywhere, including the reserved space for identity and messages in Settings.
+* New splash tagline: "Your own corner of the web".
+
+### Under the hood
+* **Bee 2.8.3** — fixes for chequebook setup, downloads and stewardship, and stricter safety checks on stored data.
+* Swarm ID 0.7.0 — your Nook address stays the same.
+
+### Upgrading from 0.7.0
+* **The first start takes a little longer** — Bee 2.8.3 converts its local storage once. After that, don't go back to 0.7.0 on the same computer.
+* **Coming from 0.6 on a Mac?** macOS may ask once for your password to let Nook read "Nook Safe Storage" in your keychain (0.7 is the first signed version). Choose **Always Allow**.
+
 ## [0.7.0](https://github.com/GasperX93/nook/releases/tag/v0.7.0) (2026-09-29)
 
 New to Nook? Read the [user guide](https://nook-drive.eth.limo/docs.html) and [how Nook works](https://nook-drive.eth.limo/how-it-works.html) on the Nook website — [nook-drive.eth.limo](https://nook-drive.eth.limo).
