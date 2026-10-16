@@ -81,6 +81,7 @@ import { Switch } from '../components/ui/switch'
 import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { useSidebar } from '../components/ui/sidebar'
 import { friendlyError } from '../lib/friendly-error'
+import { type DriveSpace, driveSpace, fitsInDrive } from '../lib/drive-space'
 import { formatBytes } from '../lib/format-bytes'
 import { isDriveFullError, withUploadRetries } from '../lib/upload-retry'
 import {
@@ -103,7 +104,7 @@ import {
 // is, so this can differ from what the files add up to — which the file count
 // shows next to it.
 const USAGE_TOOLTIP =
-  'How full the drive is, as your node measures it. A drive fills unevenly, so this can read higher or lower than your files add up to.'
+  'Used is the larger of what your files add up to and what your node measures. A drive fills unevenly, so small drives can read a little fuller than your files — "about" left is a careful estimate.'
 
 function timeUntil(ms: number): { label: string; urgent: boolean } {
   const diff = ms - Date.now()
@@ -1663,17 +1664,15 @@ function DriveCard({
   const color = ttlColor(stamp.batchTTL)
   const hasName = Boolean(customName || stamp.label)
   const driveName = customName || stamp.label || `${stamp.batchID.slice(0, 8)}…`
-  const capacityBytes = depthToBytes(stamp.depth)
-  // Use Bee's reported fill instead of summing local upload history — anything
-  // uploaded outside Nook (swarm-cli, ACT chunks, feed updates) wouldn't show
-  // up otherwise. stampFillRatio prefers Bee 2.8.1's utilizationRatio (true
-  // fractional usage) and falls back to the pessimistic worst-case bucket-fill
-  // estimate on older nodes.
-  const fillRatio = stampFillRatio(stamp)
-  const usedBytes = Math.round(capacityBytes * fillRatio)
-  const usagePct = Math.min(fillRatio * 100, 100)
-  const utilizationPct = Math.round(fillRatio * 100)
-  const isFull = fillRatio >= 1
+  // Used = the larger of the files Nook recorded and Bee's fill figure (which
+  // also counts uploads Nook has no record of); see lib/drive-space.
+  const space = driveSpace(
+    depthToBytes(stamp.depth),
+    stampFillRatio(stamp),
+    records.reduce((sum, r) => sum + (r.size || 0), 0),
+  )
+  const isFull = space.state === 'full'
+  const spaceColor = isFull ? '#ef4444' : space.state === 'almost-full' ? '#f59e0b' : 'rgb(var(--fg-muted))'
   // #93: slow-cadence health check for SHARED drives. Target = the PUBLIC
   // metadata wrapper (the first hop recipients resolve) — ACT file refs are
   // encrypted pointers that stewardship cannot verify, so drives without a
@@ -2021,19 +2020,23 @@ function DriveCard({
           <div
             className="w-32 h-1 rounded-full shrink-0"
             style={{ backgroundColor: 'rgb(var(--border))' }}
-            aria-label={`${Math.round(usagePct)}% used`}
+            aria-label={`${Math.round(space.usedRatio * 100)}% used`}
             title={USAGE_TOOLTIP}
           >
             <div
               className="h-1 rounded-full"
               style={{
-                width: `${usagePct}%`,
-                backgroundColor: isFull ? '#ef4444' : 'rgb(var(--fg))',
+                width: `${space.usedRatio * 100}%`,
+                backgroundColor: isFull ? '#ef4444' : space.state === 'almost-full' ? '#f59e0b' : 'rgb(var(--fg))',
               }}
             />
           </div>
-          <span style={{ color: isFull ? '#ef4444' : 'rgb(var(--fg-muted))' }} title={USAGE_TOOLTIP}>
-            {usedBytes > 0 ? `${driveSizeLabel(stamp.depth)} · ${utilizationPct}% full` : driveSizeLabel(stamp.depth)}
+          <span style={{ color: spaceColor }} title={USAGE_TOOLTIP}>
+            {isFull
+              ? `${driveSizeLabel(stamp.depth)} · Full`
+              : space.usedBytes > 0
+                ? `${formatBytes(space.usedBytes)} of ${driveSizeLabel(stamp.depth)} · about ${formatBytes(space.leftBytes)} left${space.state === 'almost-full' ? ' · almost full' : ''}`
+                : driveSizeLabel(stamp.depth)}
           </span>
           {stamp.usable && (
             // The TTL pill is the extend affordance (#22b): where urgency
@@ -2212,6 +2215,8 @@ interface AddFileProps {
   onWrapperRef?: (ref: string) => void
   /** Folder the upload lands in — so its in-progress row shows there (R5-2). */
   folderId?: string
+  /** What's left on the drive — an upload that doesn't fit is refused before anything is spent. */
+  space?: DriveSpace
 }
 
 /** Text safe inside HTML (file and folder names can contain < > & " '). */
@@ -2256,6 +2261,7 @@ function AddFilePanel({
   onActHistoryUpdate,
   onWrapperRef,
   folderId,
+  space,
 }: AddFileProps) {
   const { data: addresses } = useAddresses()
   const [phase, setPhase] = useState('')
@@ -2281,9 +2287,23 @@ function AddFilePanel({
   const dirInputRef = useRef<HTMLInputElement>(null)
 
   async function handleUpload(entries: FileEntry[], name: string, type: UploadType) {
-    setUploading(true)
     setError(null)
     setProgress(null)
+
+    // Refuse what can't fit before anything is spent or copied.
+    const uploadBytes = entries.reduce((sum, e) => sum + e.file.size, 0)
+
+    if (space && !fitsInDrive(space, uploadBytes)) {
+      setError(
+        space.state === 'full'
+          ? 'This drive is full — extend it to add more.'
+          : `This is ${formatBytes(uploadBytes)}, and this drive has about ${formatBytes(space.leftBytes)} left — extend the drive or pick another.`,
+      )
+
+      return
+    }
+
+    setUploading(true)
 
     // R5-2: every upload is a global transfer from its first byte — the
     // sidebar indicator and an in-progress row in the drive show it from any
@@ -3915,6 +3935,15 @@ export default function Drive() {
       {addingFile && (
         <AddFilePanel
           driveId={activeDriveId}
+          space={
+            activeDrive
+              ? driveSpace(
+                  depthToBytes(activeDrive.depth),
+                  stampFillRatio(activeDrive),
+                  records.filter(r => r.driveId === activeDriveId).reduce((sum, r) => sum + (r.size || 0), 0),
+                )
+              : undefined
+          }
           encrypted={driveMetadata.isEncrypted(activeDriveId)}
           actHistoryRef={driveMetadata.get(activeDriveId)?.actHistoryRef}
           onDone={() => setAddingFile(false)}
