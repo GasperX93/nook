@@ -324,7 +324,7 @@ export function runServer() {
   })
   router.get('/peers', async context => {
     try {
-      const peers = await makeBee().getPeers()
+      const peers = await makeBee().connectivity.getPeers()
 
       context.body = { connections: peers.length }
     } catch (error) {
@@ -374,7 +374,7 @@ export function runServer() {
     }
     const blockchainRpcEndpoint = nookRpcUrl()
     try {
-      const { ethereum: nodeAddress } = await makeBee().getNodeAddresses()
+      const { ethereum: nodeAddress } = await makeBee().connectivity.getNodeAddresses()
       await redeemGiftCode(giftCode, nodeAddress.toString(), blockchainRpcEndpoint)
       context.body = { success: true }
     } catch (error) {
@@ -436,9 +436,9 @@ export function runServer() {
 
     try {
       const bee = makeBee()
-      const reader = bee.makeFeedReader(topicHex, owner)
+      const reader = bee.feed.makeReader(topicHex, owner)
       const result = await reader.downloadReference()
-      const data = await bee.downloadData(result.reference.toHex())
+      const data = await bee.data.download(result.reference.toHex())
       context.type = 'application/octet-stream'
       context.body = Buffer.from(data.toUint8Array())
     } catch (error) {
@@ -470,7 +470,7 @@ export function runServer() {
       // store awaiting the background pusher, and quitting the app right
       // after sharing strands it — recipients then get "could not access
       // this drive" even though the feed resolves. See #86.
-      const result = await bee.uploadData(stampId, data, { deferred: false })
+      const result = await bee.data.upload(stampId, data, { deferred: false })
       context.body = { reference: result.reference.toHex() }
     } catch (error) {
       logger.error(error)
@@ -495,7 +495,7 @@ export function runServer() {
     }
 
     try {
-      const batchID = await makeBee().createPostageBatch(
+      const batchID = await makeBee().stamp.create(
         amount,
         depth,
         { immutableFlag: Boolean(immutable), label },
@@ -549,7 +549,7 @@ export function runServer() {
       // Always immutable: slot reuse works there (spike-verified) and it
       // matches the default drive type everywhere else in Nook.
       const batchID = (
-        await makeBee().createPostageBatch(
+        await makeBee().stamp.create(
           amount,
           depth,
           { immutableFlag: true, label },
@@ -1061,7 +1061,7 @@ export function runServer() {
 
     try {
       const bee = makeBee()
-      const result = await bee.getGrantees(ref)
+      const result = await bee.grantee.get(ref)
       context.body = { grantees: result.grantees.map(String) }
     } catch (error) {
       logger.error(error)
@@ -1092,7 +1092,7 @@ export function runServer() {
 
     try {
       const bee = makeBee()
-      const result = await bee.patchGrantees(stampId, ref, historyRef, { add, revoke })
+      const result = await bee.grantee.patch(stampId, ref, historyRef, { add, revoke })
       context.body = {
         ref: result.ref.toString(),
         historyRef: result.historyref.toString(),
@@ -1198,7 +1198,7 @@ export function runServer() {
     }
 
     try {
-      const result = await makeBee().getChequebookBalance()
+      const result = await makeBee().chequebook.getBalance()
       const available = result.availableBalance.toPLURBigInt()
       const requested = BigInt(amount)
 
@@ -1250,10 +1250,10 @@ async function createFeedUpdate(topicHex: string, referenceHex: string, stampId:
   const bee = makeBee()
 
   // bee-js v11: pass private key directly, no custom signer needed
-  const writer = bee.makeFeedWriter(topicHex, privateKeyHex)
+  const writer = bee.feed.makeWriter(topicHex, privateKeyHex)
   await writer.upload(stampId, referenceHex)
 
-  const manifest = await bee.createFeedManifest(stampId, topicHex, wallet.address)
+  const manifest = await bee.feed.createManifest(stampId, topicHex, wallet.address)
 
   return manifest.toString()
 }
@@ -1270,7 +1270,7 @@ async function observeProxiedTopup(method: string, beePath: string): Promise<voi
   if (!match) return
 
   try {
-    const batch = await makeBee().getPostageBatch(match[1])
+    const batch = await makeBee().stamp.get(match[1])
 
     recordPurchase({
       kind: 'topup',

@@ -65,7 +65,7 @@ async function downloadCollectionEntries(
     if (!clean) continue
     // bee-js native ACT download (the Koa /act/download route only handles
     // single references, not manifest subpaths).
-    const file = await bee.downloadFile(rec.hash, clean, act)
+    const file = await bee.file.download(rec.hash, clean, act)
     const name = clean.split('/').pop() ?? clean
 
     entries.push({
