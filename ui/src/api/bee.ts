@@ -1,6 +1,8 @@
 // Bee node API client — talks directly to the Bee node (default: localhost:1633)
 // In dev the Vite proxy forwards /bee-api/* → localhost:1633/*
 
+import { RedundancyLevel, Utils } from '@ethersphere/bee-js'
+
 import { createTar } from '../utils/tar'
 import type { FileEntry } from '../utils/directory'
 import { useAppStore } from '../store/app'
@@ -341,57 +343,50 @@ export function weiToDai(wei: string): string {
   return `${whole}.${String(frac).padStart(4, '0')}`
 }
 
-// Bee's effective (realistic) capacity per depth — accounts for bucket overflow.
-// Values from Beeport / Swarm docs. Theoretical capacity is never fully usable
-// because chunks distribute unevenly across 2^16 buckets.
-const EFFECTIVE_CAPACITY: Record<number, number> = {
-  17: 7_000_000, // ~7 MB
-  18: 34_000_000, // ~34 MB
-  19: 112_000_000, // ~110 MB
-  20: 688_000_000, // ~680 MB
-  21: 2_600_000_000, // ~2.6 GB
-  22: 7_700_000_000, // ~7.7 GB
-  23: 20_000_000_000, // ~20 GB
-  24: 47_000_000_000, // ~47 GB
-  25: 105_000_000_000, // ~105 GB
-  26: 228_000_000_000, // ~228 GB
-}
-
-// Nook's advertised capacity per depth — what we display to users as the
-// stamp's size. Always ≤ effective capacity at the same depth. The gap is
-// the overbuy margin: smaller depths overbuy aggressively (24× at depth 21)
-// because the worst-case-bucket utilization metric registers very high on
-// small uploads otherwise, then taper to ~3× at larger depths where Bee's
-// metric naturally tracks real fill more closely.
-//
-// Legacy depths 19/20 keep the old "label = effective" values for stamps
-// purchased before this scheme; new Nook buys land at depth 21+.
-const NOOK_DISPLAY_CAPACITY: Record<number, number> = {
-  19: 112_000_000, // legacy "110 MB"
-  20: 688_000_000, // legacy "680 MB"
-  21: 112_000_000, // new "110 MB" (overbought from depth-19 minimum)
-  22: 2_600_000_000, // new "2.6 GB"
-  23: 7_700_000_000, // new "7.7 GB"
-  24: 16_000_000_000, // new "16 GB"
-}
-
-/** User-facing (advertised) capacity in bytes for a given stamp depth */
+/**
+ * Usable size of a drive at this depth, in bytes — the Swarm docs "effective
+ * volume" for plain uploads: what a batch stores with at most a 1-in-1000
+ * chance that its fullest bucket fills up (Nook uploads are not chunk-encrypted
+ * — ACT encrypts references — and use no erasure coding). Always pass BOTH
+ * arguments: without them bee-js uses its default table, which is the
+ * encrypted + medium-erasure one (e.g. 2.38 GB instead of 2.60 GB at depth 21).
+ */
 export function depthToBytes(depth: number): number {
-  return NOOK_DISPLAY_CAPACITY[depth] ?? EFFECTIVE_CAPACITY[depth] ?? (1 << depth) * 4096
+  return Utils.getStampEffectiveBytes(depth, false, RedundancyLevel.OFF)
+}
+
+/** Bytes as a short size label, rounded DOWN so it never promises more than the drive holds. */
+function formatSizeDown(bytes: number): string {
+  const units: [number, string][] = [
+    [1e12, 'TB'],
+    [1e9, 'GB'],
+    [1e6, 'MB'],
+    [1e3, 'kB'],
+  ]
+
+  for (const [unit, name] of units) {
+    if (bytes >= unit) {
+      const value = bytes / unit
+      const shown = value >= 100 ? Math.floor(value) : Math.floor(value * 10) / 10
+
+      return `${shown} ${name}`
+    }
+  }
+
+  return `${bytes} B`
 }
 
 /**
- * The size a drive is sold as (R7-6): the purchase label for Nook's own
- * sizes, so the list says "2.6 GB" for a drive bought as "2.6 GB"; decimal
- * bytes for other depths.
+ * The size a drive is sold as: the preset label for Nook's own sizes, so the
+ * list says "2.6 GB" for a drive bought as "2.6 GB"; the usable size for any
+ * other depth (older drives show their true, usually larger, size).
  */
 export function driveSizeLabel(depth: number): string {
   const preset = SIZE_PRESETS.find(p => p.depth === depth)
 
   if (preset) return preset.label
-  const bytes = depthToBytes(depth)
 
-  return bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.round(bytes / 1e6)} MB`
+  return formatSizeDown(depthToBytes(depth))
 }
 
 /** Human-readable user-facing capacity for a given stamp depth (same as driveSizeLabel, R7-6). */
@@ -445,16 +440,16 @@ export async function topicFromString(name: string): Promise<string> {
 
 // ─── Storage plan presets ─────────────────────────────────────────────────────
 
-// Variable overbuy: small presets are heavily overbought so Bee's worst-case-
-// bucket utilization metric stays close to real fill. Larger presets need
-// little to no overbuy because the bucket math evens out at higher depth.
-// Labels = NOOK_DISPLAY_CAPACITY at the same depth (what users can safely
-// store), not Bee's effective capacity (which is always larger here).
+// Each size is bought at the smallest depth whose usable size (depthToBytes)
+// covers the label — the same rule as Beeport, Swarm Desktop and swarm-cli.
+// No extra overbuy: the docs number already is the 1-in-1000 "fullest bucket
+// full" point, and Bee only refuses writes a little after that.
 export const SIZE_PRESETS = [
-  { label: '110 MB', depth: 21 }, // 24× overbuy — cheap, accurate small drive
-  { label: '2.6 GB', depth: 22 }, // 3× overbuy
-  { label: '7.7 GB', depth: 23 }, // 2.6× overbuy
-  { label: '16 GB', depth: 24 }, // 3× overbuy
+  { label: '110 MB', depth: 19 }, // usable 112.06 MB
+  { label: '680 MB', depth: 20 }, // usable 687.62 MB
+  { label: '2.6 GB', depth: 21 }, // usable 2.60 GB
+  { label: '7.7 GB', depth: 22 }, // usable 7.73 GB
+  { label: '20 GB', depth: 23 }, // usable 19.94 GB
 ] as const
 
 export const DURATION_PRESETS = [

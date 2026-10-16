@@ -550,10 +550,8 @@ function ExtendModal({
   onClose: () => void
   deletable?: boolean
 }) {
-  // Capacity options: only depths strictly larger than current AND only when the
-  // user-facing capacity is also larger. With Nook's overbuy, a legacy depth-19
-  // "110 MB" stamp shouldn't see "110 MB (depth 21)" as an extend option — same
-  // displayed capacity, just a more expensive same-label drive.
+  // Capacity options: only sizes strictly larger than the drive's current one
+  // (a deeper depth always holds more, so this keeps only real upgrades).
   const currentDisplayBytes = depthToBytes(stamp.depth)
   // Deletable drives never change size: their slot ledger is laid out for the
   // drive's depth, and a dilute would hand out slots it doesn't track. The
