@@ -39,7 +39,14 @@ export function driveSpace(sizeBytes: number, fillRatio: number, recordedBytes: 
   }
 }
 
+/**
+ * Room kept free when checking an upload: folder index and manifest chunks
+ * (and ACT metadata on encrypted drives) are stamped too, and aren't part of
+ * the file sizes.
+ */
+export const UPLOAD_MARGIN = 0.02
+
 /** Whether an upload of `bytes` fits in what's left. */
 export function fitsInDrive(space: DriveSpace, bytes: number): boolean {
-  return space.state !== 'full' && bytes <= space.leftBytes
+  return space.state !== 'full' && bytes <= space.leftBytes - space.sizeBytes * UPLOAD_MARGIN
 }

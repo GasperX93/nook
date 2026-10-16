@@ -88,9 +88,19 @@ export function reserveJustBoughtAt(now = Date.now()): number | null {
   return justBought && now - justBought.at < JUST_BOUGHT_MS ? justBought.at : null
 }
 
+/**
+ * The reserve just grown. Bee lists the new depth only once its chain
+ * listener has seen the depth-increase event; until then /stamps still shows
+ * the old depth and the check below would send another dilute every minute —
+ * each one reverting on chain and costing gas.
+ */
+const JUST_GREW_MS = 30 * 60_000
+let justGrew: { batchId: string; at: number } | null = null
+
 /** Tests only. */
 export function resetJustBoughtForTests(): void {
   justBought = null
+  justGrew = null
 }
 
 interface StampState {
@@ -183,6 +193,8 @@ async function growReserveIfNeeded(batch: ReserveBatch, beeFetch: BeeFetch): Pro
 
   if (target === null || !batch.usable) return
 
+  if (justGrew && justGrew.batchId === batch.batchID && Date.now() - justGrew.at < JUST_GREW_MS) return
+
   const chainRes = await beeFetch('/chainstate')
 
   if (!chainRes.ok) return
@@ -235,6 +247,7 @@ async function growReserveIfNeeded(batch: ReserveBatch, beeFetch: BeeFetch): Pro
     return
   }
 
+  justGrew = { batchId: batch.batchID, at: Date.now() }
   // Nook manages the reserve's extension length; keep the user's on/off choice.
   setAutoExtendSetting(batch.batchID, setting?.enabled ?? true, SYSTEM_STAMP_MONTHS)
   writeState({ growBlockedNotifiedDepth: undefined })

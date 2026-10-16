@@ -198,6 +198,14 @@ describe('growing the reserve (0.7.2)', () => {
     expect(loadNotifications()[0].title).toContain('More space')
   })
 
+  it('grows once while Bee still lists the old depth (no repeat dilutes)', async () => {
+    const bee = makeBee({ reserve: { depth: 17, bucketDepth: 16, utilizationRatio: 1 } })
+
+    await runSystemStampCheck(bee.fetch)
+    await runSystemStampCheck(bee.fetch)
+    expect(bee.dilutes).toHaveLength(1)
+  })
+
   it('keeps the user’s choice when auto-extend was turned off', async () => {
     setAutoExtendSetting(BATCH, false, 3)
     const bee = makeBee({ reserve: { depth: 17, bucketDepth: 16, utilizationRatio: 0.5 } })

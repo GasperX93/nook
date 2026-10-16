@@ -48,6 +48,8 @@ describe('fitsInDrive', () => {
     const s = driveSpace(7.7 * GB, 0, 2 * GB)
     expect(fitsInDrive(s, 5 * GB)).toBe(true)
     expect(fitsInDrive(s, 6 * GB)).toBe(false)
+    // 2% of the size stays free for index/manifest chunks.
+    expect(fitsInDrive(s, 5.7 * GB - 0.154 * GB + 1)).toBe(false)
   })
 
   it('never fits on a full drive', () => {
