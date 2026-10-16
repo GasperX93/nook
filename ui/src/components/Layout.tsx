@@ -109,7 +109,7 @@ export default function Layout() {
   // instead of the amber funding ask (test-run finding #1).
   // …also right after the purchase, before Bee lists the new batch at all
   // (F-6): the wallet already shows less than 2 xBZZ, so without this the
-  // amber "add about 3 xBZZ" banner came back next to the "set aside" bell.
+  // amber "add about 4 xBZZ" banner came back next to the "set aside" bell.
   const reserveSettingUp =
     noUsableMessagingSpace &&
     ((stamps ?? []).some(s => isSystemStamp(s) && !s.usable) || Boolean(status?.reserveBoughtAt))
@@ -522,7 +522,7 @@ export default function Layout() {
             >
               <AlertTriangle size={12} className="shrink-0" style={{ color: '#f59e0b' }} />
               <span style={{ color: 'rgb(var(--fg))' }}>
-                Messages and your identity need a small reserved space — add about 3 xBZZ and Nook sets it up
+                Messages and your identity need a small reserved space — add about 4 xBZZ and Nook sets it up
                 automatically within a few minutes.{' '}
                 <button
                   onClick={() => navigate('/account?tab=wallet')}

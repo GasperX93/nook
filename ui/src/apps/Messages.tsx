@@ -330,7 +330,7 @@ export default function Messages({ initialContactId, hideContactList, hideThread
 
     if (!stampId) {
       setError(
-        'Messages need a small reserved space — add about 3 xBZZ on the Wallet page and Nook sets it up automatically.',
+        'Messages need a small reserved space — add about 4 xBZZ on the Wallet page and Nook sets it up automatically.',
       )
 
       return
@@ -478,7 +478,7 @@ export default function Messages({ initialContactId, hideContactList, hideThread
     }
 
     if (!stampId) {
-      setError('Publishing needs a small reserved space — add about 3 xBZZ on the Wallet page.')
+      setError('Publishing needs a small reserved space — add about 4 xBZZ on the Wallet page.')
 
       return
     }
@@ -530,7 +530,7 @@ export default function Messages({ initialContactId, hideContactList, hideThread
       <div className="flex flex-col p-6 gap-4 max-w-3xl">
         <h2 className="text-2xl font-semibold">Messages</h2>
         <p className="text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
-          Sending messages needs a small reserved space on the network. Add about 3 xBZZ on the Wallet page and Nook
+          Sending messages needs a small reserved space on the network. Add about 4 xBZZ on the Wallet page and Nook
           sets it up automatically.
         </p>
         <Button onClick={() => navigate('/account?tab=wallet')} className="self-start uppercase tracking-widest">

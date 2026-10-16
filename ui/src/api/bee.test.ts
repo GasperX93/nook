@@ -1,6 +1,14 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
-import { calcStampCost, depthToBytes, depthToCapacity, DURATION_PRESETS, plurToBzz, SIZE_PRESETS, weiToDai } from './bee'
+import {
+  calcStampCost,
+  depthToBytes,
+  depthToCapacity,
+  DURATION_PRESETS,
+  plurToBzz,
+  SIZE_PRESETS,
+  weiToDai,
+} from './bee'
 
 // ─── plurToBzz ────────────────────────────────────────────────────────────────
 

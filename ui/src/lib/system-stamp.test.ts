@@ -26,6 +26,21 @@ describe('pickMessagingStamp', () => {
     expect(pickMessagingStamp([reclaimable, drive], ids)).toEqual({ batchID: drive.batchID, degraded: true })
   })
 
+  it('skips a full reserve (writes into it would fail) until it is grown', () => {
+    const full = { ...system, depth: 17, bucketDepth: 16, utilizationRatio: 1 }
+
+    expect(pickMessagingStamp([full, drive])).toEqual({ batchID: drive.batchID, degraded: true })
+    expect(pickMessagingStamp([{ ...full, utilizationRatio: 0.5 }, drive])).toEqual({
+      batchID: system.batchID,
+      degraded: false,
+    })
+    // Older nodes without utilizationRatio: depth 17 holds 2 per bucket.
+    expect(pickMessagingStamp([{ ...system, depth: 17, bucketDepth: 16, utilization: 2 }, drive])).toEqual({
+      batchID: drive.batchID,
+      degraded: true,
+    })
+  })
+
   it('handles empty input', () => {
     expect(pickMessagingStamp(undefined)).toBeNull()
     expect(pickMessagingStamp([])).toBeNull()

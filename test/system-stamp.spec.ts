@@ -18,7 +18,7 @@ jest.mock('../src/foreign-bee', () => ({ isOwnBee: jest.fn(async () => true) }))
 
 import { mkdirSync, rmSync } from 'fs'
 
-import { getAutoExtendSettings } from '../src/extend-monitor'
+import { getAutoExtendSettings, setAutoExtendSetting } from '../src/extend-monitor'
 import { getMode } from '../src/funding-monitor'
 import { loadNotifications } from '../src/notifications'
 import { loadPurchases } from '../src/purchases'
@@ -42,9 +42,24 @@ function cleanUp() {
   ;(getMode as jest.Mock).mockReturnValue('light')
 }
 
-function makeBee(overrides: { existing?: boolean; lag?: number; bzz?: string; buyStatus?: number }) {
+function makeBee(overrides: {
+  existing?: boolean
+  /** Fields of the existing reserve (depth, utilizationRatio, usable, …). */
+  reserve?: Record<string, unknown>
+  lag?: number
+  bzz?: string
+  buyStatus?: number
+  diluteStatus?: number
+}) {
   const buys: { path: string; headers: Record<string, string> }[] = []
+  const dilutes: string[] = []
   const fetch: BeeFetch = async (path, init) => {
+    if (path.startsWith('/stamps/dilute/') && init?.method === 'PATCH') {
+      dilutes.push(path)
+
+      return new Response('{}', { status: overrides.diluteStatus ?? 200 })
+    }
+
     if (path.startsWith('/stamps') && init?.method === 'POST') {
       buys.push({ path, headers: (init.headers ?? {}) as Record<string, string> })
 
@@ -54,7 +69,10 @@ function makeBee(overrides: { existing?: boolean; lag?: number; bzz?: string; bu
     }
 
     if (path.startsWith('/stamps')) {
-      const stamps = overrides.existing ? [{ batchID: BATCH, label: SYSTEM_STAMP_LABEL }] : []
+      const stamps =
+        overrides.existing || overrides.reserve
+          ? [{ batchID: BATCH, label: SYSTEM_STAMP_LABEL, usable: true, ...overrides.reserve }]
+          : []
 
       return new Response(JSON.stringify({ stamps }), { status: 200 })
     }
@@ -72,7 +90,7 @@ function makeBee(overrides: { existing?: boolean; lag?: number; bzz?: string; bu
     return new Response('{}', { status: 404 })
   }
 
-  return { fetch, buys }
+  return { fetch, buys, dilutes }
 }
 
 beforeEach(() => {
@@ -82,18 +100,18 @@ beforeEach(() => {
 afterAll(cleanUp)
 
 describe('system stamp (#130)', () => {
-  it('buys once with the right shape: label, depth 17, immutable, 3 months of price', async () => {
+  it('buys once with the right shape: label, depth 18, immutable, 1 month of price', async () => {
     const bee = makeBee({})
     const result = await runSystemStampCheck(bee.fetch)
 
     expect(result).toBe('bought')
     expect(bee.buys).toHaveLength(1)
-    // amount per chunk = price 100 × 518400 blocks/mo × 3 months
-    expect(bee.buys[0].path).toBe(`/stamps/${100 * 518400 * 3}/17?label=${SYSTEM_STAMP_LABEL}`)
+    // amount per chunk = price 100 × 518400 blocks/mo × 1 month
+    expect(bee.buys[0].path).toBe(`/stamps/${100 * 518400}/18?label=${SYSTEM_STAMP_LABEL}`)
     expect(bee.buys[0].headers.immutable).toBe('true')
 
     // Auto-renew ON by default, matching the purchase duration
-    expect(getAutoExtendSettings()[BATCH]).toMatchObject({ enabled: true, months: 3 })
+    expect(getAutoExtendSettings()[BATCH]).toMatchObject({ enabled: true, months: 1 })
 
     // Ledger + bell record
     expect(loadPurchases()[0]).toMatchObject({ kind: 'create', batchId: BATCH, label: SYSTEM_STAMP_LABEL })
@@ -146,7 +164,7 @@ describe('system stamp (#130)', () => {
     const notices = loadNotifications().filter(n => n.type === 'charge-blocked')
 
     expect(notices).toHaveLength(1)
-    expect(notices[0].title).toContain('3 xBZZ')
+    expect(notices[0].title).toContain('4 xBZZ')
     expect(notices[0].link).toBe('/account?tab=wallet')
 
     // Zero balance means "not funded yet" — no nagging before any money exists.
@@ -164,5 +182,95 @@ describe('system stamp (#130)', () => {
     expect(await runSystemStampCheck(bee.fetch)).toBe('failed')
     expect(loadPurchases()).toHaveLength(0)
     expect(getAutoExtendSettings()[BATCH]).toBeUndefined()
+  })
+})
+
+describe('growing the reserve (0.7.2)', () => {
+  // price 100: next 1-month extension at depth d = 100 × 518400 × 2^d PLUR —
+  // tiny next to the default balance, so "enough funds" unless bzz is set.
+
+  it('grows a reserve bought before 0.7.2 (depth 17) to depth 18', async () => {
+    const bee = makeBee({ reserve: { depth: 17, bucketDepth: 16, utilizationRatio: 1 } })
+
+    expect(await runSystemStampCheck(bee.fetch)).toBe('exists')
+    expect(bee.dilutes).toEqual([`/stamps/dilute/${BATCH}/18`])
+    expect(getAutoExtendSettings()[BATCH]).toMatchObject({ enabled: true, months: 1 })
+    expect(loadNotifications()[0].title).toContain('More space')
+  })
+
+  it('keeps the user’s choice when auto-extend was turned off', async () => {
+    setAutoExtendSetting(BATCH, false, 3)
+    const bee = makeBee({ reserve: { depth: 17, bucketDepth: 16, utilizationRatio: 0.5 } })
+
+    await runSystemStampCheck(bee.fetch)
+    expect(getAutoExtendSettings()[BATCH]).toMatchObject({ enabled: false, months: 1 })
+  })
+
+  it('grows one step once the fullest bucket reaches 75%', async () => {
+    const half = makeBee({ reserve: { depth: 18, bucketDepth: 16, utilizationRatio: 0.5 } })
+
+    await runSystemStampCheck(half.fetch)
+    expect(half.dilutes).toHaveLength(0)
+
+    const filling = makeBee({ reserve: { depth: 18, bucketDepth: 16, utilizationRatio: 0.75 } })
+
+    await runSystemStampCheck(filling.fetch)
+    expect(filling.dilutes).toEqual([`/stamps/dilute/${BATCH}/19`])
+  })
+
+  it('reads the fill from utilization on nodes without utilizationRatio', async () => {
+    // depth 18 → 4 slots per bucket; 3 used = 75%
+    const bee = makeBee({ reserve: { depth: 18, bucketDepth: 16, utilization: 3 } })
+
+    await runSystemStampCheck(bee.fetch)
+    expect(bee.dilutes).toEqual([`/stamps/dilute/${BATCH}/19`])
+  })
+
+  it('never grows past depth 20', async () => {
+    const bee = makeBee({ reserve: { depth: 20, bucketDepth: 16, utilizationRatio: 0.9 } })
+
+    await runSystemStampCheck(bee.fetch)
+    expect(bee.dilutes).toHaveLength(0)
+  })
+
+  it('without money for the next extension: no grow, one notice per depth while filling', async () => {
+    const poor = makeBee({ reserve: { depth: 18, bucketDepth: 16, utilizationRatio: 0.8 }, bzz: '1' })
+
+    await runSystemStampCheck(poor.fetch)
+    await runSystemStampCheck(poor.fetch)
+
+    expect(poor.dilutes).toHaveLength(0)
+    const notices = loadNotifications().filter(n => n.type === 'charge-blocked')
+
+    expect(notices).toHaveLength(1)
+    expect(notices[0].title).toContain('filling up')
+  })
+
+  it('an old reserve that is not filling up waits quietly for funds', async () => {
+    const poor = makeBee({ reserve: { depth: 17, bucketDepth: 16, utilizationRatio: 0.5 }, bzz: '1' })
+
+    await runSystemStampCheck(poor.fetch)
+    expect(poor.dilutes).toHaveLength(0)
+    expect(loadNotifications()).toHaveLength(0)
+  })
+
+  it('never grows on a lagging chain or an unusable batch', async () => {
+    const lagging = makeBee({ reserve: { depth: 17, bucketDepth: 16, utilizationRatio: 1 }, lag: 500 })
+
+    await runSystemStampCheck(lagging.fetch)
+    expect(lagging.dilutes).toHaveLength(0)
+
+    const unusable = makeBee({ reserve: { depth: 17, bucketDepth: 16, utilizationRatio: 1, usable: false } })
+
+    await runSystemStampCheck(unusable.fetch)
+    expect(unusable.dilutes).toHaveLength(0)
+  })
+
+  it('a failed grow changes nothing', async () => {
+    const bee = makeBee({ reserve: { depth: 17, bucketDepth: 16, utilizationRatio: 1 }, diluteStatus: 500 })
+
+    await runSystemStampCheck(bee.fetch)
+    expect(getAutoExtendSettings()[BATCH]).toBeUndefined()
+    expect(loadNotifications()).toHaveLength(0)
   })
 })
