@@ -19,6 +19,7 @@ import { weiToDai } from '../api/bee'
 import { resumePendingPropagation } from '../store/transfers'
 import { resumeReclaimableJobs } from '../store/reclaimable-jobs'
 import TransferIndicator from './TransferIndicator'
+import UpdateNotice from './UpdateNotice'
 import {
   useReclaimableDrives,
   useBeeHealth,
@@ -366,6 +367,8 @@ export default function Layout() {
           <SidebarSpacer />
           {/* Active uploads/downloads — visible from every page (#5) */}
           <TransferIndicator />
+          {/* A newer Nook — stays until it's installed (the bell rings only once) */}
+          <UpdateNotice />
           <SidebarSeparator />
           <SidebarFooter>
             <SidebarSection>
