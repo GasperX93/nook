@@ -18,7 +18,7 @@ import { Input } from '../components/ui/input'
 import { Switch } from '../components/ui/switch'
 import { serverApi } from '../api/server'
 import { FEEDBACK_URL } from '../lib/links'
-import { isSystemStamp } from '../lib/system-stamp'
+import { isReserveBatch, isSystemStamp } from '../lib/system-stamp'
 import { useAppStore } from '../store/app'
 
 type SettingsTab = 'general' | 'network'
@@ -74,7 +74,7 @@ export default function Settings() {
     // eslint-disable-next-line
   }, [])
   const systemStamp = (stamps ?? []).find(isSystemStamp)
-  const anyDriveUsable = (stamps ?? []).some(st => st.usable && !isSystemStamp(st))
+  const anyDriveUsable = (stamps ?? []).some(st => st.usable && !isReserveBatch(st))
   const [autoRenewOn, setAutoRenewOn] = useState<boolean | null>(null)
   const [renewSaving, setRenewSaving] = useState(false)
   const [confirmingRenewOff, setConfirmingRenewOff] = useState(false)

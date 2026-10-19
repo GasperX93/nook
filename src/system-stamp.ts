@@ -25,7 +25,9 @@ import { purchaseCostPlur, recordPurchase } from './purchases'
  * Settings as "Identity & messages" (never "stamp" in user-facing strings).
  *
  * Existing users need no migration step: the same check sees no system batch
- * on upgrade and buys one as soon as funds allow.
+ * on upgrade and buys one as soon as funds allow. A reserve that is old
+ * (depth 17, before 0.7.2) or full is replaced the same way — see
+ * RETIRED_SYSTEM_STAMP_LABEL for why it is never grown in place.
  */
 
 export const SYSTEM_STAMP_LABEL = 'nook-system'
@@ -35,14 +37,15 @@ export const SYSTEM_STAMP_DEPTH = 18
 export const SYSTEM_STAMP_MONTHS = 1
 
 /**
- * Grow the reserve one depth when its fullest bucket reaches this (an
- * immutable batch refuses writes into a full bucket — for feeds and mailbox
- * slots Bee only answers a generic 400, so fullness is read from /stamps, not
- * from errors). Never past MAX depth: each step doubles the running cost.
+ * The retired label. A reserve that can no longer take writes is replaced by
+ * a new one, never grown in place: Bee 2.8.3 keeps a depth increase only in
+ * memory until the next write to the batch, so a restart in between brings
+ * back the old depth in Bee's view for good (pkg/postage/service.go
+ * HandleDepthIncrease never marks the issuer dirty). A label update is saved
+ * at once, so the old reserve is renamed, hidden and no longer extended; it
+ * runs out on its own.
  */
-export const SYSTEM_STAMP_GROW_RATIO = 0.75
-
-export const SYSTEM_STAMP_MAX_DEPTH = 20
+export const RETIRED_SYSTEM_STAMP_LABEL = 'nook-system-retired'
 
 /** Never spend the wallet below this (same floor as the chequebook monitor). */
 const WALLET_FLOOR_PLUR = BigInt('5000000000000000') // 0.5 BZZ
@@ -54,6 +57,19 @@ const INITIAL_DELAY_MS = 2 * 60_000
 
 /** A batchstore answer is only trusted while the chain view is near the tip. */
 const TRUSTED_CHAIN_LAG_BLOCKS = 120
+
+/**
+ * A purchase just sent or just made. Bee can take a while to list a new
+ * batch; until it does nothing is bought again. Kept in the state file, so a
+ * restart in the middle of a purchase can't buy twice.
+ */
+const BUY_SETTLE_MS = 30 * 60_000
+
+/** After a failed purchase, wait this long before the next try. */
+const BUY_RETRY_MS = 60 * 60_000
+
+/** Failed purchases in a row before Nook stops trying (until the next start). */
+const MAX_BUY_FAILURES = 3
 
 export type BeeFetch = (path: string, init?: RequestInit, timeoutMs?: number) => Promise<Response>
 
@@ -74,39 +90,18 @@ let inFlight = false
 
 const STATE_FILE = 'system-stamp.json'
 
-/**
- * The reserve just bought (F-6). Bee can take a while to list a new batch,
- * and until it does the existence check below sees nothing — without this, a
- * wallet that still covers another reserve would buy a second one, and the
- * dashboard fell back to "add about 4 xBZZ" in the meantime.
- */
-const JUST_BOUGHT_MS = 30 * 60_000
-let justBought: { batchId: string; at: number } | null = null
-
-/** When the reserve was bought, while it may not be listed yet (for /status). */
-export function reserveJustBoughtAt(now = Date.now()): number | null {
-  return justBought && now - justBought.at < JUST_BOUGHT_MS ? justBought.at : null
-}
-
-/**
- * The reserve just grown. Bee lists the new depth only once its chain
- * listener has seen the depth-increase event; until then /stamps still shows
- * the old depth and the check below would send another dilute every minute —
- * each one reverting on chain and costing gas.
- */
-const JUST_GREW_MS = 30 * 60_000
-let justGrew: { batchId: string; at: number } | null = null
-
-/** Tests only. */
-export function resetJustBoughtForTests(): void {
-  justBought = null
-  justGrew = null
-}
-
 interface StampState {
   lowFundsNotifiedAt?: number
-  /** Depth the "reserve almost full, add funds" notice was last shown for. */
-  growBlockedNotifiedDepth?: number
+  /** Set just before a purchase is sent, cleared when it answers. */
+  buySentAt?: number
+  /** The last reserve bought, and when. */
+  boughtBatchId?: string
+  boughtAt?: number
+  buyFailures?: number
+  lastBuyFailureAt?: number
+  buyStoppedNotified?: boolean
+  /** The full/old reserve the "add funds to replace it" notice was shown for. */
+  replaceBlockedNotifiedFor?: string
 }
 
 function readState(): StampState {
@@ -125,12 +120,21 @@ function writeState(patch: Partial<StampState>): void {
   }
 }
 
-function lowFundsAlreadyNotified(): boolean {
-  return Boolean(readState().lowFundsNotifiedAt)
+/** When the reserve was bought, while it may not be listed yet (for /status). */
+export function reserveJustBoughtAt(now = Date.now()): number | null {
+  const { boughtAt } = readState()
+
+  return boughtAt && now - boughtAt < BUY_SETTLE_MS ? boughtAt : null
+}
+
+function buySettling(now = Date.now()): boolean {
+  const { buySentAt } = readState()
+
+  return reserveJustBoughtAt(now) !== null || Boolean(buySentAt && now - buySentAt < BUY_SETTLE_MS)
 }
 
 function notifyLowFundsOnce(): void {
-  if (lowFundsAlreadyNotified()) return
+  if (readState().lowFundsNotifiedAt) return
   pushNotification({
     type: 'charge-blocked',
     title: 'Add about 4 xBZZ to activate identity & messages',
@@ -138,10 +142,6 @@ function notifyLowFundsOnce(): void {
     link: '/account?tab=wallet',
   })
   writeState({ lowFundsNotifiedAt: Date.now() })
-}
-
-function clearLowFundsFlag(): void {
-  writeState({ lowFundsNotifiedAt: undefined })
 }
 
 /** The /stamps fields the reserve checks read. */
@@ -165,106 +165,45 @@ export function reserveFillRatio(batch: ReserveBatch): number {
 }
 
 /**
- * The depth the reserve should grow to, or null to leave it. Reserves bought
- * before 0.7.2 (depth 17 ≈ 44.7 kB — full after ~11 writes) grow to the
- * current depth; any reserve grows one step when its fullest bucket reaches
- * SYSTEM_STAMP_GROW_RATIO, up to SYSTEM_STAMP_MAX_DEPTH.
+ * Whether a reserve can keep taking writes, as Bee itself sees it (Bee stamps
+ * from its own copy, so /stamps is the view that counts). Reserves bought
+ * before 0.7.2 are depth 17 (≈ 44.7 kB, full after ~11 writes) and are
+ * replaced; so is a full one — Bee refuses writes into a full bucket with a
+ * generic 400.
  */
-export function reserveGrowTarget(batch: ReserveBatch): number | null {
-  const depth = batch.depth ?? SYSTEM_STAMP_DEPTH
-
-  if (depth < SYSTEM_STAMP_DEPTH) return SYSTEM_STAMP_DEPTH
-
-  if (reserveFillRatio(batch) >= SYSTEM_STAMP_GROW_RATIO && depth < SYSTEM_STAMP_MAX_DEPTH) return depth + 1
-
-  return null
+export function reserveNeedsReplacing(batch: ReserveBatch): boolean {
+  return (batch.depth ?? SYSTEM_STAMP_DEPTH) < SYSTEM_STAMP_DEPTH || reserveFillRatio(batch) >= 1
 }
 
 /**
- * Grow ("dilute") the reserve in place: same batch, same label, everything
- * already stamped stays valid, each bucket gets twice the room per step.
- * Dilute halves the time left, so it only runs when the wallet also covers the
- * auto-extension that will follow at the new depth, plus the floor — otherwise
- * the reserve would run out two weeks later. Short of that, the user hears it
- * once per depth when the space is filling up.
+ * Rename an old reserve and stop extending it. No money moves — safe to
+ * repeat on every pass until it works.
  */
-async function growReserveIfNeeded(batch: ReserveBatch, beeFetch: BeeFetch): Promise<void> {
-  const target = reserveGrowTarget(batch)
-
-  if (target === null || !batch.usable) return
-
-  if (justGrew && justGrew.batchId === batch.batchID && Date.now() - justGrew.at < JUST_GREW_MS) return
-
-  const chainRes = await beeFetch('/chainstate')
-
-  if (!chainRes.ok) return
-  const chain = (await chainRes.json()) as { chainTip?: number; block?: number; currentPrice?: string }
-
-  if (
-    typeof chain.chainTip !== 'number' ||
-    typeof chain.block !== 'number' ||
-    chain.chainTip - chain.block >= TRUSTED_CHAIN_LAG_BLOCKS ||
-    !chain.currentPrice
-  ) {
-    return
-  }
-
-  const setting = getAutoExtendSettings()[batch.batchID.toLowerCase()]
-  const nextExtendCost = topupAmount(SYSTEM_STAMP_MONTHS, chain.currentPrice) << BigInt(target)
-
-  const walletRes = await beeFetch('/wallet')
-
-  if (!walletRes.ok) return
-  const bzzBalance = BigInt(((await walletRes.json()) as { bzzBalance: string }).bzzBalance)
-
-  if (bzzBalance < nextExtendCost + WALLET_FLOOR_PLUR) {
-    if (reserveFillRatio(batch) >= SYSTEM_STAMP_GROW_RATIO && readState().growBlockedNotifiedDepth !== target) {
-      const needed = Number((nextExtendCost + WALLET_FLOOR_PLUR) / BigInt(1e14)) / 100
-      pushNotification({
-        type: 'charge-blocked',
-        title: 'The space for your identity & messages is filling up',
-        body: `Nook needs about ${Math.ceil(needed)} xBZZ in your wallet to make it bigger. Until then, sending messages may fail. Top up on the Wallet page.`,
-        link: '/account?tab=wallet',
-      })
-      writeState({ growBlockedNotifiedDepth: target })
-    }
-
-    return
-  }
-
-  // R5-11: never spend with a node that isn't provably Nook's own.
-  if (!(await isOwnBee())) {
-    logger.error('system-stamp: grow skipped — the node on port 1633 is not Nook’s own')
-
-    return
-  }
-
-  const res = await beeFetch(`/stamps/dilute/${batch.batchID}/${target}`, { method: 'PATCH' }, 300_000)
+async function retireReserve(batch: ReserveBatch, beeFetch: BeeFetch): Promise<void> {
+  const res = await beeFetch(`/stamps/${batch.batchID}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ label: RETIRED_SYSTEM_STAMP_LABEL }),
+  })
 
   if (!res.ok) {
-    logger.error(`system-stamp: grow to depth ${target} failed (${res.status})`)
+    logger.error(`system-stamp: retiring ${batch.batchID.slice(0, 8)} failed (${res.status}) — will retry`)
 
     return
   }
+  const setting = getAutoExtendSettings()[batch.batchID.toLowerCase()]
 
-  justGrew = { batchId: batch.batchID, at: Date.now() }
-  // Nook manages the reserve's extension length; keep the user's on/off choice.
-  setAutoExtendSetting(batch.batchID, setting?.enabled ?? true, SYSTEM_STAMP_MONTHS)
-  writeState({ growBlockedNotifiedDepth: undefined })
-  pushNotification({
-    type: 'info',
-    title: 'More space for your identity & messages',
-    body: 'Nook made the reserved space bigger so your messages keep going through. It extends automatically — manage it in Settings.',
-    link: '/settings',
-  })
-  logger.info(`system-stamp: grew ${batch.batchID.slice(0, 8)} from depth ${batch.depth} to ${target}`)
+  setAutoExtendSetting(batch.batchID, false, setting?.months ?? SYSTEM_STAMP_MONTHS)
+  logger.info(`system-stamp: retired ${batch.batchID.slice(0, 8)} (depth ${batch.depth}) — no longer extended`)
 }
 
 export type SystemStampResult = 'exists' | 'bought' | 'skipped' | 'failed'
 
 /**
- * One pass: buy the system batch if (and only if) every condition holds.
- * Silent skips are the normal state — funding simply hasn't arrived yet.
+ * One pass. Keeps exactly one working reserve at SYSTEM_STAMP_DEPTH: buys one
+ * when there is none, or when the current one is old or full (then retires
+ * the old one). Silent skips are the normal state — funding simply hasn't
+ * arrived yet.
  */
 export async function runSystemStampCheck(beeFetch: BeeFetch = realBeeFetch): Promise<SystemStampResult> {
   if (getMode() !== 'light') return 'skipped'
@@ -272,23 +211,34 @@ export async function runSystemStampCheck(beeFetch: BeeFetch = realBeeFetch): Pr
   if (inFlight) return 'skipped'
   inFlight = true
   try {
-    // Existence first — one system batch, ever, while it lives. Any batch
-    // carrying the label counts (usable or not): auto-renew keeps it alive,
-    // and rebuying beside a hiccuping one would double-spend.
     const stampsRes = await beeFetch('/stamps')
 
     if (!stampsRes.ok) return 'skipped'
     const { stamps } = (await stampsRes.json()) as { stamps?: ReserveBatch[] }
-    const reserve = (stamps ?? []).find(s => s.label === SYSTEM_STAMP_LABEL)
+    const labelled = (stamps ?? []).filter(s => s.label === SYSTEM_STAMP_LABEL)
+    const working = labelled.filter(s => !reserveNeedsReplacing(s))
+    const state = readState()
 
-    if (reserve) {
-      await growReserveIfNeeded(reserve, beeFetch)
+    if (working.length > 0) {
+      // One working reserve: the last one bought when it's listed, else the
+      // newest-looking one. Any other labelled batch is retired.
+      const keep = working.find(s => s.batchID === state.boughtBatchId) ?? working[working.length - 1]
+
+      for (const old of labelled) {
+        if (old.batchID !== keep.batchID) await retireReserve(old, beeFetch)
+      }
 
       return 'exists'
     }
 
-    // Bought moments ago but not listed yet — never buy twice.
-    if (reserveJustBoughtAt() !== null) return 'exists'
+    // Bought (or being bought) moments ago but not listed yet — never buy twice.
+    if (buySettling()) return 'exists'
+
+    const failures = state.buyFailures ?? 0
+
+    if (failures >= MAX_BUY_FAILURES) return 'skipped'
+
+    if (failures > 0 && state.lastBuyFailureAt && Date.now() - state.lastBuyFailureAt < BUY_RETRY_MS) return 'skipped'
 
     // Never act on a lagging chain view — price and wallet would be stale.
     const chainRes = await beeFetch('/chainstate')
@@ -307,17 +257,33 @@ export async function runSystemStampCheck(beeFetch: BeeFetch = realBeeFetch): Pr
 
     const amountPerChunk = topupAmount(SYSTEM_STAMP_MONTHS, chain.currentPrice)
     const totalCost = amountPerChunk << BigInt(SYSTEM_STAMP_DEPTH)
+    // A replacement keeps the wallet floor; a first reserve may use it all
+    // (the onboarding amount is sized for exactly that).
+    const replacing = labelled[0]
+    const needed = replacing ? totalCost + WALLET_FLOOR_PLUR : totalCost
 
     const walletRes = await beeFetch('/wallet')
 
     if (!walletRes.ok) return 'skipped'
     const bzzBalance = BigInt(((await walletRes.json()) as { bzzBalance: string }).bzzBalance)
 
-    if (bzzBalance < totalCost) {
-      // The user funded SOMETHING but not enough for the reserve — without a
-      // word, identity and messaging silently never activate and the user has
-      // no way to know why (fresh-install finding, 2026-09-17). Tell them once.
-      if (bzzBalance > BigInt(0)) notifyLowFundsOnce()
+    if (bzzBalance < needed) {
+      if (replacing) {
+        if (state.replaceBlockedNotifiedFor !== replacing.batchID) {
+          pushNotification({
+            type: 'charge-blocked',
+            title: 'The space for your identity & messages is full',
+            body: `Nook needs about ${Math.ceil(Number(needed / BigInt(1e14)) / 100)} xBZZ in your wallet to set up new space. Until then, messages use space from your drives. Top up on the Wallet page.`,
+            link: '/account?tab=wallet',
+          })
+          writeState({ replaceBlockedNotifiedFor: replacing.batchID })
+        }
+      } else if (bzzBalance > BigInt(0)) {
+        // The user funded SOMETHING but not enough for the reserve — without a
+        // word, identity and messaging silently never activate (fresh-install
+        // finding, 2026-09-17). Tell them once.
+        notifyLowFundsOnce()
+      }
 
       return 'skipped'
     }
@@ -329,6 +295,9 @@ export async function runSystemStampCheck(beeFetch: BeeFetch = realBeeFetch): Pr
       return 'skipped'
     }
 
+    // Written down BEFORE sending: a restart mid-purchase must not buy again.
+    writeState({ buySentAt: Date.now() })
+
     // Chain transaction — generous timeout, mined before Bee responds.
     const buyRes = await beeFetch(
       `/stamps/${amountPerChunk.toString()}/${SYSTEM_STAMP_DEPTH}?label=${SYSTEM_STAMP_LABEL}`,
@@ -337,31 +306,71 @@ export async function runSystemStampCheck(beeFetch: BeeFetch = realBeeFetch): Pr
     )
 
     if (!buyRes.ok) {
-      logger.error(`system-stamp: buy failed (${buyRes.status})`)
+      const buyFailures = failures + 1
+
+      logger.error(`system-stamp: buy failed (${buyRes.status}) — attempt ${buyFailures} of ${MAX_BUY_FAILURES}`)
+      writeState({ buySentAt: undefined, buyFailures, lastBuyFailureAt: Date.now() })
+
+      if (buyFailures >= MAX_BUY_FAILURES && !state.buyStoppedNotified) {
+        pushNotification({
+          type: 'charge-blocked',
+          title: 'Couldn’t set up space for your identity & messages',
+          body: 'Nook tried 3 times and stopped. Messages use space from your drives meanwhile. Restart Nook to try again.',
+          link: '/settings',
+        })
+        writeState({ buyStoppedNotified: true })
+      }
 
       return 'failed'
     }
     const { batchID } = (await buyRes.json()) as { batchID: string }
 
-    justBought = { batchId: batchID, at: Date.now() }
+    writeState({
+      buySentAt: undefined,
+      boughtBatchId: batchID,
+      boughtAt: Date.now(),
+      buyFailures: 0,
+      lastBuyFailureAt: undefined,
+      buyStoppedNotified: undefined,
+      lowFundsNotifiedAt: undefined,
+      replaceBlockedNotifiedFor: undefined,
+    })
 
     // Auto-renew ON by default — this space expiring means unreachable
-    // identity and lost unsent messages; opting out lives in Settings.
-    setAutoExtendSetting(batchID, true, SYSTEM_STAMP_MONTHS)
+    // identity and lost unsent messages; opting out lives in Settings. A
+    // replacement keeps the user's on/off choice.
+    const previous = replacing ? getAutoExtendSettings()[replacing.batchID.toLowerCase()] : undefined
+
+    setAutoExtendSetting(batchID, previous?.enabled ?? true, SYSTEM_STAMP_MONTHS)
     recordPurchase({
       kind: 'create',
       batchId: batchID,
       label: SYSTEM_STAMP_LABEL,
       amountPlur: purchaseCostPlur(amountPerChunk.toString(), SYSTEM_STAMP_DEPTH),
     })
-    pushNotification({
-      type: 'info',
-      title: 'Reserved space for your identity & messages',
-      body: 'Nook set aside a small network space so you can be found and message reliably. It extends automatically — manage it in Settings.',
-      link: '/settings',
-    })
-    logger.info(`system-stamp: bought ${batchID.slice(0, 8)} (depth ${SYSTEM_STAMP_DEPTH}, ${SYSTEM_STAMP_MONTHS}mo)`)
-    clearLowFundsFlag()
+
+    for (const old of labelled) await retireReserve(old, beeFetch)
+
+    pushNotification(
+      replacing
+        ? {
+            type: 'info',
+            title: 'New space for your identity & messages',
+            body: 'The previous space was full, so Nook set up a new one. The old one is no longer extended and runs out on its own.',
+            link: '/settings',
+          }
+        : {
+            type: 'info',
+            title: 'Reserved space for your identity & messages',
+            body: 'Nook set aside a small network space so you can be found and message reliably. It extends automatically — manage it in Settings.',
+            link: '/settings',
+          },
+    )
+    logger.info(
+      `system-stamp: bought ${batchID.slice(0, 8)} (depth ${SYSTEM_STAMP_DEPTH}, ${SYSTEM_STAMP_MONTHS}mo)${
+        replacing ? ` to replace ${replacing.batchID.slice(0, 8)}` : ''
+      }`,
+    )
 
     return 'bought'
   } catch (error) {
@@ -376,6 +385,8 @@ export async function runSystemStampCheck(beeFetch: BeeFetch = realBeeFetch): Pr
 export function startSystemStampMonitor(): void {
   // getPath forces the data dir to exist before any dependent write.
   void getPath('')
+  // A restart is the user's way to try a stopped purchase again.
+  writeState({ buyFailures: undefined, lastBuyFailureAt: undefined, buyStoppedNotified: undefined })
   setTimeout(() => {
     void runSystemStampCheck()
     setInterval(async () => runSystemStampCheck(), CHECK_INTERVAL_MS)

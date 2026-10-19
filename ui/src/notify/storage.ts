@@ -119,6 +119,21 @@ export function clearIdentityPublished(ethAddress: string): void {
   localStorage.removeItem(IDENTITY_PUBLISHED_PREFIX + ethAddress.toLowerCase())
 }
 
+/**
+ * The reserve batch the identity was last stored with. When the reserve is
+ * replaced, the identity is stored again with the new one — otherwise it
+ * disappears from the network when the old reserve runs out.
+ */
+const IDENTITY_STAMP_PREFIX = 'nook.identityStamp.'
+
+export function getIdentityStamp(ethAddress: string): string | null {
+  return localStorage.getItem(IDENTITY_STAMP_PREFIX + ethAddress.toLowerCase())
+}
+
+export function setIdentityStamp(ethAddress: string, batchId: string): void {
+  localStorage.setItem(IDENTITY_STAMP_PREFIX + ethAddress.toLowerCase(), batchId.toLowerCase())
+}
+
 export function isOnboardingDismissed(): boolean {
   return localStorage.getItem(ONBOARDING_DISMISSED_KEY) === 'true'
 }
