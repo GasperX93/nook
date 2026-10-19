@@ -65,6 +65,12 @@ const TRUSTED_CHAIN_LAG_BLOCKS = 120
  */
 const BUY_SETTLE_MS = 30 * 60_000
 
+/**
+ * A reserve bought but never listed by Bee blocks a new purchase this long —
+ * Bee may list it late (a resync), and the old one may still carry the label.
+ */
+const BOUGHT_UNLISTED_MS = 24 * 60 * 60_000
+
 /** After a failed purchase, wait this long before the next try. */
 const BUY_RETRY_MS = 60 * 60_000
 
@@ -97,6 +103,8 @@ interface StampState {
   /** The last reserve bought, and when. */
   boughtBatchId?: string
   boughtAt?: number
+  /** Bee has listed the last reserve bought. */
+  boughtListed?: boolean
   buyFailures?: number
   lastBuyFailureAt?: number
   buyStoppedNotified?: boolean
@@ -128,9 +136,30 @@ export function reserveJustBoughtAt(now = Date.now()): number | null {
 }
 
 function buySettling(now = Date.now()): boolean {
-  const { buySentAt } = readState()
+  const { buySentAt, boughtBatchId, boughtAt, boughtListed } = readState()
 
-  return reserveJustBoughtAt(now) !== null || Boolean(buySentAt && now - buySentAt < BUY_SETTLE_MS)
+  if (reserveJustBoughtAt(now) !== null) return true
+
+  if (buySentAt && now - buySentAt < BUY_SETTLE_MS) return true
+
+  return Boolean(boughtBatchId && !boughtListed && boughtAt && now - boughtAt < BOUGHT_UNLISTED_MS)
+}
+
+function recordBuyFailure(failures: number, reason: string, alreadyNotified?: boolean): void {
+  const buyFailures = failures + 1
+
+  logger.error(`system-stamp: buy failed (${reason}) — attempt ${buyFailures} of ${MAX_BUY_FAILURES}`)
+  writeState({ buyFailures, lastBuyFailureAt: Date.now() })
+
+  if (buyFailures >= MAX_BUY_FAILURES && !alreadyNotified) {
+    pushNotification({
+      type: 'charge-blocked',
+      title: 'Couldn’t set up space for your identity & messages',
+      body: 'Nook tried 3 times and stopped. Messages use space from your drives meanwhile. Restart Nook to try again.',
+      link: '/settings',
+    })
+    writeState({ buyStoppedNotified: true })
+  }
 }
 
 function notifyLowFundsOnce(): void {
@@ -224,6 +253,8 @@ export async function runSystemStampCheck(beeFetch: BeeFetch = realBeeFetch): Pr
       // newest-looking one. Any other labelled batch is retired.
       const keep = working.find(s => s.batchID === state.boughtBatchId) ?? working[working.length - 1]
 
+      if (keep.batchID === state.boughtBatchId && !state.boughtListed) writeState({ boughtListed: true })
+
       for (const old of labelled) {
         if (old.batchID !== keep.batchID) await retireReserve(old, beeFetch)
       }
@@ -299,27 +330,25 @@ export async function runSystemStampCheck(beeFetch: BeeFetch = realBeeFetch): Pr
     writeState({ buySentAt: Date.now() })
 
     // Chain transaction — generous timeout, mined before Bee responds.
-    const buyRes = await beeFetch(
-      `/stamps/${amountPerChunk.toString()}/${SYSTEM_STAMP_DEPTH}?label=${SYSTEM_STAMP_LABEL}`,
-      { method: 'POST', headers: { immutable: 'true', 'Gas-Limit': BATCH_CREATE_GAS_LIMIT } },
-      300_000,
-    )
+    let buyRes: Response
+
+    try {
+      buyRes = await beeFetch(
+        `/stamps/${amountPerChunk.toString()}/${SYSTEM_STAMP_DEPTH}?label=${SYSTEM_STAMP_LABEL}`,
+        { method: 'POST', headers: { immutable: 'true', 'Gas-Limit': BATCH_CREATE_GAS_LIMIT } },
+        300_000,
+      )
+    } catch (error) {
+      // No answer: the purchase may still go through, so buySentAt stays and
+      // holds off another one; it still counts as a failed try.
+      recordBuyFailure(failures, String(error), state.buyStoppedNotified)
+
+      return 'failed'
+    }
 
     if (!buyRes.ok) {
-      const buyFailures = failures + 1
-
-      logger.error(`system-stamp: buy failed (${buyRes.status}) — attempt ${buyFailures} of ${MAX_BUY_FAILURES}`)
-      writeState({ buySentAt: undefined, buyFailures, lastBuyFailureAt: Date.now() })
-
-      if (buyFailures >= MAX_BUY_FAILURES && !state.buyStoppedNotified) {
-        pushNotification({
-          type: 'charge-blocked',
-          title: 'Couldn’t set up space for your identity & messages',
-          body: 'Nook tried 3 times and stopped. Messages use space from your drives meanwhile. Restart Nook to try again.',
-          link: '/settings',
-        })
-        writeState({ buyStoppedNotified: true })
-      }
+      writeState({ buySentAt: undefined })
+      recordBuyFailure(failures, String(buyRes.status), state.buyStoppedNotified)
 
       return 'failed'
     }
@@ -329,6 +358,7 @@ export async function runSystemStampCheck(beeFetch: BeeFetch = realBeeFetch): Pr
       buySentAt: undefined,
       boughtBatchId: batchID,
       boughtAt: Date.now(),
+      boughtListed: undefined,
       buyFailures: 0,
       lastBuyFailureAt: undefined,
       buyStoppedNotified: undefined,

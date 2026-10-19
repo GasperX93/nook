@@ -343,6 +343,39 @@ describe('replacing the reserve (0.7.2)', () => {
     }
   })
 
+  it('never buys twice when Bee lists the new reserve late and the old one kept its label', async () => {
+    const bee = makeBee({ reserve: { depth: 17, bucketDepth: 16, utilizationRatio: 1 }, labelStatus: 503 })
+    const now = Date.now()
+    const clock = jest.spyOn(Date, 'now')
+
+    try {
+      clock.mockReturnValue(now)
+      expect(await runSystemStampCheck(bee.fetch)).toBe('bought')
+      // 31 minutes later: Bee still hasn't listed it, the old one is still labelled.
+      clock.mockReturnValue(now + 31 * 60_000)
+      expect(await runSystemStampCheck(bee.fetch)).toBe('exists')
+      expect(bee.buys).toHaveLength(1)
+
+      // Once Bee lists it, the hold ends; a later full reserve may be replaced again.
+      bee.listBought()
+      expect(await runSystemStampCheck(bee.fetch)).toBe('exists')
+    } finally {
+      clock.mockRestore()
+    }
+  })
+
+  it('a purchase with no answer counts as a failed try and blocks a second buy', async () => {
+    const bee = makeBee({ reserve: { depth: 17, bucketDepth: 16, utilizationRatio: 1 } })
+    const hanging: BeeFetch = async (path, init) => {
+      if (path.startsWith('/stamps/') && init?.method === 'POST') throw new Error('timeout')
+
+      return bee.fetch(path, init)
+    }
+
+    expect(await runSystemStampCheck(hanging)).toBe('failed')
+    expect(await runSystemStampCheck(hanging)).toBe('exists')
+  })
+
   it('a restart during a purchase never buys twice', async () => {
     const bee = makeBee({ reserve: { depth: 17, bucketDepth: 16, utilizationRatio: 1 } })
     // The purchase was sent, then Nook stopped before Bee answered.
