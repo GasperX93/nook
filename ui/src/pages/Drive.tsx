@@ -82,6 +82,7 @@ import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { useSidebar } from '../components/ui/sidebar'
 import { friendlyError } from '../lib/friendly-error'
 import { type DriveSpace, driveSpace, fitsInDrive } from '../lib/drive-space'
+import { extendPlan } from '../lib/extend-plan'
 import { formatBytes } from '../lib/format-bytes'
 import { isDriveFullError, withUploadRetries } from '../lib/upload-retry'
 import {
@@ -551,16 +552,6 @@ function ExtendModal({
   onClose: () => void
   deletable?: boolean
 }) {
-  // Capacity options: only sizes strictly larger than the drive's current one
-  // (a deeper depth always holds more, so this keeps only real upgrades).
-  const currentDisplayBytes = depthToBytes(stamp.depth)
-  // Deletable drives never change size: their slot ledger is laid out for the
-  // drive's depth, and a dilute would hand out slots it doesn't track. The
-  // /bee-api guard refuses it too, but the dashboard calls Bee directly in the
-  // packaged app — so the option must not exist here.
-  const capacityOptions = deletable
-    ? []
-    : SIZE_PRESETS.filter(s => s.depth > stamp.depth && depthToBytes(s.depth) > currentDisplayBytes)
   const [capacityEnabled, setCapacityEnabled] = useState(false)
   const [capacityIdx, setCapacityIdx] = useState(0)
   const [durationEnabled, setDurationEnabled] = useState(false)
@@ -570,6 +561,26 @@ function ExtendModal({
   const { data: chainState } = useChainState()
   const { data: wallet } = useWallet()
   const queryClient = useQueryClient()
+  // The drive's size on chain. Bee can keep filling it at an older, smaller
+  // size after a restart, and every charge follows the chain — so nothing is
+  // bought until this is known (see lib/extend-plan.ts).
+  const { data: chainBatch, isError: chainError } = useQuery({
+    queryKey: ['bee', 'batch', stamp.batchID],
+    queryFn: async () => beeApi.getBatch(stamp.batchID),
+    retry: false,
+  })
+  const chainDepth = chainBatch?.depth ?? null
+  const realDepth = Math.max(stamp.depth, chainDepth ?? stamp.depth)
+
+  // Capacity options: only sizes strictly larger than the drive's current one
+  // (a deeper depth always holds more, so this keeps only real upgrades).
+  // Deletable drives never change size: their slot ledger is laid out for the
+  // drive's depth, and a dilute would hand out slots it doesn't track. The
+  // /bee-api guard refuses it too, but the dashboard calls Bee directly in the
+  // packaged app — so the option must not exist here.
+  const capacityOptions = deletable
+    ? []
+    : SIZE_PRESETS.filter(s => s.depth > realDepth && depthToBytes(s.depth) > depthToBytes(realDepth))
 
   // Auto-extend (#129) — STAGED like the other sections: nothing applies
   // until the footer button, so Cancel means cancel and the button label can
@@ -605,43 +616,31 @@ function ExtendModal({
     autoLoaded &&
     (autoEnabled !== autoOriginal.current.enabled || (autoEnabled && autoIdx !== autoOriginal.current.idx))
 
-  const targetDepth = capacityEnabled && capacityOptions[capacityIdx] ? capacityOptions[capacityIdx].depth : stamp.depth
-  const willDilute = capacityEnabled && targetDepth > stamp.depth
-  const userExtendMonths = durationEnabled ? DURATION_PRESETS[durationIdx].months : 0
-
-  // Compute the topup amount that, combined with the dilute (if any), produces:
-  //   - the user's current remaining TTL (preserved across the dilute halving), plus
-  //   - the additional months the user picked under "Extend duration"
-  //
-  // Math: per Bee protocol, each +1 depth in dilute halves remaining time. To restore
-  // it we need to top up enough to undo that halving. Then we add any user-requested
-  // duration on top.
-  const SECONDS_PER_MONTH = 30 * 86400
-  const SECONDS_PER_BLOCK = 5 // Gnosis chain
-  const depthDelta = targetDepth - stamp.depth
-  const recoverySeconds = depthDelta > 0 ? Math.floor(stamp.batchTTL * (1 - 1 / 2 ** depthDelta)) : 0
-  const extendSeconds = userExtendMonths * SECONDS_PER_MONTH
-  const totalSecondsToBuy = recoverySeconds + extendSeconds
-
-  // Cost = price-per-block × blocks × chunks-at-new-depth. Hidden from the user how it
-  // breaks down between dilute-recovery and user-requested time — they see one number.
-  const cost = (() => {
-    if (totalSecondsToBuy <= 0 || !chainState) return null
-    const blocks = BigInt(Math.floor(totalSecondsToBuy / SECONDS_PER_BLOCK))
-    const amount = BigInt(chainState.currentPrice) * blocks
-    const totalChunks = 1n << BigInt(targetDepth)
-    const totalPlur = amount * totalChunks
-
-    return { amount: amount.toString(), bzzCost: plurToBzz(totalPlur.toString()) }
-  })()
+  const plan = extendPlan({
+    beeDepth: stamp.depth,
+    chainDepth: chainDepth ?? stamp.depth,
+    targetDepth: capacityEnabled && capacityOptions[capacityIdx] ? capacityOptions[capacityIdx].depth : null,
+    batchTTL: stamp.batchTTL,
+    extendMonths: durationEnabled ? DURATION_PRESETS[durationIdx].months : 0,
+    currentPrice: chainState?.currentPrice ?? '0',
+  })
+  const willDilute = plan.willDilute
+  // One number for the user, however it splits between buying back the time
+  // a bigger size halves and the months they picked.
+  const cost =
+    chainState && plan.topupAmount !== null && plan.totalPlur !== null
+      ? { topupAmount: plan.topupAmount, bzzCost: plurToBzz(plan.totalPlur.toString()) }
+      : null
 
   const bzzBalance = wallet ? Number(plurToBzz(wallet.bzzBalance)) : null
   const canAfford = cost && bzzBalance !== null ? bzzBalance >= Number(cost.bzzCost) : true
-  const purchaseStaged = willDilute || totalSecondsToBuy > 0
+  const purchaseStaged = willDilute || plan.topupAmount !== null
   const nothingStaged = !purchaseStaged && !autoDirty
+  // A purchase waits for the chain's size (a wrong size means a wrong charge).
+  const chainUnknown = chainDepth === null
   // The primary button is NEVER a grey dead-end: with nothing staged it's an
   // enabled "Done" that just closes. It always says what pressing it does.
-  const canSubmit = nothingStaged || (purchaseStaged ? canAfford : true)
+  const canSubmit = nothingStaged || (purchaseStaged ? canAfford && !chainUnknown : true)
 
   const buttonLabel = submitting
     ? purchaseStaged
@@ -671,18 +670,13 @@ function ExtendModal({
         // would drop below the postage contract's minimum the on-chain tx emits
         // no BatchDepthIncrease event and Bee returns "cannot dilute batch".
         // Pre-topping avoids that.
-        //
-        // Per-chunk math: total BZZ cost is unchanged because Bee multiplies
-        // amount × current-chunk-count. Diluting later halves the per-chunk
-        // balance by 2^delta, so we scale the per-chunk amount up by 2^delta
-        // here to land on the same final balance/chunk.
-        const topupAmount =
-          willDilute && depthDelta > 0 ? (BigInt(cost.amount) << BigInt(depthDelta)).toString() : cost.amount
-
-        await beeApi.topupStamp(stamp.batchID, topupAmount)
+        // The per-chunk amount is already scaled for the dilute (extend-plan).
+        // Nook's server saves the new size in Bee once Bee shows it
+        // (depth-save.ts), so a restart can't bring the old size back.
+        await beeApi.topupStamp(stamp.batchID, cost.topupAmount)
 
         if (willDilute) {
-          await beeApi.diluteStamp(stamp.batchID, targetDepth)
+          await beeApi.diluteStamp(stamp.batchID, plan.depth)
         }
         queryClient.refetchQueries({ queryKey: ['bee', 'stamps'] })
         queryClient.refetchQueries({ queryKey: ['bee', 'wallet'] })
@@ -724,8 +718,14 @@ function ExtendModal({
             {stamp.label || `${stamp.batchID.slice(0, 20)}…`}
           </p>
           <p className="text-xs mt-0.5" style={{ color: 'rgb(var(--fg-muted))' }}>
-            {depthToCapacity(stamp.depth)} · {Math.floor(stamp.batchTTL / 86400)} days remaining
+            {depthToCapacity(realDepth)} · {Math.floor(stamp.batchTTL / 86400)} days remaining
           </p>
+          {plan.beeBehind && (
+            <p className="text-[11px] mt-2 leading-snug" style={{ color: '#b45309' }}>
+              On the network this drive is already {depthToCapacity(realDepth)}, but your node still fills it as{' '}
+              {depthToCapacity(stamp.depth)}. Making it bigger puts that right.
+            </p>
+          )}
         </div>
 
         <div>
@@ -840,7 +840,15 @@ function ExtendModal({
           )}
         </div>
 
-        {(willDilute || totalSecondsToBuy > 0) && (
+        {purchaseStaged && chainUnknown && (
+          <p className="text-xs" style={{ color: chainError ? '#ef4444' : 'rgb(var(--fg-muted))' }}>
+            {chainError
+              ? 'Can’t check this drive on the network right now — try again in a minute.'
+              : 'Checking the drive on the network…'}
+          </p>
+        )}
+
+        {purchaseStaged && (
           <div className="text-sm space-y-1">
             <p>
               <span style={{ color: 'rgb(var(--fg-muted))' }}>Cost: </span>

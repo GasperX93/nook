@@ -512,6 +512,12 @@ export const beeApi = {
   diluteStamp: async (id: string, depth: number) =>
     beeRequest<{ batchID: string }>(`/stamps/dilute/${id}/${depth}`, { method: 'PATCH' }),
 
+  /**
+   * The batch as the chain has it (Bee's batchstore). Its depth can be larger
+   * than `/stamps` shows: Bee 2.8.3 can lose a size change on restart.
+   */
+  getBatch: async (id: string) => beeRequest<{ batchID: string; depth: number; batchTTL: number }>(`/batches/${id}`),
+
   /** Create an upload-session tag (#92). Pass its uid to an upload to track network propagation. */
   createTag: async (): Promise<UploadTag> =>
     beeRequest<UploadTag>('/tags', {

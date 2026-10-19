@@ -8,6 +8,7 @@ import { getNookVersionFromFile, writeNookVersionFile } from './config'
 import { EXPECTED_BEE_VERSION, getInstalledBeeVersion, runDownloader } from './downloader'
 import { runElectronTray } from './electron'
 import { startChequebookMonitor } from './chequebook-monitor'
+import { startDepthSave } from './depth-save'
 import { startExtendMonitor } from './extend-monitor'
 import { startSystemStampMonitor } from './system-stamp'
 import { startUpdateChecker } from './update-checker'
@@ -119,6 +120,7 @@ async function main() {
   startMonitorIfNeeded()
   startChequebookMonitor()
   startExtendMonitor()
+  startDepthSave()
   startSystemStampMonitor()
   startUpdateChecker()
   runElectronTray()
