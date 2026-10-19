@@ -105,7 +105,7 @@ import {
 // is, so this can differ from what the files add up to — which the file count
 // shows next to it.
 const USAGE_TOOLTIP =
-  'Used is the larger of what your files add up to and what your node measures. A drive fills unevenly, so small drives can read a little fuller than your files — "about" left is a careful estimate.'
+  'Used is the larger of what your files add up to and what your node measures. A drive fills unevenly, so small drives can read a little fuller than your files.'
 
 function timeUntil(ms: number): { label: string; urgent: boolean } {
   const diff = ms - Date.now()
@@ -2043,7 +2043,7 @@ function DriveCard({
             {isFull
               ? `${driveSizeLabel(stamp.depth)} · Full`
               : space.usedBytes > 0
-                ? `${formatBytes(space.usedBytes)} of ${driveSizeLabel(stamp.depth)} · about ${formatBytes(space.leftBytes)} left${space.state === 'almost-full' ? ' · almost full' : ''}`
+                ? `${formatBytes(space.usedBytes)} of ${driveSizeLabel(stamp.depth)}${space.state === 'almost-full' ? ' · almost full' : ''}`
                 : driveSizeLabel(stamp.depth)}
           </span>
           {stamp.usable && (
