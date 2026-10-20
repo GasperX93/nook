@@ -29,3 +29,36 @@ export async function publishIdentity(
 
   markIdentityPublished(signer.getAddress())
 }
+
+/** Same bound as the SDK's identity feed walk (MAX_IDENTITY_SLOTS). */
+const MAX_IDENTITY_SLOTS = 32
+
+/**
+ * Store the published identity again with another batch — the same slots,
+ * the same content, a new stamp. Bee keeps a chunk for as long as ANY of its
+ * stamps lives (reserve Put stores a stamp from another batch alongside), so
+ * the identity outlives a replaced reserve. The SDK's publish skips an
+ * unchanged identity, so this writes the slots directly. Returns the number
+ * of slots stored.
+ */
+export async function restampIdentity(bee: Bee, signer: NookSigner, stampId: string): Promise<number> {
+  const address = signer.getAddress()
+  const topic = identity.feedTopic(address)
+  const reader = bee.feed.makeReader(topic, address)
+  const writer = bee.feed.makeWriter(topic, signer.getSigningKey())
+  let stored = 0
+
+  for (let index = 0; index < MAX_IDENTITY_SLOTS; index++) {
+    let payload: Uint8Array
+
+    try {
+      payload = (await reader.downloadPayload({ index })).payload.toUint8Array()
+    } catch {
+      break
+    }
+    await writer.uploadPayload(stampId, payload, { index, deferred: false })
+    stored++
+  }
+
+  return stored
+}

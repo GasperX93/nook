@@ -59,7 +59,7 @@ export default function Identity() {
 
     if (!stampId) {
       return setPublishError(
-        'Publishing needs a small reserved space — add about 3 xBZZ on the Wallet page and Nook sets it up automatically.',
+        'Publishing needs a small reserved space — add about 4 xBZZ on the Wallet page and Nook sets it up automatically.',
       )
     }
 
@@ -192,7 +192,7 @@ export default function Identity() {
                 </Button>
                 {!stampId && (
                   <span className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-                    Publishing needs a small reserved space — add about 3 xBZZ on the Wallet page
+                    Publishing needs a small reserved space — add about 4 xBZZ on the Wallet page
                   </span>
                 )}
               </div>

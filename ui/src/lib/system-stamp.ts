@@ -9,14 +9,40 @@
 
 export const SYSTEM_STAMP_LABEL = 'nook-system'
 
+/** A replaced reserve: hidden, never used, runs out on its own (src/system-stamp.ts). */
+export const RETIRED_SYSTEM_STAMP_LABEL = 'nook-system-retired'
+
 interface StampLike {
   batchID: string
   usable: boolean
   label?: string
+  depth?: number
+  bucketDepth?: number
+  utilization?: number
+  utilizationRatio?: number
 }
 
+/**
+ * A full reserve refuses every write that lands in its full bucket — and for
+ * feeds/mailbox Bee only answers a generic 400 — so treat it like a missing
+ * one until the server replaces it (src/system-stamp.ts).
+ */
+function isFull(stamp: StampLike): boolean {
+  if (typeof stamp.utilizationRatio === 'number') return stamp.utilizationRatio >= 1
+
+  if (typeof stamp.depth !== 'number' || typeof stamp.utilization !== 'number') return false
+
+  return stamp.utilization >= 2 ** (stamp.depth - (stamp.bucketDepth ?? 16))
+}
+
+/** The reserve in use — the one Settings shows and messages prefer. */
 export function isSystemStamp(stamp: { label?: string }): boolean {
   return stamp.label === SYSTEM_STAMP_LABEL
+}
+
+/** Any reserve, in use or retired — never a drive, never a fallback. */
+export function isReserveBatch(stamp: { label?: string }): boolean {
+  return stamp.label === SYSTEM_STAMP_LABEL || stamp.label === RETIRED_SYSTEM_STAMP_LABEL
 }
 
 export interface MessagingStampPick {
@@ -27,7 +53,7 @@ export interface MessagingStampPick {
 
 /**
  * The batch identity publishing and message sends should use.
- * Chain: system batch → any usable non-reclaimable batch (degraded) → null.
+ * Chain: system batch (unless full) → any usable non-reclaimable batch (degraded) → null.
  * Reclaimable batches must be excluded — their slots are ledger-managed and
  * Bee-stamped writes to them are refused (poison guards, #99).
  */
@@ -36,10 +62,10 @@ export function pickMessagingStamp(
   reclaimableIds?: Set<string>,
 ): MessagingStampPick | null {
   const candidates = (stamps ?? []).filter(s => s.usable && !(reclaimableIds?.has(s.batchID.toLowerCase()) ?? false))
-  const system = candidates.find(isSystemStamp)
+  const system = candidates.find(s => isSystemStamp(s) && !isFull(s))
 
   if (system) return { batchID: system.batchID, degraded: false }
-  const fallback = candidates.find(s => !isSystemStamp(s))
+  const fallback = candidates.find(s => !isReserveBatch(s))
 
   return fallback ? { batchID: fallback.batchID, degraded: true } : null
 }

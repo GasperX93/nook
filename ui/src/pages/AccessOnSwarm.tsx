@@ -20,7 +20,7 @@ async function fetchResolved(hash: string): Promise<{ blob: Blob; suggestedName:
   const bee = new Bee(beeBase)
 
   try {
-    const file = await bee.downloadFile(hash)
+    const file = await bee.file.download(hash)
 
     // Copy to a fresh ArrayBuffer to satisfy Blob's BlobPart type — bee-js
     // returns a Uint8Array<ArrayBufferLike> which TS won't accept directly.

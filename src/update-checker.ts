@@ -7,10 +7,14 @@ import { getPath } from './path'
 import PACKAGE_JSON from '../package.json'
 
 /**
- * Update check, phase 1 (post-test feedback 2026-09-21): tell the user a
- * newer Nook exists — a bell notification plus a Settings → General row —
- * and link the download. No self-updating yet; that's phase 2 (Squirrel),
- * which deserves its own test cycle.
+ * Update check (post-test feedback 2026-09-21): tell the user a newer Nook
+ * exists — a bell notification, a sidebar notice and a Settings row.
+ *
+ * On Mac and Windows Electron's updater (update-electron-app) downloads the
+ * new version in the background. Its own "Restart?" dialog is off; Nook shows
+ * one "Update" button instead (test feedback 2026-10-20), which restarts into
+ * the new version once it's downloaded. Linux, or an updater that failed or
+ * hasn't got the release: the button is a download link to GitHub.
  */
 
 const RELEASES_API = 'https://api.github.com/repos/GasperX93/nook/releases/latest'
@@ -18,24 +22,108 @@ const CHECK_INTERVAL_MS = 24 * 60 * 60_000
 const INITIAL_DELAY_MS = 60_000
 const STATE_FILE = 'update-check.json'
 
+/**
+ * Electron's updater: `none` = nothing found (yet), `downloading`, `ready` =
+ * downloaded and waiting for a restart, `installing`, `failed`, and
+ * `unsupported` (Linux, or not a packaged app).
+ */
+export type UpdaterState = 'none' | 'downloading' | 'ready' | 'installing' | 'failed' | 'unsupported'
+
 export interface UpdateInfo {
   current: string
   latest: string | null
   url: string | null
   updateAvailable: boolean
+  updater: UpdaterState
+  /** Update was clicked while still downloading: Nook restarts once it's done. */
+  installRequested: boolean
 }
 
+const RELEASES_PAGE = 'https://github.com/GasperX93/nook/releases'
+
 let latestSeen: { version: string; url: string } | null = null
+let updaterState: UpdaterState = 'unsupported'
+let installRequested = false
 
 export function getUpdateInfo(): UpdateInfo {
   const current = PACKAGE_JSON.version
+  const updaterHasOne = updaterState === 'downloading' || updaterState === 'ready' || updaterState === 'installing'
 
   return {
     current,
     latest: latestSeen?.version ?? null,
-    url: latestSeen?.url ?? null,
-    updateAvailable: latestSeen !== null && isNewer(latestSeen.version, current),
+    url: latestSeen?.url ?? (updaterHasOne ? RELEASES_PAGE : null),
+    updateAvailable: (latestSeen !== null && isNewer(latestSeen.version, current)) || updaterHasOne,
+    updater: updaterState,
+    installRequested,
   }
+}
+
+/** The part of Electron's autoUpdater Nook uses (injectable for tests). */
+export interface AutoUpdaterLike {
+  on(event: 'update-available' | 'update-downloaded' | 'error', listener: (...args: unknown[]) => void): unknown
+  quitAndInstall(): void
+}
+
+let updater: AutoUpdaterLike | null = null
+let stopBee: () => Promise<void> = async () => undefined
+
+/**
+ * Follow Electron's updater. Call once, only in a packaged app on Mac or
+ * Windows; `beforeInstall` stops Bee the way the tray's Quit does.
+ */
+export function watchAutoUpdater(autoUpdater: AutoUpdaterLike, beforeInstall: () => Promise<void>): void {
+  updater = autoUpdater
+  stopBee = beforeInstall
+  updaterState = 'none'
+  autoUpdater.on('update-available', () => {
+    if (updaterState !== 'ready' && updaterState !== 'installing') updaterState = 'downloading'
+  })
+  autoUpdater.on('update-downloaded', () => {
+    updaterState = 'ready'
+
+    if (installRequested) void installUpdate()
+  })
+  autoUpdater.on('error', error => {
+    logger.error(`Update download failed: ${(error as Error)?.message ?? error}`)
+
+    // A download already finished stays installable; otherwise offer the link.
+    if (updaterState !== 'ready' && updaterState !== 'installing') {
+      updaterState = 'failed'
+      installRequested = false
+    }
+  })
+}
+
+/**
+ * The Update button. Downloaded: stop Bee and restart into the new version.
+ * Still downloading: restart as soon as it's done. Otherwise nothing to do.
+ */
+export async function installUpdate(): Promise<'installing' | 'waiting' | 'unavailable'> {
+  if (!updater) return 'unavailable'
+
+  if (updaterState === 'installing') return 'installing'
+
+  if (updaterState === 'downloading') {
+    installRequested = true
+
+    return 'waiting'
+  }
+
+  if (updaterState !== 'ready') return 'unavailable'
+  updaterState = 'installing'
+  logger.info('Update: stopping Bee and restarting into the new version')
+  await stopBee()
+  updater.quitAndInstall()
+
+  return 'installing'
+}
+
+export function resetUpdaterForTests(): void {
+  updater = null
+  updaterState = 'unsupported'
+  installRequested = false
+  latestSeen = null
 }
 
 /** True when a is a strictly newer x.y.z than b. Non-numeric parts = not newer. */
@@ -88,7 +176,7 @@ async function runUpdateCheck(): Promise<void> {
     pushNotification({
       type: 'info',
       title: `Nook ${version} is available`,
-      body: `You're on ${PACKAGE_JSON.version}. Open Settings to download the update.`,
+      body: `You're on ${PACKAGE_JSON.version}. Update from the sidebar or Settings.`,
       link: '/settings',
     })
     logger.info(`Update available: ${PACKAGE_JSON.version} → ${version}`)

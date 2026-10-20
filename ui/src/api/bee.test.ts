@@ -1,6 +1,14 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
-import { calcStampCost, depthToCapacity, DURATION_PRESETS, plurToBzz, SIZE_PRESETS, weiToDai } from './bee'
+import {
+  calcStampCost,
+  depthToBytes,
+  depthToCapacity,
+  DURATION_PRESETS,
+  plurToBzz,
+  SIZE_PRESETS,
+  weiToDai,
+} from './bee'
 
 // ─── plurToBzz ────────────────────────────────────────────────────────────────
 
@@ -59,36 +67,29 @@ describe('weiToDai', () => {
 
 // ─── depthToCapacity ──────────────────────────────────────────────────────────
 
+describe('depthToBytes', () => {
+  it('matches the Swarm docs effective volume (plain uploads, no erasure coding)', () => {
+    expect(depthToBytes(17)).toBe(44_700)
+    expect(depthToBytes(19)).toBe(112_060_000)
+    expect(depthToBytes(21)).toBe(2_600_000_000)
+    expect(depthToBytes(24)).toBe(47_060_000_000)
+  })
+})
+
 describe('depthToCapacity', () => {
-  it('returns effective capacity for depth 17 (~7 MB)', () => {
-    expect(depthToCapacity(17)).toBe('7 MB')
+  it('uses the preset label for Nook sizes', () => {
+    expect(depthToCapacity(19)).toBe('110 MB')
+    expect(depthToCapacity(20)).toBe('680 MB')
+    expect(depthToCapacity(21)).toBe('2.6 GB')
+    expect(depthToCapacity(22)).toBe('7.7 GB')
+    expect(depthToCapacity(23)).toBe('20 GB')
   })
 
-  it('returns effective capacity for depth 19 (~110 MB)', () => {
-    expect(depthToCapacity(19)).toBe('112 MB')
-  })
-
-  it('returns effective capacity for depth 20 (~680 MB)', () => {
-    expect(depthToCapacity(20)).toBe('688 MB')
-  })
-
-  it('returns the Nook-advertised "2.6 GB" capacity for depth 22 (overbuy table)', () => {
-    // Under variable overbuy, depth 22 is the new "2.6 GB" preset.
-    // Effective at depth 22 is ~7.7 GB; we advertise less for headroom.
-    expect(depthToCapacity(22)).toBe('2.6 GB')
-  })
-
-  it('returns "7.7 GB" for depth 23', () => {
-    expect(depthToCapacity(23)).toBe('7.7 GB')
-  })
-
-  it('returns "16 GB" for depth 24', () => {
-    expect(depthToCapacity(24)).toBe('16 GB')
-  })
-
-  it('falls back to theoretical for unknown depths', () => {
-    // depth 16 not in lookup → theoretical: 2^16 * 4096 = 256 MB
-    expect(depthToCapacity(16)).toBe('268 MB')
+  it('shows other depths at their true usable size, rounded down', () => {
+    // An old "16 GB" drive (depth 24) really holds 47.06 GB.
+    expect(depthToCapacity(24)).toBe('47 GB')
+    expect(depthToCapacity(18)).toBe('6.6 MB')
+    expect(depthToCapacity(17)).toBe('44.7 kB')
   })
 })
 
@@ -133,13 +134,8 @@ describe('calcStampCost', () => {
 // ─── SIZE_PRESETS ─────────────────────────────────────────────────────────────
 
 describe('SIZE_PRESETS', () => {
-  it('has 4 entries', () => {
-    expect(SIZE_PRESETS).toHaveLength(4)
-  })
-
-  it('minimum depth is 21 (variable-overbuy table starts at depth 21)', () => {
-    const minDepth = Math.min(...SIZE_PRESETS.map(p => p.depth))
-    expect(minDepth).toBe(21)
+  it('has 5 entries', () => {
+    expect(SIZE_PRESETS).toHaveLength(5)
   })
 
   it('depths are in ascending order', () => {
@@ -147,9 +143,15 @@ describe('SIZE_PRESETS', () => {
     expect(depths).toEqual([...depths].sort((a, b) => a - b))
   })
 
-  it('every entry has a non-empty label', () => {
+  it('each size is bought at the smallest depth that holds it', () => {
+    const units: Record<string, number> = { MB: 1e6, GB: 1e9 }
+
     for (const preset of SIZE_PRESETS) {
-      expect(preset.label.length).toBeGreaterThan(0)
+      const [value, unit] = preset.label.split(' ')
+      const labelBytes = Number(value) * units[unit]
+      // 20 GB at depth 23 is the docs' 19.94 GB rounded (as Beeport labels it).
+      expect(depthToBytes(preset.depth)).toBeGreaterThanOrEqual(labelBytes * 0.99)
+      expect(depthToBytes(preset.depth - 1)).toBeLessThan(labelBytes)
     }
   })
 })

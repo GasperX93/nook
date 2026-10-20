@@ -12,7 +12,7 @@ const REFILL_THRESHOLD_PLUR = '5000000000000000' // 0.5 BZZ in PLUR (1 BZZ = 1e1
  * bandwidth use — the 0.5→0.7 hysteresis re-triggered every ~0.2 xBZZ).
  * Once the identity reserve exists we can afford real headroom (funds stay
  * withdrawable); BEFORE it exists the small legacy target keeps the
- * onboarding promise honest — "about 3 xBZZ" must still cover the reserve.
+ * onboarding promise honest — "about 4 xBZZ" must still cover the reserve.
  */
 const TARGET_DEPOSIT_PLUR = '7000000000000000' // 0.7 BZZ — pre-reserve (onboarding)
 const TARGET_DEPOSIT_ESTABLISHED_PLUR = '20000000000000000' // 2.0 BZZ — post-reserve
