@@ -1,14 +1,13 @@
 /**
  * How much of a drive is used and how much can still be uploaded.
  *
- * Bee only reports its FULLEST bucket (`utilizationRatio`), not total fill, so
- * "used" is the larger of two numbers — the same rule as the Swarm Desktop
- * drives screen:
- *  - the file sizes Nook recorded for this drive, and
- *  - size × Bee's ratio, which also counts uploads Nook has no record of
- *    (website updates, folder index chunks, other tools).
- * The ratio alone decides "almost full" / "full": at 1 an immutable drive
- * refuses any write that lands in the full bucket.
+ * "Used" is what the drive really stores: Bee's bucket counts added up
+ * (server /drive-usage), old website versions and folder indexes included.
+ * Until that's known it falls back to the larger of the file sizes Nook
+ * recorded and size × Bee's ratio. That ratio is only the FULLEST bucket, so
+ * as "used" it overstated a lot (568.8 MB shown for 159.6 MB stored) — it
+ * still decides "almost full" / "full": at 1 an immutable drive refuses any
+ * write that lands in the full bucket.
  */
 
 export const ALMOST_FULL_RATIO = 0.75
@@ -24,10 +23,16 @@ export interface DriveSpace {
   state: DriveSpaceState
 }
 
-export function driveSpace(sizeBytes: number, fillRatio: number, recordedBytes: number): DriveSpace {
+export function driveSpace(
+  sizeBytes: number,
+  fillRatio: number,
+  recordedBytes: number,
+  storedBytes?: number,
+): DriveSpace {
   const ratio = Math.min(Math.max(fillRatio, 0), 1)
   const state: DriveSpaceState = ratio >= 1 ? 'full' : ratio >= ALMOST_FULL_RATIO ? 'almost-full' : 'ok'
-  const usedBytes = state === 'full' ? sizeBytes : Math.min(Math.max(recordedBytes, sizeBytes * ratio), sizeBytes)
+  const estimate = storedBytes ?? Math.max(recordedBytes, sizeBytes * ratio)
+  const usedBytes = state === 'full' ? sizeBytes : Math.min(estimate, sizeBytes)
   const leftBytes = Math.max(sizeBytes - usedBytes, 0)
 
   return {

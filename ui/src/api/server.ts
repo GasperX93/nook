@@ -370,6 +370,9 @@ export const serverApi = {
 
   // ─── Auto-extend (#129) — per-drive keep-alive settings ─────────────────
 
+  /** Stored bytes per drive (batch id, lower case), from Bee's bucket counts. */
+  getDriveUsage: async () => serverGet<{ usage: Record<string, number> }>('/drive-usage'),
+
   getAutoExtend: async () => serverGet<{ settings: Record<string, AutoExtendEntry> }>('/auto-extend'),
 
   setAutoExtend: async (batchId: string, enabled: boolean, months: number) => {

@@ -52,6 +52,7 @@ import {
   useBuyStamp,
   useChainState,
   useCreateReclaimable,
+  useDriveUsage,
   useReclaimableDrives,
   useStamps,
   useWallet,
@@ -1688,12 +1689,13 @@ function DriveCard({
   const color = ttlColor(stamp.batchTTL)
   const hasName = Boolean(customName || stamp.label)
   const driveName = customName || stamp.label || `${stamp.batchID.slice(0, 8)}…`
-  // Used = the larger of the files Nook recorded and Bee's fill figure (which
-  // also counts uploads Nook has no record of); see lib/drive-space.
+  // Used = what the drive really stores (Bee's bucket counts); see lib/drive-space.
+  const { data: driveUsage } = useDriveUsage()
   const space = driveSpace(
     depthToBytes(stamp.depth),
     stampFillRatio(stamp),
     records.reduce((sum, r) => sum + (r.size || 0), 0),
+    driveUsage?.[stamp.batchID.toLowerCase()],
   )
   const isFull = space.state === 'full'
   const spaceColor = isFull ? '#ef4444' : space.state === 'almost-full' ? '#f59e0b' : 'rgb(var(--fg-muted))'
@@ -3073,6 +3075,7 @@ function SharedDriveCard({
 export default function Drive() {
   const { toggle: toggleSidebar } = useSidebar()
   const { data: stamps } = useStamps()
+  const { data: driveUsage } = useDriveUsage()
   const { data: wallet } = useWallet()
   const navigate = useNavigate()
   // Setup finishes on xDAI alone, but a drive needs xBZZ (R6-4): say so up
@@ -3970,6 +3973,7 @@ export default function Drive() {
                   depthToBytes(activeDrive.depth),
                   stampFillRatio(activeDrive),
                   records.filter(r => r.driveId === activeDriveId).reduce((sum, r) => sum + (r.size || 0), 0),
+                  driveUsage?.[activeDrive.batchID.toLowerCase()],
                 )
               : undefined
           }

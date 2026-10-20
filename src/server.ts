@@ -64,6 +64,7 @@ import {
   pushNotification,
 } from './notifications'
 import { getUpdateInfo } from './update-checker'
+import { getDriveUsage } from './drive-usage'
 import { runSystemStampCheck } from './system-stamp'
 import { purchaseCostPlur, recordPurchase } from './purchases'
 import { getWalletActivity } from './wallet-activity'
@@ -647,6 +648,11 @@ export function runServer() {
       context.status = 400
       context.body = { message: String((error as Error).message ?? error) }
     }
+  })
+
+  // Stored bytes per drive, from Bee's bucket counts (see drive-usage.ts).
+  router.get('/drive-usage', async context => {
+    context.body = { usage: await getDriveUsage() }
   })
 
   // ─── Auto-extend (#129) — per-drive settings for the extend monitor ───────

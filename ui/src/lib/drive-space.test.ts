@@ -36,6 +36,18 @@ describe('driveSpace', () => {
     expect(s.usedRatio).toBe(1)
   })
 
+  it('uses what the drive really stores when known, not the fullest bucket', () => {
+    // community-metrics: fullest bucket 7/32, 159.6 MB stored, 142.6 MB of files.
+    const s = driveSpace(2.6 * GB, 7 / 32, 142.6e6, 159.6e6)
+    expect(s.usedBytes).toBe(159.6e6)
+    expect(s.state).toBe('ok')
+  })
+
+  it('stored bytes known, but the fullest bucket decides almost full and full', () => {
+    expect(driveSpace(2.6 * GB, 0.8, 0, 1 * GB).state).toBe('almost-full')
+    expect(driveSpace(2.6 * GB, 1, 0, 1 * GB).usedBytes).toBe(2.6 * GB)
+  })
+
   it('never reports more used than the size', () => {
     const s = driveSpace(110e6, 0.2, 500e6)
     expect(s.usedBytes).toBe(110e6)

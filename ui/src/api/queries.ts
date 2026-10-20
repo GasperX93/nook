@@ -121,6 +121,17 @@ export function useStamps() {
   })
 }
 
+/** Stored bytes per drive (batch id, lower case) — see server drive-usage.ts. */
+export function useDriveUsage() {
+  return useQuery({
+    queryKey: ['server', 'drive-usage'],
+    queryFn: serverApi.getDriveUsage,
+    refetchInterval: 60_000,
+    retry: false,
+    select: data => data.usage,
+  })
+}
+
 export function useChequebookBalance() {
   return useQuery({
     queryKey: ['bee', 'chequebook'],
