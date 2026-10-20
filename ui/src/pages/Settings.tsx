@@ -1,5 +1,4 @@
 import { Bell, BellOff, ExternalLink, Moon, Sun } from 'lucide-react'
-import { useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
@@ -17,8 +16,9 @@ import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Switch } from '../components/ui/switch'
 import { serverApi } from '../api/server'
+import { useAppUpdate } from '../hooks/useAppUpdate'
 import { FEEDBACK_URL } from '../lib/links'
-import { isSystemStamp } from '../lib/system-stamp'
+import { isReserveBatch, isSystemStamp } from '../lib/system-stamp'
 import { useAppStore } from '../store/app'
 
 type SettingsTab = 'general' | 'network'
@@ -47,12 +47,8 @@ export default function Settings() {
 
   const { data: config, isLoading, isError: configError } = useConfig()
   const { data: info } = useInfo()
-  const { data: updateInfo } = useQuery({
-    queryKey: ['server', 'update'],
-    queryFn: serverApi.getUpdateInfo,
-    refetchInterval: 60 * 60_000,
-    retry: false,
-  })
+  const appUpdate = useAppUpdate()
+  const updateInfo = appUpdate.info
   const updateConfig = useUpdateConfig()
 
   const { data: health } = useBeeHealth()
@@ -74,7 +70,7 @@ export default function Settings() {
     // eslint-disable-next-line
   }, [])
   const systemStamp = (stamps ?? []).find(isSystemStamp)
-  const anyDriveUsable = (stamps ?? []).some(st => st.usable && !isSystemStamp(st))
+  const anyDriveUsable = (stamps ?? []).some(st => st.usable && !isReserveBatch(st))
   const [autoRenewOn, setAutoRenewOn] = useState<boolean | null>(null)
   const [renewSaving, setRenewSaving] = useState(false)
   const [confirmingRenewOff, setConfirmingRenewOff] = useState(false)
@@ -181,6 +177,46 @@ export default function Settings() {
 
       {tab === 'general' && (
         <>
+          {/* A newer Nook — first on the page, where the bell's "View" lands
+              (test feedback 2026-10-20). Same button as the sidebar notice. */}
+          {appUpdate.available && (appUpdate.canInstall || updateInfo?.url) && (
+            <div
+              className="flex items-center justify-between gap-3 rounded-xl px-5 py-4 text-sm"
+              style={{ backgroundColor: 'rgba(247,104,8,0.08)', border: '1px solid rgba(247,104,8,0.25)' }}
+            >
+              <span style={{ color: 'rgb(var(--fg))' }}>
+                {updateInfo?.latest ? `Nook ${updateInfo.latest} is available` : 'A new Nook is available'} — you're on{' '}
+                {updateInfo?.current}.
+                {appUpdate.busy && (
+                  <span className="block text-xs mt-0.5" style={{ color: 'rgb(var(--fg-muted))' }}>
+                    Nook restarts in a moment, then this page reloads.
+                  </span>
+                )}
+              </span>
+              {appUpdate.canInstall ? (
+                <button
+                  type="button"
+                  onClick={appUpdate.update}
+                  disabled={appUpdate.busy}
+                  className="shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold disabled:opacity-60"
+                  style={{ backgroundColor: 'rgb(var(--accent))', color: 'rgb(var(--primary-foreground))' }}
+                >
+                  {appUpdate.busy ? 'Updating…' : 'Update'}
+                </button>
+              ) : (
+                <a
+                  href={updateInfo?.url ?? undefined}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="shrink-0 font-semibold underline text-xs"
+                  style={{ color: 'rgb(var(--accent))' }}
+                >
+                  Download →
+                </a>
+              )}
+            </div>
+          )}
+
           {/* Identity & messages — the reserved network space (#130) */}
           <div className="rounded-xl border p-5 space-y-3" style={{ backgroundColor: 'rgb(var(--bg-surface))' }}>
             <p className="text-sm mb-1" style={{ color: 'rgb(var(--fg-muted))' }}>
@@ -237,7 +273,7 @@ export default function Settings() {
             ) : anyDriveUsable ? (
               <p className="text-xs" style={{ color: '#f59e0b' }}>
                 Temporarily using space from your drives for messages — Nook will reserve dedicated space automatically
-                when your wallet has enough xBZZ (about 3 xBZZ for 3 months).
+                when your wallet has enough xBZZ (about 4 xBZZ for the first month).
               </p>
             ) : (
               <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
@@ -421,27 +457,6 @@ export default function Settings() {
               <span>Nook</span>
               <span className="font-mono">{info?.version ?? '—'}</span>
             </div>
-            {/* Update offer (phase 1) — notify + link only; self-update is a
-                later phase. The bell rings once per version; this row stays. */}
-            {updateInfo?.updateAvailable && updateInfo.url && (
-              <div
-                className="flex items-center justify-between gap-3 rounded-lg px-3 py-2 text-xs"
-                style={{ backgroundColor: 'rgba(247,104,8,0.08)', border: '1px solid rgba(247,104,8,0.25)' }}
-              >
-                <span style={{ color: 'rgb(var(--fg))' }}>
-                  Nook {updateInfo.latest} is available — you're on {updateInfo.current}.
-                </span>
-                <a
-                  href={updateInfo.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="shrink-0 font-semibold underline"
-                  style={{ color: 'rgb(var(--accent))' }}
-                >
-                  Download →
-                </a>
-              </div>
-            )}
             <div className="flex flex-col gap-2 pt-1">
               <a
                 href="https://github.com/GasperX93/nook"

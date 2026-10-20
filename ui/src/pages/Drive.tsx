@@ -52,6 +52,7 @@ import {
   useBuyStamp,
   useChainState,
   useCreateReclaimable,
+  useDriveUsage,
   useReclaimableDrives,
   useStamps,
   useWallet,
@@ -62,7 +63,7 @@ import PropagationVisual from '../components/PropagationVisual'
 import { useDerivedKey } from '../hooks/useDerivedKey'
 import { useDriveMetadata } from '../hooks/useDriveMetadata'
 import { useSharedDrives } from '../hooks/useSharedDrives'
-import { isSystemStamp } from '../lib/system-stamp'
+import { isReserveBatch } from '../lib/system-stamp'
 import { useUploadHistory, type DriveFolder, type UploadRecord } from '../hooks/useUploadHistory'
 import { republishDrive } from '../lib/republish'
 import {
@@ -81,6 +82,9 @@ import { Switch } from '../components/ui/switch'
 import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { useSidebar } from '../components/ui/sidebar'
 import { friendlyError } from '../lib/friendly-error'
+import { type DriveSpace, driveSpace, fitsInDrive } from '../lib/drive-space'
+import { extendPlan } from '../lib/extend-plan'
+import { growingTo, useDriveResize } from '../store/drive-resize'
 import { formatBytes } from '../lib/format-bytes'
 import { isDriveFullError, withUploadRetries } from '../lib/upload-retry'
 import {
@@ -103,7 +107,7 @@ import {
 // is, so this can differ from what the files add up to — which the file count
 // shows next to it.
 const USAGE_TOOLTIP =
-  'How full the drive is, as your node measures it. A drive fills unevenly, so this can read higher or lower than your files add up to.'
+  'Used is everything this drive stores on the network, including folder indexes and older versions of a website.'
 
 function timeUntil(ms: number): { label: string; urgent: boolean } {
   const diff = ms - Date.now()
@@ -550,18 +554,6 @@ function ExtendModal({
   onClose: () => void
   deletable?: boolean
 }) {
-  // Capacity options: only depths strictly larger than current AND only when the
-  // user-facing capacity is also larger. With Nook's overbuy, a legacy depth-19
-  // "110 MB" stamp shouldn't see "110 MB (depth 21)" as an extend option — same
-  // displayed capacity, just a more expensive same-label drive.
-  const currentDisplayBytes = depthToBytes(stamp.depth)
-  // Deletable drives never change size: their slot ledger is laid out for the
-  // drive's depth, and a dilute would hand out slots it doesn't track. The
-  // /bee-api guard refuses it too, but the dashboard calls Bee directly in the
-  // packaged app — so the option must not exist here.
-  const capacityOptions = deletable
-    ? []
-    : SIZE_PRESETS.filter(s => s.depth > stamp.depth && depthToBytes(s.depth) > currentDisplayBytes)
   const [capacityEnabled, setCapacityEnabled] = useState(false)
   const [capacityIdx, setCapacityIdx] = useState(0)
   const [durationEnabled, setDurationEnabled] = useState(false)
@@ -571,6 +563,26 @@ function ExtendModal({
   const { data: chainState } = useChainState()
   const { data: wallet } = useWallet()
   const queryClient = useQueryClient()
+  // The drive's size on chain. Bee can keep filling it at an older, smaller
+  // size after a restart, and every charge follows the chain — so nothing is
+  // bought until this is known (see lib/extend-plan.ts).
+  const { data: chainBatch, isError: chainError } = useQuery({
+    queryKey: ['bee', 'batch', stamp.batchID],
+    queryFn: async () => beeApi.getBatch(stamp.batchID),
+    retry: false,
+  })
+  const chainDepth = chainBatch?.depth ?? null
+  const realDepth = Math.max(stamp.depth, chainDepth ?? stamp.depth)
+
+  // Capacity options: only sizes strictly larger than the drive's current one
+  // (a deeper depth always holds more, so this keeps only real upgrades).
+  // Deletable drives never change size: their slot ledger is laid out for the
+  // drive's depth, and a dilute would hand out slots it doesn't track. The
+  // /bee-api guard refuses it too, but the dashboard calls Bee directly in the
+  // packaged app — so the option must not exist here.
+  const capacityOptions = deletable
+    ? []
+    : SIZE_PRESETS.filter(s => s.depth > realDepth && depthToBytes(s.depth) > depthToBytes(realDepth))
 
   // Auto-extend (#129) — STAGED like the other sections: nothing applies
   // until the footer button, so Cancel means cancel and the button label can
@@ -606,43 +618,31 @@ function ExtendModal({
     autoLoaded &&
     (autoEnabled !== autoOriginal.current.enabled || (autoEnabled && autoIdx !== autoOriginal.current.idx))
 
-  const targetDepth = capacityEnabled && capacityOptions[capacityIdx] ? capacityOptions[capacityIdx].depth : stamp.depth
-  const willDilute = capacityEnabled && targetDepth > stamp.depth
-  const userExtendMonths = durationEnabled ? DURATION_PRESETS[durationIdx].months : 0
-
-  // Compute the topup amount that, combined with the dilute (if any), produces:
-  //   - the user's current remaining TTL (preserved across the dilute halving), plus
-  //   - the additional months the user picked under "Extend duration"
-  //
-  // Math: per Bee protocol, each +1 depth in dilute halves remaining time. To restore
-  // it we need to top up enough to undo that halving. Then we add any user-requested
-  // duration on top.
-  const SECONDS_PER_MONTH = 30 * 86400
-  const SECONDS_PER_BLOCK = 5 // Gnosis chain
-  const depthDelta = targetDepth - stamp.depth
-  const recoverySeconds = depthDelta > 0 ? Math.floor(stamp.batchTTL * (1 - 1 / 2 ** depthDelta)) : 0
-  const extendSeconds = userExtendMonths * SECONDS_PER_MONTH
-  const totalSecondsToBuy = recoverySeconds + extendSeconds
-
-  // Cost = price-per-block × blocks × chunks-at-new-depth. Hidden from the user how it
-  // breaks down between dilute-recovery and user-requested time — they see one number.
-  const cost = (() => {
-    if (totalSecondsToBuy <= 0 || !chainState) return null
-    const blocks = BigInt(Math.floor(totalSecondsToBuy / SECONDS_PER_BLOCK))
-    const amount = BigInt(chainState.currentPrice) * blocks
-    const totalChunks = 1n << BigInt(targetDepth)
-    const totalPlur = amount * totalChunks
-
-    return { amount: amount.toString(), bzzCost: plurToBzz(totalPlur.toString()) }
-  })()
+  const plan = extendPlan({
+    beeDepth: stamp.depth,
+    chainDepth: chainDepth ?? stamp.depth,
+    targetDepth: capacityEnabled && capacityOptions[capacityIdx] ? capacityOptions[capacityIdx].depth : null,
+    batchTTL: stamp.batchTTL,
+    extendMonths: durationEnabled ? DURATION_PRESETS[durationIdx].months : 0,
+    currentPrice: chainState?.currentPrice ?? '0',
+  })
+  const willDilute = plan.willDilute
+  // One number for the user, however it splits between buying back the time
+  // a bigger size halves and the months they picked.
+  const cost =
+    chainState && plan.topupAmount !== null && plan.totalPlur !== null
+      ? { topupAmount: plan.topupAmount, bzzCost: plurToBzz(plan.totalPlur.toString()) }
+      : null
 
   const bzzBalance = wallet ? Number(plurToBzz(wallet.bzzBalance)) : null
   const canAfford = cost && bzzBalance !== null ? bzzBalance >= Number(cost.bzzCost) : true
-  const purchaseStaged = willDilute || totalSecondsToBuy > 0
+  const purchaseStaged = willDilute || plan.topupAmount !== null
   const nothingStaged = !purchaseStaged && !autoDirty
+  // A purchase waits for the chain's size (a wrong size means a wrong charge).
+  const chainUnknown = chainDepth === null
   // The primary button is NEVER a grey dead-end: with nothing staged it's an
   // enabled "Done" that just closes. It always says what pressing it does.
-  const canSubmit = nothingStaged || (purchaseStaged ? canAfford : true)
+  const canSubmit = nothingStaged || (purchaseStaged ? canAfford && !chainUnknown : true)
 
   const buttonLabel = submitting
     ? purchaseStaged
@@ -672,18 +672,14 @@ function ExtendModal({
         // would drop below the postage contract's minimum the on-chain tx emits
         // no BatchDepthIncrease event and Bee returns "cannot dilute batch".
         // Pre-topping avoids that.
-        //
-        // Per-chunk math: total BZZ cost is unchanged because Bee multiplies
-        // amount × current-chunk-count. Diluting later halves the per-chunk
-        // balance by 2^delta, so we scale the per-chunk amount up by 2^delta
-        // here to land on the same final balance/chunk.
-        const topupAmount =
-          willDilute && depthDelta > 0 ? (BigInt(cost.amount) << BigInt(depthDelta)).toString() : cost.amount
-
-        await beeApi.topupStamp(stamp.batchID, topupAmount)
+        // The per-chunk amount is already scaled for the dilute (extend-plan).
+        // Nook's server saves the new size in Bee once Bee shows it
+        // (depth-save.ts), so a restart can't bring the old size back.
+        await beeApi.topupStamp(stamp.batchID, cost.topupAmount)
 
         if (willDilute) {
-          await beeApi.diluteStamp(stamp.batchID, targetDepth)
+          await beeApi.diluteStamp(stamp.batchID, plan.depth)
+          useDriveResize.getState().start(stamp.batchID, plan.depth)
         }
         queryClient.refetchQueries({ queryKey: ['bee', 'stamps'] })
         queryClient.refetchQueries({ queryKey: ['bee', 'wallet'] })
@@ -725,8 +721,14 @@ function ExtendModal({
             {stamp.label || `${stamp.batchID.slice(0, 20)}…`}
           </p>
           <p className="text-xs mt-0.5" style={{ color: 'rgb(var(--fg-muted))' }}>
-            {depthToCapacity(stamp.depth)} · {Math.floor(stamp.batchTTL / 86400)} days remaining
+            {depthToCapacity(realDepth)} · {Math.floor(stamp.batchTTL / 86400)} days remaining
           </p>
+          {plan.beeBehind && (
+            <p className="text-[11px] mt-2 leading-snug" style={{ color: '#b45309' }}>
+              On the network this drive is already {depthToCapacity(realDepth)}, but your node still fills it as{' '}
+              {depthToCapacity(stamp.depth)}. Adding space puts that right.
+            </p>
+          )}
         </div>
 
         <div>
@@ -841,7 +843,15 @@ function ExtendModal({
           )}
         </div>
 
-        {(willDilute || totalSecondsToBuy > 0) && (
+        {purchaseStaged && chainUnknown && (
+          <p className="text-xs" style={{ color: chainError ? '#ef4444' : 'rgb(var(--fg-muted))' }}>
+            {chainError
+              ? 'Can’t check this drive on the network right now — try again in a minute.'
+              : 'Checking the drive on the network…'}
+          </p>
+        )}
+
+        {purchaseStaged && (
           <div className="text-sm space-y-1">
             <p>
               <span style={{ color: 'rgb(var(--fg-muted))' }}>Cost: </span>
@@ -1660,22 +1670,35 @@ function DriveCard({
   const [renameInput, setRenameInput] = useState('')
   const [kebabOpen, setKebabOpen] = useState(false)
   const kebabRef = useRef<HTMLDivElement>(null)
+  // A size change still on its way: Bee shows the old size for a minute or
+  // two after the Extend window closes. Check more often until it arrives.
+  const growing = growingTo(
+    useDriveResize(state => state.growing[stamp.batchID.toLowerCase()]),
+    stamp.depth,
+  )
+  const cardQueryClient = useQueryClient()
+
+  useEffect(() => {
+    if (growing === null) return
+    const timer = setInterval(async () => cardQueryClient.invalidateQueries({ queryKey: ['bee', 'stamps'] }), 10_000)
+
+    return () => clearInterval(timer)
+  }, [growing, cardQueryClient])
   const MAX_TTL = 365 * 24 * 3600
   const ttlPct = Math.min((stamp.batchTTL / MAX_TTL) * 100, 100)
   const color = ttlColor(stamp.batchTTL)
   const hasName = Boolean(customName || stamp.label)
   const driveName = customName || stamp.label || `${stamp.batchID.slice(0, 8)}…`
-  const capacityBytes = depthToBytes(stamp.depth)
-  // Use Bee's reported fill instead of summing local upload history — anything
-  // uploaded outside Nook (swarm-cli, ACT chunks, feed updates) wouldn't show
-  // up otherwise. stampFillRatio prefers Bee 2.8.1's utilizationRatio (true
-  // fractional usage) and falls back to the pessimistic worst-case bucket-fill
-  // estimate on older nodes.
-  const fillRatio = stampFillRatio(stamp)
-  const usedBytes = Math.round(capacityBytes * fillRatio)
-  const usagePct = Math.min(fillRatio * 100, 100)
-  const utilizationPct = Math.round(fillRatio * 100)
-  const isFull = fillRatio >= 1
+  // Used = what the drive really stores (Bee's bucket counts); see lib/drive-space.
+  const { data: driveUsage } = useDriveUsage()
+  const space = driveSpace(
+    depthToBytes(stamp.depth),
+    stampFillRatio(stamp),
+    records.reduce((sum, r) => sum + (r.size || 0), 0),
+    driveUsage?.[stamp.batchID.toLowerCase()],
+  )
+  const isFull = space.state === 'full'
+  const spaceColor = isFull ? '#ef4444' : space.state === 'almost-full' ? '#f59e0b' : 'rgb(var(--fg-muted))'
   // #93: slow-cadence health check for SHARED drives. Target = the PUBLIC
   // metadata wrapper (the first hop recipients resolve) — ACT file refs are
   // encrypted pointers that stewardship cannot verify, so drives without a
@@ -2023,19 +2046,28 @@ function DriveCard({
           <div
             className="w-32 h-1 rounded-full shrink-0"
             style={{ backgroundColor: 'rgb(var(--border))' }}
-            aria-label={`${Math.round(usagePct)}% used`}
+            aria-label={`${Math.round(space.usedRatio * 100)}% used`}
             title={USAGE_TOOLTIP}
           >
             <div
               className="h-1 rounded-full"
               style={{
-                width: `${usagePct}%`,
-                backgroundColor: isFull ? '#ef4444' : 'rgb(var(--fg))',
+                width: `${space.usedRatio * 100}%`,
+                backgroundColor: isFull ? '#ef4444' : space.state === 'almost-full' ? '#f59e0b' : 'rgb(var(--fg))',
               }}
             />
           </div>
-          <span style={{ color: isFull ? '#ef4444' : 'rgb(var(--fg-muted))' }} title={USAGE_TOOLTIP}>
-            {usedBytes > 0 ? `${driveSizeLabel(stamp.depth)} · ${utilizationPct}% full` : driveSizeLabel(stamp.depth)}
+          <span
+            style={{ color: spaceColor }}
+            title={growing !== null ? 'The network confirms the new size in a minute or two.' : USAGE_TOOLTIP}
+          >
+            {growing !== null
+              ? `Extending to ${driveSizeLabel(growing)}…`
+              : isFull
+                ? `${driveSizeLabel(stamp.depth)} · Full`
+                : space.usedBytes > 0
+                  ? `${formatBytes(space.usedBytes)} of ${driveSizeLabel(stamp.depth)}${space.state === 'almost-full' ? ' · almost full' : ''}`
+                  : driveSizeLabel(stamp.depth)}
           </span>
           {stamp.usable && (
             // The TTL pill is the extend affordance (#22b): where urgency
@@ -2214,6 +2246,8 @@ interface AddFileProps {
   onWrapperRef?: (ref: string) => void
   /** Folder the upload lands in — so its in-progress row shows there (R5-2). */
   folderId?: string
+  /** What's left on the drive — an upload that doesn't fit is refused before anything is spent. */
+  space?: DriveSpace
 }
 
 /** Text safe inside HTML (file and folder names can contain < > & " '). */
@@ -2258,6 +2292,7 @@ function AddFilePanel({
   onActHistoryUpdate,
   onWrapperRef,
   folderId,
+  space,
 }: AddFileProps) {
   const { data: addresses } = useAddresses()
   const [phase, setPhase] = useState('')
@@ -2283,9 +2318,23 @@ function AddFilePanel({
   const dirInputRef = useRef<HTMLInputElement>(null)
 
   async function handleUpload(entries: FileEntry[], name: string, type: UploadType) {
-    setUploading(true)
     setError(null)
     setProgress(null)
+
+    // Refuse what can't fit before anything is spent or copied.
+    const uploadBytes = entries.reduce((sum, e) => sum + e.file.size, 0)
+
+    if (space && !fitsInDrive(space, uploadBytes)) {
+      setError(
+        space.state === 'full'
+          ? 'This drive is full — extend it to add more.'
+          : `This is ${formatBytes(uploadBytes)}, and this drive has about ${formatBytes(space.leftBytes)} left — extend the drive or pick another.`,
+      )
+
+      return
+    }
+
+    setUploading(true)
 
     // R5-2: every upload is a global transfer from its first byte — the
     // sidebar indicator and an in-progress row in the drive show it from any
@@ -3026,6 +3075,7 @@ function SharedDriveCard({
 export default function Drive() {
   const { toggle: toggleSidebar } = useSidebar()
   const { data: stamps } = useStamps()
+  const { data: driveUsage } = useDriveUsage()
   const { data: wallet } = useWallet()
   const navigate = useNavigate()
   // Setup finishes on xDAI alone, but a drive needs xBZZ (R6-4): say so up
@@ -3228,7 +3278,7 @@ export default function Drive() {
   const reclaimableIds = new Set((reclaimableData ?? []).map(d => d.batchId))
   // Reclaimable batches render as their own cards; the system batch (#130,
   // "Identity & messages" in Settings) is not a drive at all.
-  const allStamps = (stamps ?? []).filter(s => !reclaimableIds.has(s.batchID.toLowerCase()) && !isSystemStamp(s))
+  const allStamps = (stamps ?? []).filter(s => !reclaimableIds.has(s.batchID.toLowerCase()) && !isReserveBatch(s))
   const driveCount = allStamps.length + reclaimableDrives.length
 
   function copyHash(id: string, hash: string) {
@@ -3917,6 +3967,16 @@ export default function Drive() {
       {addingFile && (
         <AddFilePanel
           driveId={activeDriveId}
+          space={
+            activeDrive
+              ? driveSpace(
+                  depthToBytes(activeDrive.depth),
+                  stampFillRatio(activeDrive),
+                  records.filter(r => r.driveId === activeDriveId).reduce((sum, r) => sum + (r.size || 0), 0),
+                  driveUsage?.[activeDrive.batchID.toLowerCase()],
+                )
+              : undefined
+          }
           encrypted={driveMetadata.isEncrypted(activeDriveId)}
           actHistoryRef={driveMetadata.get(activeDriveId)?.actHistoryRef}
           onDone={() => setAddingFile(false)}

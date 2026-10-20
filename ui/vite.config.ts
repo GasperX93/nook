@@ -29,6 +29,7 @@ export default defineConfig(({ command }) => ({
       '/chequebook-withdraw': 'http://localhost:3054',
       '/reclaimable': 'http://localhost:3054',
       '/auto-extend': 'http://localhost:3054',
+      '/drive-usage': 'http://localhost:3054',
       '/notifications': 'http://localhost:3054',
       '/update': 'http://localhost:3054',
       '/system-stamp': 'http://localhost:3054',
