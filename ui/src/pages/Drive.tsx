@@ -83,6 +83,7 @@ import { useSidebar } from '../components/ui/sidebar'
 import { friendlyError } from '../lib/friendly-error'
 import { type DriveSpace, driveSpace, fitsInDrive } from '../lib/drive-space'
 import { extendPlan } from '../lib/extend-plan'
+import { growingTo, useDriveResize } from '../store/drive-resize'
 import { formatBytes } from '../lib/format-bytes'
 import { isDriveFullError, withUploadRetries } from '../lib/upload-retry'
 import {
@@ -677,6 +678,7 @@ function ExtendModal({
 
         if (willDilute) {
           await beeApi.diluteStamp(stamp.batchID, plan.depth)
+          useDriveResize.getState().start(stamp.batchID, plan.depth)
         }
         queryClient.refetchQueries({ queryKey: ['bee', 'stamps'] })
         queryClient.refetchQueries({ queryKey: ['bee', 'wallet'] })
@@ -1667,6 +1669,20 @@ function DriveCard({
   const [renameInput, setRenameInput] = useState('')
   const [kebabOpen, setKebabOpen] = useState(false)
   const kebabRef = useRef<HTMLDivElement>(null)
+  // A size change still on its way: Bee shows the old size for a minute or
+  // two after the Extend window closes. Check more often until it arrives.
+  const growing = growingTo(
+    useDriveResize(state => state.growing[stamp.batchID.toLowerCase()]),
+    stamp.depth,
+  )
+  const cardQueryClient = useQueryClient()
+
+  useEffect(() => {
+    if (growing === null) return
+    const timer = setInterval(async () => cardQueryClient.invalidateQueries({ queryKey: ['bee', 'stamps'] }), 10_000)
+
+    return () => clearInterval(timer)
+  }, [growing, cardQueryClient])
   const MAX_TTL = 365 * 24 * 3600
   const ttlPct = Math.min((stamp.batchTTL / MAX_TTL) * 100, 100)
   const color = ttlColor(stamp.batchTTL)
@@ -2039,12 +2055,17 @@ function DriveCard({
               }}
             />
           </div>
-          <span style={{ color: spaceColor }} title={USAGE_TOOLTIP}>
-            {isFull
-              ? `${driveSizeLabel(stamp.depth)} · Full`
-              : space.usedBytes > 0
-                ? `${formatBytes(space.usedBytes)} of ${driveSizeLabel(stamp.depth)}${space.state === 'almost-full' ? ' · almost full' : ''}`
-                : driveSizeLabel(stamp.depth)}
+          <span
+            style={{ color: spaceColor }}
+            title={growing !== null ? 'The network confirms the bigger size in a minute or two.' : USAGE_TOOLTIP}
+          >
+            {growing !== null
+              ? `Growing to ${driveSizeLabel(growing)}…`
+              : isFull
+                ? `${driveSizeLabel(stamp.depth)} · Full`
+                : space.usedBytes > 0
+                  ? `${formatBytes(space.usedBytes)} of ${driveSizeLabel(stamp.depth)}${space.state === 'almost-full' ? ' · almost full' : ''}`
+                  : driveSizeLabel(stamp.depth)}
           </span>
           {stamp.usable && (
             // The TTL pill is the extend affordance (#22b): where urgency
