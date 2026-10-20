@@ -31,7 +31,9 @@ export function driveSpace(
 ): DriveSpace {
   const ratio = Math.min(Math.max(fillRatio, 0), 1)
   const state: DriveSpaceState = ratio >= 1 ? 'full' : ratio >= ALMOST_FULL_RATIO ? 'almost-full' : 'ok'
-  const estimate = storedBytes ?? Math.max(recordedBytes, sizeBytes * ratio)
+  // Never below the recorded files: guards a stored figure that misses
+  // something (a node whose bucket counts were reset).
+  const estimate = Math.max(recordedBytes, storedBytes ?? sizeBytes * ratio)
   const usedBytes = state === 'full' ? sizeBytes : Math.min(estimate, sizeBytes)
   const leftBytes = Math.max(sizeBytes - usedBytes, 0)
 

@@ -41,6 +41,8 @@ describe('driveSpace', () => {
     const s = driveSpace(2.6 * GB, 7 / 32, 142.6e6, 159.6e6)
     expect(s.usedBytes).toBe(159.6e6)
     expect(s.state).toBe('ok')
+    // …but never below the files Nook recorded.
+    expect(driveSpace(2.6 * GB, 0.1, 300e6, 159.6e6).usedBytes).toBe(300e6)
   })
 
   it('stored bytes known, but the fullest bucket decides almost full and full', () => {
