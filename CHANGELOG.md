@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.7.2](https://github.com/GasperX93/nook/releases/tag/v0.7.2) (2026-10-20)
+
+New to Nook? Read the [user guide](https://nook-drive.eth.limo/docs.html) and [how Nook works](https://nook-drive.eth.limo/how-it-works.html) on the Nook website — [nook-drive.eth.limo](https://nook-drive.eth.limo).
+
+### Drives
+* **Cheaper drives** — sizes are 110 MB, 680 MB, 2.6 GB, 7.7 GB and 20 GB, and each costs about half (or less) of what the same size cost before. Older drives now show their true size, which can be bigger than before.
+* **Used space you can trust** — a drive shows how much it really stores, including folder indexes and older versions of a website. "Almost full" and "Full" still warn you in time.
+* **Files that don't fit are refused before uploading**, with how much space is left.
+
+### Extend drive
+* **The price you see is the price you pay**, also on drives whose node was behind the network.
+* **A bigger drive stays bigger** after Nook restarts. (Bee kept a size change only until the next restart unless something was uploaded; Nook now saves it right away.) A drive that already lost its bigger size says so, and adding space fixes it.
+* The drive shows "Extending to …" until the network confirms the new size.
+
+### Identity & messages
+* **More room** — the reserved space for your identity and messages holds about 800 messages (was about 5). When it gets old or full, Nook buys a new one instead of changing the old one; the old one runs out on its own.
+
+### Updates
+* **An Update button** — when a new Nook is out, the sidebar and Settings show it. On Mac and Windows it's already downloaded in the background: click Update and Nook restarts into it.
+
+### Under the hood
+* bee-js 13.
+
+### Upgrading from 0.7.1
+* **Nook buys new reserved space once, by itself** — about 2.5 xBZZ from the node wallet, a couple of minutes after the first start. Keep about 3 xBZZ in the wallet; if there's less, the bell tells you how much to add.
+* **Open Messages after updating**, so nothing unread is left in the old space, which runs out within a month.
+* This update still shows the old "Restart?" pop-up; the Update button is there from 0.7.2 on.
+
 ## [0.7.1](https://github.com/GasperX93/nook/releases/tag/v0.7.1) (2026-10-15)
 
 New to Nook? Read the [user guide](https://nook-drive.eth.limo/docs.html) and [how Nook works](https://nook-drive.eth.limo/how-it-works.html) on the Nook website — [nook-drive.eth.limo](https://nook-drive.eth.limo).
