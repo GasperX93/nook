@@ -107,7 +107,7 @@ import {
 // is, so this can differ from what the files add up to — which the file count
 // shows next to it.
 const USAGE_TOOLTIP =
-  'Used is the larger of what your files add up to and what your node measures. A drive fills unevenly, so small drives can read a little fuller than your files.'
+  'Used is everything this drive stores on the network, including folder indexes and older versions of a website.'
 
 function timeUntil(ms: number): { label: string; urgent: boolean } {
   const diff = ms - Date.now()
