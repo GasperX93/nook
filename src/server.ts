@@ -1255,9 +1255,9 @@ async function createFeedUpdate(topicHex: string, referenceHex: string, stampId:
 
   const bee = makeBee()
 
-  // bee-js v11: pass private key directly, no custom signer needed
+  // The private key is passed directly; no custom signer needed.
   const writer = bee.feed.makeWriter(topicHex, privateKeyHex)
-  await writer.upload(stampId, referenceHex)
+  await writer.uploadReference(stampId, referenceHex)
 
   const manifest = await bee.feed.createManifest(stampId, topicHex, wallet.address)
 
