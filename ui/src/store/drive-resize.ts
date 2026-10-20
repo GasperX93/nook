@@ -2,7 +2,7 @@
  * A drive size change that's sent but not yet visible: Bee keeps showing the
  * old size until the chain confirms the change, a minute or two after the
  * Extend window closes (test3 feedback 2026-10-20). The drive card shows
- * "Growing to …" for that gap instead of the old size. In memory only — a
+ * "Extending to …" for that gap instead of the old size. In memory only — a
  * reload just shows Bee's size again.
  */
 import { create } from 'zustand'

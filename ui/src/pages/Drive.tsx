@@ -725,7 +725,7 @@ function ExtendModal({
           {plan.beeBehind && (
             <p className="text-[11px] mt-2 leading-snug" style={{ color: '#b45309' }}>
               On the network this drive is already {depthToCapacity(realDepth)}, but your node still fills it as{' '}
-              {depthToCapacity(stamp.depth)}. Making it bigger puts that right.
+              {depthToCapacity(stamp.depth)}. Adding space puts that right.
             </p>
           )}
         </div>
@@ -2057,10 +2057,10 @@ function DriveCard({
           </div>
           <span
             style={{ color: spaceColor }}
-            title={growing !== null ? 'The network confirms the bigger size in a minute or two.' : USAGE_TOOLTIP}
+            title={growing !== null ? 'The network confirms the new size in a minute or two.' : USAGE_TOOLTIP}
           >
             {growing !== null
-              ? `Growing to ${driveSizeLabel(growing)}…`
+              ? `Extending to ${driveSizeLabel(growing)}…`
               : isFull
                 ? `${driveSizeLabel(stamp.depth)} · Full`
                 : space.usedBytes > 0
