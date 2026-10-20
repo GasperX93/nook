@@ -46,8 +46,8 @@ describe('driveSpace', () => {
   })
 
   it('stored bytes known, but the fullest bucket decides almost full and full', () => {
-    expect(driveSpace(2.6 * GB, 0.8, 0, 1 * GB).state).toBe('almost-full')
-    expect(driveSpace(2.6 * GB, 1, 0, 1 * GB).usedBytes).toBe(2.6 * GB)
+    expect(driveSpace(2.6 * GB, 0.8, 0, GB).state).toBe('almost-full')
+    expect(driveSpace(2.6 * GB, 1, 0, GB).usedBytes).toBe(2.6 * GB)
   })
 
   it('never reports more used than the size', () => {
