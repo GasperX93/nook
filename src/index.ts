@@ -1,4 +1,4 @@
-import { app, dialog } from 'electron'
+import { app, autoUpdater, dialog } from 'electron'
 import { updateElectronApp } from 'update-electron-app'
 
 import PACKAGE_JSON from '../package.json'
@@ -11,9 +11,10 @@ import { startChequebookMonitor } from './chequebook-monitor'
 import { startDepthSave } from './depth-save'
 import { startExtendMonitor } from './extend-monitor'
 import { startSystemStampMonitor } from './system-stamp'
-import { startUpdateChecker } from './update-checker'
+import { startUpdateChecker, watchAutoUpdater } from './update-checker'
 import { startMonitorIfNeeded } from './funding-monitor'
 import { initializeBee, runKeepAliveLoop, runLauncher } from './launcher'
+import { BeeManager } from './lifecycle'
 import { logger } from './logger'
 import { extractNookUrl, flushPendingNookUrl, handleNookUrl, registerNookProtocol } from './nook-deep-link'
 import { findFreePort } from './port'
@@ -72,8 +73,10 @@ async function main() {
 
   splash = await initSplash()
 
-  // Auto updater
+  // Auto updater — downloads in the background; Nook's own Update button
+  // (sidebar, Settings) restarts into it, so the library's dialog is off.
   updateElectronApp({
+    notifyUser: false,
     logger: {
       log: (...args) => logger.info(...args),
       info: (...args) => logger.info(...args),
@@ -81,6 +84,14 @@ async function main() {
       warn: (...args) => logger.warn(...args),
     },
   })
+
+  // Same platforms update-electron-app supports; Linux keeps the download link.
+  if (app.isPackaged && (process.platform === 'darwin' || process.platform === 'win32')) {
+    watchAutoUpdater(autoUpdater, async () => {
+      BeeManager.stop()
+      await BeeManager.waitForSigtermToFinish()
+    })
+  }
 
   // check if the assets and the bee binary matches the desktop version
   const desktopFileVersion = getNookVersionFromFile()

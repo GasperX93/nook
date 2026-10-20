@@ -329,7 +329,17 @@ export const serverApi = {
   },
 
   getUpdateInfo: async () =>
-    serverGet<{ current: string; latest: string | null; url: string | null; updateAvailable: boolean }>('/update'),
+    serverGet<{
+      current: string
+      latest: string | null
+      url: string | null
+      updateAvailable: boolean
+      updater: 'none' | 'downloading' | 'ready' | 'installing' | 'failed' | 'unsupported'
+      installRequested: boolean
+    }>('/update'),
+
+  /** The Update button: restart into the downloaded version (or once it's downloaded). */
+  installUpdate: async () => serverPost<{ status: 'installing' | 'waiting' | 'unavailable' }>('/update/install', {}),
 
   markNotificationsRead: async (ids?: string[]) => {
     const response = await fetch('/notifications/read', {

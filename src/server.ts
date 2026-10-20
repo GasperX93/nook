@@ -63,7 +63,7 @@ import {
   type NotificationType,
   pushNotification,
 } from './notifications'
-import { getUpdateInfo } from './update-checker'
+import { getUpdateInfo, installUpdate } from './update-checker'
 import { getDriveUsage } from './drive-usage'
 import { runSystemStampCheck } from './system-stamp'
 import { purchaseCostPlur, recordPurchase } from './purchases'
@@ -587,6 +587,11 @@ export function runServer() {
   // Update availability (phase 1): the Settings row renders from this.
   router.get('/update', context => {
     context.body = getUpdateInfo()
+  })
+
+  // The Update button: restart into the downloaded version, or as soon as it's downloaded.
+  router.post('/update/install', async context => {
+    context.body = { status: await installUpdate() }
   })
 
   // Manual reserve creation (#13): the banner's "Create it now" — runs the
