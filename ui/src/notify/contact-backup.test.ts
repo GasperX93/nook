@@ -8,7 +8,10 @@ import { CONTACTS_RESTORED_EVENT } from './backup-signal'
 import { mergeContacts, restoreContactBackup } from './contact-backup'
 import { getMyDisplayName, setMyDisplayName } from './contact-state'
 import {
+  appendReceived,
   appendSent,
+  awaitingFirstRead,
+  FIRST_READ_WAIT_MS,
   getSendCursor,
   loadReadCursors,
   loadThreads,
@@ -145,6 +148,16 @@ describe('restoreSent', () => {
 
     appendSent(loadThreads(), ANA, 'hi', 11)
     expect(needsSentLoad(ANA)).toBe(false)
+  })
+
+  it('waits for their messages after mine were loaded, but not past the cap', () => {
+    expect(awaitingFirstRead(MARTIN, 1_000)).toBe(false)
+    markSentLoaded(MARTIN, 1_000)
+    expect(awaitingFirstRead(MARTIN, 2_000)).toBe(true)
+    expect(awaitingFirstRead(MARTIN, 1_000 + FIRST_READ_WAIT_MS)).toBe(false)
+
+    appendReceived(loadThreads(), MARTIN, [message('hey', 5)])
+    expect(awaitingFirstRead(MARTIN, 2_000)).toBe(false)
   })
 
   it('fills an empty thread with what I sent, in time order with the received ones', () => {

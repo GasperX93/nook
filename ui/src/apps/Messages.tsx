@@ -1,6 +1,6 @@
 import { Bee } from '@ethersphere/bee-js'
 import { identity, mailbox, registry } from '@swarm-notify/sdk'
-import { Mail, Send } from 'lucide-react'
+import { Loader2, Mail, Send } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { useReclaimableDrives, useAddresses, useStamps } from '../api/queries'
@@ -32,7 +32,15 @@ import { sendInviteAck } from '../notify/invite-ack'
 import { enqueueSend } from '../notify/send-queue'
 import { loadInvitations, markInvitationProcessed, pendingInvitations, type Invitation } from '../notify/invitations'
 import { queueAndDeliver, retryOutboxEntry } from '../notify/deliver'
-import { appendSent, loadReadCursors, loadThreads, markRead, type StoredMessage, unreadCount } from '../notify/messages'
+import {
+  appendSent,
+  awaitingFirstRead,
+  loadReadCursors,
+  loadThreads,
+  markRead,
+  type StoredMessage,
+  unreadCount,
+} from '../notify/messages'
 import { sendMailboxMessage } from '../notify/send-message'
 import { waitForBeeReady } from '../notify/bee-ready'
 import { createNodeNotifyProvider } from '../notify/provider'
@@ -140,6 +148,8 @@ export default function Messages({ initialContactId, hideContactList, hideThread
   const selectedThread = selected ? (threads[selected.id.toLowerCase()] ?? []) : []
   const hasInbound = selected ? hasInboundSince(selectedThread, selected.addedAt) : false
   const connectionState: ConnectionState = selected ? deriveConnectionState(selected.id, hasInbound) : 'not-connected'
+  // Their messages are still being read in this browser (#191) — no invite composer yet.
+  const loadingInbound = selected ? awaitingFirstRead(selected.id) : false
   const needsNickname = connectionState !== 'connected' && !myDisplayName && (!suggestedName || editingName)
   const invitingAsSuggested =
     connectionState !== 'connected' && !myDisplayName && Boolean(suggestedName) && !editingName
@@ -653,7 +663,7 @@ export default function Messages({ initialContactId, hideContactList, hideThread
                     {short(selected.id, 8)}
                   </p>
                 </div>
-                <ConnectionStatusBadge state={connectionState} contactId={selected.id} />
+                {!loadingInbound && <ConnectionStatusBadge state={connectionState} contactId={selected.id} />}
               </div>
             )}
             <div ref={scrollRef} className="flex-1 overflow-auto px-6 py-4 flex flex-col">
@@ -672,119 +682,128 @@ export default function Messages({ initialContactId, hideContactList, hideThread
               )}
             </div>
             <div className="border-t p-4 space-y-2" style={{ borderColor: 'rgb(var(--border))' }}>
-              {error && (
-                <p className="text-xs mb-2" style={{ color: needsPublish ? 'rgb(var(--fg-muted))' : '#ef4444' }}>
-                  {error}
+              {loadingInbound ? (
+                <p className="flex items-center gap-2 text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  <Loader2 size={14} className="animate-spin" />
+                  Loading conversation…
                 </p>
-              )}
-
-              {pendingPing && pendingPing.contactId === selected.id && !sending && (
-                <Button onClick={handleRetryPing} size="sm" className="mb-2">
-                  Retry notice
-                </Button>
-              )}
-
-              {needsPublish && (
-                <Button onClick={handlePublishAndSend} disabled={publishing} size="sm" className="mb-2">
-                  {publishing ? 'Publishing…' : 'Publish identity & send'}
-                </Button>
-              )}
-
-              {sendStatus && (
-                <p
-                  className="text-xs mb-2 flex items-center gap-1.5 animate-pulse"
-                  style={{ color: 'rgb(var(--accent))' }}
-                >
-                  <Send size={12} />
-                  {sendStatus}
-                </p>
-              )}
-
-              {invitingAsSuggested && (
-                <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-                  Inviting as{' '}
-                  <span className="font-semibold" style={{ color: 'rgb(var(--fg))' }}>
-                    {suggestedName}
-                  </span>{' '}
-                  ·{' '}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPendingNicknameInput(suggestedName)
-                      setEditingName(true)
-                    }}
-                    className="underline"
-                  >
-                    change
-                  </button>
-                </p>
-              )}
-
-              {needsNickname && (
-                <div
-                  className="rounded-lg border p-3 space-y-2"
-                  style={{ backgroundColor: 'rgb(var(--bg-surface))', borderColor: 'rgb(var(--border))' }}
-                >
-                  <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-                    What should they call you? Shown to the recipient in your invite.
-                  </p>
-                  <Input
-                    autoFocus
-                    value={pendingNicknameInput}
-                    onChange={e => setPendingNicknameInput(e.target.value)}
-                    placeholder="Your name"
-                  />
-                </div>
-              )}
-
-              {connectionState === 'connected' && (
-                <DraftToolbar format={format} expanded={expanded} onToggleExpand={toggleExpand} />
-              )}
-              <div className="flex gap-2 items-end">
-                <Textarea
-                  value={draft}
-                  onChange={e => setDraft(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder={
-                    connectionState === 'connected'
-                      ? `Message ${selected.nickname}…`
-                      : myDisplayName || invitingAsSuggested
-                        ? `Optional — defaults to "${myDisplayName || suggestedName} would like to connect"`
-                        : `Optional message — your name will be added`
-                  }
-                  ref={draftRef}
-                  rows={1}
-                  className="flex-1 resize-none"
-                  style={{ minHeight: 40 }}
-                />
-                <Button
-                  onClick={handleSend}
-                  disabled={
-                    sending ||
-                    (needsNickname && !pendingNicknameInput.trim()) ||
-                    (connectionState === 'connected' && !draft.trim())
-                  }
-                  size={connectionState === 'connected' ? 'icon' : 'sm'}
-                  title={
-                    connectionState === 'connected'
-                      ? 'Send (Enter)'
-                      : connectionState === 'not-connected'
-                        ? 'Send invite'
-                        : 'Resend invite'
-                  }
-                  className={connectionState === 'connected' ? '' : 'whitespace-nowrap'}
-                >
-                  {connectionState === 'connected' ? (
-                    <Send size={16} />
-                  ) : connectionState === 'not-connected' ? (
-                    'Send invite'
-                  ) : (
-                    'Resend invite'
+              ) : (
+                <>
+                  {error && (
+                    <p className="text-xs mb-2" style={{ color: needsPublish ? 'rgb(var(--fg-muted))' : '#ef4444' }}>
+                      {error}
+                    </p>
                   )}
-                </Button>
-              </div>
-              {connectionState === 'connected' && (
-                <p className="text-[10px] text-muted-foreground">Enter to send · Shift+Enter for a new line</p>
+
+                  {pendingPing && pendingPing.contactId === selected.id && !sending && (
+                    <Button onClick={handleRetryPing} size="sm" className="mb-2">
+                      Retry notice
+                    </Button>
+                  )}
+
+                  {needsPublish && (
+                    <Button onClick={handlePublishAndSend} disabled={publishing} size="sm" className="mb-2">
+                      {publishing ? 'Publishing…' : 'Publish identity & send'}
+                    </Button>
+                  )}
+
+                  {sendStatus && (
+                    <p
+                      className="text-xs mb-2 flex items-center gap-1.5 animate-pulse"
+                      style={{ color: 'rgb(var(--accent))' }}
+                    >
+                      <Send size={12} />
+                      {sendStatus}
+                    </p>
+                  )}
+
+                  {invitingAsSuggested && (
+                    <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                      Inviting as{' '}
+                      <span className="font-semibold" style={{ color: 'rgb(var(--fg))' }}>
+                        {suggestedName}
+                      </span>{' '}
+                      ·{' '}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPendingNicknameInput(suggestedName)
+                          setEditingName(true)
+                        }}
+                        className="underline"
+                      >
+                        change
+                      </button>
+                    </p>
+                  )}
+
+                  {needsNickname && (
+                    <div
+                      className="rounded-lg border p-3 space-y-2"
+                      style={{ backgroundColor: 'rgb(var(--bg-surface))', borderColor: 'rgb(var(--border))' }}
+                    >
+                      <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                        What should they call you? Shown to the recipient in your invite.
+                      </p>
+                      <Input
+                        autoFocus
+                        value={pendingNicknameInput}
+                        onChange={e => setPendingNicknameInput(e.target.value)}
+                        placeholder="Your name"
+                      />
+                    </div>
+                  )}
+
+                  {connectionState === 'connected' && (
+                    <DraftToolbar format={format} expanded={expanded} onToggleExpand={toggleExpand} />
+                  )}
+                  <div className="flex gap-2 items-end">
+                    <Textarea
+                      value={draft}
+                      onChange={e => setDraft(e.target.value)}
+                      onKeyDown={handleKeyDown}
+                      placeholder={
+                        connectionState === 'connected'
+                          ? `Message ${selected.nickname}…`
+                          : myDisplayName || invitingAsSuggested
+                            ? `Optional — defaults to "${myDisplayName || suggestedName} would like to connect"`
+                            : `Optional message — your name will be added`
+                      }
+                      ref={draftRef}
+                      rows={1}
+                      className="flex-1 resize-none"
+                      style={{ minHeight: 40 }}
+                    />
+                    <Button
+                      onClick={handleSend}
+                      disabled={
+                        sending ||
+                        (needsNickname && !pendingNicknameInput.trim()) ||
+                        (connectionState === 'connected' && !draft.trim())
+                      }
+                      size={connectionState === 'connected' ? 'icon' : 'sm'}
+                      title={
+                        connectionState === 'connected'
+                          ? 'Send (Enter)'
+                          : connectionState === 'not-connected'
+                            ? 'Send invite'
+                            : 'Resend invite'
+                      }
+                      className={connectionState === 'connected' ? '' : 'whitespace-nowrap'}
+                    >
+                      {connectionState === 'connected' ? (
+                        <Send size={16} />
+                      ) : connectionState === 'not-connected' ? (
+                        'Send invite'
+                      ) : (
+                        'Resend invite'
+                      )}
+                    </Button>
+                  </div>
+                  {connectionState === 'connected' && (
+                    <p className="text-[10px] text-muted-foreground">Enter to send · Shift+Enter for a new line</p>
+                  )}
+                </>
               )}
             </div>
           </>

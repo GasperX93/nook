@@ -11,7 +11,7 @@ import { pickMessagingStamp } from '../lib/system-stamp'
 import { movedFromLegacyIdentity } from '../notify/active-identity'
 import { deriveConnectionState, getMyDisplayName, hasInboundSince, markInviteAccepted } from '../notify/contact-state'
 import { sendInviteAck } from '../notify/invite-ack'
-import { loadReadCursors, loadThreads, unreadCount } from '../notify/messages'
+import { awaitingFirstRead, FIRST_READ_WAIT_MS, loadReadCursors, loadThreads, unreadCount } from '../notify/messages'
 import { hasReadCursor } from '../notify/receive-cursor'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -40,9 +40,6 @@ function formatDate(ts: number): string {
 
 type AddMode = 'registry' | 'share-link'
 type SortMode = 'name' | 'date' | 'address'
-
-/** How long the contact page waits for a first read before offering Connect anyway. */
-const FIRST_READ_WAIT_MS = 60_000
 
 export default function Contacts() {
   const bee = useMemo(() => new Bee(BEE_URL), [])
@@ -268,6 +265,8 @@ export default function Contacts() {
     !showThread &&
     !hasReadCursor(selectedId ?? '') &&
     Date.now() - mountedAt < FIRST_READ_WAIT_MS
+  // My sent messages already show, theirs are still being read — no badge yet.
+  const loadingInbound = Boolean(selectedId) && awaitingFirstRead(selectedId ?? '')
   const connectionState = selectedId ? deriveConnectionState(selectedId, hasInbound) : 'not-connected'
 
   function resetAddForm() {
@@ -718,7 +717,17 @@ export default function Contacts() {
                       </button>
                     </>
                   )}
-                  <ConnectionStatusBadge state={connectionState} contactId={selected.id} />
+                  {loadingInbound ? (
+                    <span
+                      className="inline-flex items-center gap-1.5 text-xs"
+                      style={{ color: 'rgb(var(--fg-muted))' }}
+                    >
+                      <Loader2 size={12} className="animate-spin" />
+                      Loading conversation…
+                    </span>
+                  ) : (
+                    <ConnectionStatusBadge state={connectionState} contactId={selected.id} />
+                  )}
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   <Button

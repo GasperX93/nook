@@ -188,16 +188,36 @@ const SENT_LOADED_KEY = 'nook-sent-loaded-v1'
 export function needsSentLoad(counterparty: string): boolean {
   const key = counterparty.toLowerCase()
 
-  if (load<Record<string, true>>(nsKey(SENT_LOADED_KEY), {})[key]) return false
+  if (load<Record<string, number | true>>(nsKey(SENT_LOADED_KEY), {})[key]) return false
 
   return !(loadThreads()[key] ?? []).some(m => m.direction === 'sent')
 }
 
-export function markSentLoaded(counterparty: string): void {
-  const map = load<Record<string, true>>(nsKey(SENT_LOADED_KEY), {})
+/** Remembers when (ms) — the first read of their messages to me follows it. */
+export function markSentLoaded(counterparty: string, now = Date.now()): void {
+  const map = load<Record<string, number | true>>(nsKey(SENT_LOADED_KEY), {})
 
-  map[counterparty.toLowerCase()] = true
+  map[counterparty.toLowerCase()] = now
   localStorage.setItem(nsKey(SENT_LOADED_KEY), JSON.stringify(map))
+}
+
+/** How long after my sent messages were loaded the page waits for theirs before offering an invite. */
+export const FIRST_READ_WAIT_MS = 60_000
+
+/**
+ * My sent messages were just loaded from my feed (another browser, cleared
+ * data, #191) and none of theirs have arrived yet: their read can take a poll
+ * or two. Until then "Not yet connected" + Send invite would be wrong — a
+ * message typed now would go out as an invitation. Capped, so a contact who
+ * never wrote still gets the invite after FIRST_READ_WAIT_MS.
+ */
+export function awaitingFirstRead(counterparty: string, now = Date.now()): boolean {
+  const key = counterparty.toLowerCase()
+  const loadedAt = load<Record<string, number | true>>(nsKey(SENT_LOADED_KEY), {})[key]
+
+  if (typeof loadedAt !== 'number' || now - loadedAt >= FIRST_READ_WAIT_MS) return false
+
+  return !(loadThreads()[key] ?? []).some(m => m.direction === 'received')
 }
 
 /**
