@@ -1,4 +1,5 @@
 // Nook server API client — talks to the Koa backend (same origin in prod, proxied in dev)
+import type { NookContact } from '../notify/types'
 import { useAppStore } from '../store/app'
 
 function authHeaders(): Record<string, string> {
@@ -91,6 +92,17 @@ export interface ReclaimableUploadJob {
   status: 'uploading' | 'done' | 'error'
   reference?: string
   error?: string
+}
+
+/** Contacts, send cursors and display name of one identity, as saved in the app folder (#192). */
+export interface ContactBackup {
+  contacts: NookContact[]
+  sendCursors: Record<string, number>
+  /** Per contact: when the conversation was last read (ms). Absent in files from before it was added. */
+  readMarks?: Record<string, number>
+  /** Per contact: how far their feed had been read (#191). Absent in files from before it was added. */
+  theirNext?: Record<string, number>
+  myName: string
 }
 
 async function serverPost<T>(path: string, body: unknown): Promise<T> {
@@ -399,6 +411,14 @@ export const serverApi = {
 
     return response.json() as Promise<{ entry: AutoExtendEntry }>
   },
+
+  // ─── Contacts in the app folder (#192) ───────────────────────────────────
+
+  readContactBackup: async (address: string) =>
+    serverGet<{ backup: ContactBackup | null }>(`/contact-backup/${address}`),
+
+  writeContactBackup: async (address: string, backup: ContactBackup) =>
+    serverPost<{ stored: boolean }>(`/contact-backup/${address}`, backup),
 
   // ─── Identity cache (Electron safeStorage, OS keychain) ─────────────────
 

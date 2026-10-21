@@ -23,6 +23,7 @@ import {
   sendRegistryNotification,
 } from './blockchain'
 import { clearIdentityCache, isIdentityCacheAvailable, readIdentityCache, writeIdentityCache } from './identity-cache'
+import { isBackupAddress, readContactBackup, writeContactBackup } from './contact-backup'
 import { readConfigYaml, readWalletPasswordOrThrow, writeConfigYaml } from './config'
 import { getForeignBee } from './foreign-bee'
 import { checkFundingNow } from './funding-monitor'
@@ -322,6 +323,29 @@ export function runServer() {
   router.delete('/identity-cache', context => {
     clearIdentityCache()
     context.body = { cleared: true }
+  })
+  // Contacts in the app folder (#192) — one file per identity.
+  router.get('/contact-backup/:address', context => {
+    const address = context.params.address.toLowerCase()
+
+    if (!isBackupAddress(address)) {
+      context.status = 400
+      context.body = { error: 'Invalid address' }
+
+      return
+    }
+    context.body = { backup: readContactBackup(address) }
+  })
+  router.post('/contact-backup/:address', context => {
+    const address = context.params.address.toLowerCase()
+
+    if (!isBackupAddress(address) || !writeContactBackup(address, context.request.body)) {
+      context.status = 400
+      context.body = { error: 'Invalid address or backup' }
+
+      return
+    }
+    context.body = { stored: true }
   })
   router.get('/peers', async context => {
     try {
