@@ -10,7 +10,7 @@
  */
 import { Bee } from '@ethersphere/bee-js'
 import { type Contact, mailbox } from '@swarm-notify/sdk'
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 
 import { playCricketChirp } from '../lib/cricket'
 import { CONTACTS_RESTORED_EVENT } from '../notify/backup-signal'
@@ -48,9 +48,18 @@ async function loadMySent(bee: Bee, key: Uint8Array, myAddr: string, contact: Co
 export function useInboxPolling(): void {
   const { signer } = useDerivedKey()
   const bee = useMemo(() => new Bee(BEE_URL), [])
+  // Restart only when the identity changes, not for every new signer object
+  // of the same identity (the store makes several at boot) — a restart drops
+  // a long first read (#191) before it is recorded.
+  const signerRef = useRef(signer)
+
+  signerRef.current = signer
+  const address = signer?.getAddress() ?? null
 
   useEffect(() => {
-    if (!signer) return
+    const signer = signerRef.current
+
+    if (!address || !signer) return
 
     let cancelled = false
     let pollCount = 0
@@ -154,5 +163,5 @@ export function useInboxPolling(): void {
       clearInterval(id)
       window.removeEventListener(CONTACTS_RESTORED_EVENT, pollNow)
     }
-  }, [signer, bee])
+  }, [address, bee])
 }
