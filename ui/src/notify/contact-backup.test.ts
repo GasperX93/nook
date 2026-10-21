@@ -11,10 +11,9 @@ import {
   advanceSendCursor,
   appendReceived,
   appendSent,
-  awaitingFirstRead,
-  awaitingMySent,
   conversationLoading,
-  FIRST_READ_WAIT_MS,
+  conversationPending,
+  LOADING_CAP_MS,
   getSendCursor,
   getSentSeen,
   loadReadCursors,
@@ -23,9 +22,9 @@ import {
   markSentSeen,
   needsSentLoad,
   mergeSentFromFeed,
-  SENT_WAIT_MS,
   sentReadComplete,
 } from './messages'
+import { recordRead } from './receive-cursor'
 import { loadContacts, saveContacts } from './storage'
 import type { NookContact } from './types'
 
@@ -157,24 +156,38 @@ describe('sent messages from my feed', () => {
     expect(needsSentLoad(ANA)).toBe(false)
   })
 
-  it('waits for my sent messages only where I sent some, and not past the cap', () => {
-    expect(awaitingMySent(MARTIN, 0, 1_000)).toBe(false)
-    advanceSendCursor(MARTIN, 46)
-    expect(awaitingMySent(MARTIN, 0, 1_000)).toBe(true)
-    expect(awaitingMySent(MARTIN, 0, SENT_WAIT_MS)).toBe(false)
+  it('loading until their side was read a few times or sent something, and mine is in', () => {
+    const empty = { nextIndex: 0, holes: [] }
 
+    expect(conversationPending(MARTIN)).toBe(true)
+    recordRead(MARTIN, empty)
+    recordRead(MARTIN, empty)
+    expect(conversationPending(MARTIN)).toBe(true)
+    recordRead(MARTIN, empty)
+    expect(conversationPending(MARTIN)).toBe(false)
+
+    advanceSendCursor(MARTIN, 46)
+    expect(conversationPending(MARTIN)).toBe(true)
     markSentLoaded(MARTIN)
-    expect(awaitingMySent(MARTIN, 0, 1_000)).toBe(false)
+    expect(conversationPending(MARTIN)).toBe(false)
   })
 
-  it('a conversation is loading until both sides are in', () => {
-    expect(conversationLoading(MARTIN, 2_000)).toBe(false)
-    advanceSendCursor(MARTIN, 46)
-    expect(conversationLoading(MARTIN, 2_000)).toBe(true)
-    markSentLoaded(MARTIN, 1_000)
-    expect(conversationLoading(MARTIN, 2_000)).toBe(true)
+  it('a message from them ends the wait on their side right away', () => {
     appendReceived(loadThreads(), MARTIN, [message('hey', 5)])
-    expect(conversationLoading(MARTIN, 2_000)).toBe(false)
+
+    expect(conversationPending(MARTIN)).toBe(false)
+  })
+
+  it('a contact just added has nothing to load', () => {
+    saveContacts([{ ...contact(ANA, 'Ana'), addedAt: Date.now() }])
+
+    expect(conversationPending(ANA)).toBe(false)
+  })
+
+  it('the screen shows loading at most LOADING_CAP_MS from when this contact was first shown', () => {
+    expect(conversationLoading(ANA, 1_000)).toBe(true)
+    expect(conversationLoading(ANA, 1_000 + LOADING_CAP_MS - 1)).toBe(true)
+    expect(conversationLoading(ANA, 1_000 + LOADING_CAP_MS)).toBe(false)
   })
 
   it('a read of my feed counts only once it reaches my send cursor', () => {
@@ -182,16 +195,6 @@ describe('sent messages from my feed', () => {
     advanceSendCursor(MARTIN, 46)
     expect(sentReadComplete(MARTIN, 0)).toBe(false)
     expect(sentReadComplete(MARTIN, 47)).toBe(true)
-  })
-
-  it('waits for their messages after mine were loaded, but not past the cap', () => {
-    expect(awaitingFirstRead(MARTIN, 1_000)).toBe(false)
-    markSentLoaded(MARTIN, 1_000)
-    expect(awaitingFirstRead(MARTIN, 2_000)).toBe(true)
-    expect(awaitingFirstRead(MARTIN, 1_000 + FIRST_READ_WAIT_MS)).toBe(false)
-
-    appendReceived(loadThreads(), MARTIN, [message('hey', 5)])
-    expect(awaitingFirstRead(MARTIN, 2_000)).toBe(false)
   })
 
   it('fills an empty thread with what I sent, in time order with the received ones', () => {

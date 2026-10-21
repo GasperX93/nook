@@ -1,6 +1,8 @@
 import type { Message as SdkMessage } from '@swarm-notify/sdk'
 
 import { nsKey } from './active-identity'
+import { readCount } from './receive-cursor'
+import { loadContacts } from './storage'
 import { contactDataChanged } from './backup-signal'
 
 /**
@@ -202,7 +204,7 @@ export function sentReadComplete(counterparty: string, nextIndex: number): boole
   return nextIndex >= (getSendCursor(counterparty) ?? 0)
 }
 
-/** Remembers when (ms) — the first read of their messages to me follows it. */
+/** My sent messages to this contact are loaded in this browser (the value is when, in ms). */
 export function markSentLoaded(counterparty: string, now = Date.now()): void {
   const map = load<Record<string, number | true>>(nsKey(SENT_LOADED_KEY), {})
 
@@ -210,39 +212,57 @@ export function markSentLoaded(counterparty: string, now = Date.now()): void {
   localStorage.setItem(nsKey(SENT_LOADED_KEY), JSON.stringify(map))
 }
 
-/** How long after my sent messages were loaded the page waits for theirs before offering an invite. */
-export const FIRST_READ_WAIT_MS = 60_000
+/**
+ * Reads of their mailbox that must find nothing before an empty side counts
+ * as "they never wrote" — right after start the node often can't find a feed
+ * yet, so a first empty read proves nothing (#191).
+ */
+const EMPTY_READS_TRUSTED = 3
+
+/** A contact added this recently in this browser has nothing to load yet — Connect right away. */
+const FRESH_CONTACT_MS = 10 * 60_000
 
 /**
- * My sent messages were just loaded from my feed (another browser, cleared
- * data, #191) and none of theirs have arrived yet: their read can take a poll
- * or two. Until then "Not yet connected" + Send invite would be wrong — a
- * message typed now would go out as an invitation. Capped, so a contact who
- * never wrote still gets the invite after FIRST_READ_WAIT_MS.
+ * A conversation still loading in this browser (another browser, cleared
+ * data, a new contact, #191): their side read fewer than EMPTY_READS_TRUSTED
+ * times and nothing found yet, or my sent messages not loaded although I sent
+ * some. The poller retries these sooner than usual.
  */
-export function awaitingFirstRead(counterparty: string, now = Date.now()): boolean {
+export function conversationPending(counterparty: string): boolean {
   const key = counterparty.toLowerCase()
-  const loadedAt = load<Record<string, number | true>>(nsKey(SENT_LOADED_KEY), {})[key]
+  const thread = loadThreads()[key] ?? []
+  const contact = loadContacts().find(c => c.id.toLowerCase() === key)
+  const fresh = contact !== undefined && Date.now() - contact.addedAt < FRESH_CONTACT_MS
+  const theirs = !fresh && !thread.some(m => m.direction === 'received') && readCount(key) < EMPTY_READS_TRUSTED
+  const mine = (getSendCursor(key) ?? 0) > 0 && needsSentLoad(key)
 
-  if (typeof loadedAt !== 'number' || now - loadedAt >= FIRST_READ_WAIT_MS) return false
-
-  return !(loadThreads()[key] ?? []).some(m => m.direction === 'received')
+  return theirs || mine
 }
 
-/** How long a conversation waits for my sent messages before showing what it has. */
-export const SENT_WAIT_MS = 180_000
+/** How long an open conversation shows as loading at most, so an unreadable feed never hides it. */
+export const LOADING_CAP_MS = 180_000
+
+/** When each conversation was first shown as loading — the cap counts from there, per contact. */
+const loadingSince = new Map<string, number>()
 
 /**
- * I sent this contact messages (my send cursor, restored from the app folder,
- * says so) but this browser hasn't loaded them yet — the read is retried each
- * poll (#191). Until then the conversation would show only their side. Capped
- * from `since` (when the page opened), so an unreadable feed never hides the
- * conversation for good.
+ * What the screen shows: "Loading conversation…" instead of half a
+ * conversation or "Not yet connected", until both sides are in or
+ * LOADING_CAP_MS after this contact was first shown loading.
  */
-export function awaitingMySent(counterparty: string, since: number, now = Date.now()): boolean {
-  if (now - since >= SENT_WAIT_MS) return false
+export function conversationLoading(counterparty: string, now = Date.now()): boolean {
+  const key = counterparty.toLowerCase()
 
-  return (getSendCursor(counterparty) ?? 0) > 0 && needsSentLoad(counterparty)
+  if (!conversationPending(key)) {
+    loadingSince.delete(key)
+
+    return false
+  }
+  const since = loadingSince.get(key) ?? now
+
+  loadingSince.set(key, since)
+
+  return now - since < LOADING_CAP_MS
 }
 
 const SENT_SEEN_KEY = 'nook-sent-seen-v1'
@@ -271,15 +291,6 @@ export function markSentSeen(counterparty: string, nextIndex: number): void {
  * differ by up to how long it waited to go out.
  */
 const SAME_SEND_WINDOW_MS = 10 * 60_000
-
-/**
- * A conversation still loading in this browser: my sent messages not loaded
- * yet although I sent some, or mine loaded and none of theirs yet. The poller
- * retries these sooner than its usual interval.
- */
-export function conversationLoading(counterparty: string, now = Date.now()): boolean {
-  return ((getSendCursor(counterparty) ?? 0) > 0 && needsSentLoad(counterparty)) || awaitingFirstRead(counterparty, now)
-}
 
 /**
  * Sent messages read back from my own mailbox feed (#191), added to the

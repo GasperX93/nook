@@ -17,7 +17,7 @@ import { CONTACTS_RESTORED_EVENT } from '../notify/backup-signal'
 import {
   advanceSendCursor,
   appendReceived,
-  conversationLoading,
+  conversationPending,
   getSentSeen,
   loadThreads,
   markSentLoaded,
@@ -192,13 +192,13 @@ export function useInboxPolling(): void {
       }
     }
 
-    const startedAt = Date.now()
+    let startedAt = Date.now()
     let quickTimer: ReturnType<typeof setTimeout> | null = null
     // A conversation still loading in this browser: try again in seconds, not 30 s.
     const scheduleQuickPoll = () => {
       if (quickTimer || Date.now() - startedAt > QUICK_POLL_FOR_MS) return
 
-      if (!loadContacts().some(c => conversationLoading(c.id))) return
+      if (!loadContacts().some(c => conversationPending(c.id))) return
       quickTimer = setTimeout(() => {
         quickTimer = null
         void poll()
@@ -212,8 +212,13 @@ export function useInboxPolling(): void {
 
     // Contacts restored from the app folder (#192): read them now, not in 30 s.
     window.addEventListener(CONTACTS_RESTORED_EVENT, pollNow)
-    // A conversation just opened: read it now (it goes first).
-    window.addEventListener(OPEN_CONTACT_EVENT, pollNow)
+    // A conversation just opened: read it now (it goes first), and quickly again while it loads.
+    const pollOpened = () => {
+      startedAt = Date.now()
+      void poll()
+    }
+
+    window.addEventListener(OPEN_CONTACT_EVENT, pollOpened)
 
     return () => {
       cancelled = true
@@ -221,7 +226,7 @@ export function useInboxPolling(): void {
 
       if (quickTimer) clearTimeout(quickTimer)
       window.removeEventListener(CONTACTS_RESTORED_EVENT, pollNow)
-      window.removeEventListener(OPEN_CONTACT_EVENT, pollNow)
+      window.removeEventListener(OPEN_CONTACT_EVENT, pollOpened)
     }
   }, [address, bee])
 }

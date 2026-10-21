@@ -23,6 +23,8 @@ interface ReadCursor {
   next: number
   /** Unreadable slot index → times tried so far */
   holes: Record<string, number>
+  /** Reads done in this browser (#191); missing on cursors from before it was counted */
+  reads?: number
 }
 
 type CursorMap = Record<string, ReadCursor>
@@ -55,6 +57,18 @@ export function hasReadCursor(contactId: string): boolean {
   return loadAll()[contactId.toLowerCase()] !== undefined
 }
 
+/**
+ * How often this contact's mailbox was read in this browser: 0 before the
+ * first read, unlimited for cursors from before reads were counted.
+ */
+export function readCount(contactId: string): number {
+  const c = loadAll()[contactId.toLowerCase()]
+
+  if (!c) return 0
+
+  return c.reads ?? Number.POSITIVE_INFINITY
+}
+
 /** Persist the outcome of a read: new cursor, and holes with their retry counts. */
 export function recordRead(contactId: string, result: { nextIndex: number; holes: number[] }): void {
   const map = loadAll()
@@ -68,6 +82,10 @@ export function recordRead(contactId: string, result: { nextIndex: number; holes
     if (tries < MAX_HOLE_TRIES) holes[String(i)] = tries
   }
 
-  map[key] = { next: Math.max(result.nextIndex, map[key]?.next ?? 0), holes }
+  map[key] = {
+    next: Math.max(result.nextIndex, map[key]?.next ?? 0),
+    holes,
+    reads: (map[key]?.reads ?? 0) + 1,
+  }
   saveAll(map)
 }

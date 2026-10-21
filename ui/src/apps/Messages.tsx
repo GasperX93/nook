@@ -34,8 +34,7 @@ import { loadInvitations, markInvitationProcessed, pendingInvitations, type Invi
 import { queueAndDeliver, retryOutboxEntry } from '../notify/deliver'
 import {
   appendSent,
-  awaitingFirstRead,
-  awaitingMySent,
+  conversationLoading,
   loadReadCursors,
   loadThreads,
   markRead,
@@ -84,7 +83,6 @@ export default function Messages({ initialContactId, hideContactList, hideThread
   // Re-read each render cycle so newly-added contacts (eg via accepting an
   // invitation) appear without a remount.
   const [contacts, setContacts] = useState<NookContact[]>(() => loadContacts())
-  const [mountedAt] = useState(() => Date.now())
   const [invitations, setInvitations] = useState<Invitation[]>(() => loadInvitations())
 
   const [threads, setThreads] = useState(() => loadThreads())
@@ -162,7 +160,7 @@ export default function Messages({ initialContactId, hideContactList, hideThread
   const connectionState: ConnectionState = selected ? deriveConnectionState(selected.id, hasInbound) : 'not-connected'
   // One side of the conversation is still being read in this browser (#191):
   // show neither half a conversation nor an invite composer yet.
-  const syncing = selected ? awaitingFirstRead(selected.id) || awaitingMySent(selected.id, mountedAt) : false
+  const syncing = selected ? conversationLoading(selected.id) : false
   const needsNickname = connectionState !== 'connected' && !myDisplayName && (!suggestedName || editingName)
   const invitingAsSuggested =
     connectionState !== 'connected' && !myDisplayName && Boolean(suggestedName) && !editingName
