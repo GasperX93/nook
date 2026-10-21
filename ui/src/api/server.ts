@@ -98,6 +98,8 @@ export interface ReclaimableUploadJob {
 export interface ContactBackup {
   contacts: NookContact[]
   sendCursors: Record<string, number>
+  /** Per contact: when the conversation was last read (ms). Absent in files from before it was added. */
+  readMarks?: Record<string, number>
   myName: string
 }
 

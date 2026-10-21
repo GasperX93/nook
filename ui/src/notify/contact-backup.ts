@@ -2,7 +2,7 @@ import { type ContactBackup, serverApi } from '../api/server'
 import { getActiveIdentity } from './active-identity'
 import { CONTACTS_RESTORED_EVENT, onContactDataChanged } from './backup-signal'
 import { getMyDisplayName, setMyDisplayName } from './contact-state'
-import { advanceSendCursor, loadSendCursors } from './messages'
+import { advanceSendCursor, loadReadCursors, loadSendCursors, saveReadCursors } from './messages'
 import { loadContacts, saveContacts } from './storage'
 import type { NookContact } from './types'
 
@@ -12,7 +12,8 @@ import type { NookContact } from './types'
  * sign-in the saved copy is merged in; after that every change is saved again.
  *
  * Merge never deletes: contacts are added by address, send cursors take the
- * higher index, the name fills in only when this browser has none. Nothing is
+ * higher index, read marks the later time (so restored messages you already
+ * read don't show as unread), the name fills in only when this browser has none. Nothing is
  * saved before the saved copy was read, so an empty browser can't overwrite it.
  */
 
@@ -30,7 +31,12 @@ export function mergeContacts(local: NookContact[], saved: NookContact[]): NookC
 }
 
 function snapshot(): ContactBackup {
-  return { contacts: loadContacts(), sendCursors: loadSendCursors(), myName: getMyDisplayName() }
+  return {
+    contacts: loadContacts(),
+    sendCursors: loadSendCursors(),
+    readMarks: loadReadCursors(),
+    myName: getMyDisplayName(),
+  }
 }
 
 async function save(address: string): Promise<void> {
@@ -85,6 +91,18 @@ export async function restoreContactBackup(address: string): Promise<void> {
     for (const [counterparty, next] of Object.entries(saved.sendCursors ?? {})) {
       if (Number.isInteger(next) && next > 0) advanceSendCursor(counterparty, next - 1)
     }
+
+    const marks = loadReadCursors()
+    let marksChanged = false
+
+    for (const [counterparty, ts] of Object.entries(saved.readMarks ?? {})) {
+      if (Number.isFinite(ts) && ts > (marks[counterparty] ?? 0)) {
+        marks[counterparty] = ts
+        marksChanged = true
+      }
+    }
+
+    if (marksChanged) saveReadCursors(marks)
 
     if (!getMyDisplayName() && typeof saved.myName === 'string') setMyDisplayName(saved.myName)
 

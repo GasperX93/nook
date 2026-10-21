@@ -7,7 +7,7 @@ import { setActiveIdentity } from './active-identity'
 import { CONTACTS_RESTORED_EVENT } from './backup-signal'
 import { mergeContacts, restoreContactBackup } from './contact-backup'
 import { getMyDisplayName, setMyDisplayName } from './contact-state'
-import { appendSent, getSendCursor, loadThreads, restoreSent } from './messages'
+import { appendSent, getSendCursor, loadReadCursors, loadThreads, restoreSent } from './messages'
 import { loadContacts, saveContacts } from './storage'
 import type { NookContact } from './types'
 
@@ -78,6 +78,15 @@ describe('restoreContactBackup', () => {
     window.removeEventListener(CONTACTS_RESTORED_EVENT, heard)
 
     expect(heard).toHaveBeenCalledTimes(1)
+  })
+
+  it('read marks come back, the later one wins — read messages stay read', async () => {
+    localStorage.setItem(`nook-messages-read-v1:${ME}`, JSON.stringify({ [ANA]: 500 }))
+    saved = { contacts: [], sendCursors: {}, readMarks: { [MARTIN]: 1000, [ANA]: 200 }, myName: '' }
+
+    await restoreContactBackup(ME)
+
+    expect(loadReadCursors()).toEqual({ [MARTIN]: 1000, [ANA]: 500 })
   })
 
   it('never lowers a send cursor or replaces a name this browser has', async () => {

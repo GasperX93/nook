@@ -27,7 +27,7 @@ test('only a lowercase 0x address names a file', () => {
 test('nothing saved yet → null; saved → read back', () => {
   expect(readContactBackup(ME)).toBeNull()
   expect(writeContactBackup(ME, { contacts: [{ id: 'x' }], sendCursors: { x: 2 }, myName: 'Gasper' })).toBe(true)
-  expect(readContactBackup(ME)).toEqual({ contacts: [{ id: 'x' }], sendCursors: { x: 2 }, myName: 'Gasper' })
+  expect(readContactBackup(ME)).toEqual({ contacts: [{ id: 'x' }], sendCursors: { x: 2 }, readMarks: {}, myName: 'Gasper' })
 })
 
 test('a wrong shape is refused and the saved copy stays', () => {

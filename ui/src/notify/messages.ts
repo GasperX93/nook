@@ -99,6 +99,7 @@ export function loadReadCursors(): ReadCursorMap {
 
 export function saveReadCursors(cursors: ReadCursorMap): void {
   localStorage.setItem(nsKey(READ_CURSOR_KEY), JSON.stringify(cursors))
+  contactDataChanged()
 }
 
 /**

@@ -7,7 +7,7 @@ import { getPath } from './path'
  * Contacts in the app folder (#192). The dashboard keeps contacts in the
  * browser's localStorage, which is per browser and profile: another browser
  * or cleared site data showed an empty contact list. This file per identity
- * survives both. Only addresses, names and send cursors — no message content
+ * survives both. Only addresses, names, send cursors and read marks — no message content
  * (received messages reload from Swarm, sent ones too since #191).
  *
  * The server only stores what the dashboard sends; merging happens there.
@@ -19,6 +19,8 @@ const ADDRESS = /^0x[0-9a-f]{40}$/
 export interface ContactBackup {
   contacts: unknown[]
   sendCursors: Record<string, number>
+  /** Per contact: when the conversation was last read (ms), so restored messages aren't all unread */
+  readMarks: Record<string, number>
   myName: string
 }
 
@@ -53,11 +55,17 @@ export function writeContactBackup(address: string, value: unknown): boolean {
     !Array.isArray(backup.contacts) ||
     typeof backup.sendCursors !== 'object' ||
     backup.sendCursors === null ||
-    typeof backup.myName !== 'string'
+    typeof backup.myName !== 'string' ||
+    (backup.readMarks !== undefined && (typeof backup.readMarks !== 'object' || backup.readMarks === null))
   ) {
     return false
   }
-  const clean: ContactBackup = { contacts: backup.contacts, sendCursors: backup.sendCursors, myName: backup.myName }
+  const clean: ContactBackup = {
+    contacts: backup.contacts,
+    sendCursors: backup.sendCursors,
+    readMarks: backup.readMarks ?? {},
+    myName: backup.myName,
+  }
   const path = filePath(address)
 
   mkdirSync(getPath(DIR), { recursive: true })
