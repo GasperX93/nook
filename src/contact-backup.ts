@@ -23,6 +23,9 @@ export interface ContactBackup {
   readMarks: Record<string, number>
   /** Per contact: how far their feed to me had been read — a new browser waits for that much (#191) */
   theirNext: Record<string, number>
+  /** Per contact: when I sent them an invite / accepted theirs (ms) — so another browser doesn't offer the invite again */
+  invitesSent: Record<string, number>
+  invitesAccepted: Record<string, number>
   myName: string
 }
 
@@ -48,6 +51,11 @@ export function readContactBackup(address: string): ContactBackup | null {
   }
 }
 
+/** Absent, or a plain object (fields added after the first version are optional). */
+function optionalMap(value: unknown): boolean {
+  return value === undefined || (typeof value === 'object' && value !== null && !Array.isArray(value))
+}
+
 /** Validates the shape, then writes atomically (temp file + rename). */
 export function writeContactBackup(address: string, value: unknown): boolean {
   const backup = value as Partial<ContactBackup> | null
@@ -59,7 +67,9 @@ export function writeContactBackup(address: string, value: unknown): boolean {
     backup.sendCursors === null ||
     typeof backup.myName !== 'string' ||
     (backup.readMarks !== undefined && (typeof backup.readMarks !== 'object' || backup.readMarks === null)) ||
-    (backup.theirNext !== undefined && (typeof backup.theirNext !== 'object' || backup.theirNext === null))
+    !optionalMap(backup.theirNext) ||
+    !optionalMap(backup.invitesSent) ||
+    !optionalMap(backup.invitesAccepted)
   ) {
     return false
   }
@@ -68,6 +78,8 @@ export function writeContactBackup(address: string, value: unknown): boolean {
     sendCursors: backup.sendCursors,
     readMarks: backup.readMarks ?? {},
     theirNext: backup.theirNext ?? {},
+    invitesSent: backup.invitesSent ?? {},
+    invitesAccepted: backup.invitesAccepted ?? {},
     myName: backup.myName,
   }
   const path = filePath(address)

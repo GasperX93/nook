@@ -55,12 +55,25 @@ export function recordInviteSent(contactId: string, now = Date.now()): void {
   const map = loadAll()
   map[contactId.toLowerCase()] = { sentAt: now }
   saveAll(map)
+  contactDataChanged()
 }
 
 export function clearInviteSent(contactId: string): void {
   const map = loadAll()
   delete map[contactId.toLowerCase()]
   saveAll(map)
+  contactDataChanged()
+}
+
+/** Invites I sent, contact → when (ms) — kept in the app folder too, so another browser doesn't offer the invite again. */
+export function loadInvitesSent(): Record<string, number> {
+  const out: Record<string, number> = {}
+
+  for (const [id, record] of Object.entries(loadAll())) {
+    if (Number.isFinite(record?.sentAt)) out[id] = record.sentAt
+  }
+
+  return out
 }
 
 export function getMyDisplayName(): string {
@@ -106,8 +119,55 @@ export function markInviteAccepted(contactId: string): void {
 
     map[contactId.toLowerCase()] = Date.now()
     localStorage.setItem(nsKey(ACCEPTED_KEY), JSON.stringify(map))
+    contactDataChanged()
   } catch {
     // storage unavailable — worst case the composer offers an invite once
+  }
+}
+
+/** Invitations I accepted, contact → when (ms) — kept in the app folder too. */
+export function loadInvitesAccepted(): Record<string, number> {
+  return loadAccepted()
+}
+
+/**
+ * Merge invite state saved in the app folder into this browser (#192):
+ * entries only this browser lacks are added, and the later time wins.
+ * Nothing is removed.
+ */
+export function mergeInviteState(sent: Record<string, number>, accepted: Record<string, number>): void {
+  const sentMap = loadAll()
+  let sentChanged = false
+
+  for (const [id, ts] of Object.entries(sent)) {
+    const key = id.toLowerCase()
+
+    if (Number.isFinite(ts) && ts > (sentMap[key]?.sentAt ?? 0)) {
+      sentMap[key] = { sentAt: ts }
+      sentChanged = true
+    }
+  }
+
+  if (sentChanged) saveAll(sentMap)
+
+  const acceptedMap = loadAccepted()
+  let acceptedChanged = false
+
+  for (const [id, ts] of Object.entries(accepted)) {
+    const key = id.toLowerCase()
+
+    if (Number.isFinite(ts) && ts > (acceptedMap[key] ?? 0)) {
+      acceptedMap[key] = ts
+      acceptedChanged = true
+    }
+  }
+
+  if (acceptedChanged) {
+    try {
+      localStorage.setItem(nsKey(ACCEPTED_KEY), JSON.stringify(acceptedMap))
+    } catch {
+      // storage unavailable — ignore
+    }
   }
 }
 
@@ -118,6 +178,7 @@ export function clearInviteAccepted(contactId: string): void {
 
     delete map[contactId.toLowerCase()]
     localStorage.setItem(nsKey(ACCEPTED_KEY), JSON.stringify(map))
+    contactDataChanged()
   } catch {
     // storage unavailable — ignore
   }

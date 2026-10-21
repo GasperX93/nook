@@ -102,6 +102,9 @@ export interface ContactBackup {
   readMarks?: Record<string, number>
   /** Per contact: how far their feed had been read (#191). Absent in files from before it was added. */
   theirNext?: Record<string, number>
+  /** Per contact: when I sent them an invite / accepted theirs (ms). Absent in older files. */
+  invitesSent?: Record<string, number>
+  invitesAccepted?: Record<string, number>
   myName: string
 }
 

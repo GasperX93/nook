@@ -11,7 +11,7 @@ import { pickMessagingStamp } from '../lib/system-stamp'
 import { movedFromLegacyIdentity } from '../notify/active-identity'
 import { deriveConnectionState, getMyDisplayName, hasInboundSince, markInviteAccepted } from '../notify/contact-state'
 import { sendInviteAck } from '../notify/invite-ack'
-import { conversationLoading, loadReadCursors, loadThreads, unreadCount } from '../notify/messages'
+import { conversationLoading, loadReadCursors, loadThreads, theirSidePending, unreadCount } from '../notify/messages'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Textarea } from '../components/ui/textarea'
@@ -265,8 +265,14 @@ export default function Contacts() {
   // conversation view with a spinner — never half a conversation, and never
   // "Not yet connected" + Connect before their side was really read.
   const loading = selectedId ? conversationLoading(selectedId) : false
-  const showThread = hasThread || composeFor === selectedId || loading
-  const connectionState = selectedId ? deriveConnectionState(selectedId, hasInbound) : 'not-connected'
+  // Past the loading cap with their messages still coming: a connection, never the invite.
+  const catchingUp = selectedId ? !loading && theirSidePending(selectedId) : false
+  const showThread = hasThread || composeFor === selectedId || loading || catchingUp
+  const connectionState = !selectedId
+    ? 'not-connected'
+    : catchingUp
+      ? 'connected'
+      : deriveConnectionState(selectedId, hasInbound)
 
   function resetAddForm() {
     setRegistryAddr('')

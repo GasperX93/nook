@@ -32,6 +32,8 @@ test('nothing saved yet → null; saved → read back', () => {
     sendCursors: { x: 2 },
     readMarks: {},
     theirNext: {},
+    invitesSent: {},
+    invitesAccepted: {},
     myName: 'Gasper',
   })
 })
@@ -39,5 +41,22 @@ test('nothing saved yet → null; saved → read back', () => {
 test('a wrong shape is refused and the saved copy stays', () => {
   expect(writeContactBackup(ME, { contacts: 'nope' })).toBe(false)
   expect(writeContactBackup(ME, null)).toBe(false)
+  expect(
+    writeContactBackup(ME, { contacts: [], sendCursors: {}, myName: 'Other', invitesSent: ['not', 'a', 'map'] }),
+  ).toBe(false)
   expect(readContactBackup(ME)?.myName).toBe('Gasper')
+})
+
+test('invite state is kept', () => {
+  expect(
+    writeContactBackup(ME, {
+      contacts: [],
+      sendCursors: {},
+      myName: 'Gasper',
+      invitesSent: { y: 5 },
+      invitesAccepted: { z: 6 },
+    }),
+  ).toBe(true)
+  expect(readContactBackup(ME)?.invitesSent).toEqual({ y: 5 })
+  expect(readContactBackup(ME)?.invitesAccepted).toEqual({ z: 6 })
 })

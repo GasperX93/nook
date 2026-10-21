@@ -30,11 +30,21 @@ const EXPECTED_KEY = 'nook-mailbox-expected-v1'
 /** ~10 minutes of 30 s polls. */
 export const MAX_HOLE_TRIES = 20
 
+/**
+ * Reads in a row that stopped at the same slot before it is moved to the
+ * retry list and the cursor goes past it. A slot the node can't fetch is
+ * usually temporary, but one that never reads (a damaged slot) must not hide
+ * every later message for good.
+ */
+export const STALL_LIMIT = 5
+
 interface ReadCursor {
   /** First feed index not yet walked */
   next: number
   /** Slot index still to retry (hole or gap) → times tried so far */
   holes: Record<string, number>
+  /** Reads in a row that stopped early at `next` */
+  stalls?: number
 }
 
 type CursorMap = Record<string, ReadCursor>
@@ -45,6 +55,8 @@ export interface ReadOutcome {
   holes: number[]
   gaps?: number[]
   indexes?: number[]
+  /** False when the read stopped at a slot the node couldn't fetch (SDK) */
+  complete?: boolean
 }
 
 function load<T>(key: string): T | Record<string, never> {
@@ -100,9 +112,18 @@ function record(key: string, contactId: string, result: ReadOutcome): boolean {
     if (tries < MAX_HOLE_TRIES) holes[String(i)] = tries
   }
 
-  const next = Math.max(result.nextIndex, previous?.next ?? 0)
+  let next = Math.max(result.nextIndex, previous?.next ?? 0)
+  const stuck = result.complete === false && next === (previous?.next ?? 0)
+  let stalls = stuck ? (previous?.stalls ?? 0) + 1 : 0
 
-  map[id] = { next, holes }
+  // Stopped at the same slot STALL_LIMIT times: retry it later, read on past it.
+  if (stalls >= STALL_LIMIT) {
+    holes[String(next)] = 1
+    next += 1
+    stalls = 0
+  }
+
+  map[id] = stalls > 0 ? { next, holes, stalls } : { next, holes }
   save(key, map)
 
   return next !== (previous?.next ?? 0)

@@ -1,8 +1,15 @@
 import { type ContactBackup, serverApi } from '../api/server'
 import { getActiveIdentity } from './active-identity'
 import { CONTACTS_RESTORED_EVENT, onContactDataChanged } from './backup-signal'
-import { getMyDisplayName, setMyDisplayName } from './contact-state'
+import {
+  getMyDisplayName,
+  loadInvitesAccepted,
+  loadInvitesSent,
+  mergeInviteState,
+  setMyDisplayName,
+} from './contact-state'
 import { advanceSendCursor, loadReadCursors, loadSendCursors, saveReadCursors } from './messages'
+import { noteContactsRestored } from './other-browser'
 import { positionsToKeep, raiseExpected } from './receive-cursor'
 import { loadContacts, saveContacts } from './storage'
 import type { NookContact } from './types'
@@ -37,6 +44,8 @@ function snapshot(): ContactBackup {
     sendCursors: loadSendCursors(),
     readMarks: loadReadCursors(),
     theirNext: positionsToKeep(),
+    invitesSent: loadInvitesSent(),
+    invitesAccepted: loadInvitesAccepted(),
     myName: getMyDisplayName(),
   }
 }
@@ -91,6 +100,7 @@ export async function restoreContactBackup(address: string): Promise<void> {
       if (Number.isInteger(next) && next > 0) advanceSendCursor(counterparty, next - 1)
     }
     raiseExpected(saved.theirNext ?? {})
+    mergeInviteState(saved.invitesSent ?? {}, saved.invitesAccepted ?? {})
 
     const marks = loadReadCursors()
     let marksChanged = false
@@ -112,6 +122,7 @@ export async function restoreContactBackup(address: string): Promise<void> {
     if (merged.length !== local.length) {
       saveContacts(merged)
       window.dispatchEvent(new Event(CONTACTS_RESTORED_EVENT))
+      noteContactsRestored()
     }
   }
   restoredFor = id
