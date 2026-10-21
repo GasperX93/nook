@@ -8,6 +8,7 @@ import { CONTACTS_RESTORED_EVENT } from './backup-signal'
 import { mergeContacts, restoreContactBackup } from './contact-backup'
 import { getMyDisplayName, setMyDisplayName } from './contact-state'
 import {
+  advanceSendCursor,
   appendReceived,
   appendSent,
   awaitingFirstRead,
@@ -18,6 +19,7 @@ import {
   markSentLoaded,
   needsSentLoad,
   restoreSent,
+  sentReadComplete,
 } from './messages'
 import { loadContacts, saveContacts } from './storage'
 import type { NookContact } from './types'
@@ -148,6 +150,13 @@ describe('restoreSent', () => {
 
     appendSent(loadThreads(), ANA, 'hi', 11)
     expect(needsSentLoad(ANA)).toBe(false)
+  })
+
+  it('a read of my feed counts only once it reaches my send cursor', () => {
+    expect(sentReadComplete(MARTIN, 0)).toBe(true)
+    advanceSendCursor(MARTIN, 46)
+    expect(sentReadComplete(MARTIN, 0)).toBe(false)
+    expect(sentReadComplete(MARTIN, 47)).toBe(true)
   })
 
   it('waits for their messages after mine were loaded, but not past the cap', () => {

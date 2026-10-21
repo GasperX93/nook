@@ -193,6 +193,15 @@ export function needsSentLoad(counterparty: string): boolean {
   return !(loadThreads()[key] ?? []).some(m => m.direction === 'sent')
 }
 
+/**
+ * Whether a read of my own feed got as far as my send cursor (restored from
+ * the app folder, #192) — i.e. found every message I sent. 0 when I never
+ * wrote to them, so an empty read is complete then.
+ */
+export function sentReadComplete(counterparty: string, nextIndex: number): boolean {
+  return nextIndex >= (getSendCursor(counterparty) ?? 0)
+}
+
 /** Remembers when (ms) — the first read of their messages to me follows it. */
 export function markSentLoaded(counterparty: string, now = Date.now()): void {
   const map = load<Record<string, number | true>>(nsKey(SENT_LOADED_KEY), {})

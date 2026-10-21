@@ -21,6 +21,7 @@ import {
   markSentLoaded,
   needsSentLoad,
   restoreSent,
+  sentReadComplete,
 } from '../notify/messages'
 import { applyDriveMessages } from '../notify/drive-access'
 import { getReadCursor, recordRead } from '../notify/receive-cursor'
@@ -42,11 +43,13 @@ const FULL_LOOKAHEAD_EVERY = 10
 /**
  * This browser shows none of my sent messages to a contact (new contact,
  * another browser, cleared data): load them from my own feed once (#191), and
- * continue my send cursor after them.
+ * continue my send cursor after them. A short read (the node can't find the
+ * feed yet, right after start) keeps nothing and is tried again next poll.
  */
 async function loadMySent(bee: Bee, key: Uint8Array, myAddr: string, contact: Contact): Promise<void> {
   const sent = await mailbox.readMailbox(bee, key, myAddr, contact, { direction: 'sent' })
 
+  if (!sentReadComplete(contact.ethAddress, sent.nextIndex)) return
   restoreSent(loadThreads(), contact.ethAddress, sent.messages)
 
   if (sent.nextIndex > 0) advanceSendCursor(contact.ethAddress, sent.nextIndex - 1)

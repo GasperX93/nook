@@ -11,7 +11,14 @@ import { pickMessagingStamp } from '../lib/system-stamp'
 import { movedFromLegacyIdentity } from '../notify/active-identity'
 import { deriveConnectionState, getMyDisplayName, hasInboundSince, markInviteAccepted } from '../notify/contact-state'
 import { sendInviteAck } from '../notify/invite-ack'
-import { awaitingFirstRead, FIRST_READ_WAIT_MS, loadReadCursors, loadThreads, unreadCount } from '../notify/messages'
+import {
+  awaitingFirstRead,
+  FIRST_READ_WAIT_MS,
+  loadReadCursors,
+  loadThreads,
+  needsSentLoad,
+  unreadCount,
+} from '../notify/messages'
 import { hasReadCursor } from '../notify/receive-cursor'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -263,7 +270,7 @@ export default function Contacts() {
   const loadingThread =
     Boolean(selectedId) &&
     !showThread &&
-    !hasReadCursor(selectedId ?? '') &&
+    (!hasReadCursor(selectedId ?? '') || needsSentLoad(selectedId ?? '')) &&
     Date.now() - mountedAt < FIRST_READ_WAIT_MS
   // My sent messages already show, theirs are still being read — no badge yet.
   const loadingInbound = Boolean(selectedId) && awaitingFirstRead(selectedId ?? '')
