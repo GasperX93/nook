@@ -14,9 +14,16 @@ import { useEffect, useMemo, useRef } from 'react'
 
 import { playCricketChirp } from '../lib/cricket'
 import { CONTACTS_RESTORED_EVENT } from '../notify/backup-signal'
-import { advanceSendCursor, appendReceived, loadThreads, restoreSent } from '../notify/messages'
+import {
+  advanceSendCursor,
+  appendReceived,
+  loadThreads,
+  markSentLoaded,
+  needsSentLoad,
+  restoreSent,
+} from '../notify/messages'
 import { applyDriveMessages } from '../notify/drive-access'
-import { getReadCursor, hasReadCursor, recordRead } from '../notify/receive-cursor'
+import { getReadCursor, recordRead } from '../notify/receive-cursor'
 import { loadContacts } from '../notify/storage'
 import { toLibraryContact } from '../notify/types'
 import { useAppStore } from '../store/app'
@@ -33,9 +40,9 @@ const POLL_INTERVAL_MS = 30_000
 const FULL_LOOKAHEAD_EVERY = 10
 
 /**
- * First read of a contact in this browser (new contact, another browser,
- * cleared data): load what I sent from my own feed once (#191), and continue
- * my send cursor after it.
+ * This browser shows none of my sent messages to a contact (new contact,
+ * another browser, cleared data): load them from my own feed once (#191), and
+ * continue my send cursor after them.
  */
 async function loadMySent(bee: Bee, key: Uint8Array, myAddr: string, contact: Contact): Promise<void> {
   const sent = await mailbox.readMailbox(bee, key, myAddr, contact, { direction: 'sent' })
@@ -43,6 +50,7 @@ async function loadMySent(bee: Bee, key: Uint8Array, myAddr: string, contact: Co
   restoreSent(loadThreads(), contact.ethAddress, sent.messages)
 
   if (sent.nextIndex > 0) advanceSendCursor(contact.ethAddress, sent.nextIndex - 1)
+  markSentLoaded(contact.ethAddress)
 }
 
 export function useInboxPolling(): void {
@@ -103,7 +111,7 @@ export function useInboxPolling(): void {
           const { fromIndex, retryIndices } = getReadCursor(contact.id)
 
           try {
-            if (!hasReadCursor(contact.id)) await loadMySent(bee, signer.getSigningKey(), myAddr, lib)
+            if (needsSentLoad(contact.id)) await loadMySent(bee, signer.getSigningKey(), myAddr, lib)
 
             if (cancelled) return
             const result = await mailbox.readMailbox(bee, signer.getSigningKey(), myAddr, lib, {

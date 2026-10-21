@@ -178,6 +178,28 @@ export function appendSent(threads: ThreadMap, counterparty: string, body: strin
   return updated
 }
 
+const SENT_LOADED_KEY = 'nook-sent-loaded-v1'
+
+/**
+ * Whether my sent messages to this contact should be read back from my own
+ * feed: only when this browser shows none of them, and only once per contact
+ * (a contact I never wrote to would otherwise cost a feed read every poll).
+ */
+export function needsSentLoad(counterparty: string): boolean {
+  const key = counterparty.toLowerCase()
+
+  if (load<Record<string, true>>(nsKey(SENT_LOADED_KEY), {})[key]) return false
+
+  return !(loadThreads()[key] ?? []).some(m => m.direction === 'sent')
+}
+
+export function markSentLoaded(counterparty: string): void {
+  const map = load<Record<string, true>>(nsKey(SENT_LOADED_KEY), {})
+
+  map[counterparty.toLowerCase()] = true
+  localStorage.setItem(nsKey(SENT_LOADED_KEY), JSON.stringify(map))
+}
+
 /**
  * Sent messages read back from my own mailbox feed (#191) — for a thread this
  * browser has no sent messages for (new browser, cleared data). Never mixed

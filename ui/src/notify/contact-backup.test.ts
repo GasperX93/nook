@@ -7,7 +7,15 @@ import { setActiveIdentity } from './active-identity'
 import { CONTACTS_RESTORED_EVENT } from './backup-signal'
 import { mergeContacts, restoreContactBackup } from './contact-backup'
 import { getMyDisplayName, setMyDisplayName } from './contact-state'
-import { appendSent, getSendCursor, loadReadCursors, loadThreads, restoreSent } from './messages'
+import {
+  appendSent,
+  getSendCursor,
+  loadReadCursors,
+  loadThreads,
+  markSentLoaded,
+  needsSentLoad,
+  restoreSent,
+} from './messages'
 import { loadContacts, saveContacts } from './storage'
 import type { NookContact } from './types'
 
@@ -130,6 +138,15 @@ describe('restoreContactBackup', () => {
 })
 
 describe('restoreSent', () => {
+  it('sent messages are loaded once, only where this browser shows none', () => {
+    expect(needsSentLoad(MARTIN)).toBe(true)
+    markSentLoaded(MARTIN)
+    expect(needsSentLoad(MARTIN)).toBe(false)
+
+    appendSent(loadThreads(), ANA, 'hi', 11)
+    expect(needsSentLoad(ANA)).toBe(false)
+  })
+
   it('fills an empty thread with what I sent, in time order with the received ones', () => {
     restoreSent(loadThreads(), MARTIN, [message('hi', 10), message('again', 30)])
 

@@ -1,6 +1,6 @@
 import { Bee } from '@ethersphere/bee-js'
 import { identity } from '@swarm-notify/sdk'
-import { Check, Copy, Mail, MessageSquare, Pencil, Plus, Search, Send, Share2, Trash2, X } from 'lucide-react'
+import { Check, Copy, Loader2, Mail, MessageSquare, Pencil, Plus, Search, Send, Share2, Trash2, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
 import Messages, { ConnectionStatusBadge } from '../apps/Messages'
@@ -12,6 +12,7 @@ import { movedFromLegacyIdentity } from '../notify/active-identity'
 import { deriveConnectionState, getMyDisplayName, hasInboundSince, markInviteAccepted } from '../notify/contact-state'
 import { sendInviteAck } from '../notify/invite-ack'
 import { loadReadCursors, loadThreads, unreadCount } from '../notify/messages'
+import { hasReadCursor } from '../notify/receive-cursor'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Textarea } from '../components/ui/textarea'
@@ -40,6 +41,9 @@ function formatDate(ts: number): string {
 type AddMode = 'registry' | 'share-link'
 type SortMode = 'name' | 'date' | 'address'
 
+/** How long the contact page waits for a first read before offering Connect anyway. */
+const FIRST_READ_WAIT_MS = 60_000
+
 export default function Contacts() {
   const bee = useMemo(() => new Bee(BEE_URL), [])
   const { signer, signIn, deriving, swarmIdAccount } = useDerivedKey()
@@ -64,6 +68,7 @@ export default function Contacts() {
   // 30s inbox poll — without this it was a one-time snapshot and the status sat
   // on "NOT YET CONNECTED" until a manual refresh.
   const [threads, setThreads] = useState(() => loadThreads())
+  const [mountedAt] = useState(() => Date.now())
   const [cursors, setCursors] = useState(() => loadReadCursors())
 
   useEffect(() => {
@@ -254,6 +259,15 @@ export default function Contacts() {
     return { hasThread: t.length > 0, hasInbound: hasInboundSince(t, addedAt) }
   }, [selectedId, threads, composeFor, contacts])
   const showThread = hasThread || composeFor === selectedId
+  // First read of this contact in this browser still running (another browser,
+  // cleared data, #192) — "Not yet connected" + Connect would be wrong. Capped,
+  // so an unreachable mailbox never hides Connect for good (the page re-renders
+  // every 3 s).
+  const loadingThread =
+    Boolean(selectedId) &&
+    !showThread &&
+    !hasReadCursor(selectedId ?? '') &&
+    Date.now() - mountedAt < FIRST_READ_WAIT_MS
   const connectionState = selectedId ? deriveConnectionState(selectedId, hasInbound) : 'not-connected'
 
   function resetAddForm() {
@@ -768,9 +782,11 @@ export default function Contacts() {
                     </button>
                   </div>
                 )}
-                <div className="flex justify-center">
-                  <ConnectionStatusBadge state={connectionState} contactId={selected.id} />
-                </div>
+                {!loadingThread && (
+                  <div className="flex justify-center">
+                    <ConnectionStatusBadge state={connectionState} contactId={selected.id} />
+                  </div>
+                )}
                 <div className="flex items-center justify-center gap-2">
                   <code className="text-xs font-mono break-all" style={{ color: 'rgb(var(--fg-muted))' }}>
                     {selected.id}
@@ -788,38 +804,48 @@ export default function Contacts() {
                   Date added {formatDate(selected.addedAt)}
                 </p>
               </div>
-              <div className="flex items-center justify-center gap-2 pt-2">
-                <Button
-                  size="sm"
-                  onClick={() => setComposeFor(selected.id)}
-                  className="inline-flex items-center gap-1.5"
+              {loadingThread ? (
+                <p
+                  className="flex items-center justify-center gap-2 pt-2 text-sm"
+                  style={{ color: 'rgb(var(--fg-muted))' }}
                 >
-                  <MessageSquare size={14} />
-                  {connectionState === 'connected'
-                    ? 'Send message'
-                    : connectionState === 'not-connected'
-                      ? 'Connect'
-                      : 'Resend invite'}
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleShareContact(selected)}
-                  className="inline-flex items-center gap-1.5"
-                >
-                  <Share2 size={14} />
-                  {copied === 'detail-share' ? 'Copied' : 'Share contact'}
-                </Button>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  onClick={() => handleRemoveContact(selected.id)}
-                  aria-label={`Remove ${selected.nickname}`}
-                  className="text-red-500 h-9 w-9"
-                >
-                  <Trash2 size={14} />
-                </Button>
-              </div>
+                  <Loader2 size={14} className="animate-spin" />
+                  Loading conversation…
+                </p>
+              ) : (
+                <div className="flex items-center justify-center gap-2 pt-2">
+                  <Button
+                    size="sm"
+                    onClick={() => setComposeFor(selected.id)}
+                    className="inline-flex items-center gap-1.5"
+                  >
+                    <MessageSquare size={14} />
+                    {connectionState === 'connected'
+                      ? 'Send message'
+                      : connectionState === 'not-connected'
+                        ? 'Connect'
+                        : 'Resend invite'}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleShareContact(selected)}
+                    className="inline-flex items-center gap-1.5"
+                  >
+                    <Share2 size={14} />
+                    {copied === 'detail-share' ? 'Copied' : 'Share contact'}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    onClick={() => handleRemoveContact(selected.id)}
+                    aria-label={`Remove ${selected.nickname}`}
+                    className="text-red-500 h-9 w-9"
+                  >
+                    <Trash2 size={14} />
+                  </Button>
+                </div>
+              )}
               <p className="text-[11px] text-center" style={{ color: 'rgb(var(--fg-muted))' }}>
                 Added via {selected.source === 'identity-feed' ? 'identity feed' : 'contact link'}
               </p>
