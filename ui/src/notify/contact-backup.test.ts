@@ -12,6 +12,7 @@ import {
   appendReceived,
   appendSent,
   awaitingFirstRead,
+  awaitingMySent,
   FIRST_READ_WAIT_MS,
   getSendCursor,
   loadReadCursors,
@@ -19,6 +20,7 @@ import {
   markSentLoaded,
   needsSentLoad,
   restoreSent,
+  SENT_WAIT_MS,
   sentReadComplete,
 } from './messages'
 import { loadContacts, saveContacts } from './storage'
@@ -150,6 +152,16 @@ describe('restoreSent', () => {
 
     appendSent(loadThreads(), ANA, 'hi', 11)
     expect(needsSentLoad(ANA)).toBe(false)
+  })
+
+  it('waits for my sent messages only where I sent some, and not past the cap', () => {
+    expect(awaitingMySent(MARTIN, 0, 1_000)).toBe(false)
+    advanceSendCursor(MARTIN, 46)
+    expect(awaitingMySent(MARTIN, 0, 1_000)).toBe(true)
+    expect(awaitingMySent(MARTIN, 0, SENT_WAIT_MS)).toBe(false)
+
+    markSentLoaded(MARTIN)
+    expect(awaitingMySent(MARTIN, 0, 1_000)).toBe(false)
   })
 
   it('a read of my feed counts only once it reaches my send cursor', () => {

@@ -13,6 +13,7 @@ import { deriveConnectionState, getMyDisplayName, hasInboundSince, markInviteAcc
 import { sendInviteAck } from '../notify/invite-ack'
 import {
   awaitingFirstRead,
+  awaitingMySent,
   FIRST_READ_WAIT_MS,
   loadReadCursors,
   loadThreads,
@@ -272,8 +273,9 @@ export default function Contacts() {
     !showThread &&
     (!hasReadCursor(selectedId ?? '') || needsSentLoad(selectedId ?? '')) &&
     Date.now() - mountedAt < FIRST_READ_WAIT_MS
-  // My sent messages already show, theirs are still being read — no badge yet.
-  const loadingInbound = Boolean(selectedId) && awaitingFirstRead(selectedId ?? '')
+  // One side of the conversation is still being read — no badge yet.
+  const loadingInbound =
+    Boolean(selectedId) && (awaitingFirstRead(selectedId ?? '') || awaitingMySent(selectedId ?? '', mountedAt))
   const connectionState = selectedId ? deriveConnectionState(selectedId, hasInbound) : 'not-connected'
 
   function resetAddForm() {

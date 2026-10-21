@@ -35,6 +35,7 @@ import { queueAndDeliver, retryOutboxEntry } from '../notify/deliver'
 import {
   appendSent,
   awaitingFirstRead,
+  awaitingMySent,
   loadReadCursors,
   loadThreads,
   markRead,
@@ -82,6 +83,7 @@ export default function Messages({ initialContactId, hideContactList, hideThread
   // Re-read each render cycle so newly-added contacts (eg via accepting an
   // invitation) appear without a remount.
   const [contacts, setContacts] = useState<NookContact[]>(() => loadContacts())
+  const [mountedAt] = useState(() => Date.now())
   const [invitations, setInvitations] = useState<Invitation[]>(() => loadInvitations())
 
   const [threads, setThreads] = useState(() => loadThreads())
@@ -148,8 +150,9 @@ export default function Messages({ initialContactId, hideContactList, hideThread
   const selectedThread = selected ? (threads[selected.id.toLowerCase()] ?? []) : []
   const hasInbound = selected ? hasInboundSince(selectedThread, selected.addedAt) : false
   const connectionState: ConnectionState = selected ? deriveConnectionState(selected.id, hasInbound) : 'not-connected'
-  // Their messages are still being read in this browser (#191) — no invite composer yet.
-  const loadingInbound = selected ? awaitingFirstRead(selected.id) : false
+  // One side of the conversation is still being read in this browser (#191):
+  // show neither half a conversation nor an invite composer yet.
+  const syncing = selected ? awaitingFirstRead(selected.id) || awaitingMySent(selected.id, mountedAt) : false
   const needsNickname = connectionState !== 'connected' && !myDisplayName && (!suggestedName || editingName)
   const invitingAsSuggested =
     connectionState !== 'connected' && !myDisplayName && Boolean(suggestedName) && !editingName
@@ -663,11 +666,16 @@ export default function Messages({ initialContactId, hideContactList, hideThread
                     {short(selected.id, 8)}
                   </p>
                 </div>
-                {!loadingInbound && <ConnectionStatusBadge state={connectionState} contactId={selected.id} />}
+                {!syncing && <ConnectionStatusBadge state={connectionState} contactId={selected.id} />}
               </div>
             )}
             <div ref={scrollRef} className="flex-1 overflow-auto px-6 py-4 flex flex-col">
-              {selectedThread.length === 0 ? (
+              {syncing ? (
+                <p className="flex items-center gap-2 text-sm m-auto" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  <Loader2 size={14} className="animate-spin" />
+                  Loading conversation…
+                </p>
+              ) : selectedThread.length === 0 ? (
                 <p className="text-sm m-auto" style={{ color: 'rgb(var(--fg-muted))' }}>
                   No messages yet. Say hello.
                 </p>
@@ -681,13 +689,8 @@ export default function Messages({ initialContactId, hideContactList, hideThread
                 />
               )}
             </div>
-            <div className="border-t p-4 space-y-2" style={{ borderColor: 'rgb(var(--border))' }}>
-              {loadingInbound ? (
-                <p className="flex items-center gap-2 text-sm" style={{ color: 'rgb(var(--fg-muted))' }}>
-                  <Loader2 size={14} className="animate-spin" />
-                  Loading conversation…
-                </p>
-              ) : (
+            {!syncing && (
+              <div className="border-t p-4 space-y-2" style={{ borderColor: 'rgb(var(--border))' }}>
                 <>
                   {error && (
                     <p className="text-xs mb-2" style={{ color: needsPublish ? 'rgb(var(--fg-muted))' : '#ef4444' }}>
@@ -804,8 +807,8 @@ export default function Messages({ initialContactId, hideContactList, hideThread
                     <p className="text-[10px] text-muted-foreground">Enter to send · Shift+Enter for a new line</p>
                   )}
                 </>
-              )}
-            </div>
+              </div>
+            )}
           </>
         ) : selectedInvite ? (
           <div className="flex-1 flex flex-col p-6 gap-4 max-w-xl">

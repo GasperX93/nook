@@ -229,6 +229,22 @@ export function awaitingFirstRead(counterparty: string, now = Date.now()): boole
   return !(loadThreads()[key] ?? []).some(m => m.direction === 'received')
 }
 
+/** How long a conversation waits for my sent messages before showing what it has. */
+export const SENT_WAIT_MS = 180_000
+
+/**
+ * I sent this contact messages (my send cursor, restored from the app folder,
+ * says so) but this browser hasn't loaded them yet — the read is retried each
+ * poll (#191). Until then the conversation would show only their side. Capped
+ * from `since` (when the page opened), so an unreadable feed never hides the
+ * conversation for good.
+ */
+export function awaitingMySent(counterparty: string, since: number, now = Date.now()): boolean {
+  if (now - since >= SENT_WAIT_MS) return false
+
+  return (getSendCursor(counterparty) ?? 0) > 0 && needsSentLoad(counterparty)
+}
+
 /**
  * Sent messages read back from my own mailbox feed (#191) — for a thread this
  * browser has no sent messages for (new browser, cleared data). Never mixed
