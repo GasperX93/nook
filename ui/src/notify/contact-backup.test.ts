@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { type ContactBackup, serverApi } from '../api/server'
 import { setActiveIdentity } from './active-identity'
+import { CONTACTS_RESTORED_EVENT } from './backup-signal'
 import { mergeContacts, restoreContactBackup } from './contact-backup'
 import { getMyDisplayName, setMyDisplayName } from './contact-state'
 import { appendSent, getSendCursor, loadThreads, restoreSent } from './messages'
@@ -66,6 +67,17 @@ describe('restoreContactBackup', () => {
     expect(loadContacts().map(c => c.nickname)).toEqual(['Martin'])
     expect(getSendCursor(MARTIN)).toBe(7)
     expect(getMyDisplayName()).toBe('Gasper')
+  })
+
+  it('tells the inbox poller to read restored contacts right away', async () => {
+    const heard = vi.fn()
+
+    window.addEventListener(CONTACTS_RESTORED_EVENT, heard)
+    saved = { contacts: [contact(MARTIN, 'Martin')], sendCursors: {}, myName: '' }
+    await restoreContactBackup(ME)
+    window.removeEventListener(CONTACTS_RESTORED_EVENT, heard)
+
+    expect(heard).toHaveBeenCalledTimes(1)
   })
 
   it('never lowers a send cursor or replaces a name this browser has', async () => {

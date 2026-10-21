@@ -1,6 +1,6 @@
 import { type ContactBackup, serverApi } from '../api/server'
 import { getActiveIdentity } from './active-identity'
-import { onContactDataChanged } from './backup-signal'
+import { CONTACTS_RESTORED_EVENT, onContactDataChanged } from './backup-signal'
 import { getMyDisplayName, setMyDisplayName } from './contact-state'
 import { advanceSendCursor, loadSendCursors } from './messages'
 import { loadContacts, saveContacts } from './storage'
@@ -87,6 +87,8 @@ export async function restoreContactBackup(address: string): Promise<void> {
     }
 
     if (!getMyDisplayName() && typeof saved.myName === 'string') setMyDisplayName(saved.myName)
+
+    if (merged.length !== local.length) window.dispatchEvent(new Event(CONTACTS_RESTORED_EVENT))
   }
   restoredFor = id
   await save(id)

@@ -13,3 +13,10 @@ export function onContactDataChanged(fn: (() => void) | null): void {
 export function contactDataChanged(): void {
   listener?.()
 }
+
+/**
+ * Fired once the saved contacts were merged in, so the inbox poller reads
+ * them right away — before the user can send in a restored thread, which
+ * would stop its older sent messages from being loaded (#191).
+ */
+export const CONTACTS_RESTORED_EVENT = 'nook:contacts-restored'

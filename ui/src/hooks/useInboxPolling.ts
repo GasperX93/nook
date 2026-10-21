@@ -13,6 +13,7 @@ import { type Contact, mailbox } from '@swarm-notify/sdk'
 import { useEffect, useMemo } from 'react'
 
 import { playCricketChirp } from '../lib/cricket'
+import { CONTACTS_RESTORED_EVENT } from '../notify/backup-signal'
 import { advanceSendCursor, appendReceived, loadThreads, restoreSent } from '../notify/messages'
 import { applyDriveMessages } from '../notify/drive-access'
 import { getReadCursor, hasReadCursor, recordRead } from '../notify/receive-cursor'
@@ -56,10 +57,17 @@ export function useInboxPolling(): void {
     // Sequential reads can outlast the interval (first full read of long
     // histories) — never run two polls at once.
     let polling = false
+    // A poll asked for while one runs (contacts just restored) runs right after it.
+    let pollAgain = false
 
     const poll = async () => {
-      if (polling) return
+      if (polling) {
+        pollAgain = true
+
+        return
+      }
       polling = true
+      pollAgain = false
       const fullLookahead = pollCount % FULL_LOOKAHEAD_EVERY === 0
 
       pollCount++
@@ -128,15 +136,23 @@ export function useInboxPolling(): void {
         // Network blips happen; the next tick will retry. Don't spam the UI.
       } finally {
         polling = false
+
+        if (pollAgain && !cancelled) void poll()
       }
     }
 
+    const pollNow = () => void poll()
+
     void poll()
-    const id = setInterval(() => void poll(), POLL_INTERVAL_MS)
+    const id = setInterval(pollNow, POLL_INTERVAL_MS)
+
+    // Contacts restored from the app folder (#192): read them now, not in 30 s.
+    window.addEventListener(CONTACTS_RESTORED_EVENT, pollNow)
 
     return () => {
       cancelled = true
       clearInterval(id)
+      window.removeEventListener(CONTACTS_RESTORED_EVENT, pollNow)
     }
   }, [signer, bee])
 }
