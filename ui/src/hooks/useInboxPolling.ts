@@ -12,6 +12,7 @@ import { Bee } from '@ethersphere/bee-js'
 import { type Contact, mailbox } from '@swarm-notify/sdk'
 import { useEffect, useMemo, useRef } from 'react'
 
+import { api } from '../api/client'
 import { playCricketChirp } from '../lib/cricket'
 import { CONTACTS_RESTORED_EVENT } from '../notify/backup-signal'
 import {
@@ -35,6 +36,8 @@ import {
   readPosition,
   recordRead,
   recordSentRead,
+  sentStalledAt,
+  theirStalledAt,
 } from '../notify/receive-cursor'
 import { loadContacts } from '../notify/storage'
 import { toLibraryContact } from '../notify/types'
@@ -103,6 +106,45 @@ async function readMySent(
   recordSentRead(id, sent)
 
   if (first) markSentLoaded(id)
+
+  const stalled = sentStalledAt(id)
+
+  if (stalled === undefined) return
+  const beyond = await readPastStuckSlot(bee, key, myAddr, contact, stalled, 'sent')
+
+  if (!beyond) return
+  mergeSentFromFeed(loadThreads(), id, beyond.messages, beyond.indexes)
+  advanceSendCursor(id, beyond.nextIndex - 1)
+  recordSentRead(id, { ...beyond, skip: stalled })
+}
+
+/**
+ * A feed keeps stopping at one slot: read on from just after it. Returns what
+ * was found — proof the slot isn't the end, so it can be read past (and
+ * retried later) — or null when nothing is there, in which case the stall
+ * count starts over and the slot is simply read again. Never skips the end of
+ * a feed.
+ */
+async function readPastStuckSlot(
+  bee: Bee,
+  key: Uint8Array,
+  myAddr: string,
+  contact: Contact,
+  stalled: number,
+  direction: 'sent' | 'received',
+): Promise<mailbox.MailboxReadResult | null> {
+  const beyond = await mailbox.readMailbox(bee, key, myAddr, contact, { direction, fromIndex: stalled + 1 })
+  const found = beyond.indexes.length > 0 || beyond.holes.length > 0
+  const reset = { nextIndex: stalled, holes: [], complete: true }
+
+  if (!found) {
+    if (direction === 'sent') recordSentRead(contact.ethAddress, reset)
+    else recordRead(contact.ethAddress, reset)
+
+    return null
+  }
+
+  return beyond
 }
 
 /**
@@ -128,12 +170,23 @@ async function readTheirs(
   })
 
   recordRead(id, result)
+  let messages = result.messages
+  const stalled = theirStalledAt(id)
+
+  if (stalled !== undefined) {
+    const beyond = await readPastStuckSlot(bee, key, myAddr, contact, stalled, 'received')
+
+    if (beyond) {
+      recordRead(id, { ...beyond, skip: stalled })
+      messages = [...messages, ...beyond.messages]
+    }
+  }
   // Fresh load right before the write: a message sent while this
   // (possibly long) poll ran must not be overwritten by a snapshot.
   const current = loadThreads()
   const threadKey = id.toLowerCase()
   const known = new Set((current[threadKey] ?? []).map(m => m.id))
-  const thread = appendReceived(current, id, result.messages)[threadKey] ?? []
+  const thread = appendReceived(current, id, messages)[threadKey] ?? []
 
   return thread.filter(m => !known.has(m.id))
 }
@@ -189,6 +242,17 @@ export function useInboxPolling(): void {
       }
 
       try {
+        // Bee down or restarting: every read would stop early (the proxy answers
+        // 502), and nothing read now must move a cursor. Skip the round.
+        if (
+          !(await api
+            .getBeeReadiness()
+            .then(r => r.ready)
+            .catch(() => false))
+        ) {
+          return
+        }
+
         // One contact at a time from its read cursor (R3b-2): the old
         // checkInbox walked every full history in parallel each tick.
         let newCount = 0

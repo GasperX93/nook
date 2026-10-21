@@ -31,10 +31,11 @@ const EXPECTED_KEY = 'nook-mailbox-expected-v1'
 export const MAX_HOLE_TRIES = 20
 
 /**
- * Reads in a row that stopped at the same slot before it is moved to the
- * retry list and the cursor goes past it. A slot the node can't fetch is
- * usually temporary, but one that never reads (a damaged slot) must not hide
- * every later message for good.
+ * Reads in a row that stopped at the same slot before the poller checks
+ * whether anything exists after it. Only if something does is the slot moved
+ * to the retry list and reading goes on past it — a slot that never reads (a
+ * damaged one) must not hide every later message, but the end of a feed must
+ * never be skipped (while Bee is down every read stops there).
  */
 export const STALL_LIMIT = 5
 
@@ -45,6 +46,12 @@ interface ReadCursor {
   holes: Record<string, number>
   /** Reads in a row that stopped early at `next` */
   stalls?: number
+  /**
+   * Slots read past after they kept stopping reads, proven not to be the end
+   * → times tried. Retried like holes, but kept apart: they say nothing about
+   * whether the contact has written to me.
+   */
+  skipped?: Record<string, number>
 }
 
 type CursorMap = Record<string, ReadCursor>
@@ -57,6 +64,8 @@ export interface ReadOutcome {
   indexes?: number[]
   /** False when the read stopped at a slot the node couldn't fetch (SDK) */
   complete?: boolean
+  /** A stuck slot to read past — only when a read after it found something */
+  skip?: number
 }
 
 function load<T>(key: string): T | Record<string, never> {
@@ -81,8 +90,23 @@ function cursorOf(key: string, contactId: string): ReadCursor | undefined {
 
 function getCursor(key: string, contactId: string): { fromIndex: number; retryIndices: number[] } {
   const c = cursorOf(key, contactId)
+  const retry = [...Object.keys(c?.holes ?? {}), ...Object.keys(c?.skipped ?? {})].map(Number)
 
-  return { fromIndex: c?.next ?? 0, retryIndices: c ? Object.keys(c.holes).map(Number) : [] }
+  return { fromIndex: c?.next ?? 0, retryIndices: retry }
+}
+
+/** Keep the slots still worth retrying: not delivered this time, tries left. */
+function stillToRetry(tried: Record<string, number>, delivered: Set<number>, add: number[]): Record<string, number> {
+  const out: Record<string, number> = {}
+
+  for (const i of new Set([...add, ...Object.keys(tried).map(Number)])) {
+    if (delivered.has(i) && !add.includes(i)) continue
+    const tries = (tried[String(i)] ?? 0) + 1
+
+    if (tries < MAX_HOLE_TRIES) out[String(i)] = tries
+  }
+
+  return out
 }
 
 /**
@@ -95,35 +119,18 @@ function record(key: string, contactId: string, result: ReadOutcome): boolean {
   const map = load<CursorMap>(key) as CursorMap
   const id = contactId.toLowerCase()
   const previous = map[id]
-  const tried = previous?.holes ?? {}
   const delivered = new Set(result.indexes ?? [])
-  const retry = new Set<number>([
-    ...result.holes,
-    ...(result.gaps ?? []),
-    ...Object.keys(tried)
-      .map(Number)
-      .filter(i => !delivered.has(i)),
-  ])
-  const holes: Record<string, number> = {}
-
-  for (const i of retry) {
-    const tries = (tried[String(i)] ?? 0) + 1
-
-    if (tries < MAX_HOLE_TRIES) holes[String(i)] = tries
-  }
-
-  let next = Math.max(result.nextIndex, previous?.next ?? 0)
+  const holes = stillToRetry(previous?.holes ?? {}, delivered, [...result.holes, ...(result.gaps ?? [])])
+  const skipped = stillToRetry(previous?.skipped ?? {}, delivered, result.skip === undefined ? [] : [result.skip])
+  const next = Math.max(result.nextIndex, previous?.next ?? 0)
   const stuck = result.complete === false && next === (previous?.next ?? 0)
-  let stalls = stuck ? (previous?.stalls ?? 0) + 1 : 0
+  const stalls = stuck ? (previous?.stalls ?? 0) + 1 : 0
+  const cursor: ReadCursor = { next, holes }
 
-  // Stopped at the same slot STALL_LIMIT times: retry it later, read on past it.
-  if (stalls >= STALL_LIMIT) {
-    holes[String(next)] = 1
-    next += 1
-    stalls = 0
-  }
+  if (stalls > 0) cursor.stalls = stalls
 
-  map[id] = stalls > 0 ? { next, holes, stalls } : { next, holes }
+  if (Object.keys(skipped).length > 0) cursor.skipped = skipped
+  map[id] = cursor
   save(key, map)
 
   return next !== (previous?.next ?? 0)
@@ -156,6 +163,20 @@ export function getSentCursor(contactId: string): { fromIndex: number; retryIndi
 
 export function recordSentRead(contactId: string, result: ReadOutcome): void {
   record(SENT_KEY, contactId, result)
+}
+
+/** The slot their feed keeps stopping at, once it has STALL_LIMIT times in a row. */
+export function theirStalledAt(contactId: string): number | undefined {
+  const c = cursorOf(RECEIVED_KEY, contactId)
+
+  return c && (c.stalls ?? 0) >= STALL_LIMIT ? c.next : undefined
+}
+
+/** The slot my own feed to them keeps stopping at, once it has STALL_LIMIT times in a row. */
+export function sentStalledAt(contactId: string): number | undefined {
+  const c = cursorOf(SENT_KEY, contactId)
+
+  return c && (c.stalls ?? 0) >= STALL_LIMIT ? c.next : undefined
 }
 
 /** How far any of my browsers had read their feed (from the app folder), per contact. */

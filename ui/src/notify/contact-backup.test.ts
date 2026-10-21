@@ -32,7 +32,14 @@ import {
   appendOutboxMessage,
   theirSidePending,
 } from './messages'
-import { getReadCursor, positionsToKeep, raiseExpected, recordRead, STALL_LIMIT } from './receive-cursor'
+import {
+  getReadCursor,
+  positionsToKeep,
+  raiseExpected,
+  recordRead,
+  STALL_LIMIT,
+  theirStalledAt,
+} from './receive-cursor'
 import { loadContacts, saveContacts } from './storage'
 import type { NookContact } from './types'
 
@@ -278,22 +285,38 @@ describe('conversation loading (#191)', () => {
     expect(conversationLoading(ANA, 1_000 + LOADING_CAP_MS)).toBe(false)
   })
 
-  it('a slot that stops the read again and again is retried later, and reading goes on past it', () => {
+  it('a slot that keeps stopping reads is reported, but never skipped on its own', () => {
     recordRead(MARTIN, { nextIndex: 4, holes: [] })
-    for (let i = 1; i < STALL_LIMIT; i++) recordRead(MARTIN, { nextIndex: 4, holes: [], complete: false })
-    expect(getReadCursor(MARTIN).fromIndex).toBe(4)
+    for (let i = 0; i < STALL_LIMIT * 2; i++) recordRead(MARTIN, { nextIndex: 4, holes: [], complete: false })
 
-    recordRead(MARTIN, { nextIndex: 4, holes: [], complete: false })
-    expect(getReadCursor(MARTIN)).toEqual({ fromIndex: 5, retryIndices: [4] })
+    expect(theirStalledAt(MARTIN)).toBe(4)
+    expect(getReadCursor(MARTIN)).toEqual({ fromIndex: 4, retryIndices: [] })
   })
 
-  it('a read that moves on resets the count', () => {
+  it('read past only with proof: the slot is retried later, reading goes on after it', () => {
     recordRead(MARTIN, { nextIndex: 4, holes: [] })
-    for (let i = 1; i < STALL_LIMIT; i++) recordRead(MARTIN, { nextIndex: 4, holes: [], complete: false })
-    recordRead(MARTIN, { nextIndex: 6, holes: [], complete: false })
-    recordRead(MARTIN, { nextIndex: 6, holes: [], complete: false })
+    for (let i = 0; i < STALL_LIMIT; i++) recordRead(MARTIN, { nextIndex: 4, holes: [], complete: false })
+    recordRead(MARTIN, { nextIndex: 7, holes: [], indexes: [5, 6], gaps: [], skip: 4 })
 
-    expect(getReadCursor(MARTIN).fromIndex).toBe(6)
+    expect(getReadCursor(MARTIN)).toEqual({ fromIndex: 7, retryIndices: [4] })
+    expect(theirStalledAt(MARTIN)).toBeUndefined()
+  })
+
+  it('nothing after the stuck slot (the end of the feed, Bee down): the count starts over', () => {
+    recordRead(MARTIN, { nextIndex: 4, holes: [] })
+    for (let i = 0; i < STALL_LIMIT; i++) recordRead(MARTIN, { nextIndex: 4, holes: [], complete: false })
+    recordRead(MARTIN, { nextIndex: 4, holes: [], complete: true })
+
+    expect(theirStalledAt(MARTIN)).toBeUndefined()
+    expect(getReadCursor(MARTIN).fromIndex).toBe(4)
+  })
+
+  it('a skipped slot does not make a contact who never wrote look connected', () => {
+    recordRead(ANA, { nextIndex: 0, holes: [] })
+    for (let i = 0; i < STALL_LIMIT; i++) recordRead(ANA, { nextIndex: 0, holes: [], complete: false })
+    recordRead(ANA, { nextIndex: 2, holes: [], indexes: [], gaps: [], skip: 0 })
+
+    expect(theirSidePending(ANA)).toBe(false)
   })
 
   it('their side still to load means they wrote to me; mine alone does not', () => {
@@ -383,6 +406,28 @@ describe('sent messages from my feed', () => {
     mergeSentFromFeed(loadThreads(), MARTIN, [message('hi', 20)], [0])
 
     expect(loadThreads()[MARTIN]).toHaveLength(2)
+  })
+
+  it('a message still going out never takes an older one from the feed', () => {
+    appendOutboxMessage(loadThreads(), { id: 'o1', recipientId: MARTIN, ts: 100, kind: 'message', body: 'hi' })
+    mergeSentFromFeed(loadThreads(), MARTIN, [message('hi', 10)], [0])
+
+    expect(loadThreads()[MARTIN]).toHaveLength(2)
+  })
+
+  it('when it goes out, a copy of the same slot added from the feed in the meantime is dropped', () => {
+    appendOutboxMessage(loadThreads(), { id: 'o1', recipientId: MARTIN, ts: 100, kind: 'message', body: 'hi' })
+    mergeSentFromFeed(loadThreads(), MARTIN, [message('hi', 105)], [3])
+    setMessageStatusByOutboxId(loadThreads(), MARTIN, 'o1', 'sent', 3)
+
+    expect(loadThreads()[MARTIN].map(m => [m.outboxId, m.feedIndex])).toEqual([['o1', 3]])
+  })
+
+  it('an invite already shown from the feed is not added again', () => {
+    mergeSentFromFeed(loadThreads(), MARTIN, [message('hi', 105)], [0])
+    appendSent(loadThreads(), MARTIN, 'hi', 110, 0)
+
+    expect(loadThreads()[MARTIN]).toHaveLength(1)
   })
 
   it('adds what I sent from another browser', () => {
