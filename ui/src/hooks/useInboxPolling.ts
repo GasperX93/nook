@@ -17,6 +17,7 @@ import { CONTACTS_RESTORED_EVENT } from '../notify/backup-signal'
 import {
   advanceSendCursor,
   appendReceived,
+  conversationLoading,
   getSentSeen,
   loadThreads,
   markSentLoaded,
@@ -26,6 +27,7 @@ import {
   sentReadComplete,
 } from '../notify/messages'
 import { applyDriveMessages } from '../notify/drive-access'
+import { getOpenContact, OPEN_CONTACT_EVENT } from '../notify/open-contact'
 import { getReadCursor, recordRead } from '../notify/receive-cursor'
 import { loadContacts } from '../notify/storage'
 import { toLibraryContact } from '../notify/types'
@@ -34,6 +36,10 @@ import { useDerivedKey } from './useDerivedKey'
 
 const BEE_URL = `${window.location.origin}/bee-api`
 const POLL_INTERVAL_MS = 30_000
+/** While a conversation is still loading (#191), the next poll comes this soon… */
+const QUICK_POLL_MS = 5_000
+/** …but only this long after the poller started, so an unreadable feed can't keep it fast. */
+const QUICK_POLL_FOR_MS = 180_000
 /**
  * Probing past the tail costs a 404 per slot on every contact, every poll.
  * The full look-ahead (hops a sender's slot-gap) runs on the first poll and
@@ -114,7 +120,11 @@ export function useInboxPolling(): void {
       // Re-read contacts each tick — the user may add a contact between polls.
       // Filter out self: if a user adds their own share link as a contact (eg
       // for solo testing), every poll otherwise hits myAddr→myAddr (404).
-      const contacts = loadContacts().filter(c => c.id.toLowerCase() !== myAddr.toLowerCase())
+      const open = getOpenContact()
+      // The conversation on screen first — its first read shouldn't wait for the others.
+      const contacts = loadContacts()
+        .filter(c => c.id.toLowerCase() !== myAddr.toLowerCase())
+        .sort((a, b) => Number(b.id.toLowerCase() === open) - Number(a.id.toLowerCase() === open))
 
       if (contacts.length === 0) {
         polling = false
@@ -178,7 +188,21 @@ export function useInboxPolling(): void {
         polling = false
 
         if (pollAgain && !cancelled) void poll()
+        else if (!cancelled) scheduleQuickPoll()
       }
+    }
+
+    const startedAt = Date.now()
+    let quickTimer: ReturnType<typeof setTimeout> | null = null
+    // A conversation still loading in this browser: try again in seconds, not 30 s.
+    const scheduleQuickPoll = () => {
+      if (quickTimer || Date.now() - startedAt > QUICK_POLL_FOR_MS) return
+
+      if (!loadContacts().some(c => conversationLoading(c.id))) return
+      quickTimer = setTimeout(() => {
+        quickTimer = null
+        void poll()
+      }, QUICK_POLL_MS)
     }
 
     const pollNow = () => void poll()
@@ -188,11 +212,16 @@ export function useInboxPolling(): void {
 
     // Contacts restored from the app folder (#192): read them now, not in 30 s.
     window.addEventListener(CONTACTS_RESTORED_EVENT, pollNow)
+    // A conversation just opened: read it now (it goes first).
+    window.addEventListener(OPEN_CONTACT_EVENT, pollNow)
 
     return () => {
       cancelled = true
       clearInterval(id)
+
+      if (quickTimer) clearTimeout(quickTimer)
       window.removeEventListener(CONTACTS_RESTORED_EVENT, pollNow)
+      window.removeEventListener(OPEN_CONTACT_EVENT, pollNow)
     }
   }, [address, bee])
 }

@@ -13,6 +13,7 @@ import {
   appendSent,
   awaitingFirstRead,
   awaitingMySent,
+  conversationLoading,
   FIRST_READ_WAIT_MS,
   getSendCursor,
   getSentSeen,
@@ -164,6 +165,16 @@ describe('sent messages from my feed', () => {
 
     markSentLoaded(MARTIN)
     expect(awaitingMySent(MARTIN, 0, 1_000)).toBe(false)
+  })
+
+  it('a conversation is loading until both sides are in', () => {
+    expect(conversationLoading(MARTIN, 2_000)).toBe(false)
+    advanceSendCursor(MARTIN, 46)
+    expect(conversationLoading(MARTIN, 2_000)).toBe(true)
+    markSentLoaded(MARTIN, 1_000)
+    expect(conversationLoading(MARTIN, 2_000)).toBe(true)
+    appendReceived(loadThreads(), MARTIN, [message('hey', 5)])
+    expect(conversationLoading(MARTIN, 2_000)).toBe(false)
   })
 
   it('a read of my feed counts only once it reaches my send cursor', () => {

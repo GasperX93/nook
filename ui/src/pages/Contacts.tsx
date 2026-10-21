@@ -32,6 +32,7 @@ import {
   removeInvitationsFor,
 } from '../notify/invitations'
 import { normalizeNookAddress } from '../lib/nook-address'
+import { setOpenContact } from '../notify/open-contact'
 import { decodeShareLink, encodeShareLink } from '../notify/share-link'
 import { addContact, loadContacts, removeContact, renameContact, saveContacts } from '../notify/storage'
 import type { NookContact } from '../notify/types'
@@ -95,6 +96,13 @@ export default function Contacts() {
   }, [])
 
   const [selectedId, setSelectedId] = useState<string | null>(null)
+
+  // The open conversation is read first by the inbox poller (#191).
+  useEffect(() => {
+    setOpenContact(selectedId)
+
+    return () => setOpenContact(null)
+  }, [selectedId])
   const [selectedInviteId, setSelectedInviteId] = useState<string | null>(null)
   const [inviteNickname, setInviteNickname] = useState('')
   const [acceptingInvite, setAcceptingInvite] = useState(false)

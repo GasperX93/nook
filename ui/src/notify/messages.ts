@@ -273,6 +273,15 @@ export function markSentSeen(counterparty: string, nextIndex: number): void {
 const SAME_SEND_WINDOW_MS = 10 * 60_000
 
 /**
+ * A conversation still loading in this browser: my sent messages not loaded
+ * yet although I sent some, or mine loaded and none of theirs yet. The poller
+ * retries these sooner than its usual interval.
+ */
+export function conversationLoading(counterparty: string, now = Date.now()): boolean {
+  return ((getSendCursor(counterparty) ?? 0) > 0 && needsSentLoad(counterparty)) || awaitingFirstRead(counterparty, now)
+}
+
+/**
  * Sent messages read back from my own mailbox feed (#191), added to the
  * thread unless this browser already shows them: same kind and text, sent
  * within SAME_SEND_WINDOW_MS. Each local message stands for one feed message,

@@ -45,6 +45,7 @@ import {
 import { sendMailboxMessage } from '../notify/send-message'
 import { waitForBeeReady } from '../notify/bee-ready'
 import { createNodeNotifyProvider } from '../notify/provider'
+import { setOpenContact } from '../notify/open-contact'
 import { publishIdentity } from '../notify/publish-identity'
 import { addContact, isIdentityPublished, loadContacts } from '../notify/storage'
 import { toLibraryContact, type NookContact } from '../notify/types'
@@ -89,6 +90,15 @@ export default function Messages({ initialContactId, hideContactList, hideThread
   const [threads, setThreads] = useState(() => loadThreads())
   const [cursors, setCursors] = useState(() => loadReadCursors())
   const [selectedId, setSelectedId] = useState<string | null>(initialContactId ?? contacts[0]?.id ?? null)
+
+  // The open conversation is read first by the inbox poller (#191). Embedded in
+  // Contacts, that page sets it.
+  useEffect(() => {
+    if (hideContactList) return
+    setOpenContact(selectedId)
+
+    return () => setOpenContact(null)
+  }, [selectedId, hideContactList])
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
