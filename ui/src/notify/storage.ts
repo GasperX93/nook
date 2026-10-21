@@ -1,4 +1,5 @@
 import { nsKey } from './active-identity'
+import { contactDataChanged } from './backup-signal'
 import { clearInviteAccepted, clearInviteSent } from './contact-state'
 import type { NookContact } from './types'
 
@@ -41,6 +42,7 @@ export function loadContacts(): NookContact[] {
 
 export function saveContacts(contacts: NookContact[]): void {
   localStorage.setItem(nsKey(CONTACTS_KEY), JSON.stringify(contacts))
+  contactDataChanged()
 }
 
 /** Add a contact. Throws if a contact with the same id already exists. */

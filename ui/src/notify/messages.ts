@@ -1,6 +1,7 @@
 import type { Message as SdkMessage } from '@swarm-notify/sdk'
 
 import { nsKey } from './active-identity'
+import { contactDataChanged } from './backup-signal'
 
 /**
  * Local persistence for message threads.
@@ -124,7 +125,13 @@ export function advanceSendCursor(counterparty: string, writtenIndex: number): v
   if (cursors[key] === undefined || next > cursors[key]) {
     cursors[key] = next
     localStorage.setItem(nsKey(SEND_CURSOR_KEY), JSON.stringify(cursors))
+    contactDataChanged()
   }
+}
+
+/** Every recipient's send cursor (for the app-folder backup, #192). */
+export function loadSendCursors(): SendCursorMap {
+  return load<SendCursorMap>(nsKey(SEND_CURSOR_KEY), {})
 }
 
 /**
@@ -164,6 +171,36 @@ export function appendSent(threads: ThreadMap, counterparty: string, body: strin
     kind: 'message',
   }
   const updated: ThreadMap = { ...threads, [key]: [...(threads[key] ?? []), msg] }
+
+  saveThreads(updated)
+
+  return updated
+}
+
+/**
+ * Sent messages read back from my own mailbox feed (#191) — for a thread this
+ * browser has no sent messages for (new browser, cleared data). Never mixed
+ * with sent messages already here: their timestamps come from the SDK and can
+ * differ from the local ones, so they would show twice.
+ */
+export function restoreSent(threads: ThreadMap, counterparty: string, sent: SdkMessage[]): ThreadMap {
+  const key = counterparty.toLowerCase()
+  const existing = threads[key] ?? []
+
+  if (sent.length === 0 || existing.some(m => m.direction === 'sent')) return threads
+
+  const restored: StoredMessage[] = sent.map(m => ({
+    id: makeId(m.ts, 'sent', m.body),
+    counterparty: key,
+    ts: m.ts,
+    body: m.body,
+    direction: 'sent',
+    kind: isDriveKind(m.type) ? m.type : 'message',
+    driveShareLink: m.driveShareLink,
+    driveName: m.driveName,
+    fileCount: m.fileCount,
+  }))
+  const updated: ThreadMap = { ...threads, [key]: [...existing, ...restored].sort((a, b) => a.ts - b.ts) }
 
   saveThreads(updated)
 

@@ -9,13 +9,13 @@
  * changes on their next render or interval tick.
  */
 import { Bee } from '@ethersphere/bee-js'
-import { mailbox } from '@swarm-notify/sdk'
+import { type Contact, mailbox } from '@swarm-notify/sdk'
 import { useEffect, useMemo } from 'react'
 
 import { playCricketChirp } from '../lib/cricket'
-import { appendReceived, loadThreads } from '../notify/messages'
+import { advanceSendCursor, appendReceived, loadThreads, restoreSent } from '../notify/messages'
 import { applyDriveMessages } from '../notify/drive-access'
-import { getReadCursor, recordRead } from '../notify/receive-cursor'
+import { getReadCursor, hasReadCursor, recordRead } from '../notify/receive-cursor'
 import { loadContacts } from '../notify/storage'
 import { toLibraryContact } from '../notify/types'
 import { useAppStore } from '../store/app'
@@ -30,6 +30,19 @@ const POLL_INTERVAL_MS = 30_000
  * gap delays later messages by at most one full cycle (~5 min). R3b-2.
  */
 const FULL_LOOKAHEAD_EVERY = 10
+
+/**
+ * First read of a contact in this browser (new contact, another browser,
+ * cleared data): load what I sent from my own feed once (#191), and continue
+ * my send cursor after it.
+ */
+async function loadMySent(bee: Bee, key: Uint8Array, myAddr: string, contact: Contact): Promise<void> {
+  const sent = await mailbox.readMailbox(bee, key, myAddr, contact, { direction: 'sent' })
+
+  restoreSent(loadThreads(), contact.ethAddress, sent.messages)
+
+  if (sent.nextIndex > 0) advanceSendCursor(contact.ethAddress, sent.nextIndex - 1)
+}
 
 export function useInboxPolling(): void {
   const { signer } = useDerivedKey()
@@ -73,6 +86,9 @@ export function useInboxPolling(): void {
           const { fromIndex, retryIndices } = getReadCursor(contact.id)
 
           try {
+            if (!hasReadCursor(contact.id)) await loadMySent(bee, signer.getSigningKey(), myAddr, lib)
+
+            if (cancelled) return
             const result = await mailbox.readMailbox(bee, signer.getSigningKey(), myAddr, lib, {
               fromIndex,
               retryIndices,

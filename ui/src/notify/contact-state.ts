@@ -20,6 +20,7 @@
  */
 
 import { nsKey } from './active-identity'
+import { contactDataChanged } from './backup-signal'
 
 const INVITES_KEY = 'nook-invitations-sent-v1'
 const MY_NAME_KEY = 'nook-my-display-name-v1'
@@ -74,6 +75,7 @@ export function setMyDisplayName(name: string): void {
   const trimmed = name.trim()
   try {
     if (trimmed) localStorage.setItem(nsKey(MY_NAME_KEY), trimmed)
+    contactDataChanged()
   } catch {
     // ignore
   }

@@ -50,6 +50,11 @@ export function getReadCursor(contactId: string): { fromIndex: number; retryIndi
   return { fromIndex: c?.next ?? 0, retryIndices: c ? Object.keys(c.holes).map(Number) : [] }
 }
 
+/** True once this contact's mailbox has been read at least once in this browser. */
+export function hasReadCursor(contactId: string): boolean {
+  return loadAll()[contactId.toLowerCase()] !== undefined
+}
+
 /** Persist the outcome of a read: new cursor, and holes with their retry counts. */
 export function recordRead(contactId: string, result: { nextIndex: number; holes: number[] }): void {
   const map = loadAll()
