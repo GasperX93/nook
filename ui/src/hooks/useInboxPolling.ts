@@ -178,11 +178,8 @@ export function useInboxPolling(): void {
       // Re-read contacts each tick — the user may add a contact between polls.
       // Filter out self: if a user adds their own share link as a contact (eg
       // for solo testing), every poll otherwise hits myAddr→myAddr (404).
-      const open = getOpenContact()
-      // The conversation on screen first — its first read shouldn't wait for the others.
       const contacts = loadContacts()
         .filter(c => c.id.toLowerCase() !== myAddr.toLowerCase())
-        .sort((a, b) => Number(b.id.toLowerCase() === open) - Number(a.id.toLowerCase() === open))
         .filter(c => !quick || conversationPending(c.id))
 
       if (contacts.length === 0) {
@@ -196,8 +193,15 @@ export function useInboxPolling(): void {
         // checkInbox walked every full history in parallel each tick.
         let newCount = 0
 
-        for (const contact of contacts) {
+        const queue = [...contacts]
+
+        while (queue.length > 0) {
           if (cancelled) return
+          // The conversation on screen next — also when it was opened while this
+          // round was already running, so its first read doesn't wait for the rest.
+          const open = getOpenContact()
+          const at = queue.findIndex(c => c.id.toLowerCase() === open)
+          const [contact] = queue.splice(Math.max(at, 0), 1)
           const lib = toLibraryContact(contact)
 
           try {
@@ -258,9 +262,10 @@ export function useInboxPolling(): void {
     // Contacts restored from the app folder (#192): read them now, not in 30 s.
     window.addEventListener(CONTACTS_RESTORED_EVENT, pollNow)
     // A conversation just opened: read it now (it goes first), and quickly again while it loads.
+    // Only a still-loading conversation needs reading; a running round picks it next.
     const pollOpened = () => {
       startedAt = Date.now()
-      void poll()
+      void poll(true)
     }
 
     window.addEventListener(OPEN_CONTACT_EVENT, pollOpened)
