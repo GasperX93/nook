@@ -408,7 +408,7 @@ export default function Messages({ initialContactId, hideContactList, hideThread
     try {
       const myAddr = signer.getAddress()
 
-      await enqueueSend(selected.id, async () => {
+      const feedIndex = await enqueueSend(selected.id, async () => {
         // Hold until the node can push — avoids a warmup-window send that
         // gets a local ✓ but never reaches the recipient.
         if (!(await waitForBeeReady())) throw new Error('Node not ready — try again in a moment.')
@@ -422,7 +422,7 @@ export default function Messages({ initialContactId, hideContactList, hideThread
 
       // The invite is in their mailbox — show it as sent now, whatever the
       // on-chain notice does next.
-      setThreads(prev => appendSent(prev, selected.id, body))
+      setThreads(prev => appendSent(prev, selected.id, body, Date.now(), feedIndex))
       setDraft('')
 
       try {

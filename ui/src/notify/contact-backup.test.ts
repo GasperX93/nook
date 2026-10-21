@@ -15,16 +15,16 @@ import {
   conversationPending,
   LOADING_CAP_MS,
   getSendCursor,
-  getSentSeen,
   loadReadCursors,
   loadThreads,
   markSentLoaded,
-  markSentSeen,
   needsSentLoad,
   mergeSentFromFeed,
   sentReadComplete,
+  setMessageStatusByOutboxId,
+  appendOutboxMessage,
 } from './messages'
-import { recordRead } from './receive-cursor'
+import { getReadCursor, positionsToKeep, raiseExpected, recordRead } from './receive-cursor'
 import { loadContacts, saveContacts } from './storage'
 import type { NookContact } from './types'
 
@@ -117,6 +117,24 @@ describe('restoreContactBackup', () => {
     expect(getMyDisplayName()).toBe('Local name')
   })
 
+  it('how far their feeds were read comes back and is saved again, the higher one wins', async () => {
+    recordRead(ANA, { nextIndex: 9, holes: [] })
+    saved = { contacts: [], sendCursors: {}, theirNext: { [MARTIN]: 40, [ANA]: 5 }, myName: '' }
+
+    await restoreContactBackup(ME)
+
+    expect(writes[writes.length - 1].theirNext).toEqual({ [MARTIN]: 40, [ANA]: 9 })
+  })
+
+  it('a file from before read positions were kept still restores', async () => {
+    saved = { contacts: [contact(MARTIN, 'Martin')], sendCursors: {}, myName: '' }
+
+    await restoreContactBackup(ME)
+
+    expect(loadContacts().map(c => c.id)).toEqual([MARTIN])
+    expect(conversationPending(MARTIN)).toBe(false)
+  })
+
   it('saves the merged result, including contacts only this browser had', async () => {
     saveContacts([contact(ANA, 'Ana')])
     saved = { contacts: [contact(MARTIN, 'Martin')], sendCursors: {}, myName: '' }
@@ -146,6 +164,82 @@ describe('restoreContactBackup', () => {
   })
 })
 
+describe('conversation loading (#191)', () => {
+  it('a new browser waits until it has read their feed as far as one of mine had', () => {
+    raiseExpected({ [MARTIN]: 40 })
+    expect(conversationPending(MARTIN)).toBe(true)
+
+    recordRead(MARTIN, { nextIndex: 20, holes: [] })
+    expect(conversationPending(MARTIN)).toBe(true)
+
+    recordRead(MARTIN, { nextIndex: 40, holes: [] })
+    expect(conversationPending(MARTIN)).toBe(false)
+  })
+
+  it('an empty read proves nothing: still waiting while the position is short', () => {
+    raiseExpected({ [MARTIN]: 40 })
+    recordRead(MARTIN, { nextIndex: 0, holes: [] })
+    recordRead(MARTIN, { nextIndex: 0, holes: [] })
+    recordRead(MARTIN, { nextIndex: 0, holes: [] })
+
+    expect(conversationPending(MARTIN)).toBe(true)
+  })
+
+  it('nothing known about a contact (new, or never wrote) means nothing to wait for', () => {
+    expect(conversationPending(ANA)).toBe(false)
+    recordRead(ANA, { nextIndex: 0, holes: [] })
+    expect(conversationPending(ANA)).toBe(false)
+  })
+
+  it('their slots that exist but could not be read yet keep it loading until one of theirs is here', () => {
+    recordRead(MARTIN, { nextIndex: 3, holes: [0, 1, 2] })
+    expect(conversationPending(MARTIN)).toBe(true)
+
+    appendReceived(loadThreads(), MARTIN, [message('hey', 5)])
+    expect(conversationPending(MARTIN)).toBe(false)
+  })
+
+  it('my side waits for my sent messages only where I sent some', () => {
+    recordRead(MARTIN, { nextIndex: 0, holes: [] })
+    expect(conversationPending(MARTIN)).toBe(false)
+
+    advanceSendCursor(MARTIN, 46)
+    expect(conversationPending(MARTIN)).toBe(true)
+
+    markSentLoaded(MARTIN)
+    expect(conversationPending(MARTIN)).toBe(false)
+  })
+
+  it('two browsers: positions only ever go up, and the higher one is kept', () => {
+    raiseExpected({ [MARTIN]: 40 })
+    raiseExpected({ [MARTIN]: 10 })
+    recordRead(ANA, { nextIndex: 7, holes: [] })
+
+    expect(positionsToKeep()).toEqual({ [MARTIN]: 40, [ANA]: 7 })
+  })
+
+  it('the screen shows loading at most LOADING_CAP_MS from when the conversation was first shown', () => {
+    raiseExpected({ [ANA]: 3 })
+
+    expect(conversationLoading(ANA, 1_000)).toBe(true)
+    expect(conversationLoading(ANA, 1_000 + LOADING_CAP_MS - 1)).toBe(true)
+    expect(conversationLoading(ANA, 1_000 + LOADING_CAP_MS)).toBe(false)
+  })
+
+  it('a hopped gap and a retried slot not yet delivered are tried again', () => {
+    recordRead(MARTIN, { nextIndex: 5, holes: [], gaps: [2] })
+    expect(getReadCursor(MARTIN).retryIndices).toEqual([2])
+
+    // Retried, read as missing again (the SDK reports nothing for it): kept.
+    recordRead(MARTIN, { nextIndex: 5, holes: [], indexes: [] })
+    expect(getReadCursor(MARTIN).retryIndices).toEqual([2])
+
+    // Delivered this time: done.
+    recordRead(MARTIN, { nextIndex: 5, holes: [], indexes: [2] })
+    expect(getReadCursor(MARTIN).retryIndices).toEqual([])
+  })
+})
+
 describe('sent messages from my feed', () => {
   it('sent messages are loaded once, only where this browser shows none', () => {
     expect(needsSentLoad(MARTIN)).toBe(true)
@@ -156,40 +250,6 @@ describe('sent messages from my feed', () => {
     expect(needsSentLoad(ANA)).toBe(false)
   })
 
-  it('loading until their side was read a few times or sent something, and mine is in', () => {
-    const empty = { nextIndex: 0, holes: [] }
-
-    expect(conversationPending(MARTIN)).toBe(true)
-    recordRead(MARTIN, empty)
-    recordRead(MARTIN, empty)
-    expect(conversationPending(MARTIN)).toBe(true)
-    recordRead(MARTIN, empty)
-    expect(conversationPending(MARTIN)).toBe(false)
-
-    advanceSendCursor(MARTIN, 46)
-    expect(conversationPending(MARTIN)).toBe(true)
-    markSentLoaded(MARTIN)
-    expect(conversationPending(MARTIN)).toBe(false)
-  })
-
-  it('a message from them ends the wait on their side right away', () => {
-    appendReceived(loadThreads(), MARTIN, [message('hey', 5)])
-
-    expect(conversationPending(MARTIN)).toBe(false)
-  })
-
-  it('a contact just added has nothing to load', () => {
-    saveContacts([{ ...contact(ANA, 'Ana'), addedAt: Date.now() }])
-
-    expect(conversationPending(ANA)).toBe(false)
-  })
-
-  it('the screen shows loading at most LOADING_CAP_MS from when this contact was first shown', () => {
-    expect(conversationLoading(ANA, 1_000)).toBe(true)
-    expect(conversationLoading(ANA, 1_000 + LOADING_CAP_MS - 1)).toBe(true)
-    expect(conversationLoading(ANA, 1_000 + LOADING_CAP_MS)).toBe(false)
-  })
-
   it('a read of my feed counts only once it reaches my send cursor', () => {
     expect(sentReadComplete(MARTIN, 0)).toBe(true)
     advanceSendCursor(MARTIN, 46)
@@ -197,41 +257,48 @@ describe('sent messages from my feed', () => {
     expect(sentReadComplete(MARTIN, 47)).toBe(true)
   })
 
-  it('fills an empty thread with what I sent, in time order with the received ones', () => {
-    mergeSentFromFeed(loadThreads(), MARTIN, [message('hi', 10), message('again', 30)])
+  it('fills an empty thread with what I sent, in time order', () => {
+    mergeSentFromFeed(loadThreads(), MARTIN, [message('hi', 10), message('again', 30)], [0, 1])
 
-    expect(loadThreads()[MARTIN].map(m => [m.body, m.direction])).toEqual([
-      ['hi', 'sent'],
-      ['again', 'sent'],
+    expect(loadThreads()[MARTIN].map(m => [m.body, m.feedIndex])).toEqual([
+      ['hi', 0],
+      ['again', 1],
     ])
   })
 
-  it('skips what this browser already shows (its own time differs a little)', () => {
-    appendSent(loadThreads(), MARTIN, 'hi', 11)
-    mergeSentFromFeed(loadThreads(), MARTIN, [message('hi', 10)])
+  it('a message read twice from the feed shows once', () => {
+    mergeSentFromFeed(loadThreads(), MARTIN, [message('hi', 10)], [0])
+    mergeSentFromFeed(loadThreads(), MARTIN, [message('hi', 10)], [0])
 
-    expect(loadThreads()[MARTIN].map(m => m.ts)).toEqual([11])
+    expect(loadThreads()[MARTIN]).toHaveLength(1)
+  })
+
+  it('recognises a message sent from this browser by its feed index, however late it went out', () => {
+    appendOutboxMessage(loadThreads(), { id: 'o1', recipientId: MARTIN, ts: 1_000, kind: 'message', body: 'later' })
+    setMessageStatusByOutboxId(loadThreads(), MARTIN, 'o1', 'sent', 4)
+    mergeSentFromFeed(loadThreads(), MARTIN, [message('later', 1_000 + 60 * 60_000)], [4])
+
+    expect(loadThreads()[MARTIN].map(m => m.body)).toEqual(['later'])
+  })
+
+  it('an older local message without an index is matched by text and time, and takes the index', () => {
+    appendSent(loadThreads(), MARTIN, 'hi', 11)
+    mergeSentFromFeed(loadThreads(), MARTIN, [message('hi', 10)], [0])
+
+    expect(loadThreads()[MARTIN].map(m => [m.ts, m.feedIndex])).toEqual([[11, 0]])
   })
 
   it('adds what I sent from another browser', () => {
-    appendSent(loadThreads(), MARTIN, 'hi', 11)
-    mergeSentFromFeed(loadThreads(), MARTIN, [message('hi', 10), message('from incognito', 50)])
-    mergeSentFromFeed(loadThreads(), MARTIN, [message('from incognito', 50)])
+    appendSent(loadThreads(), MARTIN, 'hi', 11, 0)
+    mergeSentFromFeed(loadThreads(), MARTIN, [message('hi', 10), message('from incognito', 50)], [0, 1])
 
     expect(loadThreads()[MARTIN].map(m => m.body)).toEqual(['hi', 'from incognito'])
   })
 
   it('the same text sent twice shows twice', () => {
     appendSent(loadThreads(), MARTIN, 'ok', 11)
-    mergeSentFromFeed(loadThreads(), MARTIN, [message('ok', 10), message('ok', 20)])
+    mergeSentFromFeed(loadThreads(), MARTIN, [message('ok', 10), message('ok', 20)], [0, 1])
 
     expect(loadThreads()[MARTIN].map(m => m.body)).toEqual(['ok', 'ok'])
-  })
-
-  it('remembers how far my feed was read, never backwards', () => {
-    expect(getSentSeen(MARTIN)).toBeUndefined()
-    markSentSeen(MARTIN, 47)
-    markSentSeen(MARTIN, 40)
-    expect(getSentSeen(MARTIN)).toBe(47)
   })
 })

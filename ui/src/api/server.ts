@@ -100,6 +100,8 @@ export interface ContactBackup {
   sendCursors: Record<string, number>
   /** Per contact: when the conversation was last read (ms). Absent in files from before it was added. */
   readMarks?: Record<string, number>
+  /** Per contact: how far their feed had been read (#191). Absent in files from before it was added. */
+  theirNext?: Record<string, number>
   myName: string
 }
 

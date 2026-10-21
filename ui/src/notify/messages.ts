@@ -1,8 +1,7 @@
 import type { Message as SdkMessage } from '@swarm-notify/sdk'
 
 import { nsKey } from './active-identity'
-import { readCount } from './receive-cursor'
-import { loadContacts } from './storage'
+import { expectedPosition, hasRetries, readPosition } from './receive-cursor'
 import { contactDataChanged } from './backup-signal'
 
 /**
@@ -41,6 +40,8 @@ export interface StoredMessage {
   status?: 'sending' | 'sent' | 'failed'
   /** Link to the outbox entry that delivers/delivered this message. */
   outboxId?: string
+  /** Sent messages: the index in my feed it was written to — how a read of my feed recognises it (#191) */
+  feedIndex?: number
 }
 
 /**
@@ -163,7 +164,13 @@ function makeId(ts: number, direction: StoredMessage['direction'], body: string)
 }
 
 /** Append a sent text message to a thread. */
-export function appendSent(threads: ThreadMap, counterparty: string, body: string, ts = Date.now()): ThreadMap {
+export function appendSent(
+  threads: ThreadMap,
+  counterparty: string,
+  body: string,
+  ts = Date.now(),
+  feedIndex?: number,
+): ThreadMap {
   const key = counterparty.toLowerCase()
   const msg: StoredMessage = {
     id: makeId(ts, 'sent', body),
@@ -172,6 +179,7 @@ export function appendSent(threads: ThreadMap, counterparty: string, body: strin
     body,
     direction: 'sent',
     kind: 'message',
+    ...(feedIndex === undefined ? {} : { feedIndex }),
   }
   const updated: ThreadMap = { ...threads, [key]: [...(threads[key] ?? []), msg] }
 
@@ -213,30 +221,25 @@ export function markSentLoaded(counterparty: string, now = Date.now()): void {
 }
 
 /**
- * Reads of their mailbox that must find nothing before an empty side counts
- * as "they never wrote" — right after start the node often can't find a feed
- * yet, so a first empty read proves nothing (#191).
- */
-const EMPTY_READS_TRUSTED = 3
-
-/** A contact added this recently in this browser has nothing to load yet — Connect right away. */
-const FRESH_CONTACT_MS = 10 * 60_000
-
-/**
  * A conversation still loading in this browser (another browser, cleared
- * data, a new contact, #191): their side read fewer than EMPTY_READS_TRUSTED
- * times and nothing found yet, or my sent messages not loaded although I sent
- * some. The poller retries these sooner than usual.
+ * data, #191), judged by known positions only — never by guessing from an
+ * empty read, which on a slow node looks exactly like "never sent":
+ * - mine: I sent them messages (send cursor, from the app folder) and this
+ *   browser hasn't loaded them yet;
+ * - theirs: one of my browsers had read their feed further (app folder) than
+ *   this one has, or slots of theirs exist that couldn't be read yet and none
+ *   of their messages is here.
+ * Nothing known (new contact, a file from before this) = nothing to wait for.
+ * The poller retries these sooner than usual.
  */
 export function conversationPending(counterparty: string): boolean {
   const key = counterparty.toLowerCase()
   const thread = loadThreads()[key] ?? []
-  const contact = loadContacts().find(c => c.id.toLowerCase() === key)
-  const fresh = contact !== undefined && Date.now() - contact.addedAt < FRESH_CONTACT_MS
-  const theirs = !fresh && !thread.some(m => m.direction === 'received') && readCount(key) < EMPTY_READS_TRUSTED
   const mine = (getSendCursor(key) ?? 0) > 0 && needsSentLoad(key)
+  const theirs =
+    readPosition(key) < expectedPosition(key) || (hasRetries(key) && !thread.some(m => m.direction === 'received'))
 
-  return theirs || mine
+  return mine || theirs
 }
 
 /** How long an open conversation shows as loading at most, so an unreadable feed never hides it. */
@@ -265,26 +268,6 @@ export function conversationLoading(counterparty: string, now = Date.now()): boo
   return now - since < LOADING_CAP_MS
 }
 
-const SENT_SEEN_KEY = 'nook-sent-seen-v1'
-
-/**
- * How far (next feed index) this browser has read my own feed to a contact.
- * Each poll reads on from here, so what I sent from another browser, a private
- * window or dev mode shows up here too (#191).
- */
-export function getSentSeen(counterparty: string): number | undefined {
-  return load<Record<string, number>>(nsKey(SENT_SEEN_KEY), {})[counterparty.toLowerCase()]
-}
-
-export function markSentSeen(counterparty: string, nextIndex: number): void {
-  const map = load<Record<string, number>>(nsKey(SENT_SEEN_KEY), {})
-  const key = counterparty.toLowerCase()
-
-  if (nextIndex <= (map[key] ?? 0)) return
-  map[key] = nextIndex
-  localStorage.setItem(nsKey(SENT_SEEN_KEY), JSON.stringify(map))
-}
-
 /**
  * A message sent from this browser gets its time here when it is written
  * locally and again in the SDK when it goes to the feed, so the two copies
@@ -294,40 +277,60 @@ const SAME_SEND_WINDOW_MS = 10 * 60_000
 
 /**
  * Sent messages read back from my own mailbox feed (#191), added to the
- * thread unless this browser already shows them: same kind and text, sent
- * within SAME_SEND_WINDOW_MS. Each local message stands for one feed message,
- * so the same text sent twice shows twice.
+ * thread unless this browser already shows them. Recognised by feed index;
+ * a bubble without one (sent before indexes were kept, or still going out)
+ * matches by kind and text within SAME_SEND_WINDOW_MS, and takes the index so
+ * later reads match exactly. Each bubble stands for one feed message, so the
+ * same text sent twice shows twice.
  */
-export function mergeSentFromFeed(threads: ThreadMap, counterparty: string, sent: SdkMessage[]): ThreadMap {
+export function mergeSentFromFeed(
+  threads: ThreadMap,
+  counterparty: string,
+  sent: SdkMessage[],
+  indexes: number[],
+): ThreadMap {
   const key = counterparty.toLowerCase()
-  const existing = threads[key] ?? []
-  const unmatched = existing.filter(m => m.direction === 'sent')
+  const existing = [...(threads[key] ?? [])]
+  const known = new Set(existing.filter(m => m.feedIndex !== undefined).map(m => m.feedIndex))
   const added: StoredMessage[] = []
+  let claimed = false
 
-  for (const m of sent) {
+  sent.forEach((m, n) => {
+    const feedIndex = indexes[n]
+
+    if (known.has(feedIndex)) return
+    known.add(feedIndex)
     const kind: StoredMessage['kind'] = isDriveKind(m.type) ? m.type : 'message'
-    const match = unmatched.findIndex(
-      l => l.kind === kind && l.body === m.body && Math.abs(l.ts - m.ts) <= SAME_SEND_WINDOW_MS,
+    const match = existing.findIndex(
+      l =>
+        l.direction === 'sent' &&
+        l.feedIndex === undefined &&
+        l.kind === kind &&
+        l.body === m.body &&
+        Math.abs(l.ts - m.ts) <= SAME_SEND_WINDOW_MS,
     )
 
     if (match >= 0) {
-      unmatched.splice(match, 1)
-    } else {
-      added.push({
-        id: makeId(m.ts, 'sent', m.body),
-        counterparty: key,
-        ts: m.ts,
-        body: m.body,
-        direction: 'sent',
-        kind,
-        driveShareLink: m.driveShareLink,
-        driveName: m.driveName,
-        fileCount: m.fileCount,
-      })
-    }
-  }
+      existing[match] = { ...existing[match], feedIndex }
+      claimed = true
 
-  if (added.length === 0) return threads
+      return
+    }
+    added.push({
+      id: makeId(m.ts, 'sent', m.body),
+      counterparty: key,
+      ts: m.ts,
+      body: m.body,
+      direction: 'sent',
+      kind,
+      driveShareLink: m.driveShareLink,
+      driveName: m.driveName,
+      fileCount: m.fileCount,
+      feedIndex,
+    })
+  })
+
+  if (added.length === 0 && !claimed) return threads
   const updated: ThreadMap = { ...threads, [key]: [...existing, ...added].sort((a, b) => a.ts - b.ts) }
 
   saveThreads(updated)
@@ -376,6 +379,7 @@ export function setMessageStatusByOutboxId(
   counterparty: string,
   outboxId: string,
   status: 'sending' | 'sent' | 'failed',
+  feedIndex?: number,
 ): ThreadMap {
   const key = counterparty.toLowerCase()
   const thread = threads[key]
@@ -383,7 +387,9 @@ export function setMessageStatusByOutboxId(
   if (!thread?.some(m => m.outboxId === outboxId)) return threads
   const updated: ThreadMap = {
     ...threads,
-    [key]: thread.map(m => (m.outboxId === outboxId ? { ...m, status } : m)),
+    [key]: thread.map(m =>
+      m.outboxId === outboxId ? { ...m, status, ...(feedIndex === undefined ? {} : { feedIndex }) } : m,
+    ),
   }
 
   saveThreads(updated)

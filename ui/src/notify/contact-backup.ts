@@ -3,6 +3,7 @@ import { getActiveIdentity } from './active-identity'
 import { CONTACTS_RESTORED_EVENT, onContactDataChanged } from './backup-signal'
 import { getMyDisplayName, setMyDisplayName } from './contact-state'
 import { advanceSendCursor, loadReadCursors, loadSendCursors, saveReadCursors } from './messages'
+import { positionsToKeep, raiseExpected } from './receive-cursor'
 import { loadContacts, saveContacts } from './storage'
 import type { NookContact } from './types'
 
@@ -11,8 +12,8 @@ import type { NookContact } from './types'
  * so another browser or cleared site data showed an empty contact list. On
  * sign-in the saved copy is merged in; after that every change is saved again.
  *
- * Merge never deletes: contacts are added by address, send cursors take the
- * higher index, read marks the later time (so restored messages you already
+ * Merge never deletes: contacts are added by address, send cursors and read
+ * positions of their feeds take the higher index, read marks the later time (so restored messages you already
  * read don't show as unread), the name fills in only when this browser has none. Nothing is
  * saved before the saved copy was read, so an empty browser can't overwrite it.
  */
@@ -35,6 +36,7 @@ function snapshot(): ContactBackup {
     contacts: loadContacts(),
     sendCursors: loadSendCursors(),
     readMarks: loadReadCursors(),
+    theirNext: positionsToKeep(),
     myName: getMyDisplayName(),
   }
 }
@@ -83,14 +85,12 @@ export async function restoreContactBackup(address: string): Promise<void> {
   if (getActiveIdentity() !== id) return
 
   if (saved) {
-    const local = loadContacts()
-    const merged = mergeContacts(local, Array.isArray(saved.contacts) ? saved.contacts : [])
-
-    if (merged.length !== local.length) saveContacts(merged)
-
+    // Positions first, so a restored contact is never shown before the
+    // conversation knows what it is waiting for (#191).
     for (const [counterparty, next] of Object.entries(saved.sendCursors ?? {})) {
       if (Number.isInteger(next) && next > 0) advanceSendCursor(counterparty, next - 1)
     }
+    raiseExpected(saved.theirNext ?? {})
 
     const marks = loadReadCursors()
     let marksChanged = false
@@ -106,7 +106,13 @@ export async function restoreContactBackup(address: string): Promise<void> {
 
     if (!getMyDisplayName() && typeof saved.myName === 'string') setMyDisplayName(saved.myName)
 
-    if (merged.length !== local.length) window.dispatchEvent(new Event(CONTACTS_RESTORED_EVENT))
+    const local = loadContacts()
+    const merged = mergeContacts(local, Array.isArray(saved.contacts) ? saved.contacts : [])
+
+    if (merged.length !== local.length) {
+      saveContacts(merged)
+      window.dispatchEvent(new Event(CONTACTS_RESTORED_EVENT))
+    }
   }
   restoredFor = id
   await save(id)

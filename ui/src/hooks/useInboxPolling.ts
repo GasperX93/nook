@@ -18,17 +18,24 @@ import {
   advanceSendCursor,
   appendReceived,
   conversationPending,
-  getSentSeen,
   loadThreads,
   markSentLoaded,
-  markSentSeen,
   mergeSentFromFeed,
   needsSentLoad,
   sentReadComplete,
+  type StoredMessage,
 } from '../notify/messages'
 import { applyDriveMessages } from '../notify/drive-access'
 import { getOpenContact, OPEN_CONTACT_EVENT } from '../notify/open-contact'
-import { getReadCursor, recordRead } from '../notify/receive-cursor'
+import {
+  expectedPosition,
+  getReadCursor,
+  getSentCursor,
+  hasReadCursor,
+  readPosition,
+  recordRead,
+  recordSentRead,
+} from '../notify/receive-cursor'
 import { loadContacts } from '../notify/storage'
 import { toLibraryContact } from '../notify/types'
 import { useAppStore } from '../store/app'
@@ -47,14 +54,23 @@ const QUICK_POLL_FOR_MS = 180_000
  * gap delays later messages by at most one full cycle (~5 min). R3b-2.
  */
 const FULL_LOOKAHEAD_EVERY = 10
+/**
+ * A first read of my feed that keeps stopping short (a slot of mine the node
+ * never manages to fetch) is taken as it is after this many tries, and later
+ * reads go on from where it stopped — instead of re-reading the whole feed
+ * every poll forever.
+ */
+const FIRST_SENT_READ_TRIES = 10
+const firstSentReadTries = new Map<string, number>()
 
 /**
  * My own feed to a contact (#191). In a browser that shows none of my sent
  * messages yet (another browser, cleared data) it is read from the start, all
- * or nothing: a short read (the node can't find the feed yet, right after
- * start) keeps nothing and is tried again next poll. After that each poll
- * reads on from where this browser got to, so what I send from another
- * browser, a private window or dev mode shows up here too.
+ * or nothing: a read that stops early or short of my send cursor (the node
+ * can't fetch the feed yet, right after start) keeps nothing and is tried
+ * again next poll. After that each poll reads on from where this browser got
+ * to, so what I send from another browser, a private window or dev mode shows
+ * up here too; messages are recognised by feed index, so none shows twice.
  */
 async function readMySent(
   bee: Bee,
@@ -63,22 +79,63 @@ async function readMySent(
   contact: Contact,
   fullLookahead: boolean,
 ): Promise<void> {
-  const first = needsSentLoad(contact.ethAddress)
-  const seen = first ? undefined : getSentSeen(contact.ethAddress)
+  const id = contact.ethAddress
+  const first = needsSentLoad(id)
+  const cursor = first ? undefined : getSentCursor(id)
   const sent = await mailbox.readMailbox(bee, key, myAddr, contact, {
     direction: 'sent',
-    fromIndex: seen ?? 0,
+    fromIndex: cursor?.fromIndex ?? 0,
+    retryIndices: cursor?.retryIndices,
     // A first read hops gaps in the feed; later ones mostly stop at the end.
-    lookahead: seen === undefined || fullLookahead ? undefined : 0,
+    lookahead: cursor === undefined || fullLookahead ? undefined : 0,
   })
 
-  if (first && !sentReadComplete(contact.ethAddress, sent.nextIndex)) return
-  mergeSentFromFeed(loadThreads(), contact.ethAddress, sent.messages)
+  if (first && !(sent.complete && sentReadComplete(id, sent.nextIndex))) {
+    const tries = (firstSentReadTries.get(id) ?? 0) + 1
 
-  if (sent.nextIndex > 0) advanceSendCursor(contact.ethAddress, sent.nextIndex - 1)
-  markSentSeen(contact.ethAddress, sent.nextIndex)
+    firstSentReadTries.set(id, tries)
 
-  if (first) markSentLoaded(contact.ethAddress)
+    if (tries < FIRST_SENT_READ_TRIES) return
+  }
+  mergeSentFromFeed(loadThreads(), id, sent.messages, sent.indexes)
+
+  if (sent.nextIndex > 0) advanceSendCursor(id, sent.nextIndex - 1)
+  recordSentRead(id, sent)
+
+  if (first) markSentLoaded(id)
+}
+
+/**
+ * Their feed to me, from this browser's read cursor. While this browser is
+ * behind where one of mine had read (a new browser, #191) every read hops
+ * gaps, so it doesn't wait for the periodic full look-ahead to catch up.
+ * Returns the messages that are new here.
+ */
+async function readTheirs(
+  bee: Bee,
+  key: Uint8Array,
+  myAddr: string,
+  contact: Contact,
+  fullLookahead: boolean,
+): Promise<StoredMessage[]> {
+  const id = contact.ethAddress
+  const { fromIndex, retryIndices } = getReadCursor(id)
+  const catchingUp = !hasReadCursor(id) || readPosition(id) < expectedPosition(id)
+  const result = await mailbox.readMailbox(bee, key, myAddr, contact, {
+    fromIndex,
+    retryIndices,
+    lookahead: fullLookahead || catchingUp ? undefined : 0,
+  })
+
+  recordRead(id, result)
+  // Fresh load right before the write: a message sent while this
+  // (possibly long) poll ran must not be overwritten by a snapshot.
+  const current = loadThreads()
+  const threadKey = id.toLowerCase()
+  const known = new Set((current[threadKey] ?? []).map(m => m.id))
+  const thread = appendReceived(current, id, result.messages)[threadKey] ?? []
+
+  return thread.filter(m => !known.has(m.id))
 }
 
 export function useInboxPolling(): void {
@@ -105,9 +162,10 @@ export function useInboxPolling(): void {
     // A poll asked for while one runs (contacts just restored) runs right after it.
     let pollAgain = false
 
-    const poll = async () => {
+    // `quick`: a retry while a conversation is still loading — only those are read.
+    const poll = async (quick = false) => {
       if (polling) {
-        pollAgain = true
+        if (!quick) pollAgain = true
 
         return
       }
@@ -125,6 +183,7 @@ export function useInboxPolling(): void {
       const contacts = loadContacts()
         .filter(c => c.id.toLowerCase() !== myAddr.toLowerCase())
         .sort((a, b) => Number(b.id.toLowerCase() === open) - Number(a.id.toLowerCase() === open))
+        .filter(c => !quick || conversationPending(c.id))
 
       if (contacts.length === 0) {
         polling = false
@@ -140,29 +199,15 @@ export function useInboxPolling(): void {
         for (const contact of contacts) {
           if (cancelled) return
           const lib = toLibraryContact(contact)
-          const { fromIndex, retryIndices } = getReadCursor(contact.id)
 
           try {
             // My own feed failing must not hold up their messages.
             await readMySent(bee, signer.getSigningKey(), myAddr, lib, fullLookahead).catch(() => undefined)
 
             if (cancelled) return
-            const result = await mailbox.readMailbox(bee, signer.getSigningKey(), myAddr, lib, {
-              fromIndex,
-              retryIndices,
-              lookahead: fullLookahead ? undefined : 0,
-            })
+            const added = await readTheirs(bee, signer.getSigningKey(), myAddr, lib, fullLookahead)
 
             if (cancelled) return
-            recordRead(contact.id, result)
-            // Fresh load right before the write: a message sent while this
-            // (possibly long) poll ran must not be overwritten by a snapshot.
-            const current = loadThreads()
-            const key = lib.ethAddress.toLowerCase()
-            const known = new Set((current[key] ?? []).map(m => m.id))
-            const thread = appendReceived(current, lib.ethAddress, result.messages)[key] ?? []
-            const added = thread.filter(m => !known.has(m.id))
-
             newCount += added.length
             // Access removed / restored reaches "Shared with me" right away (R4-15).
             applyDriveMessages(added, contact.nickname)
@@ -201,7 +246,7 @@ export function useInboxPolling(): void {
       if (!loadContacts().some(c => conversationPending(c.id))) return
       quickTimer = setTimeout(() => {
         quickTimer = null
-        void poll()
+        void poll(true)
       }, QUICK_POLL_MS)
     }
 

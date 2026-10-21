@@ -90,7 +90,7 @@ async function attemptDelivery(
   if (inFlight.has(entry.id)) return false
   inFlight.add(entry.id)
   try {
-    await enqueueSend(entry.recipientId, async () => {
+    const feedIndex = await enqueueSend(entry.recipientId, async () => {
       // Don't send during warmup — a send before the node can push never
       // propagates to the recipient (the receipt-less window).
       if (!(await waitForBeeReady())) throw new Error('Node not ready yet')
@@ -112,7 +112,7 @@ async function attemptDelivery(
     })
     // Network write confirmed — only now does the entry leave the outbox.
     removeOutboxEntry(entry.id)
-    setMessageStatusByOutboxId(loadThreads(), entry.recipientId, entry.id, 'sent')
+    setMessageStatusByOutboxId(loadThreads(), entry.recipientId, entry.id, 'sent', feedIndex)
 
     return true
   } catch (err) {

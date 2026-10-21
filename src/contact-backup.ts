@@ -7,7 +7,7 @@ import { getPath } from './path'
  * Contacts in the app folder (#192). The dashboard keeps contacts in the
  * browser's localStorage, which is per browser and profile: another browser
  * or cleared site data showed an empty contact list. This file per identity
- * survives both. Only addresses, names, send cursors and read marks — no message content
+ * survives both. Only addresses, names, feed positions and read marks — no message content
  * (received messages reload from Swarm, sent ones too since #191).
  *
  * The server only stores what the dashboard sends; merging happens there.
@@ -21,6 +21,8 @@ export interface ContactBackup {
   sendCursors: Record<string, number>
   /** Per contact: when the conversation was last read (ms), so restored messages aren't all unread */
   readMarks: Record<string, number>
+  /** Per contact: how far their feed to me had been read — a new browser waits for that much (#191) */
+  theirNext: Record<string, number>
   myName: string
 }
 
@@ -56,7 +58,8 @@ export function writeContactBackup(address: string, value: unknown): boolean {
     typeof backup.sendCursors !== 'object' ||
     backup.sendCursors === null ||
     typeof backup.myName !== 'string' ||
-    (backup.readMarks !== undefined && (typeof backup.readMarks !== 'object' || backup.readMarks === null))
+    (backup.readMarks !== undefined && (typeof backup.readMarks !== 'object' || backup.readMarks === null)) ||
+    (backup.theirNext !== undefined && (typeof backup.theirNext !== 'object' || backup.theirNext === null))
   ) {
     return false
   }
@@ -64,6 +67,7 @@ export function writeContactBackup(address: string, value: unknown): boolean {
     contacts: backup.contacts,
     sendCursors: backup.sendCursors,
     readMarks: backup.readMarks ?? {},
+    theirNext: backup.theirNext ?? {},
     myName: backup.myName,
   }
   const path = filePath(address)
