@@ -35,6 +35,7 @@ import {
   hasReadCursor,
   readPosition,
   recordRead,
+  clearStalls,
   recordSentRead,
   sentStalledAt,
   theirStalledAt,
@@ -103,7 +104,7 @@ async function readMySent(
   mergeSentFromFeed(loadThreads(), id, sent.messages, sent.indexes)
 
   if (sent.nextIndex > 0) advanceSendCursor(id, sent.nextIndex - 1)
-  recordSentRead(id, sent)
+  recordSentRead(id, sent, cursor?.retryIndices ?? [])
 
   if (first) markSentLoaded(id)
 
@@ -115,7 +116,7 @@ async function readMySent(
   if (!beyond) return
   mergeSentFromFeed(loadThreads(), id, beyond.messages, beyond.indexes)
   advanceSendCursor(id, beyond.nextIndex - 1)
-  recordSentRead(id, { ...beyond, skip: stalled })
+  recordSentRead(id, { ...beyond, skip: stalled }, [])
 }
 
 /**
@@ -135,11 +136,9 @@ async function readPastStuckSlot(
 ): Promise<mailbox.MailboxReadResult | null> {
   const beyond = await mailbox.readMailbox(bee, key, myAddr, contact, { direction, fromIndex: stalled + 1 })
   const found = beyond.indexes.length > 0 || beyond.holes.length > 0
-  const reset = { nextIndex: stalled, holes: [], complete: true }
 
   if (!found) {
-    if (direction === 'sent') recordSentRead(contact.ethAddress, reset)
-    else recordRead(contact.ethAddress, reset)
+    clearStalls(contact.ethAddress, direction)
 
     return null
   }
@@ -169,7 +168,7 @@ async function readTheirs(
     lookahead: fullLookahead || catchingUp ? undefined : 0,
   })
 
-  recordRead(id, result)
+  recordRead(id, result, retryIndices)
   let messages = result.messages
   const stalled = theirStalledAt(id)
 
@@ -177,7 +176,7 @@ async function readTheirs(
     const beyond = await readPastStuckSlot(bee, key, myAddr, contact, stalled, 'received')
 
     if (beyond) {
-      recordRead(id, { ...beyond, skip: stalled })
+      recordRead(id, { ...beyond, skip: stalled }, [])
       messages = [...messages, ...beyond.messages]
     }
   }

@@ -90,18 +90,28 @@ function cursorOf(key: string, contactId: string): ReadCursor | undefined {
 
 function getCursor(key: string, contactId: string): { fromIndex: number; retryIndices: number[] } {
   const c = cursorOf(key, contactId)
-  const retry = [...Object.keys(c?.holes ?? {}), ...Object.keys(c?.skipped ?? {})].map(Number)
+  const retry = new Set([...Object.keys(c?.holes ?? {}), ...Object.keys(c?.skipped ?? {})].map(Number))
 
-  return { fromIndex: c?.next ?? 0, retryIndices: retry }
+  return { fromIndex: c?.next ?? 0, retryIndices: [...retry] }
 }
 
-/** Keep the slots still worth retrying: not delivered this time, tries left. */
-function stillToRetry(tried: Record<string, number>, delivered: Set<number>, add: number[]): Record<string, number> {
+/**
+ * Keep the slots still worth retrying: not delivered this time, tries left.
+ * Only a slot retried in this read (or new) counts a try; `retried` undefined
+ * means every known slot was retried.
+ */
+function stillToRetry(
+  tried: Record<string, number>,
+  delivered: Set<number>,
+  add: number[],
+  retried: Set<number> | undefined,
+): Record<string, number> {
   const out: Record<string, number> = {}
 
   for (const i of new Set([...add, ...Object.keys(tried).map(Number)])) {
     if (delivered.has(i) && !add.includes(i)) continue
-    const tries = (tried[String(i)] ?? 0) + 1
+    const known = tried[String(i)]
+    const tries = known === undefined || !retried || retried.has(i) ? (known ?? 0) + 1 : known
 
     if (tries < MAX_HOLE_TRIES) out[String(i)] = tries
   }
@@ -115,13 +125,19 @@ function stillToRetry(tried: Record<string, number>, delivered: Set<number>, add
  * list (the SDK drops a retried slot that reads as missing) until its tries
  * run out. Returns whether the position moved.
  */
-function record(key: string, contactId: string, result: ReadOutcome): boolean {
+function record(key: string, contactId: string, result: ReadOutcome, retriedList?: number[]): boolean {
   const map = load<CursorMap>(key) as CursorMap
   const id = contactId.toLowerCase()
   const previous = map[id]
   const delivered = new Set(result.indexes ?? [])
-  const holes = stillToRetry(previous?.holes ?? {}, delivered, [...result.holes, ...(result.gaps ?? [])])
-  const skipped = stillToRetry(previous?.skipped ?? {}, delivered, result.skip === undefined ? [] : [result.skip])
+  const retried = retriedList ? new Set(retriedList) : undefined
+  const holes = stillToRetry(previous?.holes ?? {}, delivered, [...result.holes, ...(result.gaps ?? [])], retried)
+  const skipped = stillToRetry(
+    previous?.skipped ?? {},
+    delivered,
+    result.skip === undefined ? [] : [result.skip],
+    retried,
+  )
   const next = Math.max(result.nextIndex, previous?.next ?? 0)
   const stuck = result.complete === false && next === (previous?.next ?? 0)
   const stalls = stuck ? (previous?.stalls ?? 0) + 1 : 0
@@ -151,9 +167,10 @@ export function hasRetries(contactId: string): boolean {
   return Object.keys(cursorOf(RECEIVED_KEY, contactId)?.holes ?? {}).length > 0
 }
 
-export function recordRead(contactId: string, result: ReadOutcome): void {
+/** `retried`: the retryIndices this read was given (only those count a try). */
+export function recordRead(contactId: string, result: ReadOutcome, retried?: number[]): void {
   // A new position is worth keeping in the app folder (expected position, #192).
-  if (record(RECEIVED_KEY, contactId, result)) contactDataChanged()
+  if (record(RECEIVED_KEY, contactId, result, retried)) contactDataChanged()
 }
 
 /** Where to resume reading my own feed to them; undefined before the first read in this browser. */
@@ -161,8 +178,19 @@ export function getSentCursor(contactId: string): { fromIndex: number; retryIndi
   return cursorOf(SENT_KEY, contactId) ? getCursor(SENT_KEY, contactId) : undefined
 }
 
-export function recordSentRead(contactId: string, result: ReadOutcome): void {
-  record(SENT_KEY, contactId, result)
+export function recordSentRead(contactId: string, result: ReadOutcome, retried?: number[]): void {
+  record(SENT_KEY, contactId, result, retried)
+}
+
+/** Nothing after a stuck slot: start the stall count over, touching nothing else. */
+export function clearStalls(contactId: string, direction: 'sent' | 'received'): void {
+  const key = direction === 'sent' ? SENT_KEY : RECEIVED_KEY
+  const map = load<CursorMap>(key) as CursorMap
+  const id = contactId.toLowerCase()
+
+  if (!map[id]?.stalls) return
+  delete map[id].stalls
+  save(key, map)
 }
 
 /** The slot their feed keeps stopping at, once it has STALL_LIMIT times in a row. */

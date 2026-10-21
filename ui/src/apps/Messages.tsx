@@ -431,7 +431,8 @@ export default function Messages({ initialContactId, hideContactList, hideThread
 
       // The invite is in their mailbox — show it as sent now, whatever the
       // on-chain notice does next.
-      setThreads(prev => appendSent(prev, selected.id, body, Date.now(), feedIndex))
+      // From storage, not React state: the poller may have written meanwhile.
+      setThreads(appendSent(loadThreads(), selected.id, body, Date.now(), feedIndex))
       setDraft('')
 
       try {

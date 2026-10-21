@@ -34,6 +34,8 @@ import {
 } from './messages'
 import {
   getReadCursor,
+  hasRetries,
+  MAX_HOLE_TRIES,
   positionsToKeep,
   raiseExpected,
   recordRead,
@@ -311,12 +313,21 @@ describe('conversation loading (#191)', () => {
     expect(getReadCursor(MARTIN).fromIndex).toBe(4)
   })
 
-  it('a skipped slot does not make a contact who never wrote look connected', () => {
+  it('a skipped slot alone never counts as a hole (it says nothing about who wrote)', () => {
     recordRead(ANA, { nextIndex: 0, holes: [] })
     for (let i = 0; i < STALL_LIMIT; i++) recordRead(ANA, { nextIndex: 0, holes: [], complete: false })
-    recordRead(ANA, { nextIndex: 2, holes: [], indexes: [], gaps: [], skip: 0 })
+    recordRead(ANA, { nextIndex: 2, holes: [], indexes: [1], gaps: [], skip: 0 }, [])
 
-    expect(theirSidePending(ANA)).toBe(false)
+    expect(getReadCursor(ANA)).toEqual({ fromIndex: 2, retryIndices: [0] })
+    expect(hasRetries(ANA)).toBe(false)
+  })
+
+  it('a try counts only for slots actually retried in that read', () => {
+    recordRead(MARTIN, { nextIndex: 5, holes: [2] }, [])
+    recordRead(MARTIN, { nextIndex: 5, holes: [], indexes: [] }, [])
+    for (let i = 1; i < MAX_HOLE_TRIES - 1; i++) recordRead(MARTIN, { nextIndex: 5, holes: [2] }, [2])
+
+    expect(getReadCursor(MARTIN).retryIndices).toEqual([2])
   })
 
   it('their side still to load means they wrote to me; mine alone does not', () => {
