@@ -622,8 +622,8 @@ export default function Layout() {
               <HardDrive size={12} className="shrink-0 mt-0.5" style={{ color: '#60a5fa' }} />
               <p className="flex-1" style={{ color: 'rgb(var(--fg))' }}>
                 <span className="font-semibold">Your file lists are in the browser you usually use Nook in.</span> Here,
-                drives show 0 files and Shared with me is empty. Your files are safe. Contacts and messages work here.
-                Upload to encrypted drives only from your usual browser.
+                drives other than deletable ones show 0 files, and Shared with me is empty. Your files are safe.
+                Contacts and messages work here. Upload to encrypted drives only from your usual browser.
               </p>
               <button
                 onClick={() => dismissOtherBrowserNotice()}
