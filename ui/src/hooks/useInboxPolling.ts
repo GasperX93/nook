@@ -17,10 +17,12 @@ import { CONTACTS_RESTORED_EVENT } from '../notify/backup-signal'
 import {
   advanceSendCursor,
   appendReceived,
+  getSentSeen,
   loadThreads,
   markSentLoaded,
+  markSentSeen,
+  mergeSentFromFeed,
   needsSentLoad,
-  restoreSent,
   sentReadComplete,
 } from '../notify/messages'
 import { applyDriveMessages } from '../notify/drive-access'
@@ -41,19 +43,36 @@ const POLL_INTERVAL_MS = 30_000
 const FULL_LOOKAHEAD_EVERY = 10
 
 /**
- * This browser shows none of my sent messages to a contact (new contact,
- * another browser, cleared data): load them from my own feed once (#191), and
- * continue my send cursor after them. A short read (the node can't find the
- * feed yet, right after start) keeps nothing and is tried again next poll.
+ * My own feed to a contact (#191). In a browser that shows none of my sent
+ * messages yet (another browser, cleared data) it is read from the start, all
+ * or nothing: a short read (the node can't find the feed yet, right after
+ * start) keeps nothing and is tried again next poll. After that each poll
+ * reads on from where this browser got to, so what I send from another
+ * browser, a private window or dev mode shows up here too.
  */
-async function loadMySent(bee: Bee, key: Uint8Array, myAddr: string, contact: Contact): Promise<void> {
-  const sent = await mailbox.readMailbox(bee, key, myAddr, contact, { direction: 'sent' })
+async function readMySent(
+  bee: Bee,
+  key: Uint8Array,
+  myAddr: string,
+  contact: Contact,
+  fullLookahead: boolean,
+): Promise<void> {
+  const first = needsSentLoad(contact.ethAddress)
+  const seen = first ? undefined : getSentSeen(contact.ethAddress)
+  const sent = await mailbox.readMailbox(bee, key, myAddr, contact, {
+    direction: 'sent',
+    fromIndex: seen ?? 0,
+    // A first read hops gaps in the feed; later ones mostly stop at the end.
+    lookahead: seen === undefined || fullLookahead ? undefined : 0,
+  })
 
-  if (!sentReadComplete(contact.ethAddress, sent.nextIndex)) return
-  restoreSent(loadThreads(), contact.ethAddress, sent.messages)
+  if (first && !sentReadComplete(contact.ethAddress, sent.nextIndex)) return
+  mergeSentFromFeed(loadThreads(), contact.ethAddress, sent.messages)
 
   if (sent.nextIndex > 0) advanceSendCursor(contact.ethAddress, sent.nextIndex - 1)
-  markSentLoaded(contact.ethAddress)
+  markSentSeen(contact.ethAddress, sent.nextIndex)
+
+  if (first) markSentLoaded(contact.ethAddress)
 }
 
 export function useInboxPolling(): void {
@@ -114,7 +133,8 @@ export function useInboxPolling(): void {
           const { fromIndex, retryIndices } = getReadCursor(contact.id)
 
           try {
-            if (needsSentLoad(contact.id)) await loadMySent(bee, signer.getSigningKey(), myAddr, lib)
+            // My own feed failing must not hold up their messages.
+            await readMySent(bee, signer.getSigningKey(), myAddr, lib, fullLookahead).catch(() => undefined)
 
             if (cancelled) return
             const result = await mailbox.readMailbox(bee, signer.getSigningKey(), myAddr, lib, {

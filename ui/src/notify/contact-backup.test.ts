@@ -15,11 +15,13 @@ import {
   awaitingMySent,
   FIRST_READ_WAIT_MS,
   getSendCursor,
+  getSentSeen,
   loadReadCursors,
   loadThreads,
   markSentLoaded,
+  markSentSeen,
   needsSentLoad,
-  restoreSent,
+  mergeSentFromFeed,
   SENT_WAIT_MS,
   sentReadComplete,
 } from './messages'
@@ -144,7 +146,7 @@ describe('restoreContactBackup', () => {
   })
 })
 
-describe('restoreSent', () => {
+describe('sent messages from my feed', () => {
   it('sent messages are loaded once, only where this browser shows none', () => {
     expect(needsSentLoad(MARTIN)).toBe(true)
     markSentLoaded(MARTIN)
@@ -182,7 +184,7 @@ describe('restoreSent', () => {
   })
 
   it('fills an empty thread with what I sent, in time order with the received ones', () => {
-    restoreSent(loadThreads(), MARTIN, [message('hi', 10), message('again', 30)])
+    mergeSentFromFeed(loadThreads(), MARTIN, [message('hi', 10), message('again', 30)])
 
     expect(loadThreads()[MARTIN].map(m => [m.body, m.direction])).toEqual([
       ['hi', 'sent'],
@@ -190,10 +192,32 @@ describe('restoreSent', () => {
     ])
   })
 
-  it('leaves a thread that already has sent messages alone (no duplicates)', () => {
+  it('skips what this browser already shows (its own time differs a little)', () => {
     appendSent(loadThreads(), MARTIN, 'hi', 11)
-    restoreSent(loadThreads(), MARTIN, [message('hi', 10)])
+    mergeSentFromFeed(loadThreads(), MARTIN, [message('hi', 10)])
 
     expect(loadThreads()[MARTIN].map(m => m.ts)).toEqual([11])
+  })
+
+  it('adds what I sent from another browser', () => {
+    appendSent(loadThreads(), MARTIN, 'hi', 11)
+    mergeSentFromFeed(loadThreads(), MARTIN, [message('hi', 10), message('from incognito', 50)])
+    mergeSentFromFeed(loadThreads(), MARTIN, [message('from incognito', 50)])
+
+    expect(loadThreads()[MARTIN].map(m => m.body)).toEqual(['hi', 'from incognito'])
+  })
+
+  it('the same text sent twice shows twice', () => {
+    appendSent(loadThreads(), MARTIN, 'ok', 11)
+    mergeSentFromFeed(loadThreads(), MARTIN, [message('ok', 10), message('ok', 20)])
+
+    expect(loadThreads()[MARTIN].map(m => m.body)).toEqual(['ok', 'ok'])
+  })
+
+  it('remembers how far my feed was read, never backwards', () => {
+    expect(getSentSeen(MARTIN)).toBeUndefined()
+    markSentSeen(MARTIN, 47)
+    markSentSeen(MARTIN, 40)
+    expect(getSentSeen(MARTIN)).toBe(47)
   })
 })

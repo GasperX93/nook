@@ -245,30 +245,70 @@ export function awaitingMySent(counterparty: string, since: number, now = Date.n
   return (getSendCursor(counterparty) ?? 0) > 0 && needsSentLoad(counterparty)
 }
 
+const SENT_SEEN_KEY = 'nook-sent-seen-v1'
+
 /**
- * Sent messages read back from my own mailbox feed (#191) — for a thread this
- * browser has no sent messages for (new browser, cleared data). Never mixed
- * with sent messages already here: their timestamps come from the SDK and can
- * differ from the local ones, so they would show twice.
+ * How far (next feed index) this browser has read my own feed to a contact.
+ * Each poll reads on from here, so what I sent from another browser, a private
+ * window or dev mode shows up here too (#191).
  */
-export function restoreSent(threads: ThreadMap, counterparty: string, sent: SdkMessage[]): ThreadMap {
+export function getSentSeen(counterparty: string): number | undefined {
+  return load<Record<string, number>>(nsKey(SENT_SEEN_KEY), {})[counterparty.toLowerCase()]
+}
+
+export function markSentSeen(counterparty: string, nextIndex: number): void {
+  const map = load<Record<string, number>>(nsKey(SENT_SEEN_KEY), {})
+  const key = counterparty.toLowerCase()
+
+  if (nextIndex <= (map[key] ?? 0)) return
+  map[key] = nextIndex
+  localStorage.setItem(nsKey(SENT_SEEN_KEY), JSON.stringify(map))
+}
+
+/**
+ * A message sent from this browser gets its time here when it is written
+ * locally and again in the SDK when it goes to the feed, so the two copies
+ * differ by up to how long it waited to go out.
+ */
+const SAME_SEND_WINDOW_MS = 10 * 60_000
+
+/**
+ * Sent messages read back from my own mailbox feed (#191), added to the
+ * thread unless this browser already shows them: same kind and text, sent
+ * within SAME_SEND_WINDOW_MS. Each local message stands for one feed message,
+ * so the same text sent twice shows twice.
+ */
+export function mergeSentFromFeed(threads: ThreadMap, counterparty: string, sent: SdkMessage[]): ThreadMap {
   const key = counterparty.toLowerCase()
   const existing = threads[key] ?? []
+  const unmatched = existing.filter(m => m.direction === 'sent')
+  const added: StoredMessage[] = []
 
-  if (sent.length === 0 || existing.some(m => m.direction === 'sent')) return threads
+  for (const m of sent) {
+    const kind: StoredMessage['kind'] = isDriveKind(m.type) ? m.type : 'message'
+    const match = unmatched.findIndex(
+      l => l.kind === kind && l.body === m.body && Math.abs(l.ts - m.ts) <= SAME_SEND_WINDOW_MS,
+    )
 
-  const restored: StoredMessage[] = sent.map(m => ({
-    id: makeId(m.ts, 'sent', m.body),
-    counterparty: key,
-    ts: m.ts,
-    body: m.body,
-    direction: 'sent',
-    kind: isDriveKind(m.type) ? m.type : 'message',
-    driveShareLink: m.driveShareLink,
-    driveName: m.driveName,
-    fileCount: m.fileCount,
-  }))
-  const updated: ThreadMap = { ...threads, [key]: [...existing, ...restored].sort((a, b) => a.ts - b.ts) }
+    if (match >= 0) {
+      unmatched.splice(match, 1)
+    } else {
+      added.push({
+        id: makeId(m.ts, 'sent', m.body),
+        counterparty: key,
+        ts: m.ts,
+        body: m.body,
+        direction: 'sent',
+        kind,
+        driveShareLink: m.driveShareLink,
+        driveName: m.driveName,
+        fileCount: m.fileCount,
+      })
+    }
+  }
+
+  if (added.length === 0) return threads
+  const updated: ThreadMap = { ...threads, [key]: [...existing, ...added].sort((a, b) => a.ts - b.ts) }
 
   saveThreads(updated)
 
