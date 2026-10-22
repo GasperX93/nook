@@ -167,17 +167,57 @@ function folderTree(folders: Item[], rootId: string): Set<string> {
   return ids
 }
 
-function applyOne(store: DriveStore, op: DriveOp, now: number): boolean {
+/**
+ * An encrypted drive's ACT state is the app's (act-head.ts): a browser holds
+ * whatever it last saw, and writing that back would move the drive to an older
+ * history and lose a grant. Once the app has a value, browsers can't change it;
+ * `keyRotated` they may only clear (after a re-publish).
+ */
+const SERVER_OWNED = ['actHistoryRef', 'granteeRef', 'headsSinceRotation', 'retiredHeads'] as const
+
+function browserChanges(current: Record<string, unknown>, changes: Record<string, unknown>): Record<string, unknown> {
+  const allowed: Record<string, unknown> = {}
+
+  for (const [key, value] of Object.entries(changes)) {
+    if ((SERVER_OWNED as readonly string[]).includes(key) && current[key] !== undefined) continue
+
+    if (key === 'keyRotated' && value) continue
+    allowed[key] = value
+  }
+
+  return allowed
+}
+
+/** An encrypted file whose history is one a revoke left behind can't be opened by current grantees. */
+function flagsRetiredHead(store: DriveStore, record: Item): boolean {
+  if (!record.isEncrypted || typeof record.actHistoryRef !== 'string' || typeof record.driveId !== 'string') {
+    return false
+  }
+  const meta = store.metadata[record.driveId]
+  const retired = meta?.retiredHeads
+
+  if (!meta || !Array.isArray(retired) || !retired.includes(record.actHistoryRef) || meta.keyRotated) return false
+  store.metadata[record.driveId] = { ...meta, keyRotated: true }
+
+  return true
+}
+
+function applyOne(store: DriveStore, op: DriveOp, now: number, trusted: boolean): boolean {
   if (op.kind === 'metadata') {
     if (op.op === 'delete') {
-      if (!(op.batch in store.metadata)) return false
+      // Never from a browser once the app keeps the drive's ACT state.
+      if (!(op.batch in store.metadata) || (!trusted && store.metadata[op.batch].actHistoryRef !== undefined)) {
+        return false
+      }
       delete store.metadata[op.batch]
 
       return true
     }
     const current = store.metadata[op.batch] ?? { encrypted: false }
+    const changes = trusted ? op.changes : browserChanges(current, op.changes)
 
-    store.metadata[op.batch] = patched(current, op.changes)
+    if (Object.keys(changes).length === 0) return false
+    store.metadata[op.batch] = patched(current, changes)
 
     return true
   }
@@ -219,6 +259,9 @@ function applyOne(store: DriveStore, op: DriveOp, now: number): boolean {
     else if (op.kind === 'record') items.unshift({ ...op.value })
     else items.push({ ...op.value })
 
+    // An upload that started before a revoke finished after it: the drive needs a re-publish.
+    if (op.kind === 'record') flagsRetiredHead(store, op.value)
+
     return true
   }
 
@@ -259,12 +302,12 @@ function applyOne(store: DriveStore, op: DriveOp, now: number): boolean {
   return true
 }
 
-/** Applies the ops in order; returns whether anything changed. */
-export function applyOps(store: DriveStore, ops: DriveOp[], now = Date.now()): boolean {
+/** Applies the ops in order; returns whether anything changed. `trusted` = the app itself (act-head.ts). */
+export function applyOps(store: DriveStore, ops: DriveOp[], now = Date.now(), trusted = false): boolean {
   let changed = false
 
   for (const op of ops) {
-    if (applyOne(store, op, now)) changed = true
+    if (applyOne(store, op, now, trusted)) changed = true
   }
 
   if (changed) store.rev++
@@ -428,13 +471,24 @@ function saveDriveStore(store: DriveStore): void {
   cache = store
 }
 
-/** Applies ops to the stored copy and saves it when something changed. */
+/** Applies a browser's ops to the stored copy and saves it when something changed. */
 export function changeDriveData(ops: DriveOp[]): DriveStore {
   const store = structuredClone(loadDriveStore())
 
   if (applyOps(store, ops)) saveDriveStore(store)
 
   return loadDriveStore()
+}
+
+/** The app's own change to a drive's ACT state (act-head.ts) — not filtered like a browser's. */
+export function setActState(batch: string, changes: Record<string, unknown>): void {
+  const store = structuredClone(loadDriveStore())
+
+  if (applyOps(store, [{ kind: 'metadata', op: 'patch', batch, changes }], Date.now(), true)) saveDriveStore(store)
+}
+
+export function getActState(batch: string): Record<string, unknown> | undefined {
+  return loadDriveStore().metadata[batch]
 }
 
 export function importDriveData(data: DriveImport): DriveStore {
