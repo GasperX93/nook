@@ -230,6 +230,12 @@ describe('importLocal', () => {
       keyRotated: true,
     })
   })
+  test('a malformed import adds nothing and does not throw', () => {
+    const s = fresh()
+
+    expect(importLocal(s, { records: 'abc', folders: { id: 'x' }, shared: 5, metadata: [] } as never)).toBe(false)
+    expect(s).toEqual(emptyStore())
+  })
 })
 
 describe('the file', () => {

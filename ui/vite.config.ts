@@ -36,6 +36,7 @@ export default defineConfig(({ command }) => ({
       '/wallet-activity': 'http://localhost:3054',
       '/identity-cache': 'http://localhost:3054',
       '/contact-backup': 'http://localhost:3054',
+      '/drive-data': 'http://localhost:3054',
       // Bee node API — proxied to avoid CORS issues in dev
       '/bee-api': {
         target: 'http://localhost:1633',

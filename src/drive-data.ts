@@ -293,7 +293,7 @@ export function importLocal(store: DriveStore, data: DriveImport, now = Date.now
     const dead = tombstones(store, kind)
     const have = new Set(items.map(i => i.id))
 
-    for (const value of incoming ?? []) {
+    for (const value of Array.isArray(incoming) ? incoming : []) {
       if (!isItem(value) || have.has(value.id) || value.id in dead) continue
       items.push({ ...value })
       have.add(value.id)
@@ -304,7 +304,7 @@ export function importLocal(store: DriveStore, data: DriveImport, now = Date.now
   addItems('record', data.records)
   addItems('folder', data.folders)
 
-  for (const value of data.shared ?? []) {
+  for (const value of Array.isArray(data.shared) ? data.shared : []) {
     if (!isItem(value)) continue
     const key = sharedKey(value)
 
@@ -313,7 +313,7 @@ export function importLocal(store: DriveStore, data: DriveImport, now = Date.now
     changed = true
   }
 
-  for (const [batch, value] of Object.entries(data.metadata ?? {})) {
+  for (const [batch, value] of Object.entries(isPlainObject(data.metadata) ? data.metadata : {})) {
     if (!isId(batch) || !isPlainObject(value)) continue
     const current = store.metadata[batch]
 

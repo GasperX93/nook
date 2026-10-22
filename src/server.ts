@@ -72,6 +72,7 @@ import { getWalletActivity } from './wallet-activity'
 import { getStatus } from './status'
 import { resetCrashLoop } from './supervisor'
 import { fetchWithTimeout } from './fetch-timeout'
+import { changeDriveData, importDriveData, loadDriveStore, parseOps, type DriveImport } from './drive-data'
 
 const UI_DIST = path.join(__dirname, '..', '..', 'ui')
 
@@ -254,7 +255,9 @@ export function runServer() {
   // Koa ctx, and winston JSON-stringifies extra args: ctx holds a Socket
   // (circular) and the logger itself throws, turning any malformed body into
   // an opaque 500.
-  app.use(koaBodyparser({ onerror: error => logger.error(error) }))
+  // 10 MB: a browser's first drive-data import carries its whole file list
+  // (the 1 MB default fits a few thousand files; shared drives carry theirs too).
+  app.use(koaBodyparser({ jsonLimit: '10mb', onerror: error => logger.error(error) }))
   const router = new Router()
 
   // Open endpoints without any authentication
@@ -346,6 +349,32 @@ export function runServer() {
       return
     }
     context.body = { stored: true }
+  })
+  // Classic drive data in the app — the same in every browser on this computer.
+  router.get('/drive-data', context => {
+    context.body = loadDriveStore()
+  })
+  router.post('/drive-data/ops', context => {
+    const ops = parseOps((context.request.body as { ops?: unknown })?.ops)
+
+    if (!ops) {
+      context.status = 400
+      context.body = { error: 'Invalid ops' }
+
+      return
+    }
+    context.body = changeDriveData(ops)
+  })
+  router.post('/drive-data/import', context => {
+    const body = context.request.body as DriveImport | undefined
+
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      context.status = 400
+      context.body = { error: 'Invalid import' }
+
+      return
+    }
+    context.body = importDriveData(body)
   })
   router.get('/peers', async context => {
     try {
