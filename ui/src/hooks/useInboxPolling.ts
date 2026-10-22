@@ -12,6 +12,7 @@ import { Bee } from '@ethersphere/bee-js'
 import { type Contact, mailbox } from '@swarm-notify/sdk'
 import { useEffect, useMemo, useRef } from 'react'
 
+import { api } from '../api/client'
 import { playCricketChirp } from '../lib/cricket'
 import { CONTACTS_RESTORED_EVENT } from '../notify/backup-signal'
 import {
@@ -55,8 +56,8 @@ const QUICK_POLL_FOR_MS = 180_000
  */
 const FULL_LOOKAHEAD_EVERY = 10
 /**
- * A first read of my feed that keeps stopping short (a slot of mine the node
- * never manages to fetch) is taken as it is after this many tries, and later
+ * A first read of my feed that keeps falling short of my send cursor (a slot
+ * of mine the node never manages to fetch) is taken as it is after this many tries, and later
  * reads go on from where it stopped — instead of re-reading the whole feed
  * every poll forever.
  */
@@ -78,6 +79,7 @@ async function readMySent(
   myAddr: string,
   contact: Contact,
   fullLookahead: boolean,
+  quick: boolean,
 ): Promise<void> {
   const id = contact.ethAddress
   const first = needsSentLoad(id)
@@ -90,8 +92,9 @@ async function readMySent(
     lookahead: cursor === undefined || fullLookahead ? undefined : 0,
   })
 
-  if (first && !(sent.complete && sentReadComplete(id, sent.nextIndex))) {
-    const tries = (firstSentReadTries.get(id) ?? 0) + 1
+  if (first && !sentReadComplete(id, sent.nextIndex)) {
+    // Quick 5 s retries try again but don't count: the budget is meant in 30 s polls.
+    const tries = (firstSentReadTries.get(id) ?? 0) + (quick ? 0 : 1)
 
     firstSentReadTries.set(id, tries)
 
@@ -100,7 +103,7 @@ async function readMySent(
   mergeSentFromFeed(loadThreads(), id, sent.messages, sent.indexes)
 
   if (sent.nextIndex > 0) advanceSendCursor(id, sent.nextIndex - 1)
-  recordSentRead(id, sent)
+  recordSentRead(id, sent, quick ? [] : (cursor?.retryIndices ?? []))
 
   if (first) markSentLoaded(id)
 }
@@ -117,6 +120,7 @@ async function readTheirs(
   myAddr: string,
   contact: Contact,
   fullLookahead: boolean,
+  quick: boolean,
 ): Promise<StoredMessage[]> {
   const id = contact.ethAddress
   const { fromIndex, retryIndices } = getReadCursor(id)
@@ -127,13 +131,15 @@ async function readTheirs(
     lookahead: fullLookahead || catchingUp ? undefined : 0,
   })
 
-  recordRead(id, result)
+  // Quick 5 s retries retry slots but don't use up their tries (budget = 30 s polls).
+  recordRead(id, result, quick ? [] : retryIndices)
+  const messages = result.messages
   // Fresh load right before the write: a message sent while this
   // (possibly long) poll ran must not be overwritten by a snapshot.
   const current = loadThreads()
   const threadKey = id.toLowerCase()
   const known = new Set((current[threadKey] ?? []).map(m => m.id))
-  const thread = appendReceived(current, id, result.messages)[threadKey] ?? []
+  const thread = appendReceived(current, id, messages)[threadKey] ?? []
 
   return thread.filter(m => !known.has(m.id))
 }
@@ -189,6 +195,17 @@ export function useInboxPolling(): void {
       }
 
       try {
+        // Bee down or restarting: every read would stop early (the proxy answers
+        // 502), and nothing read now must move a cursor. Skip the round.
+        if (
+          !(await api
+            .getBeeReadiness()
+            .then(r => r.ready)
+            .catch(() => false))
+        ) {
+          return
+        }
+
         // One contact at a time from its read cursor (R3b-2): the old
         // checkInbox walked every full history in parallel each tick.
         let newCount = 0
@@ -206,10 +223,10 @@ export function useInboxPolling(): void {
 
           try {
             // My own feed failing must not hold up their messages.
-            await readMySent(bee, signer.getSigningKey(), myAddr, lib, fullLookahead).catch(() => undefined)
+            await readMySent(bee, signer.getSigningKey(), myAddr, lib, fullLookahead, quick).catch(() => undefined)
 
             if (cancelled) return
-            const added = await readTheirs(bee, signer.getSigningKey(), myAddr, lib, fullLookahead)
+            const added = await readTheirs(bee, signer.getSigningKey(), myAddr, lib, fullLookahead, quick)
 
             if (cancelled) return
             newCount += added.length

@@ -37,6 +37,7 @@ import { FEEDBACK_URL } from '../lib/links'
 import { isSystemStamp, pickMessagingStamp } from '../lib/system-stamp'
 import { useOutboxDrain } from '../hooks/useOutboxDrain'
 import { hasKnownIdentity, hasLegacyIdentityPendingMove } from '../notify/active-identity'
+import { dismissOtherBrowserNotice, OTHER_BROWSER_EVENT, showOtherBrowserNotice } from '../notify/other-browser'
 import { primeCricketAudio } from '../lib/cricket'
 import { loadReadCursors, loadThreads, totalUnread } from '../notify/messages'
 import { loadInvitations, pendingInvitations } from '../notify/invitations'
@@ -240,6 +241,17 @@ export default function Layout() {
     }
   })
   const showMoveNotice = !derivedSigner && !moveNoticeDismissed && hasLegacyIdentityPendingMove()
+
+  // Contacts came back in this browser, drive data didn't (still browser-only).
+  const [otherBrowser, setOtherBrowser] = useState(() => showOtherBrowserNotice())
+
+  useEffect(() => {
+    const update = () => setOtherBrowser(showOtherBrowserNotice())
+
+    window.addEventListener(OTHER_BROWSER_EVENT, update)
+
+    return () => window.removeEventListener(OTHER_BROWSER_EVENT, update)
+  }, [])
 
   // Auto-complete onboarding for existing users upgrading from v0.2.0 (they never had the flag).
   // Once stamps or wallet data loads and shows existing activity, mark onboarding done.
@@ -599,6 +611,27 @@ export default function Layout() {
             >
               <Mail size={12} className="shrink-0" style={{ color: '#60a5fa' }} />
               <span style={{ color: 'rgb(var(--fg))' }}>To use Messages, sign in with Swarm ID (top right).</span>
+            </div>
+          )}
+
+          {otherBrowser && !showOnboarding && (
+            <div
+              className="flex items-start gap-2.5 px-4 py-2.5 text-xs shrink-0"
+              style={{ backgroundColor: 'rgba(96,165,250,0.08)', borderBottom: '1px solid rgba(96,165,250,0.2)' }}
+            >
+              <HardDrive size={12} className="shrink-0 mt-0.5" style={{ color: '#60a5fa' }} />
+              <p className="flex-1" style={{ color: 'rgb(var(--fg))' }}>
+                <span className="font-semibold">Your file lists are in the browser you usually use Nook in.</span> Here,
+                drives other than deletable ones show 0 files, and Shared with me is empty. Your files are safe.
+                Contacts and messages work here. Upload to encrypted drives only from your usual browser.
+              </p>
+              <button
+                onClick={() => dismissOtherBrowserNotice()}
+                className="shrink-0 p-0.5 hover:opacity-60"
+                aria-label="Dismiss"
+              >
+                <X size={12} style={{ color: 'rgb(var(--fg-muted))' }} />
+              </button>
             </div>
           )}
 

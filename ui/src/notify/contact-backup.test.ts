@@ -6,7 +6,14 @@ import { type ContactBackup, serverApi } from '../api/server'
 import { setActiveIdentity } from './active-identity'
 import { CONTACTS_RESTORED_EVENT } from './backup-signal'
 import { mergeContacts, restoreContactBackup } from './contact-backup'
-import { getMyDisplayName, setMyDisplayName } from './contact-state'
+import {
+  getInviteSentAt,
+  getMyDisplayName,
+  recordInviteSent,
+  setMyDisplayName,
+  wasInviteAccepted,
+} from './contact-state'
+import { showOtherBrowserNotice } from './other-browser'
 import {
   advanceSendCursor,
   appendReceived,
@@ -23,8 +30,9 @@ import {
   sentReadComplete,
   setMessageStatusByOutboxId,
   appendOutboxMessage,
+  theirSidePending,
 } from './messages'
-import { getReadCursor, positionsToKeep, raiseExpected, recordRead } from './receive-cursor'
+import { getReadCursor, MAX_HOLE_TRIES, positionsToKeep, raiseExpected, recordRead } from './receive-cursor'
 import { loadContacts, saveContacts } from './storage'
 import type { NookContact } from './types'
 
@@ -126,6 +134,25 @@ describe('restoreContactBackup', () => {
     expect(writes[writes.length - 1].theirNext).toEqual({ [MARTIN]: 40, [ANA]: 9 })
   })
 
+  it('a browser that has read a conversation itself never waits for the position another browser reached', async () => {
+    recordRead(MARTIN, { nextIndex: 24, holes: [] })
+    saved = { contacts: [], sendCursors: {}, theirNext: { [MARTIN]: 25 }, myName: '' }
+
+    await restoreContactBackup(ME)
+
+    expect(conversationPending(MARTIN)).toBe(false)
+  })
+
+  it('a position another browser reached, stored earlier, is forgotten once this browser reads itself', async () => {
+    raiseExpected({ [MARTIN]: 25 })
+    recordRead(MARTIN, { nextIndex: 24, holes: [] })
+    saved = { contacts: [], sendCursors: {}, theirNext: { [MARTIN]: 25 }, myName: '' }
+
+    await restoreContactBackup(ME)
+
+    expect(conversationPending(MARTIN)).toBe(false)
+  })
+
   it('a file from before read positions were kept still restores', async () => {
     saved = { contacts: [contact(MARTIN, 'Martin')], sendCursors: {}, myName: '' }
 
@@ -133,6 +160,50 @@ describe('restoreContactBackup', () => {
 
     expect(loadContacts().map(c => c.id)).toEqual([MARTIN])
     expect(conversationPending(MARTIN)).toBe(false)
+  })
+
+  it('invites sent and accepted come back and are saved again, the later one wins', async () => {
+    recordInviteSent(ANA, 900)
+    saved = {
+      contacts: [],
+      sendCursors: {},
+      invitesSent: { [MARTIN]: 500, [ANA]: 100 },
+      invitesAccepted: { [MARTIN]: 600 },
+      myName: '',
+    }
+
+    await restoreContactBackup(ME)
+
+    expect(getInviteSentAt(MARTIN)).toBe(500)
+    expect(getInviteSentAt(ANA)).toBe(900)
+    expect(wasInviteAccepted(MARTIN)).toBe(true)
+    expect(writes[writes.length - 1].invitesSent).toEqual({ [MARTIN]: 500, [ANA]: 900 })
+  })
+
+  it('contacts restored into a browser without drive data: the drive notice shows', async () => {
+    saved = { contacts: [contact(MARTIN, 'Martin')], sendCursors: {}, myName: '' }
+
+    await restoreContactBackup(ME)
+
+    expect(showOtherBrowserNotice()).toBe(true)
+  })
+
+  it('no drive notice in a browser that has its own drive data', async () => {
+    localStorage.setItem('swarm-drive', '[]')
+    saved = { contacts: [contact(MARTIN, 'Martin')], sendCursors: {}, myName: '' }
+
+    await restoreContactBackup(ME)
+
+    expect(showOtherBrowserNotice()).toBe(false)
+  })
+
+  it('no drive notice when nothing was restored (the usual browser)', async () => {
+    saveContacts([contact(MARTIN, 'Martin')])
+    saved = { contacts: [contact(MARTIN, 'Martin')], sendCursors: {}, myName: '' }
+
+    await restoreContactBackup(ME)
+
+    expect(showOtherBrowserNotice()).toBe(false)
   })
 
   it('saves the merged result, including contacts only this browser had', async () => {
@@ -226,6 +297,30 @@ describe('conversation loading (#191)', () => {
     expect(conversationLoading(ANA, 1_000 + LOADING_CAP_MS)).toBe(false)
   })
 
+  it('hopped gaps are retried; one delivered later goes, the other stays on the list', () => {
+    recordRead(MARTIN, { nextIndex: 4, holes: [], gaps: [0, 1], indexes: [3] }, [])
+    expect(getReadCursor(MARTIN).retryIndices).toEqual([0, 1])
+
+    recordRead(MARTIN, { nextIndex: 4, holes: [], gaps: [], indexes: [0] }, [0, 1])
+    expect(getReadCursor(MARTIN).retryIndices).toEqual([1])
+  })
+
+  it('a try counts only for slots actually retried in that read', () => {
+    recordRead(MARTIN, { nextIndex: 5, holes: [2] }, [])
+    recordRead(MARTIN, { nextIndex: 5, holes: [], indexes: [] }, [])
+    for (let i = 1; i < MAX_HOLE_TRIES - 1; i++) recordRead(MARTIN, { nextIndex: 5, holes: [2] }, [2])
+
+    expect(getReadCursor(MARTIN).retryIndices).toEqual([2])
+  })
+
+  it('their side still to load means they wrote to me; mine alone does not', () => {
+    advanceSendCursor(ANA, 3)
+    expect(theirSidePending(ANA)).toBe(false)
+
+    raiseExpected({ [ANA]: 2 })
+    expect(theirSidePending(ANA)).toBe(true)
+  })
+
   it('a hopped gap and a retried slot not yet delivered are tried again', () => {
     recordRead(MARTIN, { nextIndex: 5, holes: [], gaps: [2] })
     expect(getReadCursor(MARTIN).retryIndices).toEqual([2])
@@ -286,6 +381,47 @@ describe('sent messages from my feed', () => {
     mergeSentFromFeed(loadThreads(), MARTIN, [message('hi', 10)], [0])
 
     expect(loadThreads()[MARTIN].map(m => [m.ts, m.feedIndex])).toEqual([[11, 0]])
+  })
+
+  it('a message that waited long in the outbox is still recognised, by the closest time', () => {
+    appendSent(loadThreads(), MARTIN, 'hi', 1_000)
+    appendSent(loadThreads(), MARTIN, 'hi', 50_000_000)
+    mergeSentFromFeed(loadThreads(), MARTIN, [message('hi', 1_000 + 3 * 60 * 60_000)], [0])
+
+    expect(loadThreads()[MARTIN].map(m => [m.ts, m.feedIndex])).toEqual([
+      [1_000, 0],
+      [50_000_000, undefined],
+    ])
+  })
+
+  it('a failed message never went out, so it never takes a feed message', () => {
+    appendOutboxMessage(loadThreads(), { id: 'o1', recipientId: MARTIN, ts: 10, kind: 'message', body: 'hi' })
+    setMessageStatusByOutboxId(loadThreads(), MARTIN, 'o1', 'failed')
+    mergeSentFromFeed(loadThreads(), MARTIN, [message('hi', 20)], [0])
+
+    expect(loadThreads()[MARTIN]).toHaveLength(2)
+  })
+
+  it('a message still going out never takes an older one from the feed', () => {
+    appendOutboxMessage(loadThreads(), { id: 'o1', recipientId: MARTIN, ts: 100, kind: 'message', body: 'hi' })
+    mergeSentFromFeed(loadThreads(), MARTIN, [message('hi', 10)], [0])
+
+    expect(loadThreads()[MARTIN]).toHaveLength(2)
+  })
+
+  it('when it goes out, a copy of the same slot added from the feed in the meantime is dropped', () => {
+    appendOutboxMessage(loadThreads(), { id: 'o1', recipientId: MARTIN, ts: 100, kind: 'message', body: 'hi' })
+    mergeSentFromFeed(loadThreads(), MARTIN, [message('hi', 105)], [3])
+    setMessageStatusByOutboxId(loadThreads(), MARTIN, 'o1', 'sent', 3)
+
+    expect(loadThreads()[MARTIN].map(m => [m.outboxId, m.feedIndex])).toEqual([['o1', 3]])
+  })
+
+  it('an invite already shown from the feed is not added again', () => {
+    mergeSentFromFeed(loadThreads(), MARTIN, [message('hi', 105)], [0])
+    appendSent(loadThreads(), MARTIN, 'hi', 110, 0)
+
+    expect(loadThreads()[MARTIN]).toHaveLength(1)
   })
 
   it('adds what I sent from another browser', () => {

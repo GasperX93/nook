@@ -172,6 +172,11 @@ export function appendSent(
   feedIndex?: number,
 ): ThreadMap {
   const key = counterparty.toLowerCase()
+
+  // Already shown from a read of my feed (it went out before this ran).
+  if (feedIndex !== undefined && (threads[key] ?? []).some(m => m.direction === 'sent' && m.feedIndex === feedIndex)) {
+    return threads
+  }
   const msg: StoredMessage = {
     id: makeId(ts, 'sent', body),
     counterparty: key,
@@ -234,12 +239,21 @@ export function markSentLoaded(counterparty: string, now = Date.now()): void {
  */
 export function conversationPending(counterparty: string): boolean {
   const key = counterparty.toLowerCase()
-  const thread = loadThreads()[key] ?? []
   const mine = (getSendCursor(key) ?? 0) > 0 && needsSentLoad(key)
-  const theirs =
-    readPosition(key) < expectedPosition(key) || (hasRetries(key) && !thread.some(m => m.direction === 'received'))
 
-  return mine || theirs
+  return mine || theirSidePending(key)
+}
+
+/**
+ * Their side of a conversation still to load here — which also means they
+ * have written to me: one of my browsers read further, or slots of theirs
+ * exist that couldn't be read yet.
+ */
+export function theirSidePending(counterparty: string): boolean {
+  const key = counterparty.toLowerCase()
+  const thread = loadThreads()[key] ?? []
+
+  return readPosition(key) < expectedPosition(key) || (hasRetries(key) && !thread.some(m => m.direction === 'received'))
 }
 
 /** How long an open conversation shows as loading at most, so an unreadable feed never hides it. */
@@ -269,19 +283,15 @@ export function conversationLoading(counterparty: string, now = Date.now()): boo
 }
 
 /**
- * A message sent from this browser gets its time here when it is written
- * locally and again in the SDK when it goes to the feed, so the two copies
- * differ by up to how long it waited to go out.
- */
-const SAME_SEND_WINDOW_MS = 10 * 60_000
-
-/**
  * Sent messages read back from my own mailbox feed (#191), added to the
  * thread unless this browser already shows them. Recognised by feed index;
  * a bubble without one (sent before indexes were kept, or still going out)
- * matches by kind and text within SAME_SEND_WINDOW_MS, and takes the index so
- * later reads match exactly. Each bubble stands for one feed message, so the
- * same text sent twice shows twice.
+ * matches the same kind and text, closest in time — its local time is when it
+ * was written here, the feed's when it went out, which can be much later for
+ * a message that waited in the outbox — and takes the index so later reads
+ * match exactly. A failed bubble never went out, and one still sending gets
+ * its index from the send itself, so neither matches here. Each
+ * bubble stands for one feed message, so the same text sent twice shows twice.
  */
 export function mergeSentFromFeed(
   threads: ThreadMap,
@@ -301,14 +311,18 @@ export function mergeSentFromFeed(
     if (known.has(feedIndex)) return
     known.add(feedIndex)
     const kind: StoredMessage['kind'] = isDriveKind(m.type) ? m.type : 'message'
-    const match = existing.findIndex(
-      l =>
-        l.direction === 'sent' &&
-        l.feedIndex === undefined &&
-        l.kind === kind &&
-        l.body === m.body &&
-        Math.abs(l.ts - m.ts) <= SAME_SEND_WINDOW_MS,
-    )
+    let match = -1
+
+    existing.forEach((l, n) => {
+      if (l.direction !== 'sent' || l.feedIndex !== undefined) return
+
+      // Failed never went out; sending gets its index when it does.
+      if (l.status === 'failed' || l.status === 'sending') return
+
+      if ((l.kind ?? 'message') !== kind || l.body !== m.body) return
+
+      if (match < 0 || Math.abs(l.ts - m.ts) < Math.abs(existing[match].ts - m.ts)) match = n
+    })
 
     if (match >= 0) {
       existing[match] = { ...existing[match], feedIndex }
@@ -385,9 +399,15 @@ export function setMessageStatusByOutboxId(
   const thread = threads[key]
 
   if (!thread?.some(m => m.outboxId === outboxId)) return threads
+  // A read of my feed may already have added this message (it went out before
+  // its bubble knew its index): that copy goes, the bubble stays.
+  const kept =
+    feedIndex === undefined
+      ? thread
+      : thread.filter(m => !(m.direction === 'sent' && m.feedIndex === feedIndex && m.outboxId !== outboxId))
   const updated: ThreadMap = {
     ...threads,
-    [key]: thread.map(m =>
+    [key]: kept.map(m =>
       m.outboxId === outboxId ? { ...m, status, ...(feedIndex === undefined ? {} : { feedIndex }) } : m,
     ),
   }

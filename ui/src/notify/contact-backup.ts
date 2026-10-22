@@ -1,9 +1,16 @@
 import { type ContactBackup, serverApi } from '../api/server'
 import { getActiveIdentity } from './active-identity'
 import { CONTACTS_RESTORED_EVENT, onContactDataChanged } from './backup-signal'
-import { getMyDisplayName, setMyDisplayName } from './contact-state'
+import {
+  getMyDisplayName,
+  loadInvitesAccepted,
+  loadInvitesSent,
+  mergeInviteState,
+  setMyDisplayName,
+} from './contact-state'
 import { advanceSendCursor, loadReadCursors, loadSendCursors, saveReadCursors } from './messages'
-import { positionsToKeep, raiseExpected } from './receive-cursor'
+import { noteContactsRestored } from './other-browser'
+import { dropExpected, hasReadCursor, loadExpected, positionsToKeep, raiseExpected } from './receive-cursor'
 import { loadContacts, saveContacts } from './storage'
 import type { NookContact } from './types'
 
@@ -37,6 +44,8 @@ function snapshot(): ContactBackup {
     sendCursors: loadSendCursors(),
     readMarks: loadReadCursors(),
     theirNext: positionsToKeep(),
+    invitesSent: loadInvitesSent(),
+    invitesAccepted: loadInvitesAccepted(),
     myName: getMyDisplayName(),
   }
 }
@@ -90,7 +99,14 @@ export async function restoreContactBackup(address: string): Promise<void> {
     for (const [counterparty, next] of Object.entries(saved.sendCursors ?? {})) {
       if (Number.isInteger(next) && next > 0) advanceSendCursor(counterparty, next - 1)
     }
-    raiseExpected(saved.theirNext ?? {})
+    // Only where this browser hasn't read that conversation itself: a browser
+    // with its own read position never waits for another browser's (and
+    // forgets one it stored before, e.g. in an earlier test build).
+    const theirNext = Object.entries(saved.theirNext ?? {})
+
+    raiseExpected(Object.fromEntries(theirNext.filter(([contactId]) => !hasReadCursor(contactId))))
+    dropExpected(Object.keys(loadExpected()).filter(contactId => hasReadCursor(contactId)))
+    mergeInviteState(saved.invitesSent ?? {}, saved.invitesAccepted ?? {})
 
     const marks = loadReadCursors()
     let marksChanged = false
@@ -112,6 +128,7 @@ export async function restoreContactBackup(address: string): Promise<void> {
     if (merged.length !== local.length) {
       saveContacts(merged)
       window.dispatchEvent(new Event(CONTACTS_RESTORED_EVENT))
+      noteContactsRestored()
     }
   }
   restoredFor = id

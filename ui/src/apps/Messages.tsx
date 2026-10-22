@@ -21,6 +21,7 @@ import { REGISTRY_ADDRESS } from '../notify/constants'
 import {
   defaultInviteMessage,
   deriveConnectionState,
+  getInviteSentAt,
   hasInboundSince,
   getMyDisplayName,
   markInviteAccepted,
@@ -35,6 +36,7 @@ import { queueAndDeliver, retryOutboxEntry } from '../notify/deliver'
 import {
   appendSent,
   conversationLoading,
+  theirSidePending,
   loadReadCursors,
   loadThreads,
   markRead,
@@ -157,10 +159,17 @@ export default function Messages({ initialContactId, hideContactList, hideThread
   const selected = contacts.find(c => c.id === selectedId) ?? null
   const selectedThread = selected ? (threads[selected.id.toLowerCase()] ?? []) : []
   const hasInbound = selected ? hasInboundSince(selectedThread, selected.addedAt) : false
-  const connectionState: ConnectionState = selected ? deriveConnectionState(selected.id, hasInbound) : 'not-connected'
   // One side of the conversation is still being read in this browser (#191):
   // show neither half a conversation nor an invite composer yet.
   const syncing = selected ? conversationLoading(selected.id) : false
+  // Past the loading cap, their messages still not all here: they have written
+  // to me, so this is a connection — never fall back to the (paid) invite.
+  const catchingUp = selected ? !syncing && theirSidePending(selected.id) : false
+  const connectionState: ConnectionState = !selected
+    ? 'not-connected'
+    : catchingUp
+      ? 'connected'
+      : deriveConnectionState(selected.id, hasInbound)
   const needsNickname = connectionState !== 'connected' && !myDisplayName && (!suggestedName || editingName)
   const invitingAsSuggested =
     connectionState !== 'connected' && !myDisplayName && Boolean(suggestedName) && !editingName
@@ -422,7 +431,8 @@ export default function Messages({ initialContactId, hideContactList, hideThread
 
       // The invite is in their mailbox — show it as sent now, whatever the
       // on-chain notice does next.
-      setThreads(prev => appendSent(prev, selected.id, body, Date.now(), feedIndex))
+      // From storage, not React state: the poller may have written meanwhile.
+      setThreads(appendSent(loadThreads(), selected.id, body, Date.now(), feedIndex))
       setDraft('')
 
       try {
@@ -685,7 +695,7 @@ export default function Messages({ initialContactId, hideContactList, hideThread
                 </p>
               ) : selectedThread.length === 0 ? (
                 <p className="text-sm m-auto" style={{ color: 'rgb(var(--fg-muted))' }}>
-                  No messages yet. Say hello.
+                  {catchingUp ? 'Still loading older messages…' : 'No messages yet. Say hello.'}
                 </p>
               ) : (
                 <MessageThread
@@ -912,7 +922,7 @@ export default function Messages({ initialContactId, hideContactList, hideThread
 
 export function ConnectionStatusBadge({ state, contactId }: { state: ConnectionState; contactId: string }) {
   // For invite-sent states, show how long ago we sent it.
-  const sentAt = state === 'invite-sent-fresh' || state === 'invite-sent-stale' ? getInviteSentAtMs(contactId) : null
+  const sentAt = state === 'invite-sent-fresh' || state === 'invite-sent-stale' ? getInviteSentAt(contactId) : null
   const hint = sentAt ? formatAge(sentAt) : null
 
   const style: Record<ConnectionState, { label: string; bg: string; fg: string; dot: string }> = {
@@ -952,20 +962,6 @@ export function ConnectionStatusBadge({ state, contactId }: { state: ConnectionS
       {s.label}
     </span>
   )
-}
-
-function getInviteSentAtMs(contactId: string): number | null {
-  // Re-read each render — cheap localStorage lookup, keeps badge fresh after Send invite.
-  try {
-    const raw = localStorage.getItem('nook-invitations-sent-v1')
-
-    if (!raw) return null
-    const map = JSON.parse(raw) as Record<string, { sentAt: number }>
-
-    return map[contactId.toLowerCase()]?.sentAt ?? null
-  } catch {
-    return null
-  }
 }
 
 function formatAge(sentAtMs: number): string {

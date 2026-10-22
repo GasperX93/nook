@@ -11,7 +11,8 @@
  * - holes: the slot exists but its payload couldn't be read (still
  *   propagating, or stranded by pre-0.5.2 deferred uploads);
  * - gaps: the walk hopped over a missing slot — usually never written, but a
- *   node that is still warming up reports existing slots missing for a while.
+ *   slot the node couldn't fetch at that moment looks the same (a light node
+ *   answers both with 500), so a message hopped that way still arrives.
  *
  * Also the EXPECTED read position of their feed: how far any of my browsers
  * had read it (kept in the app folder, #192). A new browser knows from it that
@@ -70,7 +71,31 @@ function cursorOf(key: string, contactId: string): ReadCursor | undefined {
 function getCursor(key: string, contactId: string): { fromIndex: number; retryIndices: number[] } {
   const c = cursorOf(key, contactId)
 
-  return { fromIndex: c?.next ?? 0, retryIndices: c ? Object.keys(c.holes).map(Number) : [] }
+  return { fromIndex: c?.next ?? 0, retryIndices: Object.keys(c?.holes ?? {}).map(Number) }
+}
+
+/**
+ * Keep the slots still worth retrying: not delivered this time, tries left.
+ * Only a slot retried in this read (or new) counts a try; `retried` undefined
+ * means every known slot was retried.
+ */
+function stillToRetry(
+  tried: Record<string, number>,
+  delivered: Set<number>,
+  add: number[],
+  retried: Set<number> | undefined,
+): Record<string, number> {
+  const out: Record<string, number> = {}
+
+  for (const i of new Set([...add, ...Object.keys(tried).map(Number)])) {
+    if (delivered.has(i) && !add.includes(i)) continue
+    const known = tried[String(i)]
+    const tries = known === undefined || !retried || retried.has(i) ? (known ?? 0) + 1 : known
+
+    if (tries < MAX_HOLE_TRIES) out[String(i)] = tries
+  }
+
+  return out
 }
 
 /**
@@ -79,27 +104,13 @@ function getCursor(key: string, contactId: string): { fromIndex: number; retryIn
  * list (the SDK drops a retried slot that reads as missing) until its tries
  * run out. Returns whether the position moved.
  */
-function record(key: string, contactId: string, result: ReadOutcome): boolean {
+function record(key: string, contactId: string, result: ReadOutcome, retriedList?: number[]): boolean {
   const map = load<CursorMap>(key) as CursorMap
   const id = contactId.toLowerCase()
   const previous = map[id]
-  const tried = previous?.holes ?? {}
   const delivered = new Set(result.indexes ?? [])
-  const retry = new Set<number>([
-    ...result.holes,
-    ...(result.gaps ?? []),
-    ...Object.keys(tried)
-      .map(Number)
-      .filter(i => !delivered.has(i)),
-  ])
-  const holes: Record<string, number> = {}
-
-  for (const i of retry) {
-    const tries = (tried[String(i)] ?? 0) + 1
-
-    if (tries < MAX_HOLE_TRIES) holes[String(i)] = tries
-  }
-
+  const retried = retriedList ? new Set(retriedList) : undefined
+  const holes = stillToRetry(previous?.holes ?? {}, delivered, [...result.holes, ...(result.gaps ?? [])], retried)
   const next = Math.max(result.nextIndex, previous?.next ?? 0)
 
   map[id] = { next, holes }
@@ -123,9 +134,10 @@ export function hasRetries(contactId: string): boolean {
   return Object.keys(cursorOf(RECEIVED_KEY, contactId)?.holes ?? {}).length > 0
 }
 
-export function recordRead(contactId: string, result: ReadOutcome): void {
+/** `retried`: the retryIndices this read was given (only those count a try). */
+export function recordRead(contactId: string, result: ReadOutcome, retried?: number[]): void {
   // A new position is worth keeping in the app folder (expected position, #192).
-  if (record(RECEIVED_KEY, contactId, result)) contactDataChanged()
+  if (record(RECEIVED_KEY, contactId, result, retried)) contactDataChanged()
 }
 
 /** Where to resume reading my own feed to them; undefined before the first read in this browser. */
@@ -133,8 +145,8 @@ export function getSentCursor(contactId: string): { fromIndex: number; retryIndi
   return cursorOf(SENT_KEY, contactId) ? getCursor(SENT_KEY, contactId) : undefined
 }
 
-export function recordSentRead(contactId: string, result: ReadOutcome): void {
-  record(SENT_KEY, contactId, result)
+export function recordSentRead(contactId: string, result: ReadOutcome, retried?: number[]): void {
+  record(SENT_KEY, contactId, result, retried)
 }
 
 /** How far any of my browsers had read their feed (from the app folder), per contact. */
@@ -152,6 +164,23 @@ export function raiseExpected(values: Record<string, number>): void {
 
     if (Number.isInteger(next) && next > (map[id] ?? 0)) {
       map[id] = next
+      changed = true
+    }
+  }
+
+  if (changed) save(EXPECTED_KEY, map)
+}
+
+/** Forget expected positions for these contacts (this browser reads them itself). */
+export function dropExpected(contactIds: string[]): void {
+  const map = loadExpected()
+  let changed = false
+
+  for (const contactId of contactIds) {
+    const id = contactId.toLowerCase()
+
+    if (id in map) {
+      delete map[id]
       changed = true
     }
   }
