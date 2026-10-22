@@ -1,5 +1,6 @@
 // Nook server API client — talks to the Koa backend (same origin in prod, proxied in dev)
 import type { NookContact } from '../notify/types'
+import type { DriveImport, DriveOp, DriveStore } from '../store/drive-data'
 import { useAppStore } from '../store/app'
 
 function authHeaders(): Record<string, string> {
@@ -422,6 +423,14 @@ export const serverApi = {
 
   writeContactBackup: async (address: string, backup: ContactBackup) =>
     serverPost<{ stored: boolean }>(`/contact-backup/${address}`, backup),
+
+  // ─── Classic drive data in the app (store/drive-data.ts) ─────────────────
+
+  getDriveData: async () => serverGet<DriveStore>('/drive-data'),
+
+  changeDriveData: async (ops: DriveOp[]) => serverPost<DriveStore>('/drive-data/ops', { ops }),
+
+  importDriveData: async (data: DriveImport) => serverPost<DriveStore>('/drive-data/import', data),
 
   // ─── Identity cache (Electron safeStorage, OS keychain) ─────────────────
 
