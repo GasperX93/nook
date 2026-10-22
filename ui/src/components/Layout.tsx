@@ -44,6 +44,7 @@ import { loadInvitations, pendingInvitations } from '../notify/invitations'
 import { loadContacts } from '../notify/storage'
 import { useRegistryPolling } from '../hooks/useRegistryPolling'
 import { useAppStore } from '../store/app'
+import { startDriveData, useDriveDataStore } from '../store/drive-data'
 import NotificationBell from './NotificationBell'
 import SwarmIdChip from './SwarmIdChip'
 import SwarmIdDialog from './SwarmIdDialog'
@@ -183,6 +184,16 @@ export default function Layout() {
     resumePendingPropagation()
     resumeReclaimableJobs()
   }, [])
+
+  // Classic drive data lives in the app (same in every browser): read it now,
+  // after a focus and every 30 s. Its records can carry uploads still
+  // spreading that this browser hadn't seen — follow them once it's loaded.
+  useEffect(() => startDriveData(), [])
+  const driveDataStatus = useDriveDataStore(s => s.status)
+
+  useEffect(() => {
+    if (driveDataStatus === 'ready') resumePendingPropagation()
+  }, [driveDataStatus])
 
   // Unlock notification audio on the first user gesture so a background chirp
   // (e.g. an incoming invitation) isn't silently blocked by autoplay policy.

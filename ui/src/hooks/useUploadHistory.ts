@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 
+import { type DriveOp, sendDriveOps, toPatch } from '../store/drive-data'
+
 export interface DriveFolder {
   id: string
   name: string
@@ -101,14 +103,18 @@ export function pendingPropagationRecords(): {
 export function clearPendingTagUid(tagUid: number): void {
   try {
     const records: UploadRecord[] = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '[]')
+    const ops: DriveOp[] = []
     const next = records.map(r => {
       if (r.pendingTagUid !== tagUid) return r
       const { pendingTagUid: _cleared, ...rest } = r
+
+      ops.push({ kind: 'record', op: 'patch', id: r.id, changes: { pendingTagUid: null } })
 
       return rest as UploadRecord
     })
 
     save(next)
+    sendDriveOps(ops)
     // Mounted hook instances hold records in React state — poke them.
     window.dispatchEvent(new Event('nook:records-changed'))
   } catch {
@@ -167,8 +173,17 @@ function loadAll(): { records: UploadRecord[]; folders: DriveFolder[] } {
  * Write localStorage directly, then poke every mounted instance to reload —
  * the same path the transfer tracker uses (clearPendingTagUid).
  */
-function persistRecords(mutate: (records: UploadRecord[]) => UploadRecord[]): void {
+function persistRecords(mutate: (records: UploadRecord[]) => UploadRecord[], ops: DriveOp[]): void {
   save(mutate(loadAll().records))
+  // The app's copy (store/drive-data): the same change, so every browser sees it.
+  sendDriveOps(ops)
+  window.dispatchEvent(new Event('nook:records-changed'))
+}
+
+/** Folders: storage-first like records (a state updater did nothing once the page had unmounted). */
+function persistFolders(mutate: (folders: DriveFolder[]) => DriveFolder[], ops: DriveOp[]): void {
+  saveFolders(mutate(loadFolders()))
+  sendDriveOps(ops)
   window.dispatchEvent(new Event('nook:records-changed'))
 }
 
@@ -193,15 +208,18 @@ export function useUploadHistory() {
   }, [])
 
   function add(record: UploadRecord) {
-    persistRecords(all => [record, ...all])
+    persistRecords(all => [record, ...all], [{ kind: 'record', op: 'put', value: { ...record } }])
   }
 
   function remove(id: string) {
-    persistRecords(all => all.filter(r => r.id !== id))
+    persistRecords(all => all.filter(r => r.id !== id), [{ kind: 'record', op: 'delete', id }])
   }
 
   function update(id: string, changes: Partial<UploadRecord>) {
-    persistRecords(all => all.map(r => (r.id === id ? { ...r, ...changes } : r)))
+    persistRecords(
+      all => all.map(r => (r.id === id ? { ...r, ...changes } : r)),
+      [{ kind: 'record', op: 'patch', id, changes: toPatch(changes) }],
+    )
   }
 
   function addFolder(name: string, driveId: string, parentFolderId?: string) {
@@ -212,12 +230,8 @@ export function useUploadHistory() {
       driveId,
       ...(parentFolderId ? { parentFolderId } : {}),
     }
-    setFolders(prev => {
-      const next = [...prev, folder]
-      saveFolders(next)
 
-      return next
-    })
+    persistFolders(all => [...all, folder], [{ kind: 'folder', op: 'put', value: { ...folder } }])
   }
 
   function removeFolder(id: string, allFolders: DriveFolder[]) {
@@ -229,52 +243,46 @@ export function useUploadHistory() {
       toRemove.add(current)
       allFolders.filter(f => f.parentFolderId === current).forEach(f => queue.push(f.id))
     }
-    setFolders(prev => {
-      const next = prev.filter(f => !toRemove.has(f.id))
-      saveFolders(next)
-
-      return next
-    })
-    setRecords(prev => {
-      const next = prev.map(r => (r.folderId && toRemove.has(r.folderId) ? { ...r, folderId: undefined } : r))
-      save(next)
-
-      return next
-    })
+    // The app removes the folders below it and moves their files to the top level too.
+    persistFolders(all => all.filter(f => !toRemove.has(f.id)), [{ kind: 'folder', op: 'delete', id }])
+    persistRecords(
+      all => all.map(r => (r.folderId && toRemove.has(r.folderId) ? { ...r, folderId: undefined } : r)),
+      [],
+    )
   }
 
   function renameFolder(id: string, name: string) {
-    setFolders(prev => {
-      const next = prev.map(f => (f.id === id ? { ...f, name } : f))
-      saveFolders(next)
-
-      return next
-    })
+    persistFolders(
+      all => all.map(f => (f.id === id ? { ...f, name } : f)),
+      [{ kind: 'folder', op: 'patch', id, changes: { name } }],
+    )
   }
 
   function moveToFolder(recordId: string, folderId: string | null) {
-    setRecords(prev => {
-      const next = prev.map(r => (r.id === recordId ? { ...r, folderId: folderId ?? undefined } : r))
-      save(next)
-
-      return next
-    })
+    persistRecords(
+      all => all.map(r => (r.id === recordId ? { ...r, folderId: folderId ?? undefined } : r)),
+      [{ kind: 'record', op: 'patch', id: recordId, changes: { folderId } }],
+    )
   }
 
   /** Set an ENS domain on a record, removing it from any other record that had it */
   function setEnsDomain(recordId: string, domain: string) {
-    setRecords(prev => {
-      const next = prev.map(r => {
-        if (r.id === recordId) return { ...r, ensDomain: domain }
+    const others = loadAll().records.filter(r => r.id !== recordId && r.ensDomain === domain)
 
-        if (r.ensDomain === domain) return { ...r, ensDomain: undefined }
+    persistRecords(
+      all =>
+        all.map(r => {
+          if (r.id === recordId) return { ...r, ensDomain: domain }
 
-        return r
-      })
-      save(next)
+          if (r.ensDomain === domain) return { ...r, ensDomain: undefined }
 
-      return next
-    })
+          return r
+        }),
+      [
+        { kind: 'record', op: 'patch', id: recordId, changes: { ensDomain: domain } },
+        ...others.map(r => ({ kind: 'record' as const, op: 'patch' as const, id: r.id, changes: { ensDomain: null } })),
+      ],
+    )
   }
 
   return { records, folders, add, remove, update, addFolder, removeFolder, renameFolder, moveToFolder, setEnsDomain }

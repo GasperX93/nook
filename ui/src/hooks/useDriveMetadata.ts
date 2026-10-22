@@ -7,6 +7,8 @@
  */
 import { useEffect, useState } from 'react'
 
+import { type DriveOp, sendDriveOps, toPatch } from '../store/drive-data'
+
 const STORAGE_KEY = 'nook-drive-metadata'
 
 export interface LocalDriveMetadata {
@@ -65,8 +67,11 @@ const CHANGED_EVENT = 'nook:drive-metadata-changed'
  * one. Write localStorage from its current contents, then tell every mounted
  * instance to reload.
  */
-function write(mutate: (data: Record<string, LocalDriveMetadata>) => Record<string, LocalDriveMetadata>) {
+function write(mutate: (data: Record<string, LocalDriveMetadata>) => Record<string, LocalDriveMetadata>, op: DriveOp) {
   persist(mutate(load()))
+  // The app's copy (store/drive-data). The app keeps an encrypted drive's ACT
+  // history itself and ignores a stale one sent here (src/act-head.ts).
+  sendDriveOps([op])
   window.dispatchEvent(new Event(CHANGED_EVENT))
 }
 
@@ -90,20 +95,33 @@ export function useDriveMetadata() {
   }
 
   function set(batchId: string, data: LocalDriveMetadata) {
-    write(all => ({ ...all, [batchId]: data }))
+    write(all => ({ ...all, [batchId]: data }), {
+      kind: 'metadata',
+      op: 'patch',
+      batch: batchId,
+      changes: toPatch({ ...data }),
+    })
   }
 
   function update(batchId: string, partial: Partial<LocalDriveMetadata>) {
-    write(all => ({ ...all, [batchId]: { ...(all[batchId] ?? { encrypted: false }), ...partial } }))
+    write(all => ({ ...all, [batchId]: { ...(all[batchId] ?? { encrypted: false }), ...partial } }), {
+      kind: 'metadata',
+      op: 'patch',
+      batch: batchId,
+      changes: toPatch({ ...partial }),
+    })
   }
 
   function remove(batchId: string) {
-    write(all => {
-      const next = { ...all }
-      delete next[batchId]
+    write(
+      all => {
+        const next = { ...all }
+        delete next[batchId]
 
-      return next
-    })
+        return next
+      },
+      { kind: 'metadata', op: 'delete', batch: batchId },
+    )
   }
 
   return { metadata, get, isEncrypted, set, update, remove }
