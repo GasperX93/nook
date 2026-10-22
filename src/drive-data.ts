@@ -484,7 +484,15 @@ export function changeDriveData(ops: DriveOp[]): DriveStore {
 export function setActState(batch: string, changes: Record<string, unknown>): void {
   const store = structuredClone(loadDriveStore())
 
-  if (applyOps(store, [{ kind: 'metadata', op: 'patch', batch, changes }], Date.now(), true)) saveDriveStore(store)
+  if (!applyOps(store, [{ kind: 'metadata', op: 'patch', batch, changes }], Date.now(), true)) return
+  try {
+    saveDriveStore(store)
+  } catch (error) {
+    // Bee already moved the head: keep it in memory at least, or the next
+    // grant would build on the old one and lose this one.
+    cache = store
+    logger.error(`drive-data: could not save drive ${batch}'s ACT state: ${(error as Error).message}`)
+  }
 }
 
 export function getActState(batch: string): Record<string, unknown> | undefined {

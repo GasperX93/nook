@@ -77,6 +77,14 @@ describe('missingFromApp', () => {
     })
   })
 
+  it('no endless re-import of ACT state the app already keeps differently', () => {
+    localStorage.setItem(
+      'nook-drive-metadata',
+      JSON.stringify({ b1: { encrypted: true, actHistoryRef: 'old', granteeRef: 'g' } }),
+    )
+    expect(missingFromApp(store({ metadata: { b1: { encrypted: true, actHistoryRef: 'new' } } }))).toBeNull()
+  })
+
   it('an empty browser (private window) has nothing to send', () => {
     expect(missingFromApp(store({ records: [{ id: 'r1' }] }))).toBeNull()
   })
@@ -123,7 +131,14 @@ describe('refreshDriveData', () => {
 })
 
 describe('sendDriveOps', () => {
+  /** A browser that already offered its data to the app (the normal state after the first load). */
+  async function loaded() {
+    api.getDriveData.mockResolvedValueOnce(store())
+    await refreshDriveData()
+  }
+
   it('sends in order and applies the app’s answer once nothing else is on its way', async () => {
+    await loaded()
     api.changeDriveData
       .mockResolvedValueOnce(store({ rev: 2, records: [{ id: 'a' }] }))
       .mockResolvedValueOnce(store({ rev: 3, records: [{ id: 'b' }, { id: 'a' }] }))
@@ -135,11 +150,27 @@ describe('sendDriveOps', () => {
     expect(localStorage.getItem('nook-drive-ops-pending')).toBeNull()
   })
 
+  it('an answer before the first import never erases data only this browser has', async () => {
+    // e.g. a change kept from before a downgrade, sent on the first load after re-upgrading
+    localStorage.setItem('swarm-drive', JSON.stringify([{ id: 'from-0.7.2' }]))
+    api.changeDriveData.mockResolvedValueOnce(store({ rev: 4 }))
+    sendDriveOps([{ kind: 'record', op: 'patch', id: 'x', changes: { name: 'y' } }])
+    await flush()
+    expect(local('swarm-drive')).toEqual([{ id: 'from-0.7.2' }])
+    api.getDriveData.mockResolvedValueOnce(store({ rev: 4 }))
+    api.importDriveData.mockResolvedValueOnce(store({ rev: 5, records: [{ id: 'from-0.7.2' }] }))
+    await refreshDriveData()
+    expect(api.importDriveData).toHaveBeenCalledWith(expect.objectContaining({ records: [{ id: 'from-0.7.2' }] }))
+    expect(local('swarm-drive')).toEqual([{ id: 'from-0.7.2' }])
+  })
+
   it('kept while the app is unreachable, sent with the next refresh', async () => {
     api.changeDriveData.mockRejectedValueOnce(new Error('down'))
     sendDriveOps([{ kind: 'record', op: 'delete', id: 'x' }])
     await flush()
-    expect(local('nook-drive-ops-pending')).toEqual([[{ kind: 'record', op: 'delete', id: 'x' }]])
+    expect(local('nook-drive-ops-pending')).toEqual([
+      { id: expect.any(String), ops: [{ kind: 'record', op: 'delete', id: 'x' }] },
+    ])
     api.changeDriveData.mockResolvedValueOnce(store({ rev: 5 }))
     api.getDriveData.mockResolvedValue(store({ rev: 5 }))
     await refreshDriveData()
@@ -148,6 +179,7 @@ describe('sendDriveOps', () => {
   })
 
   it('a batch the app refuses is dropped instead of blocking the rest', async () => {
+    await loaded()
     api.changeDriveData
       .mockRejectedValueOnce(new Error('Invalid ops'))
       .mockResolvedValueOnce(store({ records: [{ id: 'ok' }] }))
@@ -155,6 +187,24 @@ describe('sendDriveOps', () => {
     sendDriveOps([{ kind: 'record', op: 'put', value: { id: 'ok' } }])
     await flush()
     expect(local('swarm-drive')).toEqual([{ id: 'ok' }])
+  })
+
+  it('a sent batch is removed by id, so a batch another tab added meanwhile stays', async () => {
+    await loaded()
+    let release: (s: DriveStore) => void = () => undefined
+
+    api.changeDriveData.mockImplementationOnce(async () => new Promise<DriveStore>(r => (release = r)))
+    sendDriveOps([{ kind: 'record', op: 'put', value: { id: 'a' } }])
+    await flush()
+    // Another tab sharing the queue sent the first batch too and removed it, then queued its own.
+    const other = { id: 'other-tab', ops: [{ kind: 'record', op: 'put', value: { id: 'b' } }] }
+
+    localStorage.setItem('nook-drive-ops-pending', JSON.stringify([other]))
+    api.changeDriveData.mockResolvedValueOnce(store({ records: [{ id: 'b' }, { id: 'a' }] }))
+    release(store({ records: [{ id: 'a' }] }))
+    await flush()
+    expect(api.changeDriveData.mock.calls.map(c => c[0][0].value.id)).toEqual(['a', 'b'])
+    expect(localStorage.getItem('nook-drive-ops-pending')).toBeNull()
   })
 })
 

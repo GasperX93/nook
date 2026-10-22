@@ -66,6 +66,8 @@ export const DRIVE_EVENTS = {
 } as const
 
 const PENDING_KEY = 'nook-drive-ops-pending'
+/** A drive's ACT state, kept by the app once it has a head (src/act-head.ts). */
+const ACT_FIELDS = ['actHistoryRef', 'granteeRef', 'granteeCount']
 const REFRESH_MS = 30_000
 const RETRY_MS = 5_000
 
@@ -115,6 +117,19 @@ export const useDriveDataStore = create<DriveDataState>(() => ({ status: 'loadin
 
 let chain: Promise<unknown> = Promise.resolve()
 let retryTimer: ReturnType<typeof setTimeout> | null = null
+/**
+ * The app's data replaces the local copy only after this browser's own data
+ * was offered to it once: before that, the local copy may hold the only
+ * record of files (data from before this version, or added in 0.7.2 after a
+ * downgrade) and an early answer would erase them.
+ */
+let importedOnce = false
+
+/** A batch of ops, kept until the app has it. The id lets tabs sharing the queue remove exactly what they sent. */
+interface PendingBatch {
+  id: string
+  ops: DriveOp[]
+}
 
 /** One run at a time: flushes, refreshes and imports never interleave. */
 async function serialized<T>(task: () => Promise<T>): Promise<T> {
@@ -125,53 +140,69 @@ async function serialized<T>(task: () => Promise<T>): Promise<T> {
   return run
 }
 
-function readPending(): DriveOp[][] {
+function readPending(): PendingBatch[] {
   const pending = readJson<unknown>(PENDING_KEY, [])
 
-  return Array.isArray(pending) ? (pending as DriveOp[][]) : []
+  return Array.isArray(pending)
+    ? pending.filter((b): b is PendingBatch => typeof b?.id === 'string' && Array.isArray(b?.ops))
+    : []
 }
 
-function writePending(pending: DriveOp[][]): void {
+function writePending(pending: PendingBatch[]): boolean {
   try {
     if (pending.length === 0) localStorage.removeItem(PENDING_KEY)
     else localStorage.setItem(PENDING_KEY, JSON.stringify(pending))
+
+    return true
   } catch {
-    // storage full or blocked — the app still gets them while this page lives
+    return false
   }
+}
+
+/** Removes one sent batch by id — another tab may have sent or added batches meanwhile. */
+function removePending(id: string): void {
+  writePending(readPending().filter(b => b.id !== id))
 }
 
 /**
  * Send ops the hooks just applied to the local copy. Kept until the app
- * has them; sent in order.
+ * has them; sent in order. (Two tabs may both send a batch; every op is
+ * safe to apply twice.)
  */
 export function sendDriveOps(ops: DriveOp[]): void {
   if (ops.length === 0) return
-  writePending([...readPending(), ops])
+  const batch: PendingBatch = { id: crypto.randomUUID(), ops }
+
+  if (!writePending([...readPending(), batch])) {
+    // Storage full: it can't be kept, so send it now, best effort.
+    void serialized(async () => serverApi.changeDriveData(ops).catch(() => undefined))
+
+    return
+  }
   void serialized(flushPending)
 }
 
 /** Sends every kept batch in order; false when the app couldn't be reached (retried soon). */
 async function flushPending(): Promise<boolean> {
   for (;;) {
-    const pending = readPending()
+    const [batch] = readPending()
 
-    if (pending.length === 0) return true
+    if (!batch) return true
     let store: DriveStore
 
     try {
-      store = await serverApi.changeDriveData(pending[0])
+      store = await serverApi.changeDriveData(batch.ops)
     } catch (error) {
       // A batch the app refuses (400) would block every later one forever: drop it.
       if (error instanceof Error && /invalid ops/i.test(error.message)) {
-        writePending(readPending().slice(1))
+        removePending(batch.id)
         continue
       }
       scheduleRetry()
 
       return false
     }
-    // Ops added while this batch was on its way stay kept.
-    writePending(readPending().slice(1))
+    removePending(batch.id)
 
     if (readPending().length === 0) applyStore(store)
   }
@@ -212,9 +243,14 @@ export function missingFromApp(store: DriveStore): DriveImport | null {
   }
 
   for (const [batch, local] of Object.entries(metadata && typeof metadata === 'object' ? metadata : {})) {
+    if (!local || typeof local !== 'object') continue
     const have = store.metadata[batch]
+    // The app keeps its own ACT state once it has a head; offering ours again would change nothing.
+    const offered = Object.keys(local).filter(
+      field => !(have?.actHistoryRef !== undefined && ACT_FIELDS.includes(field)) && local[field] !== null,
+    )
 
-    if (!have || Object.keys(local ?? {}).some(field => !(field in have))) out.metadata[batch] = local
+    if (!have || offered.some(field => !(field in have))) out.metadata[batch] = local
   }
 
   const empty =
@@ -228,8 +264,9 @@ export function missingFromApp(store: DriveStore): DriveImport | null {
 
 /** Writes the app's data into the local copy (only what changed) and tells mounted hooks. */
 function applyStore(store: DriveStore): void {
-  // A change made locally after this answer left is still on its way — the next answer has it.
-  if (readPending().length > 0) return
+  // Not before this browser's data was offered to the app (importedOnce), and
+  // not while a local change is still on its way — the next answer has it.
+  if (!importedOnce || readPending().length > 0) return
   const parts: Record<Part, unknown> = {
     records: store.records,
     folders: store.folders,
@@ -267,6 +304,7 @@ export async function refreshDriveData(): Promise<void> {
       const missing = missingFromApp(store)
 
       if (missing) store = await serverApi.importDriveData(missing)
+      importedOnce = true
       applyStore(store)
     } catch {
       markOffline()
@@ -310,6 +348,7 @@ export function startDriveData(): () => void {
 /** Tests only. */
 export function resetDriveDataForTests(): void {
   chain = Promise.resolve()
+  importedOnce = false
 
   if (retryTimer) clearTimeout(retryTimer)
   retryTimer = null

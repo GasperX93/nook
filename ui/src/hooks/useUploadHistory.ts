@@ -132,6 +132,8 @@ function loadAll(): { records: UploadRecord[]; folders: DriveFolder[] } {
     driveFolderIds.get(f.driveId)!.add(f.id)
   }
   let changed = false
+  // The same repairs for the app's copy, or every refresh would bring the broken values back.
+  const repairs: DriveOp[] = []
   const records: UploadRecord[] = (() => {
     try {
       return JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '[]')
@@ -144,6 +146,7 @@ function loadAll(): { records: UploadRecord[]; folders: DriveFolder[] } {
     // Migrate old stampId → driveId
     if (!rec.driveId && rec.stampId) {
       rec = { ...rec, driveId: rec.stampId }
+      repairs.push({ kind: 'record', op: 'patch', id: rec.id, changes: { driveId: rec.stampId } })
       changed = true
     }
 
@@ -153,6 +156,7 @@ function loadAll(): { records: UploadRecord[]; folders: DriveFolder[] } {
 
       if (!validFolders || !validFolders.has(rec.folderId)) {
         rec = { ...rec, folderId: undefined }
+        repairs.push({ kind: 'record', op: 'patch', id: rec.id, changes: { folderId: null } })
         changed = true
       }
     }
@@ -160,7 +164,10 @@ function loadAll(): { records: UploadRecord[]; folders: DriveFolder[] } {
     return rec
   })
 
-  if (changed) save(records)
+  if (changed) {
+    save(records)
+    sendDriveOps(repairs)
+  }
 
   return { records, folders }
 }

@@ -360,7 +360,7 @@ export function runServer() {
 
     if (!ops) {
       context.status = 400
-      context.body = { error: 'Invalid ops' }
+      context.body = { message: 'Invalid ops' }
 
       return
     }
@@ -371,7 +371,7 @@ export function runServer() {
 
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
       context.status = 400
-      context.body = { error: 'Invalid import' }
+      context.body = { message: 'Invalid import' }
 
       return
     }
