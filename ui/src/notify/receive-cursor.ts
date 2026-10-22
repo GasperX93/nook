@@ -171,6 +171,23 @@ export function raiseExpected(values: Record<string, number>): void {
   if (changed) save(EXPECTED_KEY, map)
 }
 
+/** Forget expected positions for these contacts (this browser reads them itself). */
+export function dropExpected(contactIds: string[]): void {
+  const map = loadExpected()
+  let changed = false
+
+  for (const contactId of contactIds) {
+    const id = contactId.toLowerCase()
+
+    if (id in map) {
+      delete map[id]
+      changed = true
+    }
+  }
+
+  if (changed) save(EXPECTED_KEY, map)
+}
+
 /** How far their feed must be read before this browser has everything any of mine had seen. */
 export function expectedPosition(contactId: string): number {
   const id = contactId.toLowerCase()

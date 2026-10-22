@@ -79,6 +79,7 @@ async function readMySent(
   myAddr: string,
   contact: Contact,
   fullLookahead: boolean,
+  quick: boolean,
 ): Promise<void> {
   const id = contact.ethAddress
   const first = needsSentLoad(id)
@@ -92,7 +93,8 @@ async function readMySent(
   })
 
   if (first && !sentReadComplete(id, sent.nextIndex)) {
-    const tries = (firstSentReadTries.get(id) ?? 0) + 1
+    // Quick 5 s retries try again but don't count: the budget is meant in 30 s polls.
+    const tries = (firstSentReadTries.get(id) ?? 0) + (quick ? 0 : 1)
 
     firstSentReadTries.set(id, tries)
 
@@ -101,7 +103,7 @@ async function readMySent(
   mergeSentFromFeed(loadThreads(), id, sent.messages, sent.indexes)
 
   if (sent.nextIndex > 0) advanceSendCursor(id, sent.nextIndex - 1)
-  recordSentRead(id, sent, cursor?.retryIndices ?? [])
+  recordSentRead(id, sent, quick ? [] : (cursor?.retryIndices ?? []))
 
   if (first) markSentLoaded(id)
 }
@@ -118,6 +120,7 @@ async function readTheirs(
   myAddr: string,
   contact: Contact,
   fullLookahead: boolean,
+  quick: boolean,
 ): Promise<StoredMessage[]> {
   const id = contact.ethAddress
   const { fromIndex, retryIndices } = getReadCursor(id)
@@ -128,7 +131,8 @@ async function readTheirs(
     lookahead: fullLookahead || catchingUp ? undefined : 0,
   })
 
-  recordRead(id, result, retryIndices)
+  // Quick 5 s retries retry slots but don't use up their tries (budget = 30 s polls).
+  recordRead(id, result, quick ? [] : retryIndices)
   const messages = result.messages
   // Fresh load right before the write: a message sent while this
   // (possibly long) poll ran must not be overwritten by a snapshot.
@@ -219,10 +223,10 @@ export function useInboxPolling(): void {
 
           try {
             // My own feed failing must not hold up their messages.
-            await readMySent(bee, signer.getSigningKey(), myAddr, lib, fullLookahead).catch(() => undefined)
+            await readMySent(bee, signer.getSigningKey(), myAddr, lib, fullLookahead, quick).catch(() => undefined)
 
             if (cancelled) return
-            const added = await readTheirs(bee, signer.getSigningKey(), myAddr, lib, fullLookahead)
+            const added = await readTheirs(bee, signer.getSigningKey(), myAddr, lib, fullLookahead, quick)
 
             if (cancelled) return
             newCount += added.length

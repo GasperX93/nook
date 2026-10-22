@@ -143,6 +143,16 @@ describe('restoreContactBackup', () => {
     expect(conversationPending(MARTIN)).toBe(false)
   })
 
+  it('a position another browser reached, stored earlier, is forgotten once this browser reads itself', async () => {
+    raiseExpected({ [MARTIN]: 25 })
+    recordRead(MARTIN, { nextIndex: 24, holes: [] })
+    saved = { contacts: [], sendCursors: {}, theirNext: { [MARTIN]: 25 }, myName: '' }
+
+    await restoreContactBackup(ME)
+
+    expect(conversationPending(MARTIN)).toBe(false)
+  })
+
   it('a file from before read positions were kept still restores', async () => {
     saved = { contacts: [contact(MARTIN, 'Martin')], sendCursors: {}, myName: '' }
 
@@ -285,6 +295,14 @@ describe('conversation loading (#191)', () => {
     expect(conversationLoading(ANA, 1_000)).toBe(true)
     expect(conversationLoading(ANA, 1_000 + LOADING_CAP_MS - 1)).toBe(true)
     expect(conversationLoading(ANA, 1_000 + LOADING_CAP_MS)).toBe(false)
+  })
+
+  it('hopped gaps are retried; one delivered later goes, the other stays on the list', () => {
+    recordRead(MARTIN, { nextIndex: 4, holes: [], gaps: [0, 1], indexes: [3] }, [])
+    expect(getReadCursor(MARTIN).retryIndices).toEqual([0, 1])
+
+    recordRead(MARTIN, { nextIndex: 4, holes: [], gaps: [], indexes: [0] }, [0, 1])
+    expect(getReadCursor(MARTIN).retryIndices).toEqual([1])
   })
 
   it('a try counts only for slots actually retried in that read', () => {
