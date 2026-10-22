@@ -18,7 +18,7 @@
     "@radix-ui/react-tabs": "^1.1.13",
     "@rainbow-me/rainbowkit": "^2.2.10",
     "@snaha/swarm-id": "0.7.0",
-    "@swarm-notify/sdk": "github:GasperX93/swarm-notify#8eb1b65a3278dfd27730db766ef5001cc5bac163",
+    "@swarm-notify/sdk": "github:GasperX93/swarm-notify#26eaf8c3ddcbb8ae8b5e8ee421d378a6429e42b8",
     "@tanstack/react-query": "^5.90.21",
     "@upcoming/multichain-widget": "^0.12.0",
     "class-variance-authority": "^0.7.1",
