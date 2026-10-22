@@ -212,6 +212,15 @@ export const serverApi = {
     serverPost<{ reference: string }>('/upload-bytes', { stampId, data }),
 
   /** Upload a small data blob with ACT encryption (for metadata) */
+  /**
+   * The drive's ACT history for an encrypted upload, as the app keeps it
+   * (created there once if the drive has none). Call once the drive is
+   * usable. `historyRef` = this browser's copy, used only for a drive the
+   * app doesn't know yet.
+   */
+  getDriveHead: async (stampId: string, historyRef?: string) =>
+    serverPost<{ historyRef: string }>(`/act/head/${stampId}`, { historyRef }),
+
   uploadACTMetadata: async (stampId: string, data: string, historyRef?: string) =>
     serverPost<{ reference: string; historyRef: string }>('/act/upload-metadata', { stampId, data, historyRef }),
 

@@ -2242,7 +2242,6 @@ interface AddFileProps {
   actHistoryRef?: string
   onDone: () => void
   onAdd: (record: UploadRecord) => void
-  onActHistoryUpdate?: (historyRef: string) => void
   /** Latest public wrapper ref after the metadata feed update (#93 health checks). */
   onWrapperRef?: (ref: string) => void
   /** Folder the upload lands in — so its in-progress row shows there (R5-2). */
@@ -2290,7 +2289,6 @@ function AddFilePanel({
   actHistoryRef,
   onDone,
   onAdd,
-  onActHistoryUpdate,
   onWrapperRef,
   folderId,
   space,
@@ -2383,13 +2381,19 @@ function AddFilePanel({
     try {
       await pollStampUsable(driveId, setPhase, onBeeWait)
 
-      let currentHistoryRef = actHistoryRef
+      // The drive's ACT history as the app keeps it — an upload doesn't change
+      // it (only grants do), so it is never written back from here. Fetched
+      // inside the retried step: a first one is made with a small upload, which
+      // can meet the same just-usable-drive hiccups as the upload itself.
+      let currentHistoryRef: string | undefined
 
       async function doUpload(): Promise<{ reference: string; historyAddress?: string; tagUid?: number }> {
         setPhase(encrypted ? UPLOAD_ENCRYPTED : UPLOAD_STEP_LOCAL)
         setProgress(0)
 
         if (encrypted) {
+          currentHistoryRef ??= (await serverApi.getDriveHead(driveId, actHistoryRef)).historyRef
+
           if (type === 'file') {
             return beeApi.uploadFileWithACT(entries[0].file, driveId, currentHistoryRef, onUploadPct)
           }
@@ -2440,11 +2444,6 @@ function AddFilePanel({
       const reference = result.reference
       const uploadHistoryAddress = result.historyAddress
       const uploadTagUid = result.tagUid
-
-      if (uploadHistoryAddress) {
-        currentHistoryRef = uploadHistoryAddress
-        onActHistoryUpdate?.(uploadHistoryAddress)
-      }
 
       // NOTE (#93): encrypted content refs are ACT-encrypted POINTERS, not
       // content addresses — stewardship can't verify them. The availability
@@ -2528,16 +2527,14 @@ function AddFilePanel({
           ]
 
           const metadata = JSON.stringify({ files: driveFiles })
-          // Use the drive's latest ACT history (includes grantee additions), not just file upload history
-          const latestHistory = actHistoryRef || uploadHistoryAddress
-          const uploaded = await serverApi.uploadACTMetadata(driveId, metadata, latestHistory)
+          // The app encrypts it under the drive's latest history (grants included).
+          const uploaded = await serverApi.uploadACTMetadata(driveId, metadata, currentHistoryRef)
 
           // Upload wrapper as raw bytes (not /bzz file) so feed reader can use /bytes
           const wrapper = JSON.stringify({ ref: uploaded.reference, history: uploaded.historyRef })
           const wrapperResult = await serverApi.uploadRawBytes(driveId, wrapper)
 
           await serverApi.createFeedUpdate(topic, wrapperResult.reference, driveId)
-          onActHistoryUpdate?.(uploaded.historyRef)
           onWrapperRef?.(wrapperResult.reference)
           // #93: the wrapper is PUBLIC bytes — a real address stewardship can
           // verify. Confirm the share chain is servable (soft: the ShareModal
@@ -3255,7 +3252,6 @@ export default function Drive() {
         currentHistoryRef,
         onProgress: text => setRepublishState({ driveId, text }),
         onRecordUpdate: (id, changes) => updateRecord(id, changes),
-        onHistoryUpdate: historyRef => driveMetadata.update(driveId, { actHistoryRef: historyRef }),
       })
       driveMetadata.update(driveId, { keyRotated: false })
       setRepublishState({ driveId, text: 'Re-published — everyone with access can open all files again.' })
@@ -4004,9 +4000,6 @@ export default function Drive() {
 
             // Drive shared with others? Offer to notify them of the new content.
             if ((driveMetadata.get(activeDriveId)?.granteeCount ?? 0) > 1) setUpdatedSharedDrive(true)
-          }}
-          onActHistoryUpdate={historyRef => {
-            driveMetadata.update(activeDriveId, { actHistoryRef: historyRef })
           }}
           onWrapperRef={ref => {
             driveMetadata.update(activeDriveId, { lastWrapperRef: ref })
