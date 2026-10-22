@@ -10,7 +10,7 @@ import {
 } from './contact-state'
 import { advanceSendCursor, loadReadCursors, loadSendCursors, saveReadCursors } from './messages'
 import { noteContactsRestored } from './other-browser'
-import { positionsToKeep, raiseExpected } from './receive-cursor'
+import { hasReadCursor, positionsToKeep, raiseExpected } from './receive-cursor'
 import { loadContacts, saveContacts } from './storage'
 import type { NookContact } from './types'
 
@@ -99,7 +99,11 @@ export async function restoreContactBackup(address: string): Promise<void> {
     for (const [counterparty, next] of Object.entries(saved.sendCursors ?? {})) {
       if (Number.isInteger(next) && next > 0) advanceSendCursor(counterparty, next - 1)
     }
-    raiseExpected(saved.theirNext ?? {})
+    // Only where this browser hasn't read that conversation itself: a browser
+    // with its own read position never waits for another browser's.
+    raiseExpected(
+      Object.fromEntries(Object.entries(saved.theirNext ?? {}).filter(([contactId]) => !hasReadCursor(contactId))),
+    )
     mergeInviteState(saved.invitesSent ?? {}, saved.invitesAccepted ?? {})
 
     const marks = loadReadCursors()

@@ -35,10 +35,7 @@ import {
   hasReadCursor,
   readPosition,
   recordRead,
-  clearStalls,
   recordSentRead,
-  sentStalledAt,
-  theirStalledAt,
 } from '../notify/receive-cursor'
 import { loadContacts } from '../notify/storage'
 import { toLibraryContact } from '../notify/types'
@@ -59,8 +56,8 @@ const QUICK_POLL_FOR_MS = 180_000
  */
 const FULL_LOOKAHEAD_EVERY = 10
 /**
- * A first read of my feed that keeps stopping short (a slot of mine the node
- * never manages to fetch) is taken as it is after this many tries, and later
+ * A first read of my feed that keeps falling short of my send cursor (a slot
+ * of mine the node never manages to fetch) is taken as it is after this many tries, and later
  * reads go on from where it stopped — instead of re-reading the whole feed
  * every poll forever.
  */
@@ -94,7 +91,7 @@ async function readMySent(
     lookahead: cursor === undefined || fullLookahead ? undefined : 0,
   })
 
-  if (first && !(sent.complete && sentReadComplete(id, sent.nextIndex))) {
+  if (first && !sentReadComplete(id, sent.nextIndex)) {
     const tries = (firstSentReadTries.get(id) ?? 0) + 1
 
     firstSentReadTries.set(id, tries)
@@ -107,43 +104,6 @@ async function readMySent(
   recordSentRead(id, sent, cursor?.retryIndices ?? [])
 
   if (first) markSentLoaded(id)
-
-  const stalled = sentStalledAt(id)
-
-  if (stalled === undefined) return
-  const beyond = await readPastStuckSlot(bee, key, myAddr, contact, stalled, 'sent')
-
-  if (!beyond) return
-  mergeSentFromFeed(loadThreads(), id, beyond.messages, beyond.indexes)
-  advanceSendCursor(id, beyond.nextIndex - 1)
-  recordSentRead(id, { ...beyond, skip: stalled }, [])
-}
-
-/**
- * A feed keeps stopping at one slot: read on from just after it. Returns what
- * was found — proof the slot isn't the end, so it can be read past (and
- * retried later) — or null when nothing is there, in which case the stall
- * count starts over and the slot is simply read again. Never skips the end of
- * a feed.
- */
-async function readPastStuckSlot(
-  bee: Bee,
-  key: Uint8Array,
-  myAddr: string,
-  contact: Contact,
-  stalled: number,
-  direction: 'sent' | 'received',
-): Promise<mailbox.MailboxReadResult | null> {
-  const beyond = await mailbox.readMailbox(bee, key, myAddr, contact, { direction, fromIndex: stalled + 1 })
-  const found = beyond.indexes.length > 0 || beyond.holes.length > 0
-
-  if (!found) {
-    clearStalls(contact.ethAddress, direction)
-
-    return null
-  }
-
-  return beyond
 }
 
 /**
@@ -169,17 +129,7 @@ async function readTheirs(
   })
 
   recordRead(id, result, retryIndices)
-  let messages = result.messages
-  const stalled = theirStalledAt(id)
-
-  if (stalled !== undefined) {
-    const beyond = await readPastStuckSlot(bee, key, myAddr, contact, stalled, 'received')
-
-    if (beyond) {
-      recordRead(id, { ...beyond, skip: stalled }, [])
-      messages = [...messages, ...beyond.messages]
-    }
-  }
+  const messages = result.messages
   // Fresh load right before the write: a message sent while this
   // (possibly long) poll ran must not be overwritten by a snapshot.
   const current = loadThreads()

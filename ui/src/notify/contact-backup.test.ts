@@ -32,16 +32,7 @@ import {
   appendOutboxMessage,
   theirSidePending,
 } from './messages'
-import {
-  getReadCursor,
-  hasRetries,
-  MAX_HOLE_TRIES,
-  positionsToKeep,
-  raiseExpected,
-  recordRead,
-  STALL_LIMIT,
-  theirStalledAt,
-} from './receive-cursor'
+import { getReadCursor, MAX_HOLE_TRIES, positionsToKeep, raiseExpected, recordRead } from './receive-cursor'
 import { loadContacts, saveContacts } from './storage'
 import type { NookContact } from './types'
 
@@ -141,6 +132,15 @@ describe('restoreContactBackup', () => {
     await restoreContactBackup(ME)
 
     expect(writes[writes.length - 1].theirNext).toEqual({ [MARTIN]: 40, [ANA]: 9 })
+  })
+
+  it('a browser that has read a conversation itself never waits for the position another browser reached', async () => {
+    recordRead(MARTIN, { nextIndex: 24, holes: [] })
+    saved = { contacts: [], sendCursors: {}, theirNext: { [MARTIN]: 25 }, myName: '' }
+
+    await restoreContactBackup(ME)
+
+    expect(conversationPending(MARTIN)).toBe(false)
   })
 
   it('a file from before read positions were kept still restores', async () => {
@@ -285,41 +285,6 @@ describe('conversation loading (#191)', () => {
     expect(conversationLoading(ANA, 1_000)).toBe(true)
     expect(conversationLoading(ANA, 1_000 + LOADING_CAP_MS - 1)).toBe(true)
     expect(conversationLoading(ANA, 1_000 + LOADING_CAP_MS)).toBe(false)
-  })
-
-  it('a slot that keeps stopping reads is reported, but never skipped on its own', () => {
-    recordRead(MARTIN, { nextIndex: 4, holes: [] })
-    for (let i = 0; i < STALL_LIMIT * 2; i++) recordRead(MARTIN, { nextIndex: 4, holes: [], complete: false })
-
-    expect(theirStalledAt(MARTIN)).toBe(4)
-    expect(getReadCursor(MARTIN)).toEqual({ fromIndex: 4, retryIndices: [] })
-  })
-
-  it('read past only with proof: the slot is retried later, reading goes on after it', () => {
-    recordRead(MARTIN, { nextIndex: 4, holes: [] })
-    for (let i = 0; i < STALL_LIMIT; i++) recordRead(MARTIN, { nextIndex: 4, holes: [], complete: false })
-    recordRead(MARTIN, { nextIndex: 7, holes: [], indexes: [5, 6], gaps: [], skip: 4 })
-
-    expect(getReadCursor(MARTIN)).toEqual({ fromIndex: 7, retryIndices: [4] })
-    expect(theirStalledAt(MARTIN)).toBeUndefined()
-  })
-
-  it('nothing after the stuck slot (the end of the feed, Bee down): the count starts over', () => {
-    recordRead(MARTIN, { nextIndex: 4, holes: [] })
-    for (let i = 0; i < STALL_LIMIT; i++) recordRead(MARTIN, { nextIndex: 4, holes: [], complete: false })
-    recordRead(MARTIN, { nextIndex: 4, holes: [], complete: true })
-
-    expect(theirStalledAt(MARTIN)).toBeUndefined()
-    expect(getReadCursor(MARTIN).fromIndex).toBe(4)
-  })
-
-  it('a skipped slot alone never counts as a hole (it says nothing about who wrote)', () => {
-    recordRead(ANA, { nextIndex: 0, holes: [] })
-    for (let i = 0; i < STALL_LIMIT; i++) recordRead(ANA, { nextIndex: 0, holes: [], complete: false })
-    recordRead(ANA, { nextIndex: 2, holes: [], indexes: [1], gaps: [], skip: 0 }, [])
-
-    expect(getReadCursor(ANA)).toEqual({ fromIndex: 2, retryIndices: [0] })
-    expect(hasRetries(ANA)).toBe(false)
   })
 
   it('a try counts only for slots actually retried in that read', () => {
