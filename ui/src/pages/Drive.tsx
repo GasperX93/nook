@@ -85,6 +85,7 @@ import { friendlyError } from '../lib/friendly-error'
 import { type DriveSpace, driveSpace, fitsInDrive } from '../lib/drive-space'
 import { extendPlan } from '../lib/extend-plan'
 import { growingTo, useDriveResize } from '../store/drive-resize'
+import { sendDriveOps, toPatch } from '../store/drive-data'
 import { formatBytes } from '../lib/format-bytes'
 import { isDriveFullError, withUploadRetries } from '../lib/upload-retry'
 import {
@@ -2778,6 +2779,7 @@ function SharedDriveCard({
     const updated = drives.map(d => (d.id === drive.id ? { ...d, ...changes } : d))
 
     localStorage.setItem('nook-shared-drives', JSON.stringify(updated))
+    sendDriveOps([{ kind: 'shared', op: 'patch', id: drive.id, changes: toPatch({ ...changes }) }])
     onRefresh?.()
   }
 
@@ -2852,6 +2854,7 @@ function SharedDriveCard({
     )
     const updated = drives.map(d => (d.id === drive.id ? { ...d, ...partial } : d))
     localStorage.setItem('nook-shared-drives', JSON.stringify(updated))
+    sendDriveOps([{ kind: 'shared', op: 'patch', id: drive.id, changes: { ...partial } }])
   }
 
   async function downloadFile(ref: string, _fileHistoryRef: string, fileName: string, row: number) {

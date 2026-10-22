@@ -3,6 +3,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../api/server', () => ({ serverApi: { createNotification: vi.fn(async () => undefined) } }))
 
+const sendDriveOps = vi.hoisted(() => vi.fn())
+
+vi.mock('../store/drive-data', async importOriginal => ({
+  ...(await importOriginal<typeof import('../store/drive-data')>()),
+  sendDriveOps,
+}))
+
 import { buildShareLink, type SharedDrive } from '../hooks/useSharedDrives'
 import { applyDriveMessages, findSharedDriveForLink } from './drive-access'
 import type { StoredMessage } from './messages'
@@ -71,4 +78,13 @@ describe('applyDriveMessages', () => {
     applyDriveMessages([msg('drive-share', 5000)], 'Gasper')
     expect(drive().syncRequestedAt).toBe(5000)
   })
+})
+
+it('the same change goes to the app’s copy, one patch per drive (undefined → null)', () => {
+  sendDriveOps.mockClear()
+  store([{ id: 'd1', name: 'x', feedTopic: TOPIC, feedOwner: OWNER }])
+  applyDriveMessages([msg('drive-access-removed', 10)], 'Ana')
+  expect(sendDriveOps).toHaveBeenCalledWith([
+    { kind: 'shared', op: 'patch', id: 'd1', changes: { revokedAt: 10, syncRequestedAt: null } },
+  ])
 })

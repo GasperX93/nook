@@ -13,6 +13,7 @@
  */
 import { serverApi } from '../api/server'
 import { parseShareLink, type SharedDrive } from '../hooks/useSharedDrives'
+import { type DriveOp, sendDriveOps, toPatch } from '../store/drive-data'
 import type { StoredMessage } from './messages'
 
 const STORAGE_KEY = 'nook-shared-drives'
@@ -45,6 +46,9 @@ export function findSharedDriveForLink(link: string | undefined): SharedDrive | 
 export function applyDriveMessages(messages: StoredMessage[], senderName: string): void {
   const drives = load()
   let changed = false
+  // The same changes for the app's copy (store/drive-data), one patch per drive.
+  const changes = new Map<string, Record<string, unknown>>()
+  const change = (id: string, fields: Partial<SharedDrive>) => changes.set(id, { ...changes.get(id), ...fields })
 
   for (const m of [...messages].sort((a, b) => a.ts - b.ts)) {
     if (m.direction !== 'received' || !m.kind || m.kind === 'message') continue
@@ -57,6 +61,7 @@ export function applyDriveMessages(messages: StoredMessage[], senderName: string
     if (m.kind === 'drive-access-removed') {
       if ((drives[i].revokedAt ?? 0) >= m.ts) continue
       drives[i] = { ...drives[i], revokedAt: m.ts, syncRequestedAt: undefined }
+      change(drives[i].id, { revokedAt: m.ts, syncRequestedAt: undefined })
       changed = true
       void serverApi
         .createNotification({
@@ -69,6 +74,7 @@ export function applyDriveMessages(messages: StoredMessage[], senderName: string
     } else {
       const wasRevoked = drives[i].revokedAt !== undefined
       drives[i] = { ...drives[i], revokedAt: undefined, syncRequestedAt: m.ts }
+      change(drives[i].id, { revokedAt: undefined, syncRequestedAt: m.ts })
       changed = true
 
       if (wasRevoked || m.kind === 'drive-access-restored') {
@@ -90,5 +96,8 @@ export function applyDriveMessages(messages: StoredMessage[], senderName: string
   } catch {
     return
   }
+  sendDriveOps(
+    [...changes].map(([id, fields]): DriveOp => ({ kind: 'shared', op: 'patch', id, changes: toPatch(fields) })),
+  )
   window.dispatchEvent(new Event(SHARED_DRIVES_CHANGED))
 }
