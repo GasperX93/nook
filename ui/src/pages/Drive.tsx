@@ -85,7 +85,7 @@ import { friendlyError } from '../lib/friendly-error'
 import { type DriveSpace, driveSpace, fitsInDrive } from '../lib/drive-space'
 import { extendPlan } from '../lib/extend-plan'
 import { growingTo, useDriveResize } from '../store/drive-resize'
-import { sendDriveOps, toPatch } from '../store/drive-data'
+import { sendDriveOps, toPatch, useDriveDataStore } from '../store/drive-data'
 import { formatBytes } from '../lib/format-bytes'
 import { isDriveFullError, withUploadRetries } from '../lib/upload-retry'
 import {
@@ -3153,6 +3153,9 @@ export default function Drive() {
   const [showAddSharedModal, setShowAddSharedModal] = useState(false)
   const [driveTab, setDriveTab] = useState<'mine' | 'shared'>('mine')
   const [addingFile, setAddingFile] = useState(false)
+  // Whether a drive is encrypted comes from the app's drive data: until it's
+  // loaded, this browser may not know — an upload then would go unencrypted.
+  const driveDataStatus = useDriveDataStore(st => st.status)
   const [search, setSearch] = useState('')
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [downloadErrors, setDownloadErrors] = useState<Record<string, string>>({})
@@ -3967,7 +3970,20 @@ export default function Drive() {
       {/* Inline upload panel — or, when it's closed, the panel of an upload
           that is still running for this drive (re-attached from the tracker). */}
       {!addingFile && resumedUpload && <ResumedUploadPanel transfer={resumedUpload} />}
-      {addingFile && (
+      {addingFile && driveDataStatus !== 'ready' && (
+        <div
+          className="rounded-lg border px-4 py-3 flex items-center gap-2 mb-3 text-xs"
+          style={{
+            backgroundColor: 'rgb(var(--bg-surface))',
+            borderColor: 'rgb(var(--border))',
+            color: 'rgb(var(--fg-muted))',
+          }}
+        >
+          <RefreshCw size={14} className="animate-spin" />
+          {driveDataStatus === 'loading' ? 'Loading your drive data…' : 'Couldn’t load your drive data — trying again…'}
+        </div>
+      )}
+      {addingFile && driveDataStatus === 'ready' && (
         <AddFilePanel
           driveId={activeDriveId}
           space={

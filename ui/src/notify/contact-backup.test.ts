@@ -189,11 +189,21 @@ describe('restoreContactBackup', () => {
   })
 
   it('no drive notice in a browser that has its own drive data', async () => {
-    localStorage.setItem('swarm-drive', '[]')
+    localStorage.setItem('swarm-drive', JSON.stringify([{ id: 'r1' }]))
     saved = { contacts: [contact(MARTIN, 'Martin')], sendCursors: {}, myName: '' }
 
     await restoreContactBackup(ME)
 
+    expect(showOtherBrowserNotice()).toBe(false)
+  })
+
+  it('the drive notice goes away once the app’s drive data arrives (an empty copy is not data)', async () => {
+    localStorage.setItem('swarm-drive', '[]')
+    saved = { contacts: [contact(MARTIN, 'Martin')], sendCursors: {}, myName: '' }
+
+    await restoreContactBackup(ME)
+    expect(showOtherBrowserNotice()).toBe(true)
+    localStorage.setItem('nook-drive-metadata', JSON.stringify({ b1: { encrypted: true } }))
     expect(showOtherBrowserNotice()).toBe(false)
   })
 
