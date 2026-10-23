@@ -1,6 +1,6 @@
 import { execSync } from 'child_process'
 import { unzip } from 'cross-zip'
-import { ensureDir, existsSync, unlinkSync, writeFileSync } from 'fs-extra'
+import { ensureDir, existsSync, removeSync, renameSync, unlinkSync, writeFileSync } from 'fs-extra'
 import fetch from 'node-fetch'
 import { arch, platform } from 'os'
 import { parse } from 'path'
@@ -12,7 +12,12 @@ interface DownloadOptions {
   checkTarget?: string[]
   chmod?: boolean
   force?: boolean
+  /** A smaller download is an error page, not the asset. */
+  minBytes?: number
 }
+
+/** The Bee binary is ~50 MB; anything under this is not it. */
+const MIN_BEE_BYTES = 10 * 1024 * 1024
 
 const unzipAsync = promisify(unzip)
 
@@ -78,8 +83,14 @@ export async function runDownloader(force = false): Promise<void> {
   await ensureAsset(
     `https://github.com/ethersphere/bee/releases/download/v${EXPECTED_BEE_VERSION}/bee-${platformString}-${archString}${suffixString}`,
     `bee${suffixString}`,
-    { chmod: process.platform !== 'win32', force },
+    { chmod: process.platform !== 'win32', force, minBytes: MIN_BEE_BYTES },
   )
+
+  const installed = getInstalledBeeVersion()
+
+  if (installed !== EXPECTED_BEE_VERSION) {
+    logger.error(`Bee after download reports version ${installed ?? 'none'} (expected ${EXPECTED_BEE_VERSION})`)
+  }
 }
 
 async function ensureAsset(url: string, target: string, options: DownloadOptions): Promise<void> {
@@ -99,8 +110,28 @@ async function ensureAsset(url: string, target: string, options: DownloadOptions
   }
 
   const parsedPath = parse(finalPath)
+  // Download next to the target, then rename over it: the old file is only
+  // replaced by a complete download, and the new file is a new file. Writing
+  // over the binary in place left a Bee macOS killed on every start.
+  const tempPath = `${finalPath}.download`
+
   logger.info(`Downloading to ${finalPath}`)
-  await downloadFile(url, finalPath)
+  try {
+    await downloadFile(url, tempPath, options.minBytes ?? 0)
+  } catch (error) {
+    removeSync(tempPath)
+    throw error
+  }
+
+  if (options.chmod) {
+    logger.info('Running chmod +x...')
+    try {
+      execSync(`chmod +x "${tempPath}"`)
+    } catch (error) {
+      logger.error(error)
+    }
+  }
+  renameSync(tempPath, finalPath)
 
   if (finalPath.endsWith('.zip')) {
     logger.info('Extracting...')
@@ -108,20 +139,15 @@ async function ensureAsset(url: string, target: string, options: DownloadOptions
     unlinkSync(finalPath)
   }
 
-  if (options.chmod) {
-    logger.info('Running chmod +x...')
-    try {
-      execSync(`chmod +x "${finalPath}"`)
-    } catch (error) {
-      logger.error(error)
-    }
-  }
-
   logger.info('OK')
 }
 
-async function downloadFile(url: string, target: string): Promise<void> {
-  return fetch(url)
-    .then(async x => x.arrayBuffer())
-    .then(x => writeFileSync(target, Buffer.from(x)))
+async function downloadFile(url: string, target: string, minBytes: number): Promise<void> {
+  const response = await fetch(url)
+
+  if (!response.ok) throw new Error(`Couldn't download ${url}: ${response.status} ${response.statusText}`)
+  const data = Buffer.from(await response.arrayBuffer())
+
+  if (data.length < minBytes) throw new Error(`Couldn't download ${url}: got only ${data.length} bytes`)
+  writeFileSync(target, data)
 }

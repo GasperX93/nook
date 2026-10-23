@@ -5,7 +5,7 @@ import PACKAGE_JSON from '../package.json'
 import { ensureApiKey } from './api-key'
 import { openDashboardInBrowser } from './browser'
 import { getNookVersionFromFile, writeNookVersionFile } from './config'
-import { EXPECTED_BEE_VERSION, getInstalledBeeVersion, runDownloader } from './downloader'
+import { EXPECTED_BEE_VERSION, getInstalledBeeVersion, isBeeAssetReady, runDownloader } from './downloader'
 import { runElectronTray } from './electron'
 import { startChequebookMonitor } from './chequebook-monitor'
 import { startDepthSave } from './depth-save'
@@ -97,20 +97,24 @@ async function main() {
   const desktopFileVersion = getNookVersionFromFile()
   const desktopVersionChanged = desktopFileVersion !== PACKAGE_JSON.version
   const installedBeeVersion = getInstalledBeeVersion()
-  const beeVersionMismatch = installedBeeVersion !== null && installedBeeVersion !== EXPECTED_BEE_VERSION
-  const force = desktopVersionChanged || beeVersionMismatch
+  // Download Bee only when it's needed: the expected version is missing, a
+  // different version, or a binary that doesn't run. A new Nook with the same
+  // Bee used to download it again on every update — and a download that went
+  // wrong left a Bee that never started and was never replaced.
+  const force = installedBeeVersion !== EXPECTED_BEE_VERSION
 
   logger.info(
     `Desktop version: ${PACKAGE_JSON.version}, desktop file version: ${desktopFileVersion}, ` +
-      `installed Bee: ${installedBeeVersion ?? 'none'}, expected Bee: ${EXPECTED_BEE_VERSION}, downloading assets: ${force}`,
+      `installed Bee: ${installedBeeVersion ?? (isBeeAssetReady() ? 'not answering' : 'none')}, ` +
+      `expected Bee: ${EXPECTED_BEE_VERSION}, downloading assets: ${force}`,
   )
 
   if (force) {
     splash.setMessage('Downloading Bee')
     await runDownloader(true)
-
-    if (desktopVersionChanged) writeNookVersionFile()
   }
+
+  if (desktopVersionChanged) writeNookVersionFile()
 
   ensureApiKey()
   await findFreePort()
