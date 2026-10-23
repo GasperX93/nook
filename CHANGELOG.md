@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.7.4](https://github.com/GasperX93/nook/releases/tag/v0.7.4) (2026-10-23)
+
+New to Nook? Read the [user guide](https://nook-drive.eth.limo/docs.html) and [how Nook works](https://nook-drive.eth.limo/how-it-works.html) on the Nook website — [nook-drive.eth.limo](https://nook-drive.eth.limo).
+
+### Fixes
+* **Nook no longer gets stuck on "Starting your node" after an update.** Nook downloaded its Bee node again on every update, and a download that went wrong left a Bee that never started. Now Bee is downloaded only when it's missing, a different version or doesn't run, every download is checked before it replaces the old one, and a broken Bee is repaired on the next start.
+
+### Stuck after updating to 0.7.3?
+* Quit Nook, delete the files `bee` and `nook.version` in Nook's data folder (macOS `~/Library/Application Support/Nook`), and start Nook — it downloads Bee again. Your wallet, drives and contacts stay. Or install 0.7.4, which repairs it by itself.
+
 ## [0.7.3](https://github.com/GasperX93/nook/releases/tag/v0.7.3) (2026-10-23)
 
 New to Nook? Read the [user guide](https://nook-drive.eth.limo/docs.html) and [how Nook works](https://nook-drive.eth.limo/how-it-works.html) on the Nook website — [nook-drive.eth.limo](https://nook-drive.eth.limo).
