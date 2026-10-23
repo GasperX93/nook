@@ -5,7 +5,7 @@
  */
 import { Bee } from '@ethersphere/bee-js'
 import { identity, registry } from '@swarm-notify/sdk'
-import { Copy, Check, Lock, RefreshCw, Users, X } from 'lucide-react'
+import { Copy, Check, Lock, RefreshCw, Send, Users, X } from 'lucide-react'
 import { useEffect, useRef, useMemo, useState } from 'react'
 
 import { topicFromString, waitForRetrievable } from '../api/bee'
@@ -482,7 +482,7 @@ export default function ShareModal({
       if (notifyTarget?.walletPublicKey) {
         if (!files?.length) {
           // Grant succeeded, but an empty drive has nothing to put in the link yet.
-          setError('Access granted. Add a file to this drive, then notify them with the bell next to their name.')
+          setError('Access granted. Add a file to this drive, then press Send update next to their name.')
         } else {
           try {
             // Pass the grant's fresh historyRef so the shared metadata is encrypted
@@ -708,6 +708,9 @@ export default function ShareModal({
     // eslint-disable-next-line
   }, [autoNotify, grantees, signer])
 
+  // Contacts a send is running for — see notifyContacts.
+  const sendingIds = useRef(new Set<string>())
+
   /**
    * Send the drive-share to an explicit set of contacts (each must carry a
    * walletPublicKey for ECDH). Refreshes the feed once, then per-recipient
@@ -723,6 +726,25 @@ export default function ShareModal({
     if (!isIdentityPublished(signer.getAddress())) {
       return 'Publish your Nook identity first (Account → Identity → Publish) so they can add you back.'
     }
+
+    // Mark them sending before the link is built (about a second): a second
+    // click meanwhile found the button still enabled and sent everything twice.
+    if (targets.some(c => sendingIds.current.has(c.id))) return null
+    targets.forEach(c => sendingIds.current.add(c.id))
+    setNotifyStatus(prev => ({ ...prev, ...Object.fromEntries(targets.map(c => [c.id, 'sending' as const])) }))
+    try {
+      return await sendToTargets(targets, historyOverride)
+    } catch (e) {
+      setNotifyStatus(prev => ({ ...prev, ...Object.fromEntries(targets.map(c => [c.id, 'failed' as const])) }))
+
+      return shortErrorMessage(e)
+    } finally {
+      targets.forEach(c => sendingIds.current.delete(c.id))
+    }
+  }
+
+  async function sendToTargets(targets: NookContact[], historyOverride?: string): Promise<string | null> {
+    if (!signer) return null
     const link = await refreshAndBuildLink(historyOverride)
     const myAddr = signer.getAddress()
     const fileCount = files?.length ?? 0
@@ -985,15 +1007,17 @@ export default function ShareModal({
               People with access{others.length > 0 ? ` · ${others.length}` : ''}
             </p>
             {notifiable.length > 1 && (
-              <button
+              <Button
                 onClick={async () => notifyEveryone()}
                 disabled={anySending}
-                className="text-[11px] underline disabled:opacity-50"
-                style={{ color: 'rgb(var(--fg-muted))' }}
+                size="sm"
+                variant="outline"
+                className="h-7 px-2.5 text-[11px] [&_svg]:size-3"
                 title="Send the updated drive to everyone with access"
               >
+                <Send />
                 Send update to everyone
-              </button>
+              </Button>
             )}
           </div>
           <div
@@ -1145,19 +1169,21 @@ export default function ShareModal({
                     {statusPill(status)}
                     <span className="flex items-center gap-2 shrink-0 text-[11px]">
                       {contact?.walletPublicKey && (
-                        <button
+                        <Button
                           onClick={async () => {
                             const fail = await notifyContacts([contact])
 
                             if (fail) setError(`Couldn't send the update to ${contact.nickname}: ${fail}`)
                           }}
                           disabled={status === 'sending'}
-                          className="hover:underline disabled:opacity-50"
-                          style={{ color: 'rgb(var(--fg-muted))' }}
+                          size="sm"
+                          variant="outline"
+                          className="h-7 px-2.5 text-[11px] [&_svg]:size-3"
                           title="Re-send the drive after you've added files"
                         >
-                          Send update
-                        </button>
+                          <Send />
+                          {status === 'sending' ? 'Sending…' : 'Send update'}
+                        </Button>
                       )}
                       <button
                         onClick={async () => handleRevoke(key)}
