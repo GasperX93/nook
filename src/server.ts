@@ -2,6 +2,7 @@ import Router from '@koa/router'
 import { Bee } from '@ethersphere/bee-js'
 import Wallet from 'ethereumjs-wallet'
 import { readFile } from 'fs/promises'
+import { createServer } from 'http'
 import Koa from 'koa'
 import koaBodyparser from 'koa-bodyparser'
 import mount from 'koa-mount'
@@ -12,7 +13,7 @@ import { Readable } from 'stream'
 import { ethers } from 'ethers'
 
 import PACKAGE_JSON from '../package.json'
-import { getApiKey } from './api-key'
+import { isApiKey } from './api-key'
 import {
   friendlyChainError,
   BATCH_CREATE_GAS_LIMIT,
@@ -32,7 +33,8 @@ import { BeeManager } from './lifecycle'
 import { logger, readNookLogs, readBeeLogs, subscribeLogServerRequests } from './logger'
 import { getPath } from './path'
 import { port } from './port'
-import { nookRpcUrl, rpcRelayMiddleware } from './rpc'
+import { isLoopback, nookRpcUrl, rpcRelayMiddleware } from './rpc'
+import { beeApiRefusal } from './local-only'
 import {
   MIN_RECLAIMABLE_DEPTH,
   RECLAIMABLE_WRITE_BLOCKED_MESSAGE,
@@ -147,6 +149,15 @@ export function runServer() {
   app.use(async (context, next) => {
     if (!context.path.startsWith('/bee-api')) {
       await next()
+
+      return
+    }
+    const refusal = isLoopback(context.req.socket?.remoteAddress) ? beeApiRefusal(context.headers) : 'not this computer'
+
+    if (refusal) {
+      logger.warn(`bee-api: refused ${context.method} ${context.path} (${refusal})`)
+      context.status = 403
+      context.body = { message: 'Forbidden' }
 
       return
     }
@@ -272,7 +283,7 @@ export function runServer() {
   router.use(async (context, next) => {
     const { authorization } = context.headers
 
-    if (authorization !== getApiKey()) {
+    if (!isApiKey(authorization)) {
       context.status = 401
       context.body = 'Unauthorized'
 
@@ -1254,8 +1265,23 @@ export function runServer() {
 
   app.use(router.routes())
   app.use(router.allowedMethods())
-  const server = app.listen(port.value)
-  subscribeLogServerRequests(server)
+  // This computer only (both loopback families: the dashboard opens
+  // http://localhost, which a browser may resolve to either; Bee's RPC uses
+  // 127.0.0.1). Listening on every interface put the /bee-api proxy — the
+  // whole Bee API, no key — on the Wi-Fi.
+  const callback = app.callback()
+
+  for (const host of ['127.0.0.1', '::1']) {
+    const server = createServer(callback)
+
+    server.on('error', error => {
+      // No IPv6 on this system: 127.0.0.1 is enough.
+      if (host === '::1') logger.warn(`Not listening on [::1]:${port.value}: ${error.message}`)
+      else logger.error(`Couldn't listen on ${host}:${port.value}: ${error.message}`)
+    })
+    server.listen(port.value, host)
+    subscribeLogServerRequests(server)
+  }
 }
 
 /**
