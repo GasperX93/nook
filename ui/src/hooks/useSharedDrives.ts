@@ -5,6 +5,7 @@
 import { useEffect, useState } from 'react'
 
 import { addressFromWalletPubKey, normalizeHex } from '../notify/share-link'
+import { sendDriveOps } from '../store/drive-data'
 
 const STORAGE_KEY = 'nook-shared-drives'
 
@@ -193,19 +194,19 @@ export function useSharedDrives() {
     const next = existing ? current.map(d => (d.id === existing.id ? saved : d)) : [...current, saved]
 
     persist(next)
+    // The app's copy (store/drive-data) dedupes on the feed the same way.
+    sendDriveOps([{ kind: 'shared', op: 'put', value: { ...saved } }])
     setDrives(next)
 
     return saved
   }
 
   function remove(id: string) {
-    setDrives(prev => {
-      const next = prev.filter(d => d.id !== id)
+    const next = load().filter(d => d.id !== id)
 
-      persist(next)
-
-      return next
-    })
+    persist(next)
+    sendDriveOps([{ kind: 'shared', op: 'delete', id }])
+    setDrives(next)
   }
 
   function reload() {

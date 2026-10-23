@@ -72,6 +72,8 @@ import { getWalletActivity } from './wallet-activity'
 import { getStatus } from './status'
 import { resetCrashLoop } from './supervisor'
 import { fetchWithTimeout } from './fetch-timeout'
+import { changeDriveData, importDriveData, loadDriveStore, parseOps, type DriveImport } from './drive-data'
+import { changeAccess, driveHead, grantAccess, uploadActMetadata, type ActBee } from './act-head'
 
 const UI_DIST = path.join(__dirname, '..', '..', 'ui')
 
@@ -254,7 +256,9 @@ export function runServer() {
   // Koa ctx, and winston JSON-stringifies extra args: ctx holds a Socket
   // (circular) and the logger itself throws, turning any malformed body into
   // an opaque 500.
-  app.use(koaBodyparser({ onerror: error => logger.error(error) }))
+  // 10 MB: a browser's first drive-data import carries its whole file list
+  // (the 1 MB default fits a few thousand files; shared drives carry theirs too).
+  app.use(koaBodyparser({ jsonLimit: '10mb', onerror: error => logger.error(error) }))
   const router = new Router()
 
   // Open endpoints without any authentication
@@ -346,6 +350,32 @@ export function runServer() {
       return
     }
     context.body = { stored: true }
+  })
+  // Classic drive data in the app — the same in every browser on this computer.
+  router.get('/drive-data', context => {
+    context.body = loadDriveStore()
+  })
+  router.post('/drive-data/ops', context => {
+    const ops = parseOps((context.request.body as { ops?: unknown })?.ops)
+
+    if (!ops) {
+      context.status = 400
+      context.body = { message: 'Invalid ops' }
+
+      return
+    }
+    context.body = changeDriveData(ops)
+  })
+  router.post('/drive-data/import', context => {
+    const body = context.request.body as DriveImport | undefined
+
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      context.status = 400
+      context.body = { message: 'Invalid import' }
+
+      return
+    }
+    context.body = importDriveData(body)
   })
   router.get('/peers', async context => {
     try {
@@ -937,43 +967,30 @@ export function runServer() {
     }
 
     try {
-      const beePassword = readConfigYaml().password as string | undefined
-      const headers: Record<string, string> = {
-        'swarm-postage-batch-id': stampId,
-        // Direct upload so the shared metadata is pushed to the network's storers
-        // and a grantee on another node can retrieve it (deferred = local-only).
-        'swarm-deferred-upload': 'false',
-        'swarm-act': 'true',
-        'Content-Type': 'application/octet-stream',
-      }
-
-      if (historyRef) headers['swarm-act-history-address'] = historyRef
-
-      if (beePassword) headers.Authorization = `Bearer ${beePassword}`
-
-      const response = await fetch('http://127.0.0.1:1633/bytes', {
-        method: 'POST',
-        headers,
-        body: Buffer.from(data, 'utf-8'),
-      })
-
-      if (!response.ok) {
-        context.status = response.status
-        context.body = { message: `ACT upload failed: ${response.statusText}` }
-
-        return
-      }
-
-      const result = (await response.json()) as { reference: string }
-      const actHistory = response.headers.get('swarm-act-history-address')
-      context.body = {
-        reference: result.reference,
-        historyRef: actHistory ?? '',
-      }
+      // Encrypted under the drive's head as the app keeps it, not the browser's copy.
+      context.body = await uploadActMetadata(makeActBee(), stampId, Buffer.from(data, 'utf-8'), historyRef)
     } catch (error) {
       logger.error(error)
-      context.status = 500
+      context.status = beeStatus(error) ?? 500
       context.body = { message: 'ACT metadata upload failed' }
+    }
+  })
+
+  // The drive's ACT head for an encrypted upload — created once, here, when the drive has none.
+  router.post('/act/head/:batch', async context => {
+    const { batch } = context.params
+    const { historyRef } = (context.request.body ?? {}) as { historyRef?: string }
+
+    if (rejectReclaimableStamp(context, batch)) {
+      return
+    }
+
+    try {
+      context.body = { historyRef: await driveHead(makeActBee(), batch, historyRef) }
+    } catch (error) {
+      logger.error(error)
+      context.status = beeStatus(error) ?? 500
+      context.body = { message: 'Could not prepare the encrypted drive' }
     }
   })
 
@@ -1035,10 +1052,11 @@ export function runServer() {
   })
 
   router.post('/grantee', async context => {
-    const { stampId, grantees, historyRef } = context.request.body as {
+    const { stampId, grantees, historyRef, granteeRef } = context.request.body as {
       stampId: string
       grantees: string[]
       historyRef?: string
+      granteeRef?: string
     }
 
     if (!stampId || !grantees?.length) {
@@ -1053,40 +1071,11 @@ export function runServer() {
     }
 
     try {
-      const beePassword = readConfigYaml().password as string | undefined
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-        'swarm-postage-batch-id': stampId,
-      }
-
-      if (historyRef) headers['swarm-act-history-address'] = historyRef
-
-      if (beePassword) headers.Authorization = `Bearer ${beePassword}`
-
-      const response = await fetch('http://127.0.0.1:1633/grantee', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ grantees }),
-      })
-
-      if (!response.ok) {
-        const errBody = await response.text().catch(() => '')
-        logger.error(`Create grantees failed: ${response.status} ${errBody}`)
-        context.status = response.status
-        context.body = { message: 'Failed to create grantee list' }
-
-        return
-      }
-
-      const result = (await response.json()) as { ref: string; historyref: string }
-      const actHistory = response.headers.get('swarm-act-history-address')
-      context.body = {
-        ref: result.ref,
-        historyRef: actHistory ?? result.historyref ?? '',
-      }
+      // Adds to the drive's existing list when there is one (act-head.ts).
+      context.body = await grantAccess(makeActBee(), stampId, grantees, { historyRef, granteeRef })
     } catch (error) {
       logger.error(error)
-      context.status = 500
+      context.status = beeStatus(error) ?? 500
       context.body = { message: 'Failed to create grantee list' }
     }
   })
@@ -1126,15 +1115,10 @@ export function runServer() {
     }
 
     try {
-      const bee = makeBee()
-      const result = await bee.grantee.patch(stampId, ref, historyRef, { add, revoke })
-      context.body = {
-        ref: result.ref.toString(),
-        historyRef: result.historyref.toString(),
-      }
+      context.body = await changeAccess(makeActBee(), stampId, { add, revoke }, { historyRef, granteeRef: ref })
     } catch (error) {
       logger.error(error)
-      context.status = 500
+      context.status = beeStatus(error) ?? 500
       context.body = { message: 'Failed to update grantees' }
     }
   })
@@ -1315,6 +1299,82 @@ async function observeProxiedTopup(method: string, beePath: string): Promise<voi
     })
   } catch (error) {
     logger.info(`could not record topup for activity labels: ${error}`)
+  }
+}
+
+/** A Bee answer that wasn't OK, with its status (the route passes it on). */
+class BeeHttpError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message)
+  }
+}
+
+function beeStatus(error: unknown): number | undefined {
+  return error instanceof BeeHttpError ? error.status : undefined
+}
+
+/** The Bee calls that move an encrypted drive's ACT head (act-head.ts). Bee's ACT endpoints need the API password. */
+function makeActBee(): ActBee {
+  const authHeaders = (): Record<string, string> => {
+    const beePassword = readConfigYaml().password as string | undefined
+
+    return beePassword ? { Authorization: `Bearer ${beePassword}` } : {}
+  }
+
+  return {
+    async createGrantees(stampId, grantees, historyRef) {
+      const response = await fetch('http://127.0.0.1:1633/grantee', {
+        method: 'POST',
+        headers: {
+          ...authHeaders(),
+          'Content-Type': 'application/json',
+          'swarm-postage-batch-id': stampId,
+          ...(historyRef ? { 'swarm-act-history-address': historyRef } : {}),
+        },
+        body: JSON.stringify({ grantees }),
+      })
+
+      if (!response.ok) {
+        const errBody = await response.text().catch(() => '')
+        throw new BeeHttpError(`Create grantees failed: ${response.status} ${errBody}`, response.status)
+      }
+      const result = (await response.json()) as { ref: string; historyref: string }
+
+      return {
+        ref: result.ref,
+        historyRef: response.headers.get('swarm-act-history-address') ?? result.historyref ?? '',
+      }
+    },
+    async patchGrantees(stampId, granteeRef, historyRef, add, revoke) {
+      const result = await makeBee().grantee.patch(stampId, granteeRef, historyRef, { add, revoke })
+
+      return { ref: result.ref.toString(), historyRef: result.historyref.toString() }
+    },
+    async uploadActBytes(stampId, data, historyRef) {
+      const response = await fetch('http://127.0.0.1:1633/bytes', {
+        method: 'POST',
+        headers: {
+          ...authHeaders(),
+          'swarm-postage-batch-id': stampId,
+          // Direct upload so the shared metadata (and a new history's own
+          // chunks) reach the network's storers; deferred stays local-only and
+          // a grantee on another node can't retrieve it.
+          'swarm-deferred-upload': 'false',
+          'swarm-act': 'true',
+          'Content-Type': 'application/octet-stream',
+          ...(historyRef ? { 'swarm-act-history-address': historyRef } : {}),
+        },
+        body: new Uint8Array(data),
+      })
+
+      if (!response.ok) throw new BeeHttpError(`ACT upload failed: ${response.statusText}`, response.status)
+      const result = (await response.json()) as { reference: string }
+
+      return { reference: result.reference, historyRef: response.headers.get('swarm-act-history-address') ?? '' }
+    },
   }
 }
 

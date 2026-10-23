@@ -1,29 +1,43 @@
 /**
- * "This browser doesn't have your drive data" (#191/#192 follow-up). Contacts
- * and messages come back in another browser or a private window, but file
- * lists, folders, encrypted-drive settings and Shared with me are still kept
- * only in the browser Nook was used in. Without a word, drives show "0 files"
- * there.
+ * "This browser doesn't have your drive data yet" (#191/#192 follow-up).
+ * Drive data now lives in the app (store/drive-data), but the app learns it
+ * from the browser Nook was used in before — until that browser opens this
+ * version once, another browser or a private window shows drives with 0
+ * files and doesn't know which drives are encrypted.
  *
- * Detected when contacts were restored from the app folder into this browser
- * (so this identity used Nook on this computer before, elsewhere) and this
- * browser has never stored any drive data. A browser that has its own
- * contacts, or a new install, never sees it. Drive data is node-level, so
- * neither key is namespaced per identity.
+ * Shown when contacts were restored from the app folder into this browser
+ * (so this identity used Nook on this computer before) and the drive data —
+ * the app's, which is this browser's copy once loaded — is still empty. It
+ * goes away by itself once the drive data arrives. Drive data is node-level,
+ * so neither key is namespaced per identity.
  */
 
 const FLAG_KEY = 'nook-other-browser-v1'
 const DISMISSED_KEY = 'nook-other-browser-dismissed-v1'
-const DRIVE_KEYS = ['swarm-drive', 'nook-drive-metadata', 'nook-shared-drives']
 
 export const OTHER_BROWSER_EVENT = 'nook:other-browser'
+
+function count(key: string): number {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(key) ?? 'null')
+
+    if (Array.isArray(value)) return value.length
+
+    return value && typeof value === 'object' ? Object.keys(value).length : 0
+  } catch {
+    return 0
+  }
+}
+
+/** Any file, encrypted-drive setting or shared drive known here (the app's data once loaded). */
+export function hasDriveData(): boolean {
+  return count('swarm-drive') + count('nook-drive-metadata') + count('nook-shared-drives') > 0
+}
 
 /** Call after contacts were restored into this browser from the app folder. */
 export function noteContactsRestored(): void {
   try {
-    if (localStorage.getItem(FLAG_KEY) !== null) return
-
-    if (!DRIVE_KEYS.every(key => localStorage.getItem(key) === null)) return
+    if (localStorage.getItem(FLAG_KEY) !== null || hasDriveData()) return
     localStorage.setItem(FLAG_KEY, String(Date.now()))
   } catch {
     return
@@ -33,7 +47,7 @@ export function noteContactsRestored(): void {
 
 export function showOtherBrowserNotice(): boolean {
   try {
-    return localStorage.getItem(FLAG_KEY) !== null && localStorage.getItem(DISMISSED_KEY) === null
+    return localStorage.getItem(FLAG_KEY) !== null && localStorage.getItem(DISMISSED_KEY) === null && !hasDriveData()
   } catch {
     return false
   }

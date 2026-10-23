@@ -1,5 +1,6 @@
 // Nook server API client — talks to the Koa backend (same origin in prod, proxied in dev)
 import type { NookContact } from '../notify/types'
+import type { DriveImport, DriveOp, DriveStore } from '../store/drive-data'
 import { useAppStore } from '../store/app'
 
 function authHeaders(): Record<string, string> {
@@ -211,6 +212,15 @@ export const serverApi = {
     serverPost<{ reference: string }>('/upload-bytes', { stampId, data }),
 
   /** Upload a small data blob with ACT encryption (for metadata) */
+  /**
+   * The drive's ACT history for an encrypted upload, as the app keeps it
+   * (created there once if the drive has none). Call once the drive is
+   * usable. `historyRef` = this browser's copy, used only for a drive the
+   * app doesn't know yet.
+   */
+  getDriveHead: async (stampId: string, historyRef?: string) =>
+    serverPost<{ historyRef: string }>(`/act/head/${stampId}`, { historyRef }),
+
   uploadACTMetadata: async (stampId: string, data: string, historyRef?: string) =>
     serverPost<{ reference: string; historyRef: string }>('/act/upload-metadata', { stampId, data, historyRef }),
 
@@ -422,6 +432,14 @@ export const serverApi = {
 
   writeContactBackup: async (address: string, backup: ContactBackup) =>
     serverPost<{ stored: boolean }>(`/contact-backup/${address}`, backup),
+
+  // ─── Classic drive data in the app (store/drive-data.ts) ─────────────────
+
+  getDriveData: async () => serverGet<DriveStore>('/drive-data'),
+
+  changeDriveData: async (ops: DriveOp[]) => serverPost<DriveStore>('/drive-data/ops', { ops }),
+
+  importDriveData: async (data: DriveImport) => serverPost<DriveStore>('/drive-data/import', data),
 
   // ─── Identity cache (Electron safeStorage, OS keychain) ─────────────────
 

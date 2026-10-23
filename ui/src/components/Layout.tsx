@@ -44,6 +44,7 @@ import { loadInvitations, pendingInvitations } from '../notify/invitations'
 import { loadContacts } from '../notify/storage'
 import { useRegistryPolling } from '../hooks/useRegistryPolling'
 import { useAppStore } from '../store/app'
+import { DRIVE_EVENTS, startDriveData, useDriveDataStore } from '../store/drive-data'
 import NotificationBell from './NotificationBell'
 import SwarmIdChip from './SwarmIdChip'
 import SwarmIdDialog from './SwarmIdDialog'
@@ -184,6 +185,16 @@ export default function Layout() {
     resumeReclaimableJobs()
   }, [])
 
+  // Classic drive data lives in the app (same in every browser): read it now,
+  // after a focus and every 30 s. Its records can carry uploads still
+  // spreading that this browser hadn't seen — follow them once it's loaded.
+  useEffect(() => startDriveData(), [])
+  const driveDataStatus = useDriveDataStore(s => s.status)
+
+  useEffect(() => {
+    if (driveDataStatus === 'ready') resumePendingPropagation()
+  }, [driveDataStatus])
+
   // Unlock notification audio on the first user gesture so a background chirp
   // (e.g. an incoming invitation) isn't silently blocked by autoplay policy.
   useEffect(() => {
@@ -247,10 +258,12 @@ export default function Layout() {
 
   useEffect(() => {
     const update = () => setOtherBrowser(showOtherBrowserNotice())
+    // Goes away by itself once the app's drive data reaches this browser.
+    const events = [OTHER_BROWSER_EVENT, ...new Set(Object.values(DRIVE_EVENTS))]
 
-    window.addEventListener(OTHER_BROWSER_EVENT, update)
+    events.forEach(name => window.addEventListener(name, update))
 
-    return () => window.removeEventListener(OTHER_BROWSER_EVENT, update)
+    return () => events.forEach(name => window.removeEventListener(name, update))
   }, [])
 
   // Auto-complete onboarding for existing users upgrading from v0.2.0 (they never had the flag).
@@ -614,16 +627,18 @@ export default function Layout() {
             </div>
           )}
 
-          {otherBrowser && !showOnboarding && (
+          {otherBrowser && driveDataStatus === 'ready' && !showOnboarding && (
             <div
               className="flex items-start gap-2.5 px-4 py-2.5 text-xs shrink-0"
               style={{ backgroundColor: 'rgba(96,165,250,0.08)', borderBottom: '1px solid rgba(96,165,250,0.2)' }}
             >
               <HardDrive size={12} className="shrink-0 mt-0.5" style={{ color: '#60a5fa' }} />
               <p className="flex-1" style={{ color: 'rgb(var(--fg))' }}>
-                <span className="font-semibold">Your file lists are in the browser you usually use Nook in.</span> Here,
-                drives other than deletable ones show 0 files, and Shared with me is empty. Your files are safe.
-                Contacts and messages work here. Upload to encrypted drives only from your usual browser.
+                <span className="font-semibold">
+                  Your drive lists are still in the browser you usually use Nook in.
+                </span>{' '}
+                Open Nook there once and they show up here too. Your files are safe. Until then, don&apos;t upload to
+                encrypted drives here.
               </p>
               <button
                 onClick={() => dismissOtherBrowserNotice()}

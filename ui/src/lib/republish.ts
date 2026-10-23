@@ -13,8 +13,8 @@
  * The owner can decrypt their own content locally (they're the ACT publisher):
  * files are round-tripped directly; folders/websites are enumerated via their
  * mantaray manifest (ACT-aware since bee-js 12), every entry downloaded and
- * the collection re-uploaded as a whole. Each re-upload chains the history
- * forward; the metadata feed is rewritten last so recipients reading the feed
+ * the collection re-uploaded as a whole, all under the drive's current
+ * history; the metadata feed is rewritten last so recipients reading the feed
  * get references they can decrypt.
  */
 import { Bee, MantarayNode } from '@ethersphere/bee-js'
@@ -30,13 +30,11 @@ export interface RepublishDeps {
   records: UploadRecord[]
   /** The drive's ACT publisher (Bee node public key). */
   actPublisher: string
-  /** The drive's current ACT history ref (after the latest grant/revoke). */
+  /** This browser's copy of the drive's ACT history — only used if the app doesn't know the drive yet. */
   currentHistoryRef: string
   onProgress?: (msg: string) => void
   /** Persist a record's new reference + history after re-upload. */
   onRecordUpdate: (id: string, changes: Partial<UploadRecord>) => void
-  /** Persist the drive's new latest history ref. */
-  onHistoryUpdate: (historyRef: string) => void
   /** Latest public wrapper ref after the metadata rebuild (#93 health checks). */
   onWrapperRef?: (ref: string) => void
 }
@@ -80,7 +78,7 @@ async function downloadCollectionEntries(
 }
 
 export async function republishDrive(deps: RepublishDeps): Promise<void> {
-  const { driveId, records, actPublisher, onProgress, onRecordUpdate, onHistoryUpdate, onWrapperRef } = deps
+  const { driveId, records, actPublisher, onProgress, onRecordUpdate, onWrapperRef } = deps
 
   const items = records.filter(r => r.isEncrypted && r.actHistoryRef)
 
@@ -88,7 +86,9 @@ export async function republishDrive(deps: RepublishDeps): Promise<void> {
     throw new Error('No encrypted content to re-publish in this drive.')
   }
 
-  let currentHistory = deps.currentHistoryRef
+  // The drive's history as the app keeps it (after the revoke that made this
+  // necessary). Re-uploads don't change it — only grants do.
+  const currentHistory = (await serverApi.getDriveHead(driveId, deps.currentHistoryRef)).historyRef
   const rebuilt: { name: string; reference: string; historyRef: string; size: number }[] = []
 
   for (let i = 0; i < items.length; i++) {
@@ -116,8 +116,6 @@ export async function republishDrive(deps: RepublishDeps): Promise<void> {
       result = await beeApi.uploadCollectionWithACT(entries, driveId, currentHistory, opts)
     }
 
-    if (result.historyAddress) currentHistory = result.historyAddress
-
     onRecordUpdate(rec.id, { hash: result.reference, actHistoryRef: result.historyAddress })
     rebuilt.push({ name: rec.name, reference: result.reference, historyRef: result.historyAddress, size: rec.size })
   }
@@ -132,6 +130,5 @@ export async function republishDrive(deps: RepublishDeps): Promise<void> {
   const wrapperResult = await serverApi.uploadRawBytes(driveId, wrapper)
 
   await serverApi.createFeedUpdate(topic, wrapperResult.reference, driveId)
-  onHistoryUpdate(uploaded.historyRef)
   onWrapperRef?.(wrapperResult.reference)
 }
