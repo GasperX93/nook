@@ -127,6 +127,7 @@ export function runServer() {
   // unreadable (e.g. poisoned asar reads, see #80) — an error condition, not a
   // routine access. Log it loudly, rate-limited to avoid spam.
   let lastDashboard404 = 0
+  let lastRefusalLog = 0
   app.use(async (context, next) => {
     await next()
 
@@ -155,7 +156,10 @@ export function runServer() {
     const refusal = isLoopback(context.req.socket?.remoteAddress) ? beeApiRefusal(context.headers) : 'not this computer'
 
     if (refusal) {
-      logger.warn(`bee-api: refused ${context.method} ${context.path} (${refusal})`)
+      if (Date.now() - lastRefusalLog > 60_000) {
+        lastRefusalLog = Date.now()
+        logger.warn(`bee-api: refused ${context.method} ${context.path} (${refusal})`)
+      }
       context.status = 403
       context.body = { message: 'Forbidden' }
 
@@ -225,8 +229,8 @@ export function runServer() {
       )
 
       context.status = res.status
-      // Forward response headers EXCEPT CORS (Koa CORS middleware adds those —
-      // duplicating causes browsers to fail with "Network Error" even on 2xx)
+      // Forward response headers EXCEPT CORS (the dashboard calls this
+      // same-origin; Bee's would also let other sites read the answer)
       // and EXCEPT transfer encodings Koa will recompute.
       res.headers.forEach((value, key) => {
         if (key === 'content-length' || key === 'transfer-encoding' || key === 'connection') return
@@ -1275,9 +1279,10 @@ export function runServer() {
     const server = createServer(callback)
 
     server.on('error', error => {
-      // No IPv6 on this system: 127.0.0.1 is enough.
-      if (host === '::1') logger.warn(`Not listening on [::1]:${port.value}: ${error.message}`)
-      else logger.error(`Couldn't listen on ${host}:${port.value}: ${error.message}`)
+      // No IPv6 on this system: 127.0.0.1 is enough. Without 127.0.0.1 there
+      // is no dashboard — fail loudly, as app.listen did.
+      if (host !== '::1') throw error
+      logger.warn(`Not listening on [::1]:${port.value}: ${error.message}`)
     })
     server.listen(port.value, host)
     subscribeLogServerRequests(server)
