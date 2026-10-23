@@ -701,13 +701,28 @@ export default function ShareModal({
   // One-click flow from the drive's "Notify recipients" prompt (#135):
   // fire the bulk send as soon as the grantee list has loaded.
   const autoNotifyFired = useRef(false)
+  const [autoNotice, setAutoNotice] = useState<string | null>(null)
 
   useEffect(() => {
     if (!autoNotify || autoNotifyFired.current) return
 
     if (grantees.length === 0 || !signer) return
     autoNotifyFired.current = true
-    void notifyEveryone()
+    // Say what happens: opened from "Notify recipients", the send starts by
+    // itself and Send update next to each person looked like a step still to do.
+    const targets = collectNotifyTargets()
+
+    if (targets.length === 0 || anySending) return
+    setError(null)
+    setAutoNotice('Sending the update to everyone with access…')
+    void notifyContacts(targets).then(fail => {
+      if (fail) {
+        setAutoNotice(null)
+        setError(fail)
+      } else {
+        setAutoNotice(`Update sent to ${targets.length === 1 ? targets[0].nickname : `${targets.length} people`}.`)
+      }
+    })
     // eslint-disable-next-line
   }, [autoNotify, grantees, signer])
 
@@ -987,6 +1002,14 @@ export default function ShareModal({
         {error && (
           <p className="text-xs" style={{ color: '#ef4444' }}>
             {error}
+          </p>
+        )}
+        {autoNotice && !error && (
+          <p
+            className="text-xs"
+            style={{ color: autoNotice.startsWith('Sending') ? 'rgb(var(--fg-muted))' : '#16a34a' }}
+          >
+            {autoNotice}
           </p>
         )}
         {emptyDriveHint && !files?.length && !error && (
