@@ -10,6 +10,7 @@ vi.mock('../store/drive-data', async importOriginal => ({
   sendDriveOps,
 }))
 
+import { serverApi } from '../api/server'
 import { buildShareLink, type SharedDrive } from '../hooks/useSharedDrives'
 import { applyDriveMessages, findSharedDriveForLink } from './drive-access'
 import type { StoredMessage } from './messages'
@@ -87,4 +88,37 @@ it('the same change goes to the app’s copy, one patch per drive (undefined →
   expect(sendDriveOps).toHaveBeenCalledWith([
     { kind: 'shared', op: 'patch', id: 'd1', changes: { revokedAt: 10, syncRequestedAt: null } },
   ])
+})
+
+describe('bell notifications', () => {
+  const titles = () => vi.mocked(serverApi.createNotification).mock.calls.map(c => c[0].title)
+
+  beforeEach(() => vi.mocked(serverApi.createNotification).mockClear())
+
+  it('a new browser replaying old removals and restores rings nothing — it ends where the app copy was', () => {
+    store([{ id: 'd1', name: 'Etherchunk', feedTopic: TOPIC, feedOwner: OWNER, revokedAt: 4000 }])
+    applyDriveMessages(
+      [
+        msg('drive-share', 1000),
+        msg('drive-access-removed', 2000),
+        msg('drive-access-restored', 3000),
+        msg('drive-access-removed', 4000),
+      ],
+      'Martin',
+    )
+    expect(drive().revokedAt).toBe(4000)
+    expect(titles()).toEqual([])
+  })
+
+  it('a live removal and a live restore still ring once each', () => {
+    applyDriveMessages([msg('drive-access-removed', 1000)], 'Martin')
+    expect(titles()).toEqual(['Access removed'])
+    applyDriveMessages([msg('drive-access-restored', 2000)], 'Martin')
+    expect(titles()).toEqual(['Access removed', 'Access restored'])
+  })
+
+  it('a plain re-share of a drive that was never removed rings nothing', () => {
+    applyDriveMessages([msg('drive-share', 5000)], 'Martin')
+    expect(titles()).toEqual([])
+  })
 })

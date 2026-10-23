@@ -49,6 +49,12 @@ export function applyDriveMessages(messages: StoredMessage[], senderName: string
   // The same changes for the app's copy (store/drive-data), one patch per drive.
   const changes = new Map<string, Record<string, unknown>>()
   const change = (id: string, fields: Partial<SharedDrive>) => changes.set(id, { ...changes.get(id), ...fields })
+  // Notify only when a drive's access really changed in this batch. A new
+  // browser reads every conversation from the start: replaying old removals
+  // and restores ends where the app's copy already was, and used to ring the
+  // bell for each of them as if it had just happened.
+  const revokedBefore = new Map(drives.map(d => [d.id, d.revokedAt !== undefined]))
+  const names = new Map<string, string>()
 
   for (const m of [...messages].sort((a, b) => a.ts - b.ts)) {
     if (m.direction !== 'received' || !m.kind || m.kind === 'message') continue
@@ -62,35 +68,31 @@ export function applyDriveMessages(messages: StoredMessage[], senderName: string
       if ((drives[i].revokedAt ?? 0) >= m.ts) continue
       drives[i] = { ...drives[i], revokedAt: m.ts, syncRequestedAt: undefined }
       change(drives[i].id, { revokedAt: m.ts, syncRequestedAt: undefined })
-      changed = true
-      void serverApi
-        .createNotification({
-          type: 'info',
-          title: 'Access removed',
-          body: `${senderName} removed your access to “${name}”.`,
-          link: '/drive?tab=shared',
-        })
-        .catch(() => undefined)
     } else {
-      const wasRevoked = drives[i].revokedAt !== undefined
       drives[i] = { ...drives[i], revokedAt: undefined, syncRequestedAt: m.ts }
       change(drives[i].id, { revokedAt: undefined, syncRequestedAt: m.ts })
-      changed = true
-
-      if (wasRevoked || m.kind === 'drive-access-restored') {
-        void serverApi
-          .createNotification({
-            type: 'info',
-            title: 'Access restored',
-            body: `${senderName} gave you access to “${name}” again.`,
-            link: '/drive?tab=shared',
-          })
-          .catch(() => undefined)
-      }
     }
+    names.set(drives[i].id, name)
+    changed = true
   }
 
   if (!changed) return
+  for (const d of drives) {
+    const before = revokedBefore.get(d.id)
+    const now = d.revokedAt !== undefined
+
+    if (!changes.has(d.id) || before === now) continue
+    void serverApi
+      .createNotification({
+        type: 'info',
+        title: now ? 'Access removed' : 'Access restored',
+        body: now
+          ? `${senderName} removed your access to “${names.get(d.id)}”.`
+          : `${senderName} gave you access to “${names.get(d.id)}” again.`,
+        link: '/drive?tab=shared',
+      })
+      .catch(() => undefined)
+  }
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(drives))
   } catch {
