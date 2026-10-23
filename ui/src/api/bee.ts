@@ -611,7 +611,9 @@ export const beeApi = {
     // that Location escapes the /bee-api proxy prefix, so the browser lands on
     // the SPA fallback and "downloads" index.html instead of the file.
     const url = `${getBeeUrl()}/bzz/${hash.endsWith('/') ? hash : `${hash}/`}`
-    const r = await fetch(url)
+    // Never the browser's cache: a cached answer to a plain image request (a
+    // thumbnail) has no CORS header and would block the download.
+    const r = await fetch(url, { cache: 'no-store' })
 
     if (!r.ok) throw new Error(`Download failed: ${r.status}`)
 

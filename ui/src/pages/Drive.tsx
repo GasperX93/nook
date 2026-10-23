@@ -1399,6 +1399,10 @@ function RecordRow({
         ) : record.type === 'file' && isImageFile(record.name) ? (
           <img
             src={`${getBeeUrl()}/bzz/${record.hash}/`}
+            // Asked like the download (with CORS): a plain image request got an
+            // answer without the CORS header, the browser cached it, and the
+            // download then reused it and was blocked.
+            crossOrigin="anonymous"
             className="w-full h-full object-cover"
             onError={e => {
               ;(e.target as HTMLImageElement).style.display = 'none'
