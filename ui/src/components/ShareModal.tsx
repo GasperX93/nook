@@ -148,6 +148,9 @@ export default function ShareModal({
   })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Granted on a drive with no files yet: nothing to send until a file is added.
+  // A hint, not an error — and gone once the drive has files.
+  const [emptyDriveHint, setEmptyDriveHint] = useState(false)
   const [copiedLink, setCopiedLink] = useState(false)
   const [loadedGrantees, setLoadedGrantees] = useState(false)
 
@@ -482,7 +485,7 @@ export default function ShareModal({
       if (notifyTarget?.walletPublicKey) {
         if (!files?.length) {
           // Grant succeeded, but an empty drive has nothing to put in the link yet.
-          setError('Access granted. Add a file to this drive, then press Send update next to their name.')
+          setEmptyDriveHint(true)
         } else {
           try {
             // Pass the grant's fresh historyRef so the shared metadata is encrypted
@@ -986,6 +989,11 @@ export default function ShareModal({
             {error}
           </p>
         )}
+        {emptyDriveHint && !files?.length && !error && (
+          <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+            Access granted. Add a file to this drive, then press Send update next to their name.
+          </p>
+        )}
         {/* The share succeeded; only the optional on-chain heads-up was
             skipped (#132) — amber info, never an error. */}
         {pingSkippedNote && !error && (
@@ -1171,6 +1179,7 @@ export default function ShareModal({
                       {contact?.walletPublicKey && (
                         <Button
                           onClick={async () => {
+                            setError(null)
                             const fail = await notifyContacts([contact])
 
                             if (fail) setError(`Couldn't send the update to ${contact.nickname}: ${fail}`)
