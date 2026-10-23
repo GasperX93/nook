@@ -634,7 +634,9 @@ export default function Layout() {
             >
               <HardDrive size={12} className="shrink-0 mt-0.5" style={{ color: '#60a5fa' }} />
               <p className="flex-1" style={{ color: 'rgb(var(--fg))' }}>
-                <span className="font-semibold">Your drive lists are still in the browser you usually use Nook in.</span>{' '}
+                <span className="font-semibold">
+                  Your drive lists are still in the browser you usually use Nook in.
+                </span>{' '}
                 Open Nook there once and they show up here too. Your files are safe. Until then, don&apos;t upload to
                 encrypted drives here.
               </p>
