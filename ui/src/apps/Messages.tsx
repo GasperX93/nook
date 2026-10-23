@@ -1,6 +1,6 @@
 import { Bee } from '@ethersphere/bee-js'
 import { identity, mailbox, registry } from '@swarm-notify/sdk'
-import { Mail, Send } from 'lucide-react'
+import { Loader2, Mail, Send } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { useReclaimableDrives, useAddresses, useStamps } from '../api/queries'
@@ -21,6 +21,7 @@ import { REGISTRY_ADDRESS } from '../notify/constants'
 import {
   defaultInviteMessage,
   deriveConnectionState,
+  getInviteSentAt,
   hasInboundSince,
   getMyDisplayName,
   markInviteAccepted,
@@ -32,10 +33,20 @@ import { sendInviteAck } from '../notify/invite-ack'
 import { enqueueSend } from '../notify/send-queue'
 import { loadInvitations, markInvitationProcessed, pendingInvitations, type Invitation } from '../notify/invitations'
 import { queueAndDeliver, retryOutboxEntry } from '../notify/deliver'
-import { appendSent, loadReadCursors, loadThreads, markRead, type StoredMessage, unreadCount } from '../notify/messages'
+import {
+  appendSent,
+  conversationLoading,
+  theirSidePending,
+  loadReadCursors,
+  loadThreads,
+  markRead,
+  type StoredMessage,
+  unreadCount,
+} from '../notify/messages'
 import { sendMailboxMessage } from '../notify/send-message'
 import { waitForBeeReady } from '../notify/bee-ready'
 import { createNodeNotifyProvider } from '../notify/provider'
+import { setOpenContact } from '../notify/open-contact'
 import { publishIdentity } from '../notify/publish-identity'
 import { addContact, isIdentityPublished, loadContacts } from '../notify/storage'
 import { toLibraryContact, type NookContact } from '../notify/types'
@@ -79,6 +90,15 @@ export default function Messages({ initialContactId, hideContactList, hideThread
   const [threads, setThreads] = useState(() => loadThreads())
   const [cursors, setCursors] = useState(() => loadReadCursors())
   const [selectedId, setSelectedId] = useState<string | null>(initialContactId ?? contacts[0]?.id ?? null)
+
+  // The open conversation is read first by the inbox poller (#191). Embedded in
+  // Contacts, that page sets it.
+  useEffect(() => {
+    if (hideContactList) return
+    setOpenContact(selectedId)
+
+    return () => setOpenContact(null)
+  }, [selectedId, hideContactList])
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -139,7 +159,17 @@ export default function Messages({ initialContactId, hideContactList, hideThread
   const selected = contacts.find(c => c.id === selectedId) ?? null
   const selectedThread = selected ? (threads[selected.id.toLowerCase()] ?? []) : []
   const hasInbound = selected ? hasInboundSince(selectedThread, selected.addedAt) : false
-  const connectionState: ConnectionState = selected ? deriveConnectionState(selected.id, hasInbound) : 'not-connected'
+  // One side of the conversation is still being read in this browser (#191):
+  // show neither half a conversation nor an invite composer yet.
+  const syncing = selected ? conversationLoading(selected.id) : false
+  // Past the loading cap, their messages still not all here: they have written
+  // to me, so this is a connection — never fall back to the (paid) invite.
+  const catchingUp = selected ? !syncing && theirSidePending(selected.id) : false
+  const connectionState: ConnectionState = !selected
+    ? 'not-connected'
+    : catchingUp
+      ? 'connected'
+      : deriveConnectionState(selected.id, hasInbound)
   const needsNickname = connectionState !== 'connected' && !myDisplayName && (!suggestedName || editingName)
   const invitingAsSuggested =
     connectionState !== 'connected' && !myDisplayName && Boolean(suggestedName) && !editingName
@@ -387,7 +417,7 @@ export default function Messages({ initialContactId, hideContactList, hideThread
     try {
       const myAddr = signer.getAddress()
 
-      await enqueueSend(selected.id, async () => {
+      const feedIndex = await enqueueSend(selected.id, async () => {
         // Hold until the node can push — avoids a warmup-window send that
         // gets a local ✓ but never reaches the recipient.
         if (!(await waitForBeeReady())) throw new Error('Node not ready — try again in a moment.')
@@ -401,7 +431,8 @@ export default function Messages({ initialContactId, hideContactList, hideThread
 
       // The invite is in their mailbox — show it as sent now, whatever the
       // on-chain notice does next.
-      setThreads(prev => appendSent(prev, selected.id, body))
+      // From storage, not React state: the poller may have written meanwhile.
+      setThreads(appendSent(loadThreads(), selected.id, body, Date.now(), feedIndex))
       setDraft('')
 
       try {
@@ -653,13 +684,18 @@ export default function Messages({ initialContactId, hideContactList, hideThread
                     {short(selected.id, 8)}
                   </p>
                 </div>
-                <ConnectionStatusBadge state={connectionState} contactId={selected.id} />
+                {!syncing && <ConnectionStatusBadge state={connectionState} contactId={selected.id} />}
               </div>
             )}
             <div ref={scrollRef} className="flex-1 overflow-auto px-6 py-4 flex flex-col">
-              {selectedThread.length === 0 ? (
+              {syncing ? (
+                <p className="flex items-center gap-2 text-sm m-auto" style={{ color: 'rgb(var(--fg-muted))' }}>
+                  <Loader2 size={14} className="animate-spin" />
+                  Loading conversation…
+                </p>
+              ) : selectedThread.length === 0 ? (
                 <p className="text-sm m-auto" style={{ color: 'rgb(var(--fg-muted))' }}>
-                  No messages yet. Say hello.
+                  {catchingUp ? 'Still loading older messages…' : 'No messages yet. Say hello.'}
                 </p>
               ) : (
                 <MessageThread
@@ -671,122 +707,126 @@ export default function Messages({ initialContactId, hideContactList, hideThread
                 />
               )}
             </div>
-            <div className="border-t p-4 space-y-2" style={{ borderColor: 'rgb(var(--border))' }}>
-              {error && (
-                <p className="text-xs mb-2" style={{ color: needsPublish ? 'rgb(var(--fg-muted))' : '#ef4444' }}>
-                  {error}
-                </p>
-              )}
-
-              {pendingPing && pendingPing.contactId === selected.id && !sending && (
-                <Button onClick={handleRetryPing} size="sm" className="mb-2">
-                  Retry notice
-                </Button>
-              )}
-
-              {needsPublish && (
-                <Button onClick={handlePublishAndSend} disabled={publishing} size="sm" className="mb-2">
-                  {publishing ? 'Publishing…' : 'Publish identity & send'}
-                </Button>
-              )}
-
-              {sendStatus && (
-                <p
-                  className="text-xs mb-2 flex items-center gap-1.5 animate-pulse"
-                  style={{ color: 'rgb(var(--accent))' }}
-                >
-                  <Send size={12} />
-                  {sendStatus}
-                </p>
-              )}
-
-              {invitingAsSuggested && (
-                <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-                  Inviting as{' '}
-                  <span className="font-semibold" style={{ color: 'rgb(var(--fg))' }}>
-                    {suggestedName}
-                  </span>{' '}
-                  ·{' '}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPendingNicknameInput(suggestedName)
-                      setEditingName(true)
-                    }}
-                    className="underline"
-                  >
-                    change
-                  </button>
-                </p>
-              )}
-
-              {needsNickname && (
-                <div
-                  className="rounded-lg border p-3 space-y-2"
-                  style={{ backgroundColor: 'rgb(var(--bg-surface))', borderColor: 'rgb(var(--border))' }}
-                >
-                  <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-                    What should they call you? Shown to the recipient in your invite.
-                  </p>
-                  <Input
-                    autoFocus
-                    value={pendingNicknameInput}
-                    onChange={e => setPendingNicknameInput(e.target.value)}
-                    placeholder="Your name"
-                  />
-                </div>
-              )}
-
-              {connectionState === 'connected' && (
-                <DraftToolbar format={format} expanded={expanded} onToggleExpand={toggleExpand} />
-              )}
-              <div className="flex gap-2 items-end">
-                <Textarea
-                  value={draft}
-                  onChange={e => setDraft(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder={
-                    connectionState === 'connected'
-                      ? `Message ${selected.nickname}…`
-                      : myDisplayName || invitingAsSuggested
-                        ? `Optional — defaults to "${myDisplayName || suggestedName} would like to connect"`
-                        : `Optional message — your name will be added`
-                  }
-                  ref={draftRef}
-                  rows={1}
-                  className="flex-1 resize-none"
-                  style={{ minHeight: 40 }}
-                />
-                <Button
-                  onClick={handleSend}
-                  disabled={
-                    sending ||
-                    (needsNickname && !pendingNicknameInput.trim()) ||
-                    (connectionState === 'connected' && !draft.trim())
-                  }
-                  size={connectionState === 'connected' ? 'icon' : 'sm'}
-                  title={
-                    connectionState === 'connected'
-                      ? 'Send (Enter)'
-                      : connectionState === 'not-connected'
-                        ? 'Send invite'
-                        : 'Resend invite'
-                  }
-                  className={connectionState === 'connected' ? '' : 'whitespace-nowrap'}
-                >
-                  {connectionState === 'connected' ? (
-                    <Send size={16} />
-                  ) : connectionState === 'not-connected' ? (
-                    'Send invite'
-                  ) : (
-                    'Resend invite'
+            {!syncing && (
+              <div className="border-t p-4 space-y-2" style={{ borderColor: 'rgb(var(--border))' }}>
+                <>
+                  {error && (
+                    <p className="text-xs mb-2" style={{ color: needsPublish ? 'rgb(var(--fg-muted))' : '#ef4444' }}>
+                      {error}
+                    </p>
                   )}
-                </Button>
+
+                  {pendingPing && pendingPing.contactId === selected.id && !sending && (
+                    <Button onClick={handleRetryPing} size="sm" className="mb-2">
+                      Retry notice
+                    </Button>
+                  )}
+
+                  {needsPublish && (
+                    <Button onClick={handlePublishAndSend} disabled={publishing} size="sm" className="mb-2">
+                      {publishing ? 'Publishing…' : 'Publish identity & send'}
+                    </Button>
+                  )}
+
+                  {sendStatus && (
+                    <p
+                      className="text-xs mb-2 flex items-center gap-1.5 animate-pulse"
+                      style={{ color: 'rgb(var(--accent))' }}
+                    >
+                      <Send size={12} />
+                      {sendStatus}
+                    </p>
+                  )}
+
+                  {invitingAsSuggested && (
+                    <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                      Inviting as{' '}
+                      <span className="font-semibold" style={{ color: 'rgb(var(--fg))' }}>
+                        {suggestedName}
+                      </span>{' '}
+                      ·{' '}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPendingNicknameInput(suggestedName)
+                          setEditingName(true)
+                        }}
+                        className="underline"
+                      >
+                        change
+                      </button>
+                    </p>
+                  )}
+
+                  {needsNickname && (
+                    <div
+                      className="rounded-lg border p-3 space-y-2"
+                      style={{ backgroundColor: 'rgb(var(--bg-surface))', borderColor: 'rgb(var(--border))' }}
+                    >
+                      <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
+                        What should they call you? Shown to the recipient in your invite.
+                      </p>
+                      <Input
+                        autoFocus
+                        value={pendingNicknameInput}
+                        onChange={e => setPendingNicknameInput(e.target.value)}
+                        placeholder="Your name"
+                      />
+                    </div>
+                  )}
+
+                  {connectionState === 'connected' && (
+                    <DraftToolbar format={format} expanded={expanded} onToggleExpand={toggleExpand} />
+                  )}
+                  <div className="flex gap-2 items-end">
+                    <Textarea
+                      value={draft}
+                      onChange={e => setDraft(e.target.value)}
+                      onKeyDown={handleKeyDown}
+                      placeholder={
+                        connectionState === 'connected'
+                          ? `Message ${selected.nickname}…`
+                          : myDisplayName || invitingAsSuggested
+                            ? `Optional — defaults to "${myDisplayName || suggestedName} would like to connect"`
+                            : `Optional message — your name will be added`
+                      }
+                      ref={draftRef}
+                      rows={1}
+                      className="flex-1 resize-none"
+                      style={{ minHeight: 40 }}
+                    />
+                    <Button
+                      onClick={handleSend}
+                      disabled={
+                        sending ||
+                        (needsNickname && !pendingNicknameInput.trim()) ||
+                        (connectionState === 'connected' && !draft.trim())
+                      }
+                      size={connectionState === 'connected' ? 'icon' : 'sm'}
+                      title={
+                        connectionState === 'connected'
+                          ? 'Send (Enter)'
+                          : connectionState === 'not-connected'
+                            ? 'Send invite'
+                            : 'Resend invite'
+                      }
+                      className={connectionState === 'connected' ? '' : 'whitespace-nowrap'}
+                    >
+                      {connectionState === 'connected' ? (
+                        <Send size={16} />
+                      ) : connectionState === 'not-connected' ? (
+                        'Send invite'
+                      ) : (
+                        'Resend invite'
+                      )}
+                    </Button>
+                  </div>
+                  {connectionState === 'connected' && (
+                    <p className="text-[10px] text-muted-foreground">Enter to send · Shift+Enter for a new line</p>
+                  )}
+                </>
               </div>
-              {connectionState === 'connected' && (
-                <p className="text-[10px] text-muted-foreground">Enter to send · Shift+Enter for a new line</p>
-              )}
-            </div>
+            )}
           </>
         ) : selectedInvite ? (
           <div className="flex-1 flex flex-col p-6 gap-4 max-w-xl">
@@ -882,7 +922,7 @@ export default function Messages({ initialContactId, hideContactList, hideThread
 
 export function ConnectionStatusBadge({ state, contactId }: { state: ConnectionState; contactId: string }) {
   // For invite-sent states, show how long ago we sent it.
-  const sentAt = state === 'invite-sent-fresh' || state === 'invite-sent-stale' ? getInviteSentAtMs(contactId) : null
+  const sentAt = state === 'invite-sent-fresh' || state === 'invite-sent-stale' ? getInviteSentAt(contactId) : null
   const hint = sentAt ? formatAge(sentAt) : null
 
   const style: Record<ConnectionState, { label: string; bg: string; fg: string; dot: string }> = {
@@ -922,20 +962,6 @@ export function ConnectionStatusBadge({ state, contactId }: { state: ConnectionS
       {s.label}
     </span>
   )
-}
-
-function getInviteSentAtMs(contactId: string): number | null {
-  // Re-read each render — cheap localStorage lookup, keeps badge fresh after Send invite.
-  try {
-    const raw = localStorage.getItem('nook-invitations-sent-v1')
-
-    if (!raw) return null
-    const map = JSON.parse(raw) as Record<string, { sentAt: number }>
-
-    return map[contactId.toLowerCase()]?.sentAt ?? null
-  } catch {
-    return null
-  }
 }
 
 function formatAge(sentAtMs: number): string {

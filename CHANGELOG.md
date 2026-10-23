@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.7.3](https://github.com/GasperX93/nook/releases/tag/v0.7.3) (2026-10-23)
+
+New to Nook? Read the [user guide](https://nook-drive.eth.limo/docs.html) and [how Nook works](https://nook-drive.eth.limo/how-it-works.html) on the Nook website — [nook-drive.eth.limo](https://nook-drive.eth.limo).
+
+### Use Nook in any browser
+* **Contacts and conversations in every browser** — contacts, your name and read status are kept in the Nook app folder, not only in the browser. Another browser, a private window or cleared site data shows your contacts and whole conversations, including the messages you sent.
+* **Drives in every browser** — file lists, folders, encrypted-drive settings and Shared with me are kept in the app too. Every browser on the computer shows the same drives, and a change in one shows in the others within seconds.
+
+### Messages
+* **Conversations load fast again** and no longer get stuck on "Loading conversation…".
+* **A sent message never shows twice.**
+* **A contact who wrote to you never falls back to "Send invite"**, and invites you sent or accepted are remembered in every browser.
+
+### Sharing encrypted drives
+* **Giving someone access during an upload works** — before, an encrypted upload that finished after you shared the drive locked the new person out.
+* **Send update** is a clear button and can't send the drive twice. Opened from "Notify recipients", the share dialog says who got the update.
+* A renamed drive shows its new name in every browser.
+
+### Fixes
+* Image files download again — a thumbnail could block the download.
+* A new browser no longer shows "Access removed / restored" for old drive messages.
+
+### Upgrading from 0.7.2
+* **Open Nook once in the browser you usually use** after updating. That browser hands its contacts and drive lists to the app; after that every browser shows them.
+* Until then, a new browser or private window shows a notice and doesn't know which drives are encrypted — don't upload to encrypted drives there.
+* Going back to 0.7.2 keeps your files and contacts, but don't share or remove access to encrypted drives while on 0.7.2.
+
 ## [0.7.2](https://github.com/GasperX93/nook/releases/tag/v0.7.2) (2026-10-20)
 
 New to Nook? Read the [user guide](https://nook-drive.eth.limo/docs.html) and [how Nook works](https://nook-drive.eth.limo/how-it-works.html) on the Nook website — [nook-drive.eth.limo](https://nook-drive.eth.limo).

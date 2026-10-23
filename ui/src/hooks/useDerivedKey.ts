@@ -17,6 +17,7 @@ import { useCallback, useEffect } from 'react'
 
 import { SWARM_ID_SECRET_PREFIX, SWARM_ID_WALLET_MARKER } from '../crypto/signer'
 import { markSwarmIdIdentity, setActiveIdentity } from '../notify/active-identity'
+import { restoreContactBackup } from '../notify/contact-backup'
 import { migrateMessagesToV2 } from '../notify/messages'
 import { acquireDeriveLock, releaseDeriveLock, useIdentityStore } from '../store/identity'
 import { signInWithSwarmId } from '../swarm-id'
@@ -97,6 +98,10 @@ export function useDerivedKey() {
     // Once the identity namespace is active, run the one-time v2 clean break
     // (drops stale single-slot v1 threads — see migrateMessagesToV2). Idempotent.
     if (safeAddress) migrateMessagesToV2()
+
+    // Then merge in the contacts saved in the app folder (#192) — after the
+    // clean break, which would otherwise wipe the restored send cursors.
+    if (safeAddress) void restoreContactBackup(safeAddress)
   }, [safeAddress])
 
   return {

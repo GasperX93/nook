@@ -85,6 +85,7 @@ import { friendlyError } from '../lib/friendly-error'
 import { type DriveSpace, driveSpace, fitsInDrive } from '../lib/drive-space'
 import { extendPlan } from '../lib/extend-plan'
 import { growingTo, useDriveResize } from '../store/drive-resize'
+import { sendDriveOps, toPatch, useDriveDataStore } from '../store/drive-data'
 import { formatBytes } from '../lib/format-bytes'
 import { isDriveFullError, withUploadRetries } from '../lib/upload-retry'
 import {
@@ -1398,6 +1399,10 @@ function RecordRow({
         ) : record.type === 'file' && isImageFile(record.name) ? (
           <img
             src={`${getBeeUrl()}/bzz/${record.hash}/`}
+            // Asked like the download (with CORS): a plain image request got an
+            // answer without the CORS header, the browser cached it, and the
+            // download then reused it and was blocked.
+            crossOrigin="anonymous"
             className="w-full h-full object-cover"
             onError={e => {
               ;(e.target as HTMLImageElement).style.display = 'none'
@@ -2241,7 +2246,6 @@ interface AddFileProps {
   actHistoryRef?: string
   onDone: () => void
   onAdd: (record: UploadRecord) => void
-  onActHistoryUpdate?: (historyRef: string) => void
   /** Latest public wrapper ref after the metadata feed update (#93 health checks). */
   onWrapperRef?: (ref: string) => void
   /** Folder the upload lands in — so its in-progress row shows there (R5-2). */
@@ -2289,7 +2293,6 @@ function AddFilePanel({
   actHistoryRef,
   onDone,
   onAdd,
-  onActHistoryUpdate,
   onWrapperRef,
   folderId,
   space,
@@ -2382,13 +2385,19 @@ function AddFilePanel({
     try {
       await pollStampUsable(driveId, setPhase, onBeeWait)
 
-      let currentHistoryRef = actHistoryRef
+      // The drive's ACT history as the app keeps it — an upload doesn't change
+      // it (only grants do), so it is never written back from here. Fetched
+      // inside the retried step: a first one is made with a small upload, which
+      // can meet the same just-usable-drive hiccups as the upload itself.
+      let currentHistoryRef: string | undefined
 
       async function doUpload(): Promise<{ reference: string; historyAddress?: string; tagUid?: number }> {
         setPhase(encrypted ? UPLOAD_ENCRYPTED : UPLOAD_STEP_LOCAL)
         setProgress(0)
 
         if (encrypted) {
+          currentHistoryRef ??= (await serverApi.getDriveHead(driveId, actHistoryRef)).historyRef
+
           if (type === 'file') {
             return beeApi.uploadFileWithACT(entries[0].file, driveId, currentHistoryRef, onUploadPct)
           }
@@ -2439,11 +2448,6 @@ function AddFilePanel({
       const reference = result.reference
       const uploadHistoryAddress = result.historyAddress
       const uploadTagUid = result.tagUid
-
-      if (uploadHistoryAddress) {
-        currentHistoryRef = uploadHistoryAddress
-        onActHistoryUpdate?.(uploadHistoryAddress)
-      }
 
       // NOTE (#93): encrypted content refs are ACT-encrypted POINTERS, not
       // content addresses — stewardship can't verify them. The availability
@@ -2527,16 +2531,14 @@ function AddFilePanel({
           ]
 
           const metadata = JSON.stringify({ files: driveFiles })
-          // Use the drive's latest ACT history (includes grantee additions), not just file upload history
-          const latestHistory = actHistoryRef || uploadHistoryAddress
-          const uploaded = await serverApi.uploadACTMetadata(driveId, metadata, latestHistory)
+          // The app encrypts it under the drive's latest history (grants included).
+          const uploaded = await serverApi.uploadACTMetadata(driveId, metadata, currentHistoryRef)
 
           // Upload wrapper as raw bytes (not /bzz file) so feed reader can use /bytes
           const wrapper = JSON.stringify({ ref: uploaded.reference, history: uploaded.historyRef })
           const wrapperResult = await serverApi.uploadRawBytes(driveId, wrapper)
 
           await serverApi.createFeedUpdate(topic, wrapperResult.reference, driveId)
-          onActHistoryUpdate?.(uploaded.historyRef)
           onWrapperRef?.(wrapperResult.reference)
           // #93: the wrapper is PUBLIC bytes — a real address stewardship can
           // verify. Confirm the share chain is servable (soft: the ShareModal
@@ -2778,6 +2780,7 @@ function SharedDriveCard({
     const updated = drives.map(d => (d.id === drive.id ? { ...d, ...changes } : d))
 
     localStorage.setItem('nook-shared-drives', JSON.stringify(updated))
+    sendDriveOps([{ kind: 'shared', op: 'patch', id: drive.id, changes: toPatch({ ...changes }) }])
     onRefresh?.()
   }
 
@@ -2852,6 +2855,7 @@ function SharedDriveCard({
     )
     const updated = drives.map(d => (d.id === drive.id ? { ...d, ...partial } : d))
     localStorage.setItem('nook-shared-drives', JSON.stringify(updated))
+    sendDriveOps([{ kind: 'shared', op: 'patch', id: drive.id, changes: { ...partial } }])
   }
 
   async function downloadFile(ref: string, _fileHistoryRef: string, fileName: string, row: number) {
@@ -3110,24 +3114,54 @@ export default function Drive() {
     }
   })
 
-  function renameDrive(batchID: string, name: string) {
-    // Optimistic local overlay — shows instantly and doubles as a fallback for
-    // nodes older than Bee 2.8.1 (where PATCH /stamps doesn't exist).
+  // A rename shows right away (pending) and is saved as the drive's label on
+  // the node, which every browser reads. The browser's own copy
+  // (nook-drive-labels) is only a fallback for a drive the node has no label
+  // for: preferring it showed an old name in a browser that had renamed the
+  // drive earlier.
+  const [pendingDriveLabels, setPendingDriveLabels] = useState<Record<string, string>>({})
+
+  function driveLabel(batchID: string, nodeLabel?: string): string | undefined {
+    return pendingDriveLabels[batchID] || nodeLabel || customDriveLabels[batchID] || undefined
+  }
+
+  function setLocalDriveLabel(batchID: string, name: string | null) {
     setCustomDriveLabels(prev => {
-      const next = { ...prev, [batchID]: name }
-      localStorage.setItem('nook-drive-labels', JSON.stringify(next))
+      const next = { ...prev }
+
+      if (name === null) delete next[batchID]
+      else next[batchID] = name
+      try {
+        localStorage.setItem('nook-drive-labels', JSON.stringify(next))
+      } catch {
+        // storage unavailable — the node's label still holds the name
+      }
 
       return next
     })
-    // Persist on the node (batch label) — survives reinstall/other browsers,
-    // unlike this origin's localStorage. Best-effort: local rename stands
-    // regardless.
+  }
+
+  function renameDrive(batchID: string, name: string) {
+    setPendingDriveLabels(prev => ({ ...prev, [batchID]: name }))
     beeApi
       .renameStamp(batchID, name)
-      .then(async () => queryClient.invalidateQueries({ queryKey: ['bee', 'stamps'] }))
-      .catch(() => {
-        // Older node or transient error — the localStorage overlay covers it.
+      .then(async () => {
+        await queryClient.invalidateQueries({ queryKey: ['bee', 'stamps'] })
+        setLocalDriveLabel(batchID, null)
       })
+      .catch(() => {
+        // Older node (no PATCH /stamps) or transient error — keep the name in this browser.
+        setLocalDriveLabel(batchID, name)
+      })
+      .finally(() =>
+        setPendingDriveLabels(prev => {
+          const next = { ...prev }
+
+          delete next[batchID]
+
+          return next
+        }),
+      )
   }
 
   const [activeDriveId, setActiveDriveId] = useState<string | null>(null)
@@ -3150,6 +3184,9 @@ export default function Drive() {
   const [showAddSharedModal, setShowAddSharedModal] = useState(false)
   const [driveTab, setDriveTab] = useState<'mine' | 'shared'>('mine')
   const [addingFile, setAddingFile] = useState(false)
+  // Whether a drive is encrypted comes from the app's drive data: until it's
+  // loaded, this browser may not know — an upload then would go unencrypted.
+  const driveDataStatus = useDriveDataStore(st => st.status)
   const [search, setSearch] = useState('')
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [downloadErrors, setDownloadErrors] = useState<Record<string, string>>({})
@@ -3249,7 +3286,6 @@ export default function Drive() {
         currentHistoryRef,
         onProgress: text => setRepublishState({ driveId, text }),
         onRecordUpdate: (id, changes) => updateRecord(id, changes),
-        onHistoryUpdate: historyRef => driveMetadata.update(driveId, { actHistoryRef: historyRef }),
       })
       driveMetadata.update(driveId, { keyRotated: false })
       setRepublishState({ driveId, text: 'Re-published — everyone with access can open all files again.' })
@@ -3494,7 +3530,10 @@ export default function Drive() {
                 key={drive.batchId}
                 drive={drive}
                 stamp={stamps?.find(s => s.batchID.toLowerCase() === drive.batchId)}
-                customName={customDriveLabels[drive.batchId]}
+                customName={driveLabel(
+                  drive.batchId,
+                  stamps?.find(s => s.batchID.toLowerCase() === drive.batchId)?.label,
+                )}
                 autoExtendOn={autoExtendSettings[drive.batchId]?.enabled}
                 autoExtendMonths={autoExtendSettings[drive.batchId]?.months}
                 autoExtendUpcoming={Boolean(autoExtendSettings[drive.batchId]?.notifiedUpcomingAt)}
@@ -3520,7 +3559,7 @@ export default function Drive() {
                 autoExtendFailed={Boolean(autoExtendSettings[stamp.batchID.toLowerCase()]?.lastFailure)}
                 autoExtendFailedReason={autoExtendSettings[stamp.batchID.toLowerCase()]?.lastFailure?.reason}
                 onAutoExtend={() => setShowExtendModal(stamp.batchID)}
-                customName={customDriveLabels[stamp.batchID]}
+                customName={driveLabel(stamp.batchID, stamp.label)}
                 encrypted={driveMetadata.isEncrypted(stamp.batchID)}
                 granteeCount={driveMetadata.get(stamp.batchID)?.granteeCount}
                 wrapperRef={driveMetadata.get(stamp.batchID)?.lastWrapperRef}
@@ -3559,7 +3598,7 @@ export default function Drive() {
                     <ExpiredDriveRow
                       key={drive.batchId}
                       drive={drive}
-                      customName={customDriveLabels[drive.batchId]}
+                      customName={driveLabel(drive.batchId)}
                       onOpen={() => setActiveDriveId(drive.batchId)}
                     />
                   ))}
@@ -3602,7 +3641,7 @@ export default function Drive() {
             return (
               <ShareModal
                 autoNotify={shareAutoNotify}
-                driveName={stamp?.label || customDriveLabels[showShareModal] || 'Encrypted drive'}
+                driveName={driveLabel(showShareModal, stamp?.label) || 'Encrypted drive'}
                 stampId={showShareModal}
                 actPublisher={meta?.actPublisher || firstRef?.actPublisher}
                 actHistoryRef={meta?.actHistoryRef || firstRef?.actHistoryRef}
@@ -3677,7 +3716,10 @@ export default function Drive() {
         <ReclaimableDriveView
           drive={activeReclaimable}
           stamp={stamps?.find(s => s.batchID.toLowerCase() === activeReclaimable.batchId)}
-          customName={customDriveLabels[activeReclaimable.batchId]}
+          customName={driveLabel(
+            activeReclaimable.batchId,
+            stamps?.find(s => s.batchID.toLowerCase() === activeReclaimable.batchId)?.label,
+          )}
           onBack={() => setActiveDriveId(null)}
         />
         {/* Bell deep link opens the drive with the Extend modal on top (#138) */}
@@ -3964,7 +4006,20 @@ export default function Drive() {
       {/* Inline upload panel — or, when it's closed, the panel of an upload
           that is still running for this drive (re-attached from the tracker). */}
       {!addingFile && resumedUpload && <ResumedUploadPanel transfer={resumedUpload} />}
-      {addingFile && (
+      {addingFile && driveDataStatus !== 'ready' && (
+        <div
+          className="rounded-lg border px-4 py-3 flex items-center gap-2 mb-3 text-xs"
+          style={{
+            backgroundColor: 'rgb(var(--bg-surface))',
+            borderColor: 'rgb(var(--border))',
+            color: 'rgb(var(--fg-muted))',
+          }}
+        >
+          <RefreshCw size={14} className="animate-spin" />
+          {driveDataStatus === 'loading' ? 'Loading your drive data…' : 'Couldn’t load your drive data — trying again…'}
+        </div>
+      )}
+      {addingFile && driveDataStatus === 'ready' && (
         <AddFilePanel
           driveId={activeDriveId}
           space={
@@ -3985,9 +4040,6 @@ export default function Drive() {
 
             // Drive shared with others? Offer to notify them of the new content.
             if ((driveMetadata.get(activeDriveId)?.granteeCount ?? 0) > 1) setUpdatedSharedDrive(true)
-          }}
-          onActHistoryUpdate={historyRef => {
-            driveMetadata.update(activeDriveId, { actHistoryRef: historyRef })
           }}
           onWrapperRef={ref => {
             driveMetadata.update(activeDriveId, { lastWrapperRef: ref })
@@ -4191,7 +4243,7 @@ export default function Drive() {
           return (
             <ShareModal
               autoNotify={shareAutoNotify}
-              driveName={stamp?.label || customDriveLabels[showShareModal] || 'Encrypted drive'}
+              driveName={driveLabel(showShareModal, stamp?.label) || 'Encrypted drive'}
               stampId={showShareModal}
               actPublisher={meta?.actPublisher || firstRef?.actPublisher}
               actHistoryRef={meta?.actHistoryRef || firstRef?.actHistoryRef}

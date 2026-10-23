@@ -111,13 +111,17 @@ export function useUpload() {
 
     // Upload with retry — Bee's stamp issuer may need a moment to load
     // even after the stamp reports as usable via REST.
-    let currentHistoryRef = actHistoryRef
+    // Encrypted: the drive's ACT history as the app keeps it (an upload doesn't
+    // change it); fetched inside the retried step, like the upload.
+    let currentHistoryRef: string | undefined
 
     async function doUpload(): Promise<{ reference: string; historyAddress?: string; tagUid?: number }> {
       onPhase?.(encrypted ? UPLOAD_ENCRYPTED : UPLOAD_STEP_LOCAL)
       onProgress?.(0)
 
       if (encrypted) {
+        currentHistoryRef ??= (await serverApi.getDriveHead(driveId, actHistoryRef)).historyRef
+
         // ACT-encrypted upload
         if (type === 'file') {
           return beeApi.uploadFileWithACT(entries[0].file, driveId, currentHistoryRef, pct => onProgress?.(pct))
@@ -172,9 +176,6 @@ export function useUpload() {
     const reference = result.reference
     const uploadHistoryAddress = result.historyAddress
     const uploadTagUid = result.tagUid
-
-    // Update history ref for next upload in same session
-    if (uploadHistoryAddress) currentHistoryRef = uploadHistoryAddress
 
     // Fetch current stamp TTL to set accurate expiry
     let expiresAt: number

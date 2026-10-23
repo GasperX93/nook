@@ -1,6 +1,6 @@
 import { Bee } from '@ethersphere/bee-js'
 import { identity } from '@swarm-notify/sdk'
-import { Check, Copy, Mail, MessageSquare, Pencil, Plus, Search, Send, Share2, Trash2, X } from 'lucide-react'
+import { Check, Copy, Loader2, Mail, MessageSquare, Pencil, Plus, Search, Send, Share2, Trash2, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
 import Messages, { ConnectionStatusBadge } from '../apps/Messages'
@@ -11,7 +11,7 @@ import { pickMessagingStamp } from '../lib/system-stamp'
 import { movedFromLegacyIdentity } from '../notify/active-identity'
 import { deriveConnectionState, getMyDisplayName, hasInboundSince, markInviteAccepted } from '../notify/contact-state'
 import { sendInviteAck } from '../notify/invite-ack'
-import { loadReadCursors, loadThreads, unreadCount } from '../notify/messages'
+import { conversationLoading, loadReadCursors, loadThreads, theirSidePending, unreadCount } from '../notify/messages'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Textarea } from '../components/ui/textarea'
@@ -23,6 +23,7 @@ import {
   removeInvitationsFor,
 } from '../notify/invitations'
 import { normalizeNookAddress } from '../lib/nook-address'
+import { setOpenContact } from '../notify/open-contact'
 import { decodeShareLink, encodeShareLink } from '../notify/share-link'
 import { addContact, loadContacts, removeContact, renameContact, saveContacts } from '../notify/storage'
 import type { NookContact } from '../notify/types'
@@ -85,6 +86,13 @@ export default function Contacts() {
   }, [])
 
   const [selectedId, setSelectedId] = useState<string | null>(null)
+
+  // The open conversation is read first by the inbox poller (#191).
+  useEffect(() => {
+    setOpenContact(selectedId)
+
+    return () => setOpenContact(null)
+  }, [selectedId])
   const [selectedInviteId, setSelectedInviteId] = useState<string | null>(null)
   const [inviteNickname, setInviteNickname] = useState('')
   const [acceptingInvite, setAcceptingInvite] = useState(false)
@@ -253,8 +261,18 @@ export default function Contacts() {
 
     return { hasThread: t.length > 0, hasInbound: hasInboundSince(t, addedAt) }
   }, [selectedId, threads, composeFor, contacts])
-  const showThread = hasThread || composeFor === selectedId
-  const connectionState = selectedId ? deriveConnectionState(selectedId, hasInbound) : 'not-connected'
+  // Still loading in this browser (another browser, cleared data, #191): the
+  // conversation view with a spinner — never half a conversation, and never
+  // "Not yet connected" + Connect before their side was really read.
+  const loading = selectedId ? conversationLoading(selectedId) : false
+  // Past the loading cap with their messages still coming: a connection, never the invite.
+  const catchingUp = selectedId ? !loading && theirSidePending(selectedId) : false
+  const showThread = hasThread || composeFor === selectedId || loading || catchingUp
+  const connectionState = !selectedId
+    ? 'not-connected'
+    : catchingUp
+      ? 'connected'
+      : deriveConnectionState(selectedId, hasInbound)
 
   function resetAddForm() {
     setRegistryAddr('')
@@ -704,7 +722,16 @@ export default function Contacts() {
                       </button>
                     </>
                   )}
-                  <ConnectionStatusBadge state={connectionState} contactId={selected.id} />
+                  {loading ? (
+                    <Loader2
+                      size={14}
+                      className="animate-spin shrink-0"
+                      style={{ color: 'rgb(var(--fg-muted))' }}
+                      aria-label="Loading conversation"
+                    />
+                  ) : (
+                    <ConnectionStatusBadge state={connectionState} contactId={selected.id} />
+                  )}
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   <Button
