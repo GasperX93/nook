@@ -3110,24 +3110,54 @@ export default function Drive() {
     }
   })
 
-  function renameDrive(batchID: string, name: string) {
-    // Optimistic local overlay — shows instantly and doubles as a fallback for
-    // nodes older than Bee 2.8.1 (where PATCH /stamps doesn't exist).
+  // A rename shows right away (pending) and is saved as the drive's label on
+  // the node, which every browser reads. The browser's own copy
+  // (nook-drive-labels) is only a fallback for a drive the node has no label
+  // for: preferring it showed an old name in a browser that had renamed the
+  // drive earlier.
+  const [pendingDriveLabels, setPendingDriveLabels] = useState<Record<string, string>>({})
+
+  function driveLabel(batchID: string, nodeLabel?: string): string | undefined {
+    return pendingDriveLabels[batchID] || nodeLabel || customDriveLabels[batchID] || undefined
+  }
+
+  function setLocalDriveLabel(batchID: string, name: string | null) {
     setCustomDriveLabels(prev => {
-      const next = { ...prev, [batchID]: name }
-      localStorage.setItem('nook-drive-labels', JSON.stringify(next))
+      const next = { ...prev }
+
+      if (name === null) delete next[batchID]
+      else next[batchID] = name
+      try {
+        localStorage.setItem('nook-drive-labels', JSON.stringify(next))
+      } catch {
+        // storage unavailable — the node's label still holds the name
+      }
 
       return next
     })
-    // Persist on the node (batch label) — survives reinstall/other browsers,
-    // unlike this origin's localStorage. Best-effort: local rename stands
-    // regardless.
+  }
+
+  function renameDrive(batchID: string, name: string) {
+    setPendingDriveLabels(prev => ({ ...prev, [batchID]: name }))
     beeApi
       .renameStamp(batchID, name)
-      .then(async () => queryClient.invalidateQueries({ queryKey: ['bee', 'stamps'] }))
-      .catch(() => {
-        // Older node or transient error — the localStorage overlay covers it.
+      .then(async () => {
+        await queryClient.invalidateQueries({ queryKey: ['bee', 'stamps'] })
+        setLocalDriveLabel(batchID, null)
       })
+      .catch(() => {
+        // Older node (no PATCH /stamps) or transient error — keep the name in this browser.
+        setLocalDriveLabel(batchID, name)
+      })
+      .finally(() =>
+        setPendingDriveLabels(prev => {
+          const next = { ...prev }
+
+          delete next[batchID]
+
+          return next
+        }),
+      )
   }
 
   const [activeDriveId, setActiveDriveId] = useState<string | null>(null)
@@ -3496,7 +3526,10 @@ export default function Drive() {
                 key={drive.batchId}
                 drive={drive}
                 stamp={stamps?.find(s => s.batchID.toLowerCase() === drive.batchId)}
-                customName={customDriveLabels[drive.batchId]}
+                customName={driveLabel(
+                  drive.batchId,
+                  stamps?.find(s => s.batchID.toLowerCase() === drive.batchId)?.label,
+                )}
                 autoExtendOn={autoExtendSettings[drive.batchId]?.enabled}
                 autoExtendMonths={autoExtendSettings[drive.batchId]?.months}
                 autoExtendUpcoming={Boolean(autoExtendSettings[drive.batchId]?.notifiedUpcomingAt)}
@@ -3522,7 +3555,7 @@ export default function Drive() {
                 autoExtendFailed={Boolean(autoExtendSettings[stamp.batchID.toLowerCase()]?.lastFailure)}
                 autoExtendFailedReason={autoExtendSettings[stamp.batchID.toLowerCase()]?.lastFailure?.reason}
                 onAutoExtend={() => setShowExtendModal(stamp.batchID)}
-                customName={customDriveLabels[stamp.batchID]}
+                customName={driveLabel(stamp.batchID, stamp.label)}
                 encrypted={driveMetadata.isEncrypted(stamp.batchID)}
                 granteeCount={driveMetadata.get(stamp.batchID)?.granteeCount}
                 wrapperRef={driveMetadata.get(stamp.batchID)?.lastWrapperRef}
@@ -3561,7 +3594,7 @@ export default function Drive() {
                     <ExpiredDriveRow
                       key={drive.batchId}
                       drive={drive}
-                      customName={customDriveLabels[drive.batchId]}
+                      customName={driveLabel(drive.batchId)}
                       onOpen={() => setActiveDriveId(drive.batchId)}
                     />
                   ))}
@@ -3604,7 +3637,7 @@ export default function Drive() {
             return (
               <ShareModal
                 autoNotify={shareAutoNotify}
-                driveName={stamp?.label || customDriveLabels[showShareModal] || 'Encrypted drive'}
+                driveName={driveLabel(showShareModal, stamp?.label) || 'Encrypted drive'}
                 stampId={showShareModal}
                 actPublisher={meta?.actPublisher || firstRef?.actPublisher}
                 actHistoryRef={meta?.actHistoryRef || firstRef?.actHistoryRef}
@@ -3679,7 +3712,10 @@ export default function Drive() {
         <ReclaimableDriveView
           drive={activeReclaimable}
           stamp={stamps?.find(s => s.batchID.toLowerCase() === activeReclaimable.batchId)}
-          customName={customDriveLabels[activeReclaimable.batchId]}
+          customName={driveLabel(
+            activeReclaimable.batchId,
+            stamps?.find(s => s.batchID.toLowerCase() === activeReclaimable.batchId)?.label,
+          )}
           onBack={() => setActiveDriveId(null)}
         />
         {/* Bell deep link opens the drive with the Extend modal on top (#138) */}
@@ -4203,7 +4239,7 @@ export default function Drive() {
           return (
             <ShareModal
               autoNotify={shareAutoNotify}
-              driveName={stamp?.label || customDriveLabels[showShareModal] || 'Encrypted drive'}
+              driveName={driveLabel(showShareModal, stamp?.label) || 'Encrypted drive'}
               stampId={showShareModal}
               actPublisher={meta?.actPublisher || firstRef?.actPublisher}
               actHistoryRef={meta?.actHistoryRef || firstRef?.actHistoryRef}
