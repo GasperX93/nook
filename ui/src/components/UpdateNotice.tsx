@@ -14,7 +14,7 @@ const ORANGE = '#f76808'
  */
 export default function UpdateNotice() {
   const { expanded } = useSidebar()
-  const { info, available, canInstall, busy, update } = useAppUpdate()
+  const { info, available, canInstall, stuck, busy, update } = useAppUpdate()
 
   if (!info || !available || (!canInstall && !info.url)) return null
 
@@ -24,7 +24,7 @@ export default function UpdateNotice() {
     ? 'Nook restarts in a moment, then this page reloads.'
     : !expanded
       ? `${label} — ${canInstall ? 'update' : 'download'}`
-      : `You're on ${info.current}`
+      : `${stuck ? 'The download seems stuck. Quit and reopen Nook to try again, or download it here. ' : ''}You're on ${info.current}`
   const className = `flex items-center gap-2 rounded-lg text-left transition-colors hover:bg-white/5 focus:outline-none focus-visible:ring-1 focus-visible:ring-white/30 disabled:cursor-default ${
     expanded ? 'w-full px-2.5 py-2' : 'h-10 w-10 mx-auto justify-center relative'
   }`

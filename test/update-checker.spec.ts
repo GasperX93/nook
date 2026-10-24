@@ -160,3 +160,86 @@ test('when the updater finds a version, the notice asks GitHub again and names i
   expect(mockFetch).toHaveBeenCalledTimes(1)
   expect(getUpdateInfo().latest).toBe(next)
 })
+
+// Squirrel.Mac refuses a check while the previous check and its download run.
+function busyError() {
+  return Object.assign(new Error('The command is disabled and cannot be executed'), {
+    domain: 'RACCommandErrorDomain',
+    code: 1,
+  })
+}
+
+test('a "busy" check while downloading is not a failed download', async () => {
+  const u = makeUpdater()
+
+  watchAutoUpdater(u.updater, u.stopBee)
+  u.emitter.emit('update-available')
+  expect(await installUpdate()).toBe('waiting')
+  u.emitter.emit('error', busyError())
+  expect(getUpdateInfo().updater).toBe('downloading')
+  expect(getUpdateInfo().installRequested).toBe(true)
+  u.emitter.emit('update-downloaded')
+  await settle()
+  expect(u.installs).toHaveLength(1)
+})
+
+test('a real download error offers the link, and the next check downloads again', () => {
+  const u = makeUpdater()
+
+  watchAutoUpdater(u.updater, u.stopBee)
+  u.emitter.emit('update-available')
+  u.emitter.emit('error', new Error('The network connection was lost.'))
+  expect(getUpdateInfo().updater).toBe('failed')
+  u.emitter.emit('update-available')
+  expect(getUpdateInfo().updater).toBe('downloading')
+})
+
+test('a download that never finishes is reported stuck: the link, no waiting click', async () => {
+  const u = makeUpdater()
+  const now = jest.spyOn(Date, 'now')
+
+  try {
+    now.mockReturnValue(1_000_000)
+    watchAutoUpdater(u.updater, u.stopBee)
+    u.emitter.emit('update-available')
+    await installUpdate()
+    // Checks every 10 minutes keep saying "busy"…
+    now.mockReturnValue(1_000_000 + 59 * 60_000)
+    u.emitter.emit('error', busyError())
+    expect(getUpdateInfo().updater).toBe('downloading')
+    // …and after an hour it's stuck.
+    now.mockReturnValue(1_000_000 + 61 * 60_000)
+    const info = getUpdateInfo()
+
+    expect(info.updater).toBe('stuck')
+    expect(info.updateAvailable).toBe(true)
+    expect(info.url).not.toBeNull()
+    expect(info.installRequested).toBe(false)
+    expect(await installUpdate()).toBe('unavailable')
+
+    // If it does finish after all, Update works again, but no surprise restart.
+    u.emitter.emit('update-downloaded')
+    await settle()
+    expect(getUpdateInfo().updater).toBe('ready')
+    expect(u.installs).toHaveLength(0)
+  } finally {
+    now.mockRestore()
+  }
+})
+
+test('a later "update found" during a download does not restart the stuck clock', () => {
+  const u = makeUpdater()
+  const now = jest.spyOn(Date, 'now')
+
+  try {
+    now.mockReturnValue(0)
+    watchAutoUpdater(u.updater, u.stopBee)
+    u.emitter.emit('update-available')
+    now.mockReturnValue(50 * 60_000)
+    u.emitter.emit('update-available')
+    now.mockReturnValue(61 * 60_000)
+    expect(getUpdateInfo().updater).toBe('stuck')
+  } finally {
+    now.mockRestore()
+  }
+})

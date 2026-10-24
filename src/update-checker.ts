@@ -24,10 +24,18 @@ const STATE_FILE = 'update-check.json'
 
 /**
  * Electron's updater: `none` = nothing found (yet), `downloading`, `ready` =
- * downloaded and waiting for a restart, `installing`, `failed`, and
- * `unsupported` (Linux, or not a packaged app).
+ * downloaded and waiting for a restart, `installing`, `failed`, `stuck` = a
+ * download that hasn't finished in STUCK_AFTER_MS (only a restart starts it
+ * again), and `unsupported` (Linux, or not a packaged app).
  */
-export type UpdaterState = 'none' | 'downloading' | 'ready' | 'installing' | 'failed' | 'unsupported'
+export type UpdaterState = 'none' | 'downloading' | 'ready' | 'installing' | 'failed' | 'stuck' | 'unsupported'
+
+/**
+ * Squirrel.Mac's own download timeout is 20 minutes without data; a download
+ * still going after an hour has hung (2026-10-23: one never finished after the
+ * Mac slept mid-download, and the next 20 hours of checks all said "busy").
+ */
+const STUCK_AFTER_MS = 60 * 60_000
 
 export interface UpdateInfo {
   current: string
@@ -44,10 +52,28 @@ const RELEASES_PAGE = 'https://github.com/GasperX93/nook/releases'
 let latestSeen: { version: string; url: string } | null = null
 let updaterState: UpdaterState = 'unsupported'
 let installRequested = false
+let downloadStartedAt = 0
+let stuckLogged = false
+
+/** The state, with a download that has run too long reported as stuck. */
+function currentUpdaterState(): UpdaterState {
+  if (updaterState !== 'downloading' || Date.now() - downloadStartedAt < STUCK_AFTER_MS) return updaterState
+
+  if (!stuckLogged) {
+    stuckLogged = true
+    // The user is offered the download link instead; don't restart on them
+    // hours later if the download does finish.
+    installRequested = false
+    logger.warn('Update download seems stuck — quitting and reopening Nook starts it again')
+  }
+
+  return 'stuck'
+}
 
 export function getUpdateInfo(): UpdateInfo {
   const current = PACKAGE_JSON.version
-  const updaterHasOne = updaterState === 'downloading' || updaterState === 'ready' || updaterState === 'installing'
+  const state = currentUpdaterState()
+  const updaterHasOne = state === 'downloading' || state === 'ready' || state === 'installing' || state === 'stuck'
   // The daily GitHub check can be older than the updater's find: never name a
   // version that isn't newer than this one ("Nook 0.7.4 is available" on 0.7.4).
   const newer = latestSeen !== null && isNewer(latestSeen.version, current) ? latestSeen : null
@@ -57,7 +83,7 @@ export function getUpdateInfo(): UpdateInfo {
     latest: newer?.version ?? null,
     url: newer?.url ?? (updaterHasOne ? RELEASES_PAGE : null),
     updateAvailable: newer !== null || updaterHasOne,
-    updater: updaterState,
+    updater: state,
     installRequested,
   }
 }
@@ -80,25 +106,46 @@ export function watchAutoUpdater(autoUpdater: AutoUpdaterLike, beforeInstall: ()
   stopBee = beforeInstall
   updaterState = 'none'
   autoUpdater.on('update-available', () => {
-    if (updaterState !== 'ready' && updaterState !== 'installing') updaterState = 'downloading'
+    if (updaterState !== 'ready' && updaterState !== 'installing' && updaterState !== 'downloading') {
+      updaterState = 'downloading'
+      downloadStartedAt = Date.now()
+      stuckLogged = false
+    }
 
     // Ask GitHub again so the notice names the version being downloaded.
     void runUpdateCheck()
   })
   autoUpdater.on('update-downloaded', () => {
+    logger.info('Update downloaded — ready to install')
     updaterState = 'ready'
 
     if (installRequested) void installUpdate()
   })
   autoUpdater.on('error', error => {
+    // update-electron-app checks every 10 minutes; while a check and its
+    // download are still running, Squirrel.Mac refuses the next one with this
+    // error. The download goes on, so nothing has failed.
+    if (isBusyError(error)) {
+      logger.debug('Update check skipped: the previous check or download is still running')
+
+      return
+    }
     logger.error(`Update download failed: ${(error as Error)?.message ?? error}`)
 
     // A download already finished stays installable; otherwise offer the link.
+    // The next check retries it.
     if (updaterState !== 'ready' && updaterState !== 'installing') {
       updaterState = 'failed'
       installRequested = false
     }
   })
+}
+
+/** Squirrel.Mac's "a check is already running" (RACCommandErrorNotEnabled). */
+function isBusyError(error: unknown): boolean {
+  const { domain, code, message } = (error ?? {}) as { domain?: string; code?: number; message?: string }
+
+  return (domain === 'RACCommandErrorDomain' && code === 1) || /command is disabled/i.test(message ?? '')
 }
 
 /**
@@ -108,15 +155,17 @@ export function watchAutoUpdater(autoUpdater: AutoUpdaterLike, beforeInstall: ()
 export async function installUpdate(): Promise<'installing' | 'waiting' | 'unavailable'> {
   if (!updater) return 'unavailable'
 
-  if (updaterState === 'installing') return 'installing'
+  const state = currentUpdaterState()
 
-  if (updaterState === 'downloading') {
+  if (state === 'installing') return 'installing'
+
+  if (state === 'downloading') {
     installRequested = true
 
     return 'waiting'
   }
 
-  if (updaterState !== 'ready') return 'unavailable'
+  if (state !== 'ready') return 'unavailable'
   updaterState = 'installing'
   logger.info('Update: stopping Bee and restarting into the new version')
   await stopBee()
@@ -130,6 +179,8 @@ export function resetUpdaterForTests(): void {
   updaterState = 'unsupported'
   installRequested = false
   latestSeen = null
+  downloadStartedAt = 0
+  stuckLogged = false
 }
 
 /** True when a is a strictly newer x.y.z than b. Non-numeric parts = not newer. */

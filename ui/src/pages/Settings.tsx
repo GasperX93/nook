@@ -192,6 +192,11 @@ export default function Settings() {
                     Nook restarts in a moment, then this page reloads.
                   </span>
                 )}
+                {appUpdate.stuck && (
+                  <span className="block text-xs mt-0.5" style={{ color: 'rgb(var(--fg-muted))' }}>
+                    The download seems stuck. Quit and reopen Nook to try again, or download it here.
+                  </span>
+                )}
               </span>
               {appUpdate.canInstall ? (
                 <button
