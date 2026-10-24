@@ -35,14 +35,19 @@ import {
 const TEN_MINUTES = 10 * 60_000
 const HOUR = 60 * 60_000
 
-function makeUpdater(options: { installError?: string } = {}) {
+function makeUpdater(options: { installError?: string; feedError?: string } = {}) {
   const emitter = new EventEmitter()
   const installs: number[] = []
   const feeds: string[] = []
   let checks = 0
   const updater: AutoUpdaterLike = {
     on: (event, listener) => emitter.on(event, listener),
-    setFeedURL: ({ url }) => feeds.push(url),
+    setFeedURL: ({ url }) => {
+      feeds.push(url)
+
+      // Electron reports an unsigned build here, as an updater error.
+      if (options.feedError) emitter.emit('error', new Error(options.feedError))
+    },
     checkForUpdates: () => {
       checks++
     },
@@ -67,7 +72,7 @@ function makeUpdater(options: { installError?: string } = {}) {
 }
 
 /** Start the updater on a fake one; the first check runs right away. */
-function started(options: { installError?: string } = {}) {
+function started(options: { installError?: string; feedError?: string } = {}) {
   const u = makeUpdater(options)
 
   startAutoUpdates(u.updater, u.control)
@@ -223,7 +228,7 @@ test('Update that fails to install brings Bee back and says to quit and reopen (
   expect(await installUpdate()).toBe('unavailable')
 })
 
-test('Nook still running 30 s after Update: Bee comes back, quit and reopen', async () => {
+test('Nook still running 60 s after Update: Bee comes back, quit and reopen', async () => {
   jest.useFakeTimers()
   const u = started()
 
@@ -231,7 +236,7 @@ test('Nook still running 30 s after Update: Bee comes back, quit and reopen', as
   u.emitter.emit('update-downloaded')
   await installUpdate()
   expect(getUpdateInfo().updater).toBe('installing')
-  jest.advanceTimersByTime(29_000)
+  jest.advanceTimersByTime(59_000)
   expect(u.bee.starts).toBe(0)
   jest.advanceTimersByTime(2_000)
   expect(u.bee.starts).toBe(1)
@@ -360,4 +365,33 @@ test('a later "update found" during a download does not restart the stuck clock'
   } finally {
     now.mockRestore()
   }
+})
+
+test('an updater error while setting the feed (unsigned build) is handled, not thrown', () => {
+  expect(() => started({ feedError: 'Could not get code signature for running application' })).not.toThrow()
+  expect(getUpdateInfo().updater).toBe('failed')
+})
+
+test('after Update failed, a later "update found" does not hide "quit and reopen"', async () => {
+  const u = started({ installError: "No update available, can't quit and install" })
+
+  u.emitter.emit('update-available')
+  u.emitter.emit('update-downloaded')
+  await installUpdate()
+  u.emitter.emit('update-available')
+  expect(getUpdateInfo().updater).toBe('installFailed')
+})
+
+test('once downloaded, the notice names the downloaded version, not a newer GitHub release', async () => {
+  const u = started()
+  const staged = bump(PACKAGE_JSON.version)
+  const newest = bump(staged)
+
+  githubLatest(newest)
+  u.emitter.emit('update-available')
+  await settle()
+  expect(getUpdateInfo().latest).toBe(newest)
+  u.emitter.emit('update-downloaded', {}, '', `v${staged}`, new Date(), 'https://x')
+  expect(getUpdateInfo().latest).toBe(staged)
+  expect(getUpdateInfo().url).toContain(`/tag/v${staged}`)
 })

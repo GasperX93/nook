@@ -51,7 +51,7 @@ const UPDATER_CHECK_INTERVAL_MS = 10 * 60_000
 const STUCK_AFTER_MS = 2 * 60 * 60_000
 
 /** Update was clicked but Nook is still running this long after: it didn't restart. */
-const INSTALL_TIMEOUT_MS = 30_000
+const INSTALL_TIMEOUT_MS = 60_000
 
 export interface UpdateInfo {
   current: string
@@ -70,6 +70,8 @@ let updaterState: UpdaterState = 'unsupported'
 let installRequested = false
 let downloadStartedAt = 0
 let stuckLogged = false
+/** The version Electron downloaded — what Update installs, whatever GitHub says is newest. */
+let downloadedVersion: string | null = null
 
 /** The state, with a download that has run too long reported as stuck. */
 function currentUpdaterState(): UpdaterState {
@@ -97,7 +99,14 @@ export function getUpdateInfo(): UpdateInfo {
     state === 'installFailed'
   // The daily GitHub check can be older than the updater's find: never name a
   // version that isn't newer than this one ("Nook 0.7.4 is available" on 0.7.4).
-  const newer = latestSeen !== null && isNewer(latestSeen.version, current) ? latestSeen : null
+  // Once one is downloaded, name that one: it's what Update installs (a newer
+  // release is picked up after the restart).
+  const staged =
+    downloadedVersion !== null && (state === 'ready' || state === 'installing' || state === 'installFailed')
+      ? { version: downloadedVersion, url: `${RELEASES_PAGE}/tag/v${downloadedVersion}` }
+      : null
+  const seen = staged ?? latestSeen
+  const newer = seen !== null && isNewer(seen.version, current) ? seen : null
 
   return {
     current,
@@ -144,10 +153,6 @@ export function startAutoUpdates(autoUpdater: AutoUpdaterLike, beeControl: BeeCo
   updater = autoUpdater
   bee = beeControl
   updaterState = 'none'
-  autoUpdater.setFeedURL({
-    url: `${FEED_HOST}/${process.platform}-${process.arch}/${PACKAGE_JSON.version}`,
-    headers: { 'User-Agent': `Nook/${PACKAGE_JSON.version} (${process.platform}: ${process.arch})` },
-  })
   autoUpdater.on('checking-for-update', () => logger.info('Update: checking'))
   autoUpdater.on('update-not-available', () => {
     logger.info('Update: none available')
@@ -158,7 +163,12 @@ export function startAutoUpdates(autoUpdater: AutoUpdaterLike, beeControl: BeeCo
   autoUpdater.on('update-available', () => {
     logger.info('Update: found, downloading')
 
-    if (updaterState !== 'ready' && updaterState !== 'installing' && updaterState !== 'downloading') {
+    if (
+      updaterState !== 'ready' &&
+      updaterState !== 'installing' &&
+      updaterState !== 'downloading' &&
+      updaterState !== 'installFailed'
+    ) {
       updaterState = 'downloading'
       downloadStartedAt = Date.now()
       stuckLogged = false
@@ -167,8 +177,12 @@ export function startAutoUpdates(autoUpdater: AutoUpdaterLike, beeControl: BeeCo
     // Ask GitHub again so the notice names the version being downloaded.
     void runUpdateCheck()
   })
-  autoUpdater.on('update-downloaded', () => {
-    logger.info('Update: downloaded, ready to install')
+  autoUpdater.on('update-downloaded', (...args: unknown[]) => {
+    // (event, releaseNotes, releaseName, …): the feed's name, e.g. "v0.7.5".
+    const name = typeof args[2] === 'string' ? args[2].replace(/^v/, '') : ''
+
+    downloadedVersion = /^\d+\.\d+\.\d+$/.test(name) ? name : null
+    logger.info(`Update: downloaded${downloadedVersion ? ` ${downloadedVersion}` : ''}, ready to install`)
     // No more checks: one now would make Electron forget this download.
     stopChecks()
     const tookTooLong = Date.now() - downloadStartedAt >= STUCK_AFTER_MS
@@ -196,7 +210,9 @@ export function startAutoUpdates(autoUpdater: AutoUpdaterLike, beeControl: BeeCo
 
       return
     }
-    logger.error(`Update download failed: ${message}`)
+
+    if (updaterState === 'none' || updaterState === 'failed') logger.info(`Update check failed: ${message}`)
+    else logger.error(`Update download failed: ${message}`)
 
     // A download already finished stays installable; otherwise offer the link.
     // The next check retries it.
@@ -204,6 +220,12 @@ export function startAutoUpdates(autoUpdater: AutoUpdaterLike, beeControl: BeeCo
       updaterState = 'failed'
       installRequested = false
     }
+  })
+
+  // After the listeners: setFeedURL reports a bad signature as an 'error' event.
+  autoUpdater.setFeedURL({
+    url: `${FEED_HOST}/${process.platform}-${process.arch}/${PACKAGE_JSON.version}`,
+    headers: { 'User-Agent': `Nook/${PACKAGE_JSON.version} (${process.platform}: ${process.arch})` },
   })
 
   const check = () => {
@@ -287,6 +309,7 @@ export function resetUpdaterForTests(): void {
   updaterState = 'unsupported'
   installRequested = false
   latestSeen = null
+  downloadedVersion = null
   downloadStartedAt = 0
   stuckLogged = false
 }

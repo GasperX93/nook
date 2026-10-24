@@ -33,6 +33,13 @@ if (squirrelInstallingExecution) {
   app.quit()
 }
 
+// Nook is a tray app (the dashboard lives in the browser), so closing its last
+// window must not quit it. Electron's default does: quitAndInstall closes the
+// hidden splash, Nook quit before the updater could relaunch it, and an Update
+// that failed took Nook down with Bee stopped (2026-10-24). Tray Quit and every
+// other quit call app.quit() and still quit.
+app.on('window-all-closed', () => undefined)
+
 // Register nook:// protocol handler. Doing this at module load so it runs
 // before the app's `ready` event, which is required for OS handoff to work.
 registerNookProtocol()
