@@ -1,11 +1,18 @@
 # Changelog
 
+## [0.7.5](https://github.com/GasperX93/nook/releases/tag/v0.7.5) (2026-10-24)
+
+New to Nook? Read the [user guide](https://nook-drive.eth.limo/docs.html) and [how Nook works](https://nook-drive.eth.limo/how-it-works.html) on the Nook website — [nook-drive.eth.limo](https://nook-drive.eth.limo).
+
+### Security
+* **Tighter local security** — Nook's local server and node are locked down further. Updating is recommended. Nothing changes in how you use Nook.
+
 ## [0.7.4](https://github.com/GasperX93/nook/releases/tag/v0.7.4) (2026-10-23)
 
 New to Nook? Read the [user guide](https://nook-drive.eth.limo/docs.html) and [how Nook works](https://nook-drive.eth.limo/how-it-works.html) on the Nook website — [nook-drive.eth.limo](https://nook-drive.eth.limo).
 
 ### Fixes
-* **Nook no longer gets stuck on "Starting your node" after an update.** Nook downloaded its Bee node again on every update, and a download that went wrong left a Bee that never started. Now Bee is downloaded only when it's missing, a different version or doesn't run, every download is checked before it replaces the old one, and a broken Bee is repaired on the next start.
+* **Safer Bee updates** — Nook now downloads its Bee node only when Bee itself changes, and checks every download before using it. In rare cases a download that went wrong could leave Nook on "Starting your node" after an update; Nook now repairs that by itself on the next start.
 
 ### Stuck after updating to 0.7.3?
 * Quit Nook, delete the files `bee` and `nook.version` in Nook's data folder (macOS `~/Library/Application Support/Nook`), and start Nook — it downloads Bee again. Your wallet, drives and contacts stay. Or install 0.7.4, which repairs it by itself.
