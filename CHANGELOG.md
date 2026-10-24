@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.7.6](https://github.com/GasperX93/nook/releases/tag/v0.7.6) (2026-10-24)
+
+New to Nook? Read the [user guide](https://nook-drive.eth.limo/docs.html) and [how Nook works](https://nook-drive.eth.limo/how-it-works.html) on the Nook website — [nook-drive.eth.limo](https://nook-drive.eth.limo).
+
+### Fixes
+* **Update on Mac works reliably** — clicking Update could keep spinning with your node stopped, especially if you clicked a while after the update was ready. Nook now restarts into the new version, and if an update can't finish it starts your node again and tells you to quit and reopen Nook.
+* **The update notice names the right version.**
+
+### Update keeps spinning?
+* Quit Nook from the menu-bar icon and open it again — the update finishes then. This can still happen once, when updating from 0.7.5 or older to 0.7.6.
+
 ## [0.7.5](https://github.com/GasperX93/nook/releases/tag/v0.7.5) (2026-10-24)
 
 New to Nook? Read the [user guide](https://nook-drive.eth.limo/docs.html) and [how Nook works](https://nook-drive.eth.limo/how-it-works.html) on the Nook website — [nook-drive.eth.limo](https://nook-drive.eth.limo).

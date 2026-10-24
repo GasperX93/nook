@@ -10,7 +10,7 @@
       "url": "https://github.com/ethersphere/swarm-desktop"
     }
   ],
-  "version": "0.7.5",
+  "version": "0.7.6",
   "description": "Permanent decentralized storage for files, folders and websites",
   "repository": "https://github.com/GasperX93/nook",
   "main": "dist/desktop/src/index.js",
