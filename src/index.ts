@@ -1,5 +1,4 @@
 import { app, autoUpdater, dialog } from 'electron'
-import { updateElectronApp } from 'update-electron-app'
 
 import PACKAGE_JSON from '../package.json'
 import { ensureApiKey } from './api-key'
@@ -11,7 +10,7 @@ import { startChequebookMonitor } from './chequebook-monitor'
 import { startDepthSave } from './depth-save'
 import { startExtendMonitor } from './extend-monitor'
 import { startSystemStampMonitor } from './system-stamp'
-import { startUpdateChecker, watchAutoUpdater } from './update-checker'
+import { startAutoUpdates, startUpdateChecker } from './update-checker'
 import { startMonitorIfNeeded } from './funding-monitor'
 import { initializeBee, runKeepAliveLoop, runLauncher } from './launcher'
 import { BeeManager } from './lifecycle'
@@ -73,24 +72,19 @@ async function main() {
 
   splash = await initSplash()
 
-  // Auto updater — downloads in the background; Nook's own Update button
-  // (sidebar, Settings) restarts into it, so the library's dialog is off.
-  updateElectronApp({
-    notifyUser: false,
-    logger: {
-      log: (...args) => logger.info(...args),
-      info: (...args) => logger.info(...args),
-      error: (...args) => logger.error(...args),
-      warn: (...args) => logger.warn(...args),
-    },
-  })
-
-  // Same platforms update-electron-app supports; Linux keeps the download link.
+  // Auto updater (Mac, Windows) — downloads in the background; Nook's own
+  // Update button (sidebar, Settings) restarts into it. Linux keeps the link.
   if (app.isPackaged && (process.platform === 'darwin' || process.platform === 'win32')) {
-    watchAutoUpdater(autoUpdater, async () => {
-      BeeManager.stop()
-      await BeeManager.waitForSigtermToFinish()
-    })
+    void app.whenReady().then(() =>
+      startAutoUpdates(autoUpdater, {
+        stop: async () => {
+          BeeManager.stop()
+          await BeeManager.waitForSigtermToFinish()
+        },
+        // The keep-alive loop starts Bee again once it's wanted.
+        start: () => BeeManager.setUserIntention(true),
+      }),
+    )
   }
 
   // check if the assets and the bee binary matches the desktop version

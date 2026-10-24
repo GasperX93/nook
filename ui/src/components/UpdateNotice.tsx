@@ -14,12 +14,16 @@ const ORANGE = '#f76808'
  */
 export default function UpdateNotice() {
   const { expanded } = useSidebar()
-  const { info, available, canInstall, stuck, busy, update } = useAppUpdate()
+  const { info, available, canInstall, stuck, reopen, busy, update } = useAppUpdate()
 
-  if (!info || !available || (!canInstall && !info.url)) return null
+  if (!info || !available || (!canInstall && !reopen && !info.url)) return null
 
   const label = info.latest ? `Nook ${info.latest} is available` : 'A new Nook is available'
-  const action = busy ? 'Updating…' : canInstall ? 'Update' : 'Download →'
+  let action = 'Download →'
+
+  if (busy) action = 'Updating…'
+  else if (canInstall) action = 'Update'
+  else if (reopen) action = 'Quit and reopen Nook to finish'
   const title = busy
     ? 'Nook restarts in a moment, then this page reloads.'
     : !expanded
@@ -54,7 +58,16 @@ export default function UpdateNotice() {
 
   return (
     <div className="px-3 pb-2">
-      {canInstall ? (
+      {reopen && (
+        <div
+          title="Nook didn't restart. Quit it from the menu bar (Mac) or tray (Windows) and open it again; the update is ready and finishes then."
+          className={className}
+          style={style}
+        >
+          {content}
+        </div>
+      )}
+      {!reopen && canInstall && (
         <button
           type="button"
           onClick={update}
@@ -66,7 +79,8 @@ export default function UpdateNotice() {
         >
           {content}
         </button>
-      ) : (
+      )}
+      {!reopen && !canInstall && (
         <a
           href={info.url ?? undefined}
           target="_blank"

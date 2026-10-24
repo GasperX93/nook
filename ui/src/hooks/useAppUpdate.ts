@@ -28,6 +28,8 @@ export function useAppUpdate() {
     available && (info?.updater === 'downloading' || info?.updater === 'ready' || info?.updater === 'installing')
   // Hung download (server STUCK_AFTER_MS): the link, and a restart retries it.
   const stuck = available && info?.updater === 'stuck'
+  // Update didn't restart Nook; the update is prepared, quitting and reopening finishes it.
+  const reopen = available && info?.updater === 'installFailed'
   const busy = canInstall && (clicked || Boolean(info?.installRequested) || info?.updater === 'installing')
   const current = info?.current
 
@@ -58,5 +60,5 @@ export function useAppUpdate() {
     await queryClient.invalidateQueries({ queryKey: ['server', 'update'] })
   }
 
-  return { info, available, canInstall, stuck, busy, update }
+  return { info, available, canInstall, stuck, reopen, busy, update }
 }

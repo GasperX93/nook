@@ -179,7 +179,7 @@ export default function Settings() {
         <>
           {/* A newer Nook — first on the page, where the bell's "View" lands
               (test feedback 2026-10-20). Same button as the sidebar notice. */}
-          {appUpdate.available && (appUpdate.canInstall || updateInfo?.url) && (
+          {appUpdate.available && (appUpdate.canInstall || appUpdate.reopen || updateInfo?.url) && (
             <div
               className="flex items-center justify-between gap-3 rounded-xl px-5 py-4 text-sm"
               style={{ backgroundColor: 'rgba(247,104,8,0.08)', border: '1px solid rgba(247,104,8,0.25)' }}
@@ -195,6 +195,12 @@ export default function Settings() {
                 {appUpdate.stuck && (
                   <span className="block text-xs mt-0.5" style={{ color: 'rgb(var(--fg-muted))' }}>
                     The download seems stuck. Quit and reopen Nook to try again, or download it here.
+                  </span>
+                )}
+                {appUpdate.reopen && (
+                  <span className="block text-xs mt-0.5" style={{ color: 'rgb(var(--fg-muted))' }}>
+                    Nook didn't restart. Quit it from the menu bar (Mac) or tray (Windows) and open it again — the
+                    update is ready and finishes then.
                   </span>
                 )}
               </span>

@@ -359,7 +359,7 @@ export const serverApi = {
       latest: string | null
       url: string | null
       updateAvailable: boolean
-      updater: 'none' | 'downloading' | 'ready' | 'installing' | 'failed' | 'stuck' | 'unsupported'
+      updater: 'none' | 'downloading' | 'ready' | 'installing' | 'failed' | 'stuck' | 'installFailed' | 'unsupported'
       installRequested: boolean
     }>('/update'),
 
