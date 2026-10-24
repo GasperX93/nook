@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.5](https://github.com/GasperX93/nook/releases/tag/v0.7.5) (2026-10-24)
+
+New to Nook? Read the [user guide](https://nook-drive.eth.limo/docs.html) and [how Nook works](https://nook-drive.eth.limo/how-it-works.html) on the Nook website — [nook-drive.eth.limo](https://nook-drive.eth.limo).
+
+### Security
+* **Tighter local security** — Nook's local server and node are locked down further. Updating is recommended. Nothing changes in how you use Nook.
+
 ## [0.7.4](https://github.com/GasperX93/nook/releases/tag/v0.7.4) (2026-10-23)
 
 New to Nook? Read the [user guide](https://nook-drive.eth.limo/docs.html) and [how Nook works](https://nook-drive.eth.limo/how-it-works.html) on the Nook website — [nook-drive.eth.limo](https://nook-drive.eth.limo).
