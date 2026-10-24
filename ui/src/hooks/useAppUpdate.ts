@@ -16,16 +16,20 @@ export function useAppUpdate() {
   const { data: info } = useQuery({
     queryKey: ['server', 'update'],
     queryFn: serverApi.getUpdateInfo,
-    // The server's first check runs a minute after launch; poll faster while
-    // an update is on its way so the button follows the download.
+    // A local call: every minute, so the button turns into Update soon after
+    // the updater finds a version; faster while it downloads or a click waits.
     refetchInterval: query =>
-      query.state.data?.installRequested || query.state.data?.updater === 'downloading' ? 5_000 : 10 * 60_000,
+      query.state.data?.installRequested || query.state.data?.updater === 'downloading' ? 5_000 : 60_000,
     retry: false,
   })
 
   const available = Boolean(info?.updateAvailable)
   const canInstall =
     available && (info?.updater === 'downloading' || info?.updater === 'ready' || info?.updater === 'installing')
+  // Hung download (server STUCK_AFTER_MS): the link, and a restart retries it.
+  const stuck = available && info?.updater === 'stuck'
+  // Update didn't restart Nook; the update is prepared, quitting and reopening finishes it.
+  const reopen = available && info?.updater === 'installFailed'
   const busy = canInstall && (clicked || Boolean(info?.installRequested) || info?.updater === 'installing')
   const current = info?.current
 
@@ -56,5 +60,5 @@ export function useAppUpdate() {
     await queryClient.invalidateQueries({ queryKey: ['server', 'update'] })
   }
 
-  return { info, available, canInstall, busy, update }
+  return { info, available, canInstall, stuck, reopen, busy, update }
 }

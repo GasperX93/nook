@@ -1,5 +1,4 @@
 import { app, autoUpdater, dialog } from 'electron'
-import { updateElectronApp } from 'update-electron-app'
 
 import PACKAGE_JSON from '../package.json'
 import { ensureApiKey } from './api-key'
@@ -11,7 +10,7 @@ import { startChequebookMonitor } from './chequebook-monitor'
 import { startDepthSave } from './depth-save'
 import { startExtendMonitor } from './extend-monitor'
 import { startSystemStampMonitor } from './system-stamp'
-import { startUpdateChecker, watchAutoUpdater } from './update-checker'
+import { startAutoUpdates, startUpdateChecker } from './update-checker'
 import { startMonitorIfNeeded } from './funding-monitor'
 import { initializeBee, runKeepAliveLoop, runLauncher } from './launcher'
 import { BeeManager } from './lifecycle'
@@ -33,6 +32,13 @@ runMigrations()
 if (squirrelInstallingExecution) {
   app.quit()
 }
+
+// Nook is a tray app (the dashboard lives in the browser), so closing its last
+// window must not quit it. Electron's default does: quitAndInstall closes the
+// hidden splash, Nook quit before the updater could relaunch it, and an Update
+// that failed took Nook down with Bee stopped (2026-10-24). Tray Quit and every
+// other quit call app.quit() and still quit.
+app.on('window-all-closed', () => undefined)
 
 // Register nook:// protocol handler. Doing this at module load so it runs
 // before the app's `ready` event, which is required for OS handoff to work.
@@ -73,24 +79,19 @@ async function main() {
 
   splash = await initSplash()
 
-  // Auto updater — downloads in the background; Nook's own Update button
-  // (sidebar, Settings) restarts into it, so the library's dialog is off.
-  updateElectronApp({
-    notifyUser: false,
-    logger: {
-      log: (...args) => logger.info(...args),
-      info: (...args) => logger.info(...args),
-      error: (...args) => logger.error(...args),
-      warn: (...args) => logger.warn(...args),
-    },
-  })
-
-  // Same platforms update-electron-app supports; Linux keeps the download link.
+  // Auto updater (Mac, Windows) — downloads in the background; Nook's own
+  // Update button (sidebar, Settings) restarts into it. Linux keeps the link.
   if (app.isPackaged && (process.platform === 'darwin' || process.platform === 'win32')) {
-    watchAutoUpdater(autoUpdater, async () => {
-      BeeManager.stop()
-      await BeeManager.waitForSigtermToFinish()
-    })
+    void app.whenReady().then(() =>
+      startAutoUpdates(autoUpdater, {
+        stop: async () => {
+          BeeManager.stop()
+          await BeeManager.waitForSigtermToFinish()
+        },
+        // The keep-alive loop starts Bee again once it's wanted.
+        start: () => BeeManager.setUserIntention(true),
+      }),
+    )
   }
 
   // check if the assets and the bee binary matches the desktop version
