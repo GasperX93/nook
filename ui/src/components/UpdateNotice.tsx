@@ -14,17 +14,21 @@ const ORANGE = '#f76808'
  */
 export default function UpdateNotice() {
   const { expanded } = useSidebar()
-  const { info, available, canInstall, busy, update } = useAppUpdate()
+  const { info, available, canInstall, stuck, reopen, busy, update } = useAppUpdate()
 
-  if (!info || !available || (!canInstall && !info.url)) return null
+  if (!info || !available || (!canInstall && !reopen && !info.url)) return null
 
   const label = info.latest ? `Nook ${info.latest} is available` : 'A new Nook is available'
-  const action = busy ? 'Updating…' : canInstall ? 'Update' : 'Download →'
+  let action = 'Download →'
+
+  if (busy) action = 'Updating…'
+  else if (canInstall) action = 'Update'
+  else if (reopen) action = 'Quit and reopen Nook to finish'
   const title = busy
     ? 'Nook restarts in a moment, then this page reloads.'
     : !expanded
       ? `${label} — ${canInstall ? 'update' : 'download'}`
-      : `You're on ${info.current}`
+      : `${stuck ? 'The download seems stuck. Quit and reopen Nook to try again, or download it here. ' : ''}You're on ${info.current}`
   const className = `flex items-center gap-2 rounded-lg text-left transition-colors hover:bg-white/5 focus:outline-none focus-visible:ring-1 focus-visible:ring-white/30 disabled:cursor-default ${
     expanded ? 'w-full px-2.5 py-2' : 'h-10 w-10 mx-auto justify-center relative'
   }`
@@ -54,7 +58,16 @@ export default function UpdateNotice() {
 
   return (
     <div className="px-3 pb-2">
-      {canInstall ? (
+      {reopen && (
+        <div
+          title="Nook didn't restart. Quit it from the menu bar (Mac) or tray (Windows) and open it again; the update is ready and finishes then."
+          className={className}
+          style={style}
+        >
+          {content}
+        </div>
+      )}
+      {!reopen && canInstall && (
         <button
           type="button"
           onClick={update}
@@ -66,7 +79,8 @@ export default function UpdateNotice() {
         >
           {content}
         </button>
-      ) : (
+      )}
+      {!reopen && !canInstall && (
         <a
           href={info.url ?? undefined}
           target="_blank"
