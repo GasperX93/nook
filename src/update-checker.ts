@@ -48,12 +48,15 @@ let installRequested = false
 export function getUpdateInfo(): UpdateInfo {
   const current = PACKAGE_JSON.version
   const updaterHasOne = updaterState === 'downloading' || updaterState === 'ready' || updaterState === 'installing'
+  // The daily GitHub check can be older than the updater's find: never name a
+  // version that isn't newer than this one ("Nook 0.7.4 is available" on 0.7.4).
+  const newer = latestSeen !== null && isNewer(latestSeen.version, current) ? latestSeen : null
 
   return {
     current,
-    latest: latestSeen?.version ?? null,
-    url: latestSeen?.url ?? (updaterHasOne ? RELEASES_PAGE : null),
-    updateAvailable: (latestSeen !== null && isNewer(latestSeen.version, current)) || updaterHasOne,
+    latest: newer?.version ?? null,
+    url: newer?.url ?? (updaterHasOne ? RELEASES_PAGE : null),
+    updateAvailable: newer !== null || updaterHasOne,
     updater: updaterState,
     installRequested,
   }
@@ -78,6 +81,9 @@ export function watchAutoUpdater(autoUpdater: AutoUpdaterLike, beforeInstall: ()
   updaterState = 'none'
   autoUpdater.on('update-available', () => {
     if (updaterState !== 'ready' && updaterState !== 'installing') updaterState = 'downloading'
+
+    // Ask GitHub again so the notice names the version being downloaded.
+    void runUpdateCheck()
   })
   autoUpdater.on('update-downloaded', () => {
     updaterState = 'ready'
