@@ -6,6 +6,7 @@ import { rebuildElectronTray } from './electron'
 import { fetchWithTimeout } from './fetch-timeout'
 import { mayLaunchBee } from './foreign-bee'
 import { BeeManager } from './lifecycle'
+import { DASHBOARD_ORIGIN } from './local-only'
 import { RotatingLogWriter } from './log-rotator'
 import { logger } from './logger'
 import { checkPath, getLogPath, getPath } from './path'
@@ -95,7 +96,7 @@ function createConfiguration() {
 swap-enable: false
 mainnet: true
 full-node: false
-cors-allowed-origins: '*'
+cors-allowed-origins: ['${DASHBOARD_ORIGIN}']
 skip-postage-snapshot: false
 resolver-options: https://ethereum-rpc.publicnode.com
 data-dir: ${getPath('data-dir')}

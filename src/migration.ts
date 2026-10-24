@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'fs'
 import { dirname } from 'path'
 import { configYamlExists, deleteKeyFromConfigYaml, readConfigYaml, writeConfigYaml } from './config'
+import { DASHBOARD_ORIGIN } from './local-only'
 import { logger } from './logger'
 import { getLogPath, getPath } from './path'
 import { LEGACY_DEFAULT_RPCS, RPC_RELAY_URL } from './rpc-endpoints'
@@ -76,6 +77,15 @@ export function runMigrations() {
     }
 
     markRpcMoveDone()
+  }
+
+  // Bee answered CORS for any web page ('*'): a site you visit could read the
+  // node's API and open its live connections. Only the dashboard needs it. A
+  // value the user set themselves is kept.
+  const cors = config['cors-allowed-origins']
+
+  if (cors === '*' || (Array.isArray(cors) && cors.length === 1 && cors[0] === '*')) {
+    writeConfigYaml({ 'cors-allowed-origins': [DASHBOARD_ORIGIN] })
   }
 
   // Cloudflare deprecated its Ethereum gateway: it still answers the handshake

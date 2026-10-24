@@ -261,4 +261,25 @@ describe('runMigrations', () => {
       expect(mockWrite).not.toHaveBeenCalledWith({ 'storage-incentives-enable': false })
     })
   })
+
+  describe('Bee CORS', () => {
+    it("narrows '*' to the dashboard's origin", () => {
+      mockExists.mockReturnValue(true)
+      mockRead.mockReturnValue({ 'cors-allowed-origins': '*', 'storage-incentives-enable': false })
+      runMigrations()
+      expect(mockWrite).toHaveBeenCalledWith({ 'cors-allowed-origins': ['http://localhost:3054'] })
+    })
+
+    it('leaves the dashboard origin and a value the user set alone', () => {
+      mockExists.mockReturnValue(true)
+      for (const cors of [['http://localhost:3054'], 'https://my.app']) {
+        mockWrite.mockClear()
+        mockRead.mockReturnValue({ 'cors-allowed-origins': cors, 'storage-incentives-enable': false })
+        runMigrations()
+        expect(mockWrite).not.toHaveBeenCalledWith(
+          expect.objectContaining({ 'cors-allowed-origins': expect.anything() }),
+        )
+      }
+    })
+  })
 })
