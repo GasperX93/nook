@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.7.7](https://github.com/GasperX93/nook/releases/tag/v0.7.7) (2026-10-30)
+## [0.7.7](https://github.com/GasperX93/nook/releases/tag/v0.7.7) (2026-10-31)
 
 New to Nook? Read the [user guide](https://nook-drive.eth.limo/docs.html) and [how Nook works](https://nook-drive.eth.limo/how-it-works.html) on the Nook website — [nook-drive.eth.limo](https://nook-drive.eth.limo).
 
