@@ -1,11 +1,22 @@
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { AlertTriangle, Check, ChevronDown, ExternalLink, Globe, RefreshCw, X } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
-import { namehash } from 'viem'
-import { useAccount, usePublicClient, useSwitchChain, useWalletClient } from 'wagmi'
+import { type Address, formatEther } from 'viem'
+import { useAccount, usePublicClient, useSwitchChain } from 'wagmi'
 import { getWalletClient } from '@wagmi/core'
 import { mainnet } from 'wagmi/chains'
 import { bzzLink } from '../lib/ens-gateway'
+import {
+  checkCanLink,
+  checkEthName,
+  confirmLinked,
+  findWritableResolver,
+  type LinkCheck,
+  readContenthash,
+  type ResolverLookup,
+  setContenthashCall,
+  type Setter,
+} from '../lib/ens-link'
 import { wagmiConfig } from '../wagmi'
 import { Button } from './ui/button'
 
@@ -30,31 +41,15 @@ function decodeContentHash(hex: string): { protocol: string; hash: string } | nu
   return { protocol: 'unknown', hash: clean }
 }
 
-const RESOLVER_ABI = [
-  {
-    name: 'contenthash',
-    inputs: [{ name: 'node', type: 'bytes32' }],
-    outputs: [{ name: '', type: 'bytes' }],
-    stateMutability: 'view',
-    type: 'function',
-  },
-  {
-    name: 'setContenthash',
-    inputs: [
-      { name: 'node', type: 'bytes32' },
-      { name: 'hash', type: 'bytes' },
-    ],
-    outputs: [],
-    stateMutability: 'nonpayable',
-    type: 'function',
-  },
-] as const
-
-// ENS subgraph — same endpoint + key as Beeport (public, from ethersphere/beeport constants.ts)
+// ENS subgraph — same endpoint + key as Beeport (public, from ethersphere/beeport constants.ts).
+// It covers ENSv1 names only: names moved to or registered on ENSv2 may be
+// missing, so the domain can also be typed (ENS docs: "let users enter a name
+// manually").
 const ENS_SUBGRAPH = 'https://gateway.thegraph.com/api/subgraphs/id/5XqPmWe6gjyrJtFn9cLy237i4cWw2j9HcUJEXsP5qGtH'
 const ENS_SUBGRAPH_KEY = '5260e01a116d193aced5a8963059e9d7'
 
-async function fetchOwnedDomains(address: string): Promise<string[]> {
+/** The wallet's .eth names from the subgraph; `null` when the list couldn't be loaded. */
+async function fetchOwnedDomains(address: string): Promise<string[] | null> {
   const addr = address.toLowerCase()
   const query = `{
     domains(where: { owner: "${addr}" }) { name }
@@ -69,18 +64,60 @@ async function fetchOwnedDomains(address: string): Promise<string[]> {
       },
       body: JSON.stringify({ query }),
     })
+
+    if (!res.ok) return null
     const json = await res.json()
+
+    if (!json.data) return null
     const names = new Set<string>()
     const addName = (n: string | undefined) => {
-      if (n && !n.includes('[')) names.add(n)
+      if (!n || n.includes('[')) return
+      const checked = checkEthName(n)
+
+      if (checked.ok) names.add(checked.name)
     }
-    for (const d of json.data?.domains ?? []) addName(d.name)
-    for (const d of json.data?.wrappedDomains ?? []) addName(d.name)
+    for (const d of json.data.domains ?? []) addName(d.name)
+    for (const d of json.data.wrappedDomains ?? []) addName(d.name)
 
     return [...names].sort()
   } catch {
-    return []
+    return null
   }
+}
+
+function lookupError(name: string, lookup: Exclude<ResolverLookup, { kind: 'ok' }>): string {
+  if (lookup.kind === 'no-resolver') {
+    return `${name} has no resolver. It may have expired, or it isn't set up yet — check it in the ENS app.`
+  }
+
+  if (lookup.kind === 'unsupported') {
+    return `${name}'s resolver can't store a website link. Switch it to the standard resolver in the ENS app.`
+  }
+
+  return `Couldn't reach Ethereum to check ${name}. Try again in a moment.`
+}
+
+function linkCheckError(name: string, setter: Setter, check: Exclude<LinkCheck, { ok: true }>): string {
+  if (check.reason === 'not-allowed') {
+    return setter === 'dnsname'
+      ? `This wallet isn't allowed to change ${name}. Connect the wallet that owns it. For a subname, give it its own resolver in the ENS app.`
+      : `This wallet can't change ${name}. Connect the wallet that owns it. If it does, the name's resolver may be outdated — update it in the ENS app.`
+  }
+
+  if (check.reason === 'no-funds') {
+    return `Not enough ETH on Ethereum for the fee (about ${Number(formatEther(check.fee)).toFixed(4)} ETH).`
+  }
+
+  return `Couldn't reach Ethereum to check ${name}. Try again in a moment.`
+}
+
+/** Under the name field: why the list may be empty or incomplete. */
+function listHint(listFailed: boolean, count: number): string {
+  if (listFailed) return "Couldn't load your domains — type the name instead."
+
+  if (count === 0) return 'No domains found for this wallet. Names on ENSv2 may not be listed — type yours.'
+
+  return 'Names on ENSv2 may not be listed — type yours.'
 }
 
 type ModalState = 'loading' | 'select' | 'checking' | 'ready' | 'confirming' | 'pending' | 'success' | 'error'
@@ -101,29 +138,33 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
   // regardless of which chain the wallet is connected to (e.g. Gnosis). The wallet
   // is only switched to mainnet at write time, in linkDomain().
   const publicClient = usePublicClient({ chainId: mainnet.id })
-  const { data: walletClient } = useWalletClient()
   const { switchChainAsync } = useSwitchChain()
 
   const needsChainSwitch = chainId !== mainnet.id
 
   const [state, setState] = useState<ModalState>('loading')
   const [domains, setDomains] = useState<string[]>([])
+  const [listFailed, setListFailed] = useState(false)
   const [ensName, setEnsName] = useState(currentDomain ?? '')
   const [dropdownOpen, setDropdownOpen] = useState(false)
-  const [resolverAddr, setResolverAddr] = useState<`0x${string}` | null>(null)
+  const [target, setTarget] = useState<{ name: string; resolver: Address; setter: Setter } | null>(null)
   const [currentHash, setCurrentHash] = useState<{ protocol: string; hash: string } | null>(null)
   const [error, setError] = useState('')
   const [txHash, setTxHash] = useState('')
 
   const hashToSet = feedManifest ?? swarmHash
   const alreadySet = currentHash?.protocol === 'bzz' && currentHash.hash.toLowerCase() === hashToSet.toLowerCase()
+  // A transaction is in the wallet or on its way: closing now would lose it from view.
+  const busy = state === 'confirming' || state === 'pending'
+  const linkedName = target?.name ?? ensName
 
   // Fetch owned domains when modal opens
   useEffect(() => {
     if (!isOpen || !isConnected || !address) return
     setState('loading')
     fetchOwnedDomains(address).then(names => {
-      setDomains(names)
+      setDomains(names ?? [])
+      setListFailed(names === null)
       setState('select')
     })
   }, [isOpen, isConnected, address])
@@ -133,51 +174,68 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
     setDropdownOpen(false)
   }, [])
 
-  const lookupDomain = useCallback(async () => {
-    if (!publicClient || !ensName.trim()) return
-    const name = ensName.trim().toLowerCase()
+  const fail = useCallback((message: string) => {
+    setError(message)
+    setState('error')
+  }, [])
 
+  // Continue: everything that decides whether Link can work runs here, before
+  // the wallet is asked anything.
+  const lookupDomain = useCallback(async () => {
+    if (!publicClient || !address) return
+    const checked = checkEthName(ensName)
+
+    if (!checked.ok) {
+      if (checked.reason !== 'empty') {
+        fail(
+          checked.reason === 'not-eth'
+            ? 'Only .eth names for now — for example yourname.eth.'
+            : "That isn't a valid ENS name.",
+        )
+      }
+
+      return
+    }
+    const name = checked.name
+
+    setEnsName(name)
     setState('checking')
     setError('')
+    setTarget(null)
+    setCurrentHash(null)
+
+    const lookup = await findWritableResolver(publicClient, name)
+
+    if (lookup.kind !== 'ok') return fail(lookupError(name, lookup))
+
+    let current: { protocol: string; hash: string } | null = null
 
     try {
-      const resolver = await publicClient.getEnsResolver({ name })
+      const hash = await readContenthash(publicClient, name)
 
-      if (!resolver) {
-        setError('No resolver found for this domain.')
-        setState('error')
-
-        return
-      }
-      setResolverAddr(resolver)
-
-      try {
-        const hash = await publicClient.readContract({
-          address: resolver,
-          abi: RESOLVER_ABI,
-          functionName: 'contenthash',
-          args: [namehash(name)],
-        })
-
-        if (hash && hash !== '0x') {
-          setCurrentHash(decodeContentHash(hash))
-        } else {
-          setCurrentHash(null)
-        }
-      } catch {
-        setCurrentHash(null)
-      }
-
-      setState('ready')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to look up domain')
-      setState('error')
+      current = hash ? decodeContentHash(hash) : null
+    } catch {
+      return fail(`Couldn't reach Ethereum to check ${name}. Try again in a moment.`)
     }
-  }, [publicClient, ensName])
+    setCurrentHash(current)
+
+    const isSet = current?.protocol === 'bzz' && current.hash.toLowerCase() === hashToSet.toLowerCase()
+
+    if (!isSet) {
+      const call = setContenthashCall(lookup.resolver, lookup.setter, name, encodeSwarmContentHash(hashToSet))
+      const check = await checkCanLink(publicClient, call, address)
+
+      if (!check.ok) return fail(linkCheckError(name, lookup.setter, check))
+    }
+
+    setTarget({ name, resolver: lookup.resolver, setter: lookup.setter })
+    setState('ready')
+  }, [publicClient, address, ensName, hashToSet, fail])
 
   const linkDomain = useCallback(async () => {
-    if (!resolverAddr || !publicClient) return
-    const name = ensName.trim().toLowerCase()
+    if (!target || !publicClient) return
+    const { name, resolver, setter } = target
+    const contenthash = encodeSwarmContentHash(hashToSet)
 
     setState('confirming')
     setError('')
@@ -191,20 +249,13 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
       // Fetch fresh wallet client (hook value is stale after chain switch)
       const client = await getWalletClient(wagmiConfig, { chainId: mainnet.id })
 
-      if (!client) {
-        setError('Wallet not available. Please try again.')
-        setState('error')
+      if (!client) return fail('Wallet not available. Please try again.')
 
-        return
-      }
+      // The call is one of two single-overload ABIs (see ens-link.ts); the cast
+      // only joins their types — the wallet client has the account and chain.
+      const call = setContenthashCall(resolver, setter, name, contenthash)
+      const tx = await client.writeContract(call as unknown as Parameters<typeof client.writeContract>[0])
 
-      const encoded = encodeSwarmContentHash(hashToSet)
-      const tx = await client.writeContract({
-        address: resolverAddr,
-        abi: RESOLVER_ABI,
-        functionName: 'setContenthash',
-        args: [namehash(name), encoded],
-      })
       setTxHash(tx)
       // Sent is not linked: wait for the transaction to be mined, and only a
       // successful receipt counts (a reverted setContenthash links nothing).
@@ -212,10 +263,15 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
       const receipt = await publicClient.waitForTransactionReceipt({ hash: tx })
 
       if (receipt.status !== 'success') {
-        setError('The transaction failed on Ethereum — the domain was not linked. You can try again.')
-        setState('error')
+        return fail('The transaction failed on Ethereum — the domain was not linked. You can try again.')
+      }
 
-        return
+      // …and the name must now return the new hash (a write to a resolver the
+      // name no longer uses would succeed and change nothing).
+      if (!(await confirmLinked(publicClient, name, contenthash, receipt.blockNumber))) {
+        return fail(
+          `The transaction went through, but ${name} doesn't show the new link yet. Check it in the ENS app in a minute.`,
+        )
       }
       setState('success')
       onLinked(name)
@@ -227,16 +283,15 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
 
         return
       }
-      setError(msg)
-      setState('error')
+      fail(msg)
     }
-  }, [walletClient, resolverAddr, ensName, hashToSet, publicClient, onLinked, needsChainSwitch, switchChainAsync])
+  }, [target, hashToSet, publicClient, onLinked, needsChainSwitch, switchChainAsync, fail])
 
   const reset = useCallback(() => {
     setState('select')
     setError('')
     setCurrentHash(null)
-    setResolverAddr(null)
+    setTarget(null)
     setTxHash('')
     setEnsName('')
   }, [])
@@ -244,7 +299,7 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
   if (!isOpen) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={busy ? undefined : onClose}>
       <div className="absolute inset-0 bg-black/60" />
       <div
         className="relative rounded-xl border p-6 w-full max-w-md space-y-5 max-h-[calc(100vh-2rem)] max-w-[calc(100vw-2rem)] overflow-y-auto"
@@ -256,7 +311,7 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
           <h2 className="text-sm font-semibold" style={{ color: 'rgb(var(--fg))' }}>
             Link ENS domain
           </h2>
-          <Button onClick={onClose} variant="ghost" size="icon" className="h-8 w-8">
+          <Button onClick={onClose} disabled={busy} variant="ghost" size="icon" className="h-8 w-8">
             <X size={16} />
           </Button>
         </div>
@@ -291,10 +346,10 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
             {/* Domain selection */}
             {(state === 'select' || state === 'checking' || state === 'error') && (
               <div className="space-y-3">
-                {domains.length > 0 ? (
+                {domains.length > 0 && (
                   <div>
                     <label className="text-xs mb-1.5 block" style={{ color: 'rgb(var(--fg-muted))' }}>
-                      Select domain
+                      Your domains
                     </label>
                     <div className="relative">
                       <button
@@ -303,10 +358,10 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
                         className="w-full flex items-center justify-between rounded-lg border px-3 py-2 text-xs font-mono focus:outline-none"
                         style={{
                           backgroundColor: 'rgb(var(--bg))',
-                          color: ensName ? 'rgb(var(--fg))' : 'rgb(var(--fg-muted))',
+                          color: domains.includes(ensName) ? 'rgb(var(--fg))' : 'rgb(var(--fg-muted))',
                         }}
                       >
-                        <span>{ensName || 'Choose a domain...'}</span>
+                        <span>{domains.includes(ensName) ? ensName : 'Choose a domain...'}</span>
                         <ChevronDown size={12} style={{ color: 'rgb(var(--fg-muted))' }} />
                       </button>
                       {dropdownOpen && (
@@ -328,23 +383,31 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
                       )}
                     </div>
                   </div>
-                ) : (
-                  <div className="text-center py-4 space-y-2">
-                    <p className="text-xs" style={{ color: 'rgb(var(--fg-muted))' }}>
-                      No ENS domains found for this wallet.
-                    </p>
-                    <a
-                      href="https://app.ens.domains"
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center gap-1 text-xs font-medium transition-opacity hover:opacity-80"
-                      style={{ color: 'rgb(var(--accent))' }}
-                    >
-                      Register a domain at app.ens.domains
-                      <ExternalLink size={10} />
-                    </a>
-                  </div>
                 )}
+
+                {/* The list covers ENSv1 names only — names on ENSv2 are typed. */}
+                <div>
+                  <label htmlFor="ens-name" className="text-xs mb-1.5 block" style={{ color: 'rgb(var(--fg-muted))' }}>
+                    {domains.length > 0 ? 'Or type your domain' : 'Your domain'}
+                  </label>
+                  <input
+                    id="ens-name"
+                    value={ensName}
+                    onChange={e => setEnsName(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') void lookupDomain()
+                    }}
+                    disabled={state === 'checking'}
+                    placeholder="yourname.eth"
+                    autoComplete="off"
+                    spellCheck={false}
+                    className="w-full rounded-lg border px-3 py-2 text-xs font-mono focus:outline-none"
+                    style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
+                  />
+                  <p className="text-[10px] mt-1" style={{ color: 'rgb(var(--fg-muted))' }}>
+                    {listHint(listFailed, domains.length)}
+                  </p>
+                </div>
 
                 {state === 'error' && error && (
                   <div className="flex items-start gap-2 text-xs" style={{ color: '#ef4444' }}>
@@ -386,7 +449,7 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
               <div className="space-y-4">
                 <div className="rounded-lg border p-3 space-y-2" style={{ backgroundColor: 'rgb(var(--bg))' }}>
                   <p className="text-xs font-medium" style={{ color: 'rgb(var(--fg))' }}>
-                    {ensName}
+                    {linkedName}
                   </p>
                   {currentHash ? (
                     <div>
@@ -428,7 +491,7 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
                   >
                     <Check size={14} style={{ color: '#4ade80' }} />
                     <p className="text-xs" style={{ color: '#4ade80' }}>
-                      This content hash is already set on {ensName}.
+                      This content hash is already set on {linkedName}.
                     </p>
                   </div>
                 ) : needsChainSwitch ? (
@@ -501,26 +564,26 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
                   </p>
                 </div>
                 <a
-                  href={`https://${ensName}.limo`}
+                  href={`https://${linkedName}.limo`}
                   target="_blank"
                   rel="noreferrer"
                   className="inline-flex items-center gap-1.5 text-xs font-medium transition-colors hover:underline"
                   style={{ color: 'rgb(var(--accent))' }}
                 >
                   <Globe size={12} />
-                  {ensName}.limo
+                  {linkedName}.limo
                   <ExternalLink size={10} />
                 </a>
-                {bzzLink(ensName) && (
+                {bzzLink(linkedName) && (
                   <a
-                    href={bzzLink(ensName)!.url}
+                    href={bzzLink(linkedName)!.url}
                     target="_blank"
                     rel="noreferrer"
                     className="inline-flex items-center gap-1.5 text-xs font-medium transition-colors hover:underline"
                     style={{ color: 'rgb(var(--accent))' }}
                   >
                     <Globe size={12} />
-                    {bzzLink(ensName)!.label}
+                    {bzzLink(linkedName)!.label}
                     <ExternalLink size={10} />
                   </a>
                 )}
