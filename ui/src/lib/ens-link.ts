@@ -336,3 +336,56 @@ function errorMessage(err: unknown): string {
 
   return err instanceof Error ? err.message : String(err)
 }
+
+/**
+ * ENS's names API (bigname — ensdomains/bigname, what the ENS app itself
+ * reads). Unlike the ENS subgraph it lists ENSv1 AND ENSv2 names (verified
+ * 2026-10-30: a wallet's five migrated names were all there). No key, CORS
+ * open, paged by cursor.
+ */
+export const BIGNAME_API = 'https://api.bigname.sh/v1'
+const BIGNAME_MAX_PAGES = 10
+
+interface BignamePage {
+  data?: { name?: string; status?: string }[]
+  page?: { next_cursor?: string | null; has_more?: boolean }
+}
+
+/** The .eth names in one page of the response (active ones only; reverse records etc. dropped). */
+export function parseBignameNames(page: BignamePage): string[] {
+  const names: string[] = []
+
+  for (const entry of page.data ?? []) {
+    const checked =
+      entry.name && entry.status === 'active' && !entry.name.includes('[') ? checkEthName(entry.name) : null
+
+    if (checked?.ok) names.push(checked.name)
+  }
+
+  return names
+}
+
+/** All .eth names an address owns or manages, v1 and v2; `null` when the API can't be reached. */
+export async function fetchNamesForAddress(address: string, fetchFn: typeof fetch = fetch): Promise<string[] | null> {
+  const names = new Set<string>()
+  let cursor: string | null = null
+
+  try {
+    for (let i = 0; i < BIGNAME_MAX_PAGES; i++) {
+      const url = `${BIGNAME_API}/addresses/${address.toLowerCase()}/names?page_size=50${cursor ? `&cursor=${cursor}` : ''}`
+      const res = await fetchFn(url)
+
+      if (!res.ok) return null
+      const page = (await res.json()) as BignamePage
+
+      for (const name of parseBignameNames(page)) names.add(name)
+      cursor = page.page?.has_more ? (page.page.next_cursor ?? null) : null
+
+      if (!cursor) break
+    }
+  } catch {
+    return null
+  }
+
+  return [...names].sort()
+}

@@ -17,6 +17,7 @@ import {
   COMPOSITE_RESOLVER_INTERFACE,
   confirmLinked,
   dnsEncode,
+  fetchNamesForAddress,
   findWritableResolver,
   LEGACY_CONTENTHASH_INTERFACE,
   LEGACY_SET_CONTENTHASH_ABI,
@@ -284,5 +285,45 @@ describe('checkCanLink', () => {
     const client = chain({ estimateFeesPerGas: vi.fn(async () => Promise.reject(new Error('no'))) })
 
     expect(await checkCanLink(client as never, call, OWNER)).toEqual({ ok: true })
+  })
+})
+
+describe('fetchNamesForAddress (ENS names API, v1 + v2)', () => {
+  const page = (names: { name: string; status?: string }[], next: string | null) => ({
+    ok: true,
+    json: async () => ({
+      data: names.map(n => ({ status: 'active', ...n })),
+      page: { next_cursor: next, has_more: next !== null },
+    }),
+  })
+
+  it('collects .eth names across pages, drops reverse records, inactive and non-.eth names', async () => {
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValueOnce(
+        page(
+          [
+            { name: '[b95a61a1].addr.reverse' },
+            { name: 'justdeploy.eth' },
+            { name: 'Martin.Zupan.eth' },
+            { name: 'old.eth', status: 'expired' },
+          ],
+          'abc',
+        ),
+      )
+      .mockResolvedValueOnce(page([{ name: 'vzupan.eth' }, { name: 'ens.domains' }], null))
+
+    expect(await fetchNamesForAddress('0xABC', fetchFn as never)).toEqual([
+      'justdeploy.eth',
+      'martin.zupan.eth',
+      'vzupan.eth',
+    ])
+    expect(fetchFn.mock.calls[0][0]).toBe('https://api.bigname.sh/v1/addresses/0xabc/names?page_size=50')
+    expect(fetchFn.mock.calls[1][0]).toContain('&cursor=abc')
+  })
+
+  it('null when the API fails, so the caller can fall back', async () => {
+    expect(await fetchNamesForAddress('0xabc', vi.fn().mockResolvedValue({ ok: false }) as never)).toBeNull()
+    expect(await fetchNamesForAddress('0xabc', vi.fn().mockRejectedValue(new Error('offline')) as never)).toBeNull()
   })
 })

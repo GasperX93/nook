@@ -1,5 +1,5 @@
 import { useConnectModal } from '@rainbow-me/rainbowkit'
-import { AlertTriangle, Check, ExternalLink, Globe, RefreshCw, X } from 'lucide-react'
+import { AlertTriangle, Check, ChevronDown, ExternalLink, Globe, RefreshCw, X } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { type Address, formatEther } from 'viem'
 import { useAccount, usePublicClient, useSwitchChain } from 'wagmi'
@@ -10,6 +10,7 @@ import {
   checkCanLink,
   checkEthName,
   confirmLinked,
+  fetchNamesForAddress,
   findWritableResolver,
   type LinkCheck,
   readContenthash,
@@ -41,15 +42,15 @@ function decodeContentHash(hex: string): { protocol: string; hash: string } | nu
   return { protocol: 'unknown', hash: clean }
 }
 
-// ENS subgraph — same endpoint + key as Beeport (public, from ethersphere/beeport constants.ts).
-// It covers ENSv1 names only: names moved to or registered on ENSv2 may be
-// missing, so the domain can also be typed (ENS docs: "let users enter a name
-// manually").
+// Fallback list when ENS's names API (fetchNamesForAddress) is down: the ENS
+// subgraph — same endpoint + key as Beeport (public, from ethersphere/beeport
+// constants.ts). It covers ENSv1 names only, so names moved to ENSv2 are
+// missing from it; the domain can always be typed.
 const ENS_SUBGRAPH = 'https://gateway.thegraph.com/api/subgraphs/id/5XqPmWe6gjyrJtFn9cLy237i4cWw2j9HcUJEXsP5qGtH'
 const ENS_SUBGRAPH_KEY = '5260e01a116d193aced5a8963059e9d7'
 
 /** The wallet's .eth names from the subgraph; `null` when the list couldn't be loaded. */
-async function fetchOwnedDomains(address: string): Promise<string[] | null> {
+async function fetchSubgraphDomains(address: string): Promise<string[] | null> {
   const addr = address.toLowerCase()
   const query = `{
     domains(where: { owner: "${addr}" }) { name }
@@ -111,13 +112,25 @@ function linkCheckError(name: string, setter: Setter, check: Exclude<LinkCheck, 
   return `Couldn't reach Ethereum to check ${name}. Try again in a moment.`
 }
 
-/** Under the name field: why the list may be empty or incomplete. */
-function listHint(listFailed: boolean, count: number): string {
-  if (listFailed) return "Couldn't load your domains — type the name."
+/** Under the list: only when it may be missing names. */
+function listHint(listFailed: boolean, listComplete: boolean, count: number): string | null {
+  if (listFailed) return "Couldn't load your domains — type the name below."
 
-  if (count === 0) return "Type the .eth name you want to link. Names on ENSv2 aren't listed here."
+  if (!listComplete) return "Names on ENSv2 couldn't be loaded right now — type them below."
 
-  return "Type it, or pick one below. Names on ENSv2 aren't listed here — type them."
+  if (count === 0) return 'No .eth names found for this wallet.'
+
+  return null
+}
+
+/** The wallet's .eth names: ENS's names API (v1 + v2), else the subgraph (v1 only). */
+async function fetchOwnedDomains(address: string): Promise<{ names: string[]; complete: boolean } | null> {
+  const all = await fetchNamesForAddress(address)
+
+  if (all) return { names: all, complete: true }
+  const v1 = await fetchSubgraphDomains(address)
+
+  return v1 ? { names: v1, complete: false } : null
 }
 
 type ModalState = 'loading' | 'select' | 'checking' | 'ready' | 'confirming' | 'pending' | 'success' | 'error'
@@ -145,6 +158,8 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
   const [state, setState] = useState<ModalState>('loading')
   const [domains, setDomains] = useState<string[]>([])
   const [listFailed, setListFailed] = useState(false)
+  const [listComplete, setListComplete] = useState(true)
+  const [listOpen, setListOpen] = useState(false)
   const [ensName, setEnsName] = useState(currentDomain ?? '')
   const [target, setTarget] = useState<{ name: string; resolver: Address; setter: Setter } | null>(null)
   const [currentHash, setCurrentHash] = useState<{ protocol: string; hash: string } | null>(null)
@@ -161,9 +176,10 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
   useEffect(() => {
     if (!isOpen || !isConnected || !address) return
     setState('loading')
-    fetchOwnedDomains(address).then(names => {
-      setDomains(names ?? [])
-      setListFailed(names === null)
+    fetchOwnedDomains(address).then(result => {
+      setDomains(result?.names ?? [])
+      setListFailed(result === null)
+      setListComplete(result?.complete ?? false)
       setState('select')
     })
   }, [isOpen, isConnected, address])
@@ -340,17 +356,71 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
             {/* Domain selection */}
             {(state === 'select' || state === 'checking' || state === 'error') && (
               <div className="space-y-3">
-                {/* Typing is the main way: the list below covers ENSv1 names only
-                    (names moved to ENSv2 drop out of it), and it sits inside the
-                    window, so nothing ever covers the field or Continue. */}
+                {/* All the wallet's names (v1 + v2) in a list that opens INSIDE the
+                    window — it pushes the content down and never covers the
+                    field or Continue. Typing stays for anything not listed. */}
+                <div>
+                  <label className="text-xs mb-1.5 block" style={{ color: 'rgb(var(--fg-muted))' }}>
+                    Your domains
+                  </label>
+                  {domains.length > 0 && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setListOpen(!listOpen)}
+                        disabled={state === 'checking'}
+                        className="w-full flex items-center justify-between rounded-lg border px-3 py-2 text-xs font-mono focus:outline-none"
+                        style={{
+                          backgroundColor: 'rgb(var(--bg))',
+                          color: domains.includes(ensName) ? 'rgb(var(--fg))' : 'rgb(var(--fg-muted))',
+                        }}
+                      >
+                        <span>{domains.includes(ensName) ? ensName : 'Choose a domain...'}</span>
+                        <ChevronDown
+                          size={12}
+                          className={`transition-transform ${listOpen ? 'rotate-180' : ''}`}
+                          style={{ color: 'rgb(var(--fg-muted))' }}
+                        />
+                      </button>
+                      {listOpen && (
+                        <div
+                          className="mt-1 rounded-lg border py-1 max-h-48 overflow-auto"
+                          style={{ backgroundColor: 'rgb(var(--bg))', borderColor: 'rgb(var(--border))' }}
+                        >
+                          {domains.map(name => (
+                            <button
+                              key={name}
+                              type="button"
+                              onClick={() => {
+                                setEnsName(name)
+                                setListOpen(false)
+                              }}
+                              className="w-full text-left px-3 py-2 text-xs font-mono transition-colors hover:bg-white/5"
+                              style={{ color: name === ensName ? 'rgb(var(--accent))' : 'rgb(var(--fg))' }}
+                            >
+                              {name}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  )}
+                  {listHint(listFailed, listComplete, domains.length) && (
+                    <p className="text-[10px] mt-1" style={{ color: 'rgb(var(--fg-muted))' }}>
+                      {listHint(listFailed, listComplete, domains.length)}
+                    </p>
+                  )}
+                </div>
+
                 <div>
                   <label htmlFor="ens-name" className="text-xs mb-1.5 block" style={{ color: 'rgb(var(--fg-muted))' }}>
-                    Your domain
+                    {domains.length > 0 ? 'Or type a domain' : 'Type your domain'}
                   </label>
                   <input
                     id="ens-name"
                     value={ensName}
                     onChange={e => setEnsName(e.target.value)}
+                    onFocus={() => setListOpen(false)}
                     onKeyDown={e => {
                       if (e.key === 'Enter') void lookupDomain()
                     }}
@@ -361,35 +431,7 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
                     className="w-full rounded-lg border px-3 py-2 text-xs font-mono focus:outline-none"
                     style={{ backgroundColor: 'rgb(var(--bg))', color: 'rgb(var(--fg))' }}
                   />
-                  <p className="text-[10px] mt-1" style={{ color: 'rgb(var(--fg-muted))' }}>
-                    {listHint(listFailed, domains.length)}
-                  </p>
                 </div>
-
-                {domains.length > 0 && (
-                  <div>
-                    <p className="text-[10px] uppercase tracking-widest mb-1" style={{ color: 'rgb(var(--fg-muted))' }}>
-                      Found for this wallet
-                    </p>
-                    <div className="flex flex-wrap gap-1.5 max-h-24 overflow-auto">
-                      {domains.map(name => (
-                        <button
-                          key={name}
-                          type="button"
-                          onClick={() => setEnsName(name)}
-                          disabled={state === 'checking'}
-                          className="rounded-md border px-2 py-1 text-[11px] font-mono transition-colors hover:bg-white/5"
-                          style={{
-                            borderColor: name === ensName ? 'rgb(var(--accent))' : 'rgb(var(--border))',
-                            color: name === ensName ? 'rgb(var(--accent))' : 'rgb(var(--fg))',
-                          }}
-                        >
-                          {name}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
 
                 {state === 'error' && error && (
                   <div className="flex items-start gap-2 text-xs" style={{ color: '#ef4444' }}>
