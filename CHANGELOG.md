@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.7.7](https://github.com/GasperX93/nook/releases/tag/v0.7.7) (2026-10-30)
+
+New to Nook? Read the [user guide](https://nook-drive.eth.limo/docs.html) and [how Nook works](https://nook-drive.eth.limo/how-it-works.html) on the Nook website — [nook-drive.eth.limo](https://nook-drive.eth.limo).
+
+### Fixes
+* **Link ENS domain works again** — ENS moved to a new version (ENSv2) on 27 October, and linking a domain to your website stopped working. It now works for every .eth name, whether you've upgraded it to ENSv2 or not.
+* **All your domains in the list** — names upgraded to ENSv2 show up again, and you can still type a domain.
+* **Clearer before you pay** — Nook checks that the link will go through before your wallet asks you to confirm, and tells you why if it won't (not your name, not enough ETH for the fee, …). A mistyped name no longer shows "Domain linked!".
+
 ## [0.7.6](https://github.com/GasperX93/nook/releases/tag/v0.7.6) (2026-10-24)
 
 New to Nook? Read the [user guide](https://nook-drive.eth.limo/docs.html) and [how Nook works](https://nook-drive.eth.limo/how-it-works.html) on the Nook website — [nook-drive.eth.limo](https://nook-drive.eth.limo).
