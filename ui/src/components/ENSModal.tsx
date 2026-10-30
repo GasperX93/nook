@@ -1,5 +1,5 @@
 import { useConnectModal } from '@rainbow-me/rainbowkit'
-import { AlertTriangle, Check, ChevronDown, ExternalLink, Globe, RefreshCw, X } from 'lucide-react'
+import { AlertTriangle, Check, ExternalLink, Globe, RefreshCw, X } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { type Address, formatEther } from 'viem'
 import { useAccount, usePublicClient, useSwitchChain } from 'wagmi'
@@ -113,11 +113,11 @@ function linkCheckError(name: string, setter: Setter, check: Exclude<LinkCheck, 
 
 /** Under the name field: why the list may be empty or incomplete. */
 function listHint(listFailed: boolean, count: number): string {
-  if (listFailed) return "Couldn't load your domains — type the name instead."
+  if (listFailed) return "Couldn't load your domains — type the name."
 
-  if (count === 0) return 'No domains found for this wallet. Names on ENSv2 may not be listed — type yours.'
+  if (count === 0) return "Type the .eth name you want to link. Names on ENSv2 aren't listed here."
 
-  return 'Names on ENSv2 may not be listed — type yours.'
+  return "Type it, or pick one below. Names on ENSv2 aren't listed here — type them."
 }
 
 type ModalState = 'loading' | 'select' | 'checking' | 'ready' | 'confirming' | 'pending' | 'success' | 'error'
@@ -146,7 +146,6 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
   const [domains, setDomains] = useState<string[]>([])
   const [listFailed, setListFailed] = useState(false)
   const [ensName, setEnsName] = useState(currentDomain ?? '')
-  const [dropdownOpen, setDropdownOpen] = useState(false)
   const [target, setTarget] = useState<{ name: string; resolver: Address; setter: Setter } | null>(null)
   const [currentHash, setCurrentHash] = useState<{ protocol: string; hash: string } | null>(null)
   const [error, setError] = useState('')
@@ -168,11 +167,6 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
       setState('select')
     })
   }, [isOpen, isConnected, address])
-
-  const selectDomain = useCallback((name: string) => {
-    setEnsName(name)
-    setDropdownOpen(false)
-  }, [])
 
   const fail = useCallback((message: string) => {
     setError(message)
@@ -346,49 +340,12 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
             {/* Domain selection */}
             {(state === 'select' || state === 'checking' || state === 'error') && (
               <div className="space-y-3">
-                {domains.length > 0 && (
-                  <div>
-                    <label className="text-xs mb-1.5 block" style={{ color: 'rgb(var(--fg-muted))' }}>
-                      Your domains
-                    </label>
-                    <div className="relative">
-                      <button
-                        onClick={() => setDropdownOpen(!dropdownOpen)}
-                        disabled={state === 'checking'}
-                        className="w-full flex items-center justify-between rounded-lg border px-3 py-2 text-xs font-mono focus:outline-none"
-                        style={{
-                          backgroundColor: 'rgb(var(--bg))',
-                          color: domains.includes(ensName) ? 'rgb(var(--fg))' : 'rgb(var(--fg-muted))',
-                        }}
-                      >
-                        <span>{domains.includes(ensName) ? ensName : 'Choose a domain...'}</span>
-                        <ChevronDown size={12} style={{ color: 'rgb(var(--fg-muted))' }} />
-                      </button>
-                      {dropdownOpen && (
-                        <div
-                          className="absolute left-0 right-0 top-full mt-1 rounded-lg border py-1 z-50 max-h-48 overflow-auto"
-                          style={{ backgroundColor: 'rgb(var(--bg-surface))', borderColor: 'rgb(var(--border))' }}
-                        >
-                          {domains.map(name => (
-                            <button
-                              key={name}
-                              onClick={() => selectDomain(name)}
-                              className="w-full text-left px-3 py-2 text-xs font-mono transition-colors hover:bg-white/5"
-                              style={{ color: name === ensName ? 'rgb(var(--accent))' : 'rgb(var(--fg))' }}
-                            >
-                              {name}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {/* The list covers ENSv1 names only — names on ENSv2 are typed. */}
+                {/* Typing is the main way: the list below covers ENSv1 names only
+                    (names moved to ENSv2 drop out of it), and it sits inside the
+                    window, so nothing ever covers the field or Continue. */}
                 <div>
                   <label htmlFor="ens-name" className="text-xs mb-1.5 block" style={{ color: 'rgb(var(--fg-muted))' }}>
-                    {domains.length > 0 ? 'Or type your domain' : 'Your domain'}
+                    Your domain
                   </label>
                   <input
                     id="ens-name"
@@ -408,6 +365,31 @@ export default function ENSModal({ isOpen, onClose, swarmHash, feedManifest, cur
                     {listHint(listFailed, domains.length)}
                   </p>
                 </div>
+
+                {domains.length > 0 && (
+                  <div>
+                    <p className="text-[10px] uppercase tracking-widest mb-1" style={{ color: 'rgb(var(--fg-muted))' }}>
+                      Found for this wallet
+                    </p>
+                    <div className="flex flex-wrap gap-1.5 max-h-24 overflow-auto">
+                      {domains.map(name => (
+                        <button
+                          key={name}
+                          type="button"
+                          onClick={() => setEnsName(name)}
+                          disabled={state === 'checking'}
+                          className="rounded-md border px-2 py-1 text-[11px] font-mono transition-colors hover:bg-white/5"
+                          style={{
+                            borderColor: name === ensName ? 'rgb(var(--accent))' : 'rgb(var(--border))',
+                            color: name === ensName ? 'rgb(var(--accent))' : 'rgb(var(--fg))',
+                          }}
+                        >
+                          {name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {state === 'error' && error && (
                   <div className="flex items-start gap-2 text-xs" style={{ color: '#ef4444' }}>
