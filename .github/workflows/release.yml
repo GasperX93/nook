@@ -29,9 +29,9 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
           cache: npm
@@ -40,6 +40,8 @@ jobs:
             ui/package-lock.json
 
       - run: npm ci
+      # .npmrc blocks install scripts; this runs the few Nook needs (see devkit.mjs)
+      - run: npm run install:scripts
       - run: cd ui && npm ci
 
       - name: Build

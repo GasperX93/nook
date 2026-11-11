@@ -25,6 +25,10 @@ Do not reason from assumptions, memory, or diff text alone. Every claim about ho
 ## Commands
 
 ```bash
+# Install (root .npmrc blocks dependency install scripts)
+npm ci && npm run install:scripts   # install:scripts runs the 5 allowed ones (list in devkit.mjs)
+cd ui && npm ci
+
 # Development
 npm start              # Run Electron app + UI concurrently (dev mode)
 
@@ -87,7 +91,7 @@ The app has two main layers:
 
 **Startup sequence** (`index.ts`): migrations → splash → download Bee if needed → API key → claim port 3054 → start Koa server → init Bee config → launch Bee → start funding monitor → start chequebook monitor → setup tray → keep-alive loop.
 
-**Bundled Bee version**: `EXPECTED_BEE_VERSION` in `src/downloader.ts` (currently **2.8.3**). On launch the downloader compares the installed binary's version and force-redownloads on mismatch — existing installs auto-upgrade.
+**Bundled Bee version**: `EXPECTED_BEE_VERSION` in `src/downloader.ts` (currently **2.8.3**). On launch the downloader compares the installed binary's version and force-redownloads on mismatch — existing installs auto-upgrade. The download must match the SHA-256 pinned in `BEE_SHA256` (same file) or it is thrown away — **on every Bee bump replace all checksums** (from the release's `bee_<version>_checksums.txt`, cross-checked with the GitHub asset digests).
 
 **Ultra-light / light mode**: New installs start in ultra-light mode (`swap-enable: false`, no `blockchain-rpc-endpoint`). Bee API is available immediately without funds. The funding monitor polls wallet balance every 15s. When xDAI is detected: stop Bee → write `blockchain-rpc-endpoint` and `swap-enable: true` → restart in light mode. Postage sync takes ~2–3 minutes thanks to clean snapshot loading.
 

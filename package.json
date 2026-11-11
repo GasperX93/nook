@@ -29,6 +29,7 @@
     "open:ui": "node devkit.mjs open:ui",
     "purge:data": "node devkit.mjs purge:data",
     "purge:logs": "node devkit.mjs purge:logs",
+    "install:scripts": "node devkit.mjs install:scripts",
     "clean": "rimraf dist out",
     "depcheck": "depcheck . && depcheck ui/",
     "lint": "eslint --fix \"src/**/*.ts\" && cd ui && npm run lint",
@@ -48,6 +49,9 @@
     "desktop"
   ],
   "license": "BSD-3-Clause",
+  "engines": {
+    "node": ">=20.11"
+  },
   "devDependencies": {
     "@electron-forge/cli": "^7.11.1",
     "@electron-forge/maker-deb": "^7.11.1",

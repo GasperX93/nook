@@ -4,8 +4,22 @@ import envPaths from 'env-paths'
 import open from 'open'
 
 import cpy from 'cpy'
+import { execSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
+
+/**
+ * `.npmrc` sets ignore-scripts, so no dependency runs code at install time.
+ * These are the only ones whose install script Nook needs:
+ *   electron            — downloads the Electron binary
+ *   better-sqlite3      — fetches/compiles its native module
+ *   electron-winstaller — picks the 7-Zip binary (Windows installer)
+ *   fs-xattr, macos-alias — native modules for the macOS DMG
+ * Adding a name here lets that package run code on every developer and CI
+ * machine — check what its script does first.
+ */
+const INSTALL_SCRIPT_PACKAGES = ['electron', 'better-sqlite3', 'electron-winstaller', 'fs-xattr', 'macos-alias']
 
 const paths = envPaths('Nook', { suffix: '' })
 const requestedCommand = process.argv[2]
@@ -23,8 +37,24 @@ switch (requestedCommand) {
   case 'purge:logs':
     await purgeLogs()
     break
+  case 'install:scripts':
+    runInstallScripts()
+    break
   default:
     throw new Error(`Unknown command "${requestedCommand}"!`)
+}
+
+function runInstallScripts() {
+  // Always the main app's node_modules, wherever this is run from: an empty
+  // list would turn the command into "rebuild everything, scripts on".
+  const root = import.meta.dirname
+  // Optional packages are only installed on the system they are for.
+  const present = INSTALL_SCRIPT_PACKAGES.filter(name => existsSync(join(root, 'node_modules', name)))
+
+  if (present.length === 0) {
+    throw new Error('No package to run install scripts for — run `npm ci` first')
+  }
+  execSync(`npm rebuild ${present.join(' ')} --ignore-scripts=false`, { cwd: root, stdio: 'inherit' })
 }
 
 function purgeData() {
