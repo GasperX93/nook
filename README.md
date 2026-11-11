@@ -48,8 +48,8 @@ Download the latest build from the [releases page](https://github.com/GasperX93/
 ## Development
 
 ```bash
-npm install
-cd ui && npm install && cd ..
+npm ci && npm run install:scripts   # dependency install scripts are blocked; this runs the few Nook needs
+cd ui && npm ci && cd ..
 npm start          # starts Electron backend + Vite dev server
 ```
 
