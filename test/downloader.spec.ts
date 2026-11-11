@@ -88,7 +88,13 @@ test('a Bee with no pinned checksum is not downloaded at all', async () => {
 })
 
 test('every system Nook is built for has a pinned checksum', () => {
-  for (const asset of ['bee-darwin-arm64', 'bee-darwin-amd64', 'bee-linux-amd64', 'bee-windows-amd64.exe']) {
+  for (const asset of [
+    'bee-darwin-arm64',
+    'bee-darwin-amd64',
+    'bee-linux-amd64',
+    'bee-linux-arm64',
+    'bee-windows-amd64.exe',
+  ]) {
     expect(BEE_SHA256[asset]).toMatch(/^[0-9a-f]{64}$/)
   }
 })
