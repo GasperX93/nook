@@ -27,7 +27,7 @@ Do not reason from assumptions, memory, or diff text alone. Every claim about ho
 ```bash
 # Install (root .npmrc blocks dependency install scripts)
 npm ci && npm run install:scripts   # install:scripts runs the 5 allowed ones (list in devkit.mjs)
-cd ui && npm ci
+cd ui && npm ci                      # ui/.npmrc blocks install scripts too; none are needed there
 
 # Development
 npm start              # Run Electron app + UI concurrently (dev mode)
@@ -129,7 +129,7 @@ Key files:
 
 ### Messaging (`ui/src/notify/` + `@swarm-notify/sdk`)
 
-End-to-end encrypted messaging over Swarm feeds, using the **swarm-notify SDK** (pinned by commit in `ui/package.json` to `github:GasperX93/swarm-notify#<rev>`):
+End-to-end encrypted messaging over Swarm feeds, using the **swarm-notify SDK** (`ui/package.json` points at a pre-built `.tgz` on a swarm-notify GitHub release, tagged `v<version>-<commit>`; the lockfile pins its checksum. To move to a new SDK commit: build + `npm pack` it there, publish the file as a release, change the URL and run `npm install --package-lock-only` in `ui/`):
 
 - **Append-only mailbox** (v2 feed topic): one message = one immutable feed index. The sender owns a persisted per-recipient **send cursor** (`notify/messages.ts`) so writes never depend on a network read-latest. ALL senders route through `notify/send-message.ts` → `sendMailboxMessage` (cursor + `mailbox.send`); per-recipient serialization via `notify/send-queue.ts`; node-readiness gate via `notify/bee-ready.ts`.
 - **Payloads are direct-pushed** (`deferred: false` in the SDK and in Koa `/upload-bytes`) — "sent" means on-the-network; feed slots (SOC writes) are always direct in Bee.
