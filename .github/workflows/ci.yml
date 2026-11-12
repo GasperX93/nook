@@ -36,3 +36,33 @@ jobs:
 
       - name: Frontend tests
         run: cd ui && npm test
+
+  # The release build for Windows only runs on a version tag. This runs the
+  # same install on every change, so a problem shows up before release day.
+  install-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            ui/package-lock.json
+
+      - run: npm ci
+      - run: npm run install:scripts
+      - run: cd ui && npm ci
+
+      - name: The allowed install scripts did their work
+        shell: bash
+        run: |
+          # electron: the binary was downloaded (throws if it was not)
+          node -e "console.log('electron binary:', require('electron'))"
+          # better-sqlite3: the native module is there
+          test -f node_modules/better-sqlite3/build/Release/better_sqlite3.node
+          # electron-winstaller: the 7-Zip binary for this machine was selected
+          test -f node_modules/electron-winstaller/vendor/7z.exe
+          test -f node_modules/electron-winstaller/vendor/7z.dll
