@@ -8,7 +8,37 @@ permissions:
   contents: write
 
 jobs:
+  # A release is built only from a commit that is on master. Release candidates
+  # (vX.Y.Z-rc.N) may also be on develop. Any other tag stops here.
+  check-tag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check the tagged commit is on the release branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          BRANCHES="master"
+          case "$TAG" in
+            *-rc.*) BRANCHES="master develop" ;;
+          esac
+
+          for BRANCH in $BRANCHES; do
+            # "identical" or "behind" = the commit is part of the branch
+            STATUS=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BRANCH...$GITHUB_SHA" --jq .status)
+            echo "$TAG ($GITHUB_SHA) against $BRANCH: $STATUS"
+            if [ "$STATUS" = "identical" ] || [ "$STATUS" = "behind" ]; then
+              exit 0
+            fi
+          done
+
+          echo "::error::$TAG is not on: $BRANCHES. Nothing was built."
+          exit 1
+
   build:
+    needs: check-tag
     strategy:
       fail-fast: false
       matrix:
