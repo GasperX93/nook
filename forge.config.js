@@ -98,7 +98,6 @@ const config = {
       /^\/node_modules\/@istanbuljs/,
       /^\/node_modules\/@jest/,
       /^\/node_modules\/@jridgewell/,
-      /^\/node_modules\/@kayahr/,
       /^\/node_modules\/@listr2/,
       /^\/node_modules\/@malept/,
       /^\/node_modules\/@nodelib/,

@@ -2,7 +2,6 @@
   "ignores": [
     "@electron-forge/*",
     "@types/*",
-    "@kayahr/jest-electron-runner",
     "electron-forge-maker-zip-all",
     "ts-jest",
     "ts-node",
